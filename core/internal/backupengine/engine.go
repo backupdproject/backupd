@@ -377,6 +377,26 @@ type StreamSnapshotInfo struct {
 // satisfying it, which is a compile-time answer instead of a runtime
 // ErrUnsupported. Everything it adds is expressed in this package's own
 // types plus io.ReadCloser.
+//
+// # Its unit is ONE object, and that is a Phase-1 interim
+//
+// One call takes one stream and produces one snapshot, so a caller
+// backing up a whole source through this port produces one snapshot per
+// object: a set of 100k files becomes 100k snapshots, manifests and
+// sources, with every per-snapshot cost paid per file. That is enough to
+// prove a source can be read straight into a repository - which is what
+// backupengine/source and ADR 0012 do with it - and it is not the shape a
+// backup set is stored in.
+//
+// #783 introduces the session-scoped port that is: one snapshot per
+// backup-set run, under the set's own identity, with its objects as a
+// tree inside it. That port is not an implementation of this one. This
+// interface is push-shaped, and the engine underneath is pull-shaped: its
+// uploader walks a tree and asks it for children, so the control
+// flow inverts, and with it the error model: there is nothing per-object
+// to delete out of a set-wide snapshot, so what this port expresses as
+// "store, then DeleteSnapshot what could not be proven" becomes a
+// stream-level error the uploader observes while it is pulling.
 type StreamingRepository interface {
 	Repository
 

@@ -70,6 +70,25 @@ func realRepository(t *testing.T) (backupengine.StreamingRepository, string) {
 	return streaming, root
 }
 
+// testRef is a valid repository reference, which the production sink
+// requires: it refuses to write a snapshot it cannot attribute to a
+// backup set and a domain.
+func testRef(t *testing.T, set string) model.RepositoryRef {
+	t.Helper()
+
+	domain, err := model.NewRepositoryDomainID("production")
+	if err != nil {
+		t.Fatalf("NewRepositoryDomainID: %v", err)
+	}
+
+	id, err := model.NewBackupSetID("nas", set)
+	if err != nil {
+		t.Fatalf("NewBackupSetID: %v", err)
+	}
+
+	return model.RepositoryRef{Domain: domain, Set: id}
+}
+
 func sha256Of(b []byte) string {
 	sum := sha256.Sum256(b)
 
@@ -109,6 +128,7 @@ func TestALocalTreeStreamsThroughTheAdapterIntoARealRepository(t *testing.T) {
 	sink := source.RepositorySink{
 		Repo:        repo,
 		Source:      backupengine.Source{Host: "nas", User: "backupd", Path: "/sets/local-source"},
+		Ref:         testRef(t, "local-source"),
 		Description: "integration",
 	}
 
@@ -444,6 +464,7 @@ func TestCancellationAgainstARealSourceLeavesNothingRunning(t *testing.T) {
 	sink := source.RepositorySink{
 		Repo:   repo,
 		Source: backupengine.Source{Host: "nas", User: "backupd", Path: "/sets/cancel"},
+		Ref:    testRef(t, "cancel"),
 	}
 
 	if _, err := a.Backup(ctx, source.Request{Source: src, Sink: sink}); !errors.Is(err, context.Canceled) {
@@ -493,6 +514,7 @@ func TestARealFileRewrittenMidReadIsNotLeftInTheRepository(t *testing.T) {
 		inner: source.RepositorySink{
 			Repo:   repo,
 			Source: backupengine.Source{Host: "nas", User: "backupd", Path: "/sets/busy"},
+			Ref:    testRef(t, "busy"),
 		},
 		duringRead: func(attempt int) {
 			if attempt != 1 || !rewritten.CompareAndSwap(false, true) {
@@ -637,3 +659,116 @@ func (h *hookedReader) Read(p []byte) (int, error) {
 }
 
 func (h *hookedReader) Close() error { return h.inner.Close() }
+
+// A cancel that lands AFTER a Store succeeded must not leave the
+// snapshot it produced behind.
+//
+// This is the narrow window the cancellation contract missed. The bytes
+// are in the repository before anything can be compared - that is the
+// premise of a single-pass stream - so the run checks the read window
+// after the store returns. A cancellation that arrives in between ends
+// the run right there, and what it used to leave behind was a snapshot
+// nobody ever checked, sitting in the repository as a restore point
+// indistinguishable from a verified one. An operator restoring it would
+// get bytes this product never proved were the file's.
+//
+// It is run against a real repository rather than a fake sink because
+// the removal has to survive the thing that makes it hard: the run's
+// context is already cancelled, so a Discard performed on that context
+// would be refused by the repository and the snapshot would stay. Only
+// a real DeleteSnapshot can fail that way.
+func TestACancelAfterAStoreLeavesNoUnverifiedSnapshotBehind(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceDir, "late.bin"), patternBytes(1<<20, 0xC0DE), 0o600); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+
+	adapter := rclone.New()
+	src := transport.Source{ID: "late", Type: "local", Root: sourceDir}
+	repo, _ := realRepository(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sink := &cancelAfterStore{
+		inner: source.RepositorySink{
+			Repo:   repo,
+			Source: backupengine.Source{Host: "nas", User: "backupd", Path: "/sets/late"},
+			Ref:    testRef(t, "late"),
+		},
+		cancel: cancel,
+	}
+
+	a, err := source.New(source.Deps{Streamer: adapter, Stater: adapter, Enumerator: adapter}, source.Options{
+		Mode:   model.ModeLiveBestEffort,
+		Preset: model.PresetConservative,
+	})
+	if err != nil {
+		t.Fatalf("source.New: %v", err)
+	}
+
+	rep, _ := a.Backup(ctx, source.Request{Source: src, Sink: sink})
+
+	if rep.Stored != 0 {
+		t.Fatalf("the cancelled run reported %d objects stored and proven; nothing was ever checked: %+v", rep.Stored, rep)
+	}
+
+	if rep.Complete() {
+		t.Fatalf("a run cancelled after a store called itself complete: %+v", rep)
+	}
+
+	if id := sink.storedID(); id == "" {
+		t.Fatal("the store never happened, so this test proved nothing about what a cancel leaves behind")
+	}
+
+	snaps, err := repo.ListSnapshots(context.Background(), backupengine.Source{
+		Host: "nas", User: "backupd", Path: "/sets/late/late.bin",
+	})
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+
+	if len(snaps) != 0 {
+		t.Fatalf("the repository holds %d snapshots of an object the run never verified; a cancelled store must be discarded, not kept", len(snaps))
+	}
+}
+
+// cancelAfterStore cancels the run in the window between a successful
+// Store and the mutation check that would have verified it, which is the
+// race this is about, made deterministic.
+type cancelAfterStore struct {
+	inner  source.RepositorySink
+	cancel context.CancelFunc
+
+	mu sync.Mutex
+	id string
+}
+
+func (c *cancelAfterStore) Store(ctx context.Context, obj source.Object) (source.Stored, error) {
+	out, err := c.inner.Store(ctx, obj)
+	if err != nil {
+		return out, err
+	}
+
+	c.mu.Lock()
+	c.id = out.ID
+	c.mu.Unlock()
+
+	c.cancel()
+
+	return out, nil
+}
+
+func (c *cancelAfterStore) Discard(ctx context.Context, id string) error {
+	//nolint:wrapcheck // this is the production sink's own error.
+	return c.inner.Discard(ctx, id)
+}
+
+func (c *cancelAfterStore) storedID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.id
+}

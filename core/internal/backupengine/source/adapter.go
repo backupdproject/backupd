@@ -87,12 +87,23 @@ var (
 // source" is enforced rather than promised.
 type Deps struct {
 	// Streamer opens an object for one forward read. Required.
+	//
+	// A Streamer that also satisfies SessionOpener is used through ONE
+	// session per run - opened before the first object, closed after
+	// the last - and both the opens and the stats below go through it.
+	// A Streamer that does not is used per object, which is what it
+	// always was. Nothing else here changes either way.
 	Streamer Streamer
 
 	// Stater answers what the source says about an object, and is what
 	// the post-read half of the mutation check asks. Required unless
 	// every run this adapter will perform declares a consistency mode
 	// that guarantees a point in time.
+	//
+	// It is the per-object surface: when the Streamer opens a session,
+	// the run stats through that session instead, because a stat on a
+	// connection the run already holds is the whole point of having
+	// one.
 	Stater Stater
 
 	// Enumerator walks the source. Required for Backup; BackupPaths does
@@ -402,7 +413,7 @@ func (a *Adapter) BackupPaths(ctx context.Context, req Request, paths []string) 
 				continue
 			}
 
-			art, err := a.deps.Stater.StatSource(ctx, req.Source, safe)
+			art, err := r.reader.statSource(ctx, safe)
 			if err != nil {
 				r.recordFailure(safe, sourceconsistency.KindRegular, statOutcome(err), err)
 
@@ -501,6 +512,13 @@ type run struct {
 	sink     Sink
 	excluded func(string) bool
 
+	// reader is this run's conversation with the source, opened by
+	// execute and closed by it. Every open and every stat in the run
+	// goes through it, which is what makes "one transport session per
+	// run" a fact about the code rather than a convention: there is no
+	// other path to the source from in here.
+	reader sourceReader
+
 	mu     sync.Mutex
 	report Report
 }
@@ -522,6 +540,20 @@ func (r *run) execute(ctx context.Context, produce func(context.Context, func(tr
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// One conversation with the source, opened before the first object
+	// and closed after the last one. It is closed on every path out,
+	// including the cancelled one and the one where the producer
+	// refused, because an unclosed session is an SSH connection held
+	// for the life of the process.
+	reader, err := r.adapter.newSourceReader(ctx, r.source)
+	if err != nil {
+		return r.snapshot(), err
+	}
+
+	defer reader.close()
+
+	r.reader = reader
+
 	work := make(chan transport.RemoteArtifact)
 
 	var wg sync.WaitGroup
@@ -538,7 +570,7 @@ func (r *run) execute(ctx context.Context, produce func(context.Context, func(tr
 		}()
 	}
 
-	err := produce(ctx, func(art transport.RemoteArtifact) error {
+	err = produce(ctx, func(art transport.RemoteArtifact) error {
 		select {
 		case work <- art:
 			return nil
@@ -653,7 +685,7 @@ func (r *run) handleSymlink(ctx context.Context, art transport.RemoteArtifact) {
 // records what was proven.
 func (r *run) capture(ctx context.Context, art transport.RemoteArtifact) {
 	r.store(ctx, art, sourceconsistency.KindRegular, func() (backupengine.StreamSource, func() int64, func()) {
-		s := newObjectStream(r.adapter.deps.Streamer, r.source, art.Path, r.profile.ModTime(art.ModTime))
+		s := newObjectStream(r.reader, art.Path, r.profile.ModTime(art.ModTime))
 
 		return s, s.BytesRead, s.closeAll
 	})
@@ -734,6 +766,28 @@ func (r *run) store(
 			// A cancelled run is an instruction, not a failure, and is
 			// never retried. Whatever the sink reported is a symptom of
 			// the teardown rather than a fact about the source.
+			//
+			// What the cancellation must not do is leave the sink
+			// holding something nobody ever checked. A Store that
+			// succeeded in the window between the last context check
+			// and this one produced a restore point whose read window
+			// was never compared against the source, and a repository
+			// cannot tell that snapshot from a verified one: the
+			// difference lives in this function and the run is over.
+			// An operator restoring it would get bytes this product
+			// never proved were the file's. So it is removed, on the
+			// same terms a torn read's copy is.
+			if err == nil {
+				if derr := r.discardUnverified(ctx, stored.ID); derr != nil {
+					r.recordAttempts(attempts)
+					r.recordFailure(art.Path, kind, sourceconsistency.OutcomeIncomplete, fmt.Errorf(
+						"the run was cancelled after this object was stored, and the unverified copy stored as %q could not be removed: %w",
+						stored.ID, derr))
+
+					return
+				}
+			}
+
 			r.recordFailure(art.Path, kind, sourceconsistency.OutcomeUnreadable, cerr)
 
 			return
@@ -786,6 +840,36 @@ func (r *run) store(
 	})
 }
 
+// discardGrace bounds the removal of something a cancelled run stored and
+// never checked.
+//
+// The removal is small - a manifest goes away, no content is rewritten -
+// and it is the last thing a cancelled run does, so the bound exists to
+// stop a repository that has stopped answering from holding a cancelled
+// backup open forever, not to ration the work.
+const discardGrace = 30 * time.Second
+
+// discardUnverified removes a snapshot the run is not going to be able to
+// prove, on a context the cancellation cannot reach.
+//
+// The detachment is the whole method. The ordinary discard runs on the
+// run's own context, which is correct: a torn read is discovered while
+// the run is healthy, and a removal that outlived a cancellation would be
+// work nobody asked for. This one is reached only when that context is
+// ALREADY cancelled, so passing it on would hand the sink a dead context,
+// get ErrCanceled back from the repository, and turn "clean up after
+// yourself" into a report that something was left behind - every time,
+// by construction. context.WithoutCancel keeps the values (deadlines a
+// caller configured, tracing, transport config) and drops the
+// cancellation; discardGrace puts the bound back.
+func (r *run) discardUnverified(ctx context.Context, id string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), discardGrace)
+	defer cancel()
+
+	//nolint:wrapcheck // the caller names the object and what could not be removed.
+	return r.sink.Discard(ctx, id)
+}
+
 // settled reports whether the object held still across the read, and the
 // sentence explaining the answer either way.
 //
@@ -808,7 +892,7 @@ func (r *run) settled(ctx context.Context, art transport.RemoteArtifact, before 
 		return true, "read under a consistency mode that guarantees a point in time"
 	}
 
-	after, err := r.adapter.deps.Stater.StatSource(ctx, r.source, art.Path)
+	after, err := r.reader.statSource(ctx, art.Path)
 	if err != nil {
 		return false, fmt.Sprintf("the source would not say what is at this path after the read: %v", err)
 	}

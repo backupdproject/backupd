@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/backupdproject/backupd/core/internal/backupengine"
+	"github.com/backupdproject/backupd/core/internal/model"
 	"github.com/backupdproject/backupd/core/internal/sourceconsistency"
 	"github.com/backupdproject/backupd/core/internal/transport"
 )
@@ -100,13 +101,24 @@ type Stored struct {
 	UploadedBytes int64
 }
 
-// Sink is where a prepared object's bytes go.
+// Sink is where a prepared object's bytes go, for as long as an object is
+// the unit a snapshot is taken of.
 //
 // It exists so that this package owns "read the source safely" and
-// nothing else. What a stored object becomes - one snapshot per object
-// today, an entry in a tree manifest when the snapshot lifecycle lands -
-// is the sink's decision, and swapping it must not require re-proving
-// path safety, cancellation or mutation detection.
+// nothing else: what a stored object BECOMES is the sink's decision, and
+// deciding differently must not re-open path safety, cancellation or
+// mutation detection.
+//
+// It is deliberately not the port a tree snapshot can be written
+// against, and pretending otherwise is a claim ADR 0012 used to make and
+// no longer does. This interface is push-shaped: the caller walks, opens
+// and hands over one object at a time, and undoes a store with Discard
+// once the read behind it is found wanting. Kopia's tree upload is
+// pull-shaped - the uploader walks an fs.Entry and asks for children -
+// and a snapshot that spans a whole backup set has no per-object thing
+// to discard, only a stream-level error to fail the run with. #783
+// introduces that port and inverts the control flow; see RepositorySink
+// for what that means for the interim implementation below.
 type Sink interface {
 	// Store reads obj.Stream to its end and returns what it stored. It
 	// must not retry: the retry bound belongs to the adapter, and a sink
@@ -114,22 +126,71 @@ type Sink interface {
 	Store(ctx context.Context, obj Object) (Stored, error)
 
 	// Discard removes something Store returned, because the read that
-	// produced it turned out to have been torn. A sink that cannot
-	// remove what it stored says so with an error, and the adapter
-	// reports the object as incomplete AND names the artifact that has
-	// to be dealt with, rather than leaving a torn read behind silently.
+	// produced it was never proven: it turned out to have been torn, or
+	// the run was cancelled before anything could check. A sink that
+	// cannot remove what it stored says so with an error, and the
+	// adapter reports the object as incomplete AND names the artifact
+	// that has to be dealt with, rather than leaving an unverified read
+	// behind silently.
+	//
+	// It may be called with a context the run's own cancellation cannot
+	// reach, which is deliberate: the discard that matters most is the
+	// one a cancellation caused (see the adapter's discardUnverified).
 	Discard(ctx context.Context, id string) error
 }
+
+// Tag keys every snapshot the production sink writes carries.
+//
+// They are how a repository that holds more than one backup set can be
+// asked what is IN it: the set a snapshot belongs to, and the repository
+// domain that set was admitted to (model.RepositoryRef is the pair). A
+// repository counting its distinct Kopia "sources" instead would report
+// this sink's per-object snapshots as thousands of tenants of one
+// domain, which is a co-tenancy signal that says the opposite of the
+// truth and is the reason these exist.
+//
+// They are string literals here and constants in backupengine after
+// #781 lands (backupengine.TagKeyBackupSet, backupengine.TagKeyDomain).
+// The literals are agreed across both branches; when that port merges
+// these two declarations go away and the references below become the
+// constants, with no change to what is written.
+const (
+	tagKeyBackupSet = "backupd.set"
+	tagKeyDomain    = "backupd.domain"
+)
 
 // RepositorySink stores each object as one streamed snapshot in a backup
 // repository.
 //
-// One snapshot per object is what the streaming boundary offers today
-// (backupengine.StreamingRepository takes one stream and returns one
-// snapshot id), and it is deliberately the sink's business rather than
-// the adapter's: gathering a source's objects into a single tree manifest
-// is snapshot-lifecycle work, and when it lands it lands here, behind
-// this interface, without touching a line of the reading path.
+// # This is the Phase-1 interim, not the snapshot model
+//
+// One snapshot per object is what the streaming boundary offers today:
+// backupengine.StreamingRepository takes one stream and returns one
+// snapshot id, so a backup set of 100k files becomes 100k snapshots,
+// 100k manifests and 100k Kopia sources. That is affordable for the job
+// this sink exists to do - prove the source-READ path end to end, over a
+// real transport, into a real repository - and it is not the shape a
+// backup set is stored in.
+//
+// #783 introduces the real port: one snapshot per backup-set RUN, under
+// one SourceInfo (the set's model.SourceIdentity), with the objects as a
+// tree inside it. That is not a different implementation of this
+// interface, and ADR 0012 no longer claims it is. Kopia's tree upload is
+// PULL-based - upload.Uploader walks an fs.Entry and asks it for
+// children - while everything above this sink is PUSH-based: the adapter
+// walks, hands each object to Store, checks the read window and Discards
+// what moved. A tree sink cannot be written against Sink as declared
+// above, so #783 replaces the port, inverts that control flow, and moves
+// the discard decision from "remove the snapshot this object produced"
+// to a stream-level error the uploader observes while it is pulling. The
+// reading path this package owns - path safety, capability refusals,
+// cancellation, mutation detection - is what survives that change
+// unaltered, and it is what is being proven here.
+//
+// The set tags below are the one piece of the #783 model that is seeded
+// now rather than then: a snapshot that cannot be attributed to a backup
+// set is invisible to the repository's own accounting, and that is worth
+// fixing in the interim rather than after it.
 type RepositorySink struct {
 	// Repo is the open repository.
 	Repo backupengine.StreamingRepository
@@ -138,10 +199,28 @@ type RepositorySink struct {
 	// the ROOT of the backup set in the repository's namespace; each
 	// object is stored under it, so a source's objects list together and
 	// two machines backing up the same pathname stay distinct.
+	//
+	// It is the repository's NAMESPACE for this set and not the set's
+	// identity: two sets can legitimately be named the same way from two
+	// machines, and a Kopia source is a (host, user, path) triple that
+	// nothing validates. Ref is the identity.
 	Source backupengine.Source
 
+	// Ref is the backup set and the repository domain these snapshots
+	// belong to, and it is required: Store refuses rather than writing a
+	// snapshot nothing can attribute.
+	//
+	// A refusal is the right answer rather than an untagged snapshot
+	// because the failure is silent in the other direction. An untagged
+	// snapshot is stored, restorable and invisible to every question
+	// asked by set - what does this domain hold, is this domain shared,
+	// how much does this set cost - and it is invisible AFTER the backup
+	// window, when the operator has already been told the run was fine.
+	Ref model.RepositoryRef
+
 	// Description and Tags are recorded with every snapshot this sink
-	// writes.
+	// writes. Tags is the caller's own selection vocabulary; it cannot
+	// overwrite the identity tags, which are the repository's.
 	Description string
 	Tags        map[string]string
 }
@@ -159,6 +238,11 @@ var _ Sink = RepositorySink{}
 // "attempted 3". The adapter is the one authority, so everything below it
 // is asked for exactly one attempt.
 func (s RepositorySink) Store(ctx context.Context, obj Object) (Stored, error) {
+	tags, err := s.snapshotTags()
+	if err != nil {
+		return Stored{}, fmt.Errorf("storing %q: %w", obj.Path, err)
+	}
+
 	src := s.Source
 	src.Path = repositoryPath(s.Source.Path, obj.Path)
 
@@ -166,7 +250,7 @@ func (s RepositorySink) Store(ctx context.Context, obj Object) (Stored, error) {
 		Source:      src,
 		Stream:      obj.Stream,
 		Description: s.Description,
-		Tags:        s.Tags,
+		Tags:        tags,
 		MaxAttempts: 1,
 	})
 	if err != nil {
@@ -178,6 +262,30 @@ func (s RepositorySink) Store(ctx context.Context, obj Object) (Stored, error) {
 		Bytes:         info.Bytes,
 		UploadedBytes: info.UploadedBytes,
 	}, nil
+}
+
+// snapshotTags is the caller's tags plus the two this sink owns.
+//
+// The identity tags are written LAST, so a caller that passes
+// "backupd.set" itself does not get to say which set this is. They are
+// the repository's answer about its own contents, and a sink that let a
+// tag map overwrite them would make the co-tenancy signal something a
+// configuration file could lie about.
+func (s RepositorySink) snapshotTags() (map[string]string, error) {
+	if err := s.Ref.Validate(); err != nil {
+		return nil, fmt.Errorf(
+			"this sink cannot attribute a snapshot to a backup set (%w), and an untagged snapshot is one no accounting of this repository can see", err)
+	}
+
+	tags := make(map[string]string, len(s.Tags)+2)
+	for k, v := range s.Tags {
+		tags[k] = v
+	}
+
+	tags[tagKeyBackupSet] = s.Ref.Set.String()
+	tags[tagKeyDomain] = s.Ref.Domain.String()
+
+	return tags, nil
 }
 
 // Discard removes a snapshot written from a read that turned out to be

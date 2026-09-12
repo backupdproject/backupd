@@ -36,18 +36,85 @@ a backup that changed nothing.
 
 ## Decision
 
-### 1. The adapter reads; a Sink stores
+### 1. The adapter reads; a Sink stores — and the sink is a Phase-1 interim
 
 `source.Adapter` owns "read this source safely" and nothing else. Where an
 object's bytes go is a `source.Sink`, and `source.RepositorySink` is the
 production one: one streamed snapshot per object.
 
-One snapshot per object is what the merged streaming boundary offers, and
-it is deliberately behind the interface rather than in the adapter.
-Gathering a source's objects into a single tree manifest is
-snapshot-lifecycle work (#783); when it lands it replaces a sink, and not
-one line of the reading path - path safety, cancellation, mutation
-detection, the capability gates - has to be re-proven for it.
+One snapshot per object is what the merged streaming boundary offers
+(`backupengine.StreamingRepository` takes one stream and returns one
+snapshot id), and it is what proves the thing this ADR is actually
+about — the source-READ path, over a real transport, into a real
+repository. It is **not** the shape a backup set is stored in, and this
+ADR does not claim it is:
+
+- A set of 100k files becomes ~100k snapshots, ~100k manifests and ~100k
+  Kopia sources. Every per-snapshot cost — an index entry, a manifest
+  blob, a source row in every listing — is paid per FILE.
+- The repository's own accounting reads those sources as tenants, which
+  is why every snapshot this sink writes is tagged with the backup set
+  and repository domain it belongs to (§1a below). Without the tags a
+  single-set repository reports itself as a hundred thousand co-tenants.
+
+#783 is where the real model lands: **one snapshot per backup-set run**,
+under one `SourceInfo` — the set's `model.SourceIdentity` — with the
+set's objects as a tree inside it.
+
+An earlier revision of this ADR claimed #783 "replaces a sink, and not
+one line of the reading path has to be re-proven". The first half of that
+is false and is withdrawn. A tree snapshot **cannot** be written against
+`source.Sink` as declared here, for a structural reason rather than an
+effort one:
+
+- Kopia's tree upload is **pull-based**. `upload.Uploader` walks an
+  `fs.Entry` and asks it for children, one directory at a time, on the
+  uploader's own goroutines.
+- Everything above the sink here is **push-based**. The adapter walks,
+  opens, and hands one prepared object at a time to `Store`, then checks
+  the read window and calls `Discard` on what it cannot prove.
+
+So #783 replaces the PORT, not an implementation of it, and inverts the
+control flow with it: the adapter stops driving and becomes the thing the
+uploader pulls from. The discard decision moves with it — there is no
+per-object snapshot to remove from a set-wide snapshot, so a torn or
+cancelled read becomes a **stream-level error the uploader observes**,
+which fails the entry (and, under `FailFast`, the run) rather than
+removing something already committed.
+
+What genuinely does survive that change, and what this ADR is therefore
+worth on its own, is the READING path: path safety, the capability gates,
+cancellation of a read blocked on a socket, mutation detection across the
+read window, and the single retry authority. Those are properties of
+`source.Adapter` and of the transport underneath it, and #783 re-uses
+them rather than re-deciding them.
+
+### 1a. Every snapshot says which backup set it belongs to
+
+`RepositorySink` requires a `model.RepositoryRef` — a domain and a backup
+set — and refuses to store anything without one. Every snapshot it writes
+carries two tags:
+
+| Tag | Value |
+| --- | --- |
+| `backupd.set` | `model.BackupSetID.String()`, e.g. `nas/photos` |
+| `backupd.domain` | `model.RepositoryDomainID.String()`, e.g. `production` |
+
+The keys are agreed with the repository adapter (#781), whose `Stats`
+counts DISTINCT `backupd.set` values as the repository's tenants instead
+of counting Kopia sources. A caller's own tag map cannot overwrite
+either: the identity is the repository's answer about its contents, not a
+configuration value.
+
+The refusal is deliberate and is the interesting half. An untagged
+snapshot is stored, restorable, and invisible to every question asked by
+set — what does this domain hold, is it shared, what does this set cost —
+and it is invisible AFTER the backup window, once the operator has been
+told the run was fine.
+
+This tagging is the one piece of the #783 model seeded now rather than
+then, because the interim's per-object snapshots are exactly what makes
+the untagged case pathological.
 
 ### 2. Every capability question is asked of the matrix, once
 
@@ -215,20 +282,68 @@ be wired in by accident: it does not satisfy the interface.
   `Read` already blocked on a socket consults, and the sink does not
   return while it is blocked, so "after Store returns" is too late to be
   the only place a reader is closed.
+- A cancel that lands AFTER a successful `Store` **discards** what that
+  store produced. The bytes are in the repository before anything can be
+  compared — that is the premise of a single-pass stream — so the read
+  window is checked after the store returns, and a cancellation in
+  between would otherwise leave a snapshot nobody ever checked, sitting
+  in the repository as a restore point indistinguishable from a verified
+  one. The discard runs on a context detached from the run's
+  (`context.WithoutCancel`, bounded by `discardGrace`), because the run's
+  own context is by definition already cancelled and the repository would
+  refuse the removal on it.
+
+### 10. One transport session per run, not per object
+
+`transport.SourceSession` is one conversation with one source, opened by
+the run before the first object and closed by it after the last. The
+adapter type-asserts for the capability (`source.SessionOpener`) exactly
+as a caller type-asserts for `StreamingRepository`; a transport without
+it is read per object, unchanged.
+
+The per-operation shape every other `transport.Transport` method uses is
+correct when a call IS the operation, and wrong for a backup run. On
+SFTP each `OpenSourceStream` and each `StatSource` built its own rclone
+`Fs`: a TCP connect, a key exchange, a publickey authentication and a
+subsystem start, per call. A run opens each object once and stats it
+again to check the read window, so the cost was linear in the object
+count, and a host with the connection cap of #264 sees a backup of ten
+thousand small files as a fan-out of twenty thousand logins.
+
+Measured against the containerised SSH server, counting the server's own
+`Accepted publickey` lines: 24 objects cost **72** logins per-object and
+**2** through one session — the session's own plus rclone's probe of the
+root — and the same 2 for 4 objects, which is the property the test pins
+(the cost does not grow with the source). Wall clock for that run fell
+from 40s to 7s.
+
+This is not the cached `Fs` `transport/rclone`'s `shutdownFs` argues
+against, and the distinction is the scope rather than the mechanism.
+What that refuses is an `Fs` cached ON THE ADAPTER for the life of the
+process: rclone captures the ambient `ConfigInfo` into an `Fs` at
+construction and never re-reads it, so a process-lifetime `Fs` would
+apply the first caller's bandwidth limit to every later one. A session is
+built from one run's own context, reachable only by that run, and closed
+with it — on every path out, including the cancelled one, on a context
+the cancellation cannot reach, because an unclosed session is an SSH
+connection held for the life of the daemon.
 
 ## Consequences
 
 **What this buys.** A source is read once, its bytes never exist outside
 the repository, every capability answer comes from one authority, a torn
-read is never left behind as a restore point, and a run report says what
+or unverified read is never left behind as a restore point, every
+snapshot says which backup set and domain it belongs to, a run costs the
+source one login rather than two per object, and a run report says what
 it does and does not contain.
 
 **What it costs.** One goroutine per in-flight object for the cancellation
 watcher (bounded by the worker count). One extra metadata round trip per
 object for the post-read stat, skipped only under a consistency mode that
-guarantees a point in time. One snapshot per object until #783 replaces
-the sink. And the same-second same-length blind window in §4, which is a
-property of single-pass streaming and not of this implementation.
+guarantees a point in time. One snapshot per object, with everything a
+snapshot costs paid per file, until #783 replaces the PORT this sink
+implements (§1). And the same-second same-length blind window in §4, which
+is a property of single-pass streaming and not of this implementation.
 
 **What is refused rather than supported.** A backend that cannot stream; a
 walk of a backend that cannot be listed within a bound; a `preserve`

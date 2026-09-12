@@ -1,7 +1,9 @@
 package rclone_test
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,5 +91,111 @@ func TestStatSourceRefusesAPathThatNamesNothing(t *testing.T) {
 
 	if _, err := adapter.StatSource(context.Background(), src, "gone.bin"); err == nil {
 		t.Fatal("StatSource invented an artifact for a path that names nothing")
+	}
+}
+
+// One session serves every object of a run, and a stream taken from it
+// stays readable while other objects are opened and closed around it.
+//
+// The second half is the bug this shape invites. OpenSourceStream binds
+// the Fs it built to the reader it returns, so closing the reader hangs
+// up; a session that reused that wrapper would have the first object a
+// worker finished reading tear down the connection every OTHER worker
+// was still reading through.
+func TestASourceSessionServesManyObjectsAtOnce(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	bodies := map[string][]byte{
+		"a.bin": []byte("the first object"),
+		"b.bin": []byte("the second object, which is a different length"),
+		"c.bin": []byte("the third"),
+	}
+
+	for name, body := range bodies {
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0o600); err != nil {
+			t.Fatalf("seeding %s: %v", name, err)
+		}
+	}
+
+	adapter := rclone.New()
+	src := transport.Source{ID: "session", Type: "local", Root: dir}
+	ctx := context.Background()
+
+	session, err := adapter.OpenSourceSession(ctx, src)
+	if err != nil {
+		t.Fatalf("OpenSourceSession: %v", err)
+	}
+
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+
+		// Closing twice is what a run that both defers a close and
+		// closes explicitly does, and it must not be an error.
+		if err := session.Close(); err != nil {
+			t.Errorf("closing the session a second time: %v", err)
+		}
+	}()
+
+	// Hold one object open across the whole exercise.
+	held, err := session.OpenStream(ctx, "a.bin")
+	if err != nil {
+		t.Fatalf("OpenStream(a.bin): %v", err)
+	}
+
+	for _, name := range []string{"b.bin", "c.bin"} {
+		art, err := session.StatSource(ctx, name)
+		if err != nil {
+			t.Fatalf("StatSource(%s): %v", name, err)
+		}
+
+		if art.Size != int64(len(bodies[name])) {
+			t.Errorf("StatSource(%s) reports %d bytes, want %d", name, art.Size, len(bodies[name]))
+		}
+
+		rc, err := session.OpenStream(ctx, name)
+		if err != nil {
+			t.Fatalf("OpenStream(%s): %v", name, err)
+		}
+
+		got, err := io.ReadAll(rc)
+		_ = rc.Close()
+
+		if err != nil {
+			t.Fatalf("reading %s: %v", name, err)
+		}
+
+		if !bytes.Equal(got, bodies[name]) {
+			t.Errorf("%s came back as %q", name, got)
+		}
+	}
+
+	// The reader opened first is unaffected by the readers closed after
+	// it.
+	got, err := io.ReadAll(held)
+	_ = held.Close()
+
+	if err != nil {
+		t.Fatalf("reading the object held open across the session: %v", err)
+	}
+
+	if !bytes.Equal(got, bodies["a.bin"]) {
+		t.Errorf("the held object came back as %q", got)
+	}
+}
+
+// A session over a source that cannot be reached is a refusal at OPEN,
+// not a handle that fails once per object.
+func TestOpenSourceSessionRefusesABackendItCannotBuild(t *testing.T) {
+	t.Parallel()
+
+	adapter := rclone.New()
+	src := transport.Source{ID: "nonsense", Type: "not-a-registered-backend", Root: t.TempDir()}
+
+	if _, err := adapter.OpenSourceSession(context.Background(), src); err == nil {
+		t.Fatal("a session was opened against a backend this binary does not have")
 	}
 }

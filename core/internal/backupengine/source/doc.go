@@ -37,7 +37,7 @@
 //     configuration refusal, because storing one would mean inventing a
 //     capability the backend does not have.
 //
-// # The three properties a run holds
+// # The properties a run holds
 //
 // Bounded. One directory chunk per level of the tree (the enumerator's
 // bound, see core/internal/transport.LocalEnumerator), one buffer per
@@ -53,7 +53,19 @@
 // stops every worker, and closes every reader that was mid-read; a read
 // blocked on a remote socket is unblocked by closing it from the
 // outside, because a context is not something a blocked syscall
-// consults.
+// consults. A cancel that lands after an object was already stored
+// discards it: the read window is checked after the store returns, so
+// what a cancellation would otherwise leave behind is a restore point
+// nothing ever verified.
+//
+// One conversation with the source. A run opens one transport session
+// (transport.SourceSession) and reads and stats every object through it,
+// closing it once when the run ends. The alternative, and what this used
+// to do, is a connection per operation: on SFTP that is a full SSH
+// handshake for every open AND every stat, so the cost grew with the
+// object count and a set of small files looked like a fan-out to the
+// host it was reading. A transport without the capability is read per
+// object, unchanged.
 //
 // Retried in exactly one place. The adapter owns the retry bound and
 // nothing below it retries: the engine is asked for one attempt per
@@ -84,6 +96,19 @@
 // read is retried within a bound. A torn read is never left behind as a
 // restore point, and an object that will not hold still makes the run
 // incomplete instead of being recorded as verified.
+//
+// # What this package is a phase of
+//
+// The READING path here is the product's: path safety, the capability
+// refusals, cancellation, mutation detection, one retry authority, one
+// transport session. What is an interim is what happens to the bytes
+// after they are read - RepositorySink writes one snapshot per object,
+// because one stream in and one snapshot out is what the merged engine
+// boundary offers today. #783 replaces that PORT (not an implementation
+// of Sink: the control flow inverts, see RepositorySink and ADR 0012 §1)
+// with one snapshot per backup-set run. Every snapshot written here
+// carries the backup set and domain it belongs to, so the repository can
+// account for its contents in the meantime.
 //
 // # What it never does
 //

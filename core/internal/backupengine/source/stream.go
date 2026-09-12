@@ -30,8 +30,7 @@ import (
 // is the source's own post-read size. A number taken from the listing
 // would compare the source with itself.
 type objectStream struct {
-	streamer   Streamer
-	source     transport.Source
+	reader     sourceReader
 	remotePath string
 	modTime    time.Time
 
@@ -59,13 +58,12 @@ var _ backupengine.StreamSource = (*objectStream)(nil)
 // Nothing is opened until the engine asks. A snapshot that fails before
 // it reaches this object never dialed it, so there is nothing to leak.
 func NewObjectStream(streamer Streamer, src transport.Source, remotePath string, modTime time.Time) backupengine.StreamSource {
-	return newObjectStream(streamer, src, remotePath, modTime)
+	return newObjectStream(perObjectReader{streamer: streamer, src: src}, remotePath, modTime)
 }
 
-func newObjectStream(streamer Streamer, src transport.Source, remotePath string, modTime time.Time) *objectStream {
+func newObjectStream(reader sourceReader, remotePath string, modTime time.Time) *objectStream {
 	return &objectStream{
-		streamer:   streamer,
-		source:     src,
+		reader:     reader,
 		remotePath: remotePath,
 		modTime:    modTime,
 	}
@@ -90,7 +88,7 @@ func (s *objectStream) Open(ctx context.Context) (io.ReadCloser, error) {
 	s.opens++
 	s.mu.Unlock()
 
-	rc, err := s.streamer.OpenSourceStream(ctx, s.source, s.remotePath)
+	rc, err := s.reader.openStream(ctx, s.remotePath)
 	if err != nil {
 		//nolint:wrapcheck // the transport already wraps with its own operation name.
 		return nil, err
