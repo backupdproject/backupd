@@ -113,20 +113,39 @@ than to the client. `probeStorage` writes one blob to a reserved blob-id
 prefix and checks, in order: that it can be read back whole, that a range
 read at a non-zero offset returns *that range*, that a listing shows it
 immediately, that a delete removes it, that the listing then agrees, and
-that the storage reported a timestamp for it. It runs at create time,
-before the repository format is written, so an unsupported target is left
-as an empty bucket and an explicit `ErrStorageUnsupported` naming the
-missing property — not as a half-usable repository discovered during a
-restore.
+that the storage reported a timestamp for it.
 
-It also runs on every `Health` call, deliberately. A bucket policy that
-starts denying deletes, or a filesystem that fills up, is as interesting as
-a target that never had the property.
+It runs at create time, before the repository format is written, so an
+unsupported target is left as an empty bucket and an explicit
+`ErrStorageUnsupported` naming the missing property — not as a half-usable
+repository discovered during a restore.
+
+At create time, and for a bucket only, it also writes a **21 MiB** blob and
+compares it back byte for byte. A 256-byte PUT proves very little about a
+bucket that will be asked to hold 20 MiB pack blobs (the vendor's
+`MaxPackSize` default), and the class of endpoint that answers 200 to
+everything while mangling large bodies — a mishandled chunked-signature
+stream, a proxy with a body limit, a gateway that truncates — is precisely
+the class whose damage is silent. Note what this is *not*: the vendor sets
+`DisableMultipart` on every `PutObject`
+(`repo/blob/s3/s3_storage.go`), so nothing this product writes is split
+into parts at this pin. The probe size is above minio-go's 16 MiB part
+size anyway, so it covers that path too if a future version drops the flag.
+
+The cheap properties also run on every `Health` call, deliberately: a
+bucket policy that starts denying deletes, or a filesystem that fills up,
+is as interesting as a target that never had the property. The 21 MiB
+write does not, and that is a cost decision stated once — health runs
+before every backup, and 21 MiB per preflight would make the preflight the
+most expensive thing in a cycle on a domestic uplink.
 
 The faults are injected in unit tests (`probe_internal_test.go`), one
 property at a time, because the endpoints worth refusing are the ones
-nobody has in a test rig. The MinIO run proves the other half: a conforming
-endpoint passes, over the wire, with signed requests and multipart uploads.
+nobody has in a test rig — including a storage that stores small blobs
+faithfully and corrupts every large one, which passes the cheap probe and
+is refused by the create-time one. The MinIO run proves the other half: a
+conforming endpoint passes, over the wire, with signed requests and
+21 MiB single-PUT bodies.
 
 ### Clock skew is a warning, and time synchronisation is not this product's job
 
@@ -156,11 +175,34 @@ is the material. There is no field a literal secret fits into, which is the
 enforcement rather than a preference — a test that wanted to shortcut would
 have to add one.
 
-A `Ref` is therefore safe to log, safe to render into an error, and safe to
-keep for the life of an open repository handle, which is what lets `Health`
-reach the storage again without being handed the credentials a second time.
-The material is resolved at the moment a provider is built and is not
-retained by the adapter; buffers holding it are zeroed as far as Go allows.
+A `Ref` is therefore safe to render into an error and safe to keep for the
+life of an open repository handle, which is what lets `Health` reach the
+storage again without being handed the credentials a second time. The
+material is resolved at the moment a provider is built and is not retained
+by the adapter; buffers holding it are zeroed as far as Go allows.
+
+It is safe to LOG on every rendering path too, and that took four methods
+rather than one. `String()` is honoured by `fmt`, and by nothing
+else: `log/slog`'s JSON handler ignores `Stringer` entirely and reflects
+over exported fields, so a `Ref` logged as a structured attribute printed
+its whole `Command` argv — the vault path, the role and whatever token the
+operator's resolver takes. `encoding/json` did the same to anything a
+`Ref` is a field of, and `%#v` to a debug print. So `Ref` now has
+`LogValue`, `MarshalText`, `MarshalJSON` and `GoString`, all rendering
+exactly what `String()` does, and deliberately no `UnmarshalJSON`: a `Ref`
+must not be parseable back out of JSON, because that would be a second,
+undocumented way to declare a secret source.
+
+A `file` source is also checked for custody before it is read, which is
+the rule `internal/transport/rclone` already applies to a credentials file
+and an ssh key: a secret file readable by any account but its owner,
+sitting in a directory another account can write, reached through a
+symbolic link, or not a regular file at all, is refused with `ErrCustody`
+rather than read. The mode and the file type are checked on the open
+descriptor rather than on the path, so nothing can be swapped between the
+check and the read, and the open uses `O_NONBLOCK` so that a fifo left
+where the file should be is refused instead of blocking the process
+forever.
 
 `core/internal/secretref` is a new package, and the honest account of why
 is this: the *declaration* is not new — `config.Passphrase`,
@@ -173,6 +215,61 @@ copies privately, in a shape built around rclone's configmap, and unifying
 the two means refactoring that package's most security-sensitive file.
 That is tracked separately and is not something to attempt sideways from a
 repository adapter.
+
+### What the state directory holds, and what it must never hold
+
+`<StateDir>/<domain>.config` is the vendor's `LocalConfig`: which storage
+this repository is connected to, plus client options. For a bucket
+repository the storage half used to be the vendor's own `s3.Options`, and
+`s3.Options` carries `AccessKeyID`, `SecretAccessKey` and `SessionToken`
+with ordinary `json` tags — the `kopia:"sensitive"` tag on them is a
+CLI-display hint and nothing more. So connecting wrote the operator's
+resolved cloud credentials to the backup host in cleartext and left them
+there, which defeats the whole of the section above: an operator who kept
+the secret in a 0600 file or behind a Vault command got a plaintext copy
+anyway, made by the program they were trusting not to do that.
+
+So this adapter registers its **own** storage type, `backupd-s3`
+(`kopia/s3connection.go`), and that is what gets persisted. Its config
+holds the bucket, the key prefix, the endpoint, the region, the TLS
+decision and an operator's `RootCA` — all coordinates, none of them
+resolvable — plus a credential *handle*: a 16-byte nonce naming an
+in-memory registration of the operator's `secretref.Ref`, valid only
+inside this process and released when the repository handle closes. Every
+`repo.Open` therefore resolves the credential from the declared source
+again, at the moment the storage is built.
+
+The handle is a nonce and not the `Ref` itself for two reasons. A `Ref`
+names an executable to run, so persisting one would turn a state file into
+a choice of program this daemon then executes; and it would put the
+operator's resolver argv on disk, which is exactly what the logging
+methods above refuse to render into a log line.
+
+What this costs is stated plainly: a config file alone cannot reopen a
+bucket repository in a new process. That costs nothing, because
+`OpenRepository` always reconnects before it opens — the config it reads is
+always one the same process just wrote, naming a registration that process
+holds — and a stale config from a previous run is overwritten before it is
+read.
+
+The state directory is 0700 and the config file 0600, asserted by this
+adapter rather than inherited from the vendor's defaults. The regression
+test reads the *bytes* of every file under the state directory and fails on
+any part of the credential or the passphrase, and separately fails if the
+persisted config has a field named after one of the vendor's three secret
+options — the byte assertion is the one that survives a vendor upgrade
+that renames a field.
+
+`Close` does not disconnect, and with the credentials gone that is no
+longer a custody question. It is a correctness one: the vendor's
+`Disconnect` deletes the maintenance lock file it keeps beside the config
+(`<config>.mlock`) along with the config itself, and maintenance ownership
+is state this product means to keep across a restart. What is left behind
+is coordinates and a dead nonce.
+
+So: `<StateDir>` holds where a repository is, what this process calls it,
+and a nonce. It holds no credential material, no resolver argv, no path to
+either, and (see the caching consequence below) no repository content.
 
 ### Maintenance ownership is recorded now and decided later
 
@@ -221,8 +318,8 @@ is the client inside the vendor's native S3 provider, so this is the
 default path for every write this product would make.
 
 The probe refuses it with `ErrStorageUnsupported` and the message
-"returned 430 bytes for a blob of 256 that was just written to it". That
-is the probe doing exactly what the section above builds it for, and it is
+"returned 430 bytes that are not the 256 that were just written to it".
+That is the probe doing exactly what the section above builds it for, and it is
 the reason the probe is not negotiable: weakening it so a convenient
 fixture passes would delete the only check that catches silent write
 corruption.
@@ -266,14 +363,47 @@ in this tree.
   listing rather than the repository index, because the question is what
   the repository costs and the answer includes blobs an interrupted
   maintenance left behind.
-- There is no "do not verify TLS" option, and there will not be. A knob
-  that disables authentication of the endpoint carrying every backup this
-  product holds is not a convenience; `RootCA` is the answer to a private
-  CA.
-- A repository's content cache is always enabled, under `StateDir`. The
-  spike's "empty cache path means no cache" spelling is gone: a persistent
-  index cache is the correct production default, and the alternative was a
-  knob whose only user was a test.
+- `RepositoryStats.Sources` is the co-tenancy number, and it counts
+  distinct **backup-set tags** (`backupengine.TagKeyBackupSet`, the literal
+  `backupd.set`, set by the sink that writes the snapshot) rather than the
+  engine's own sources. A streaming backup set writes one engine source
+  *per object*, so a count of those would report forty co-tenants for one
+  set of forty database dumps, and two single-object sets would report two
+  and be indistinguishable from the breach the number exists to find.
+  Snapshots with no set tag — which this product does not write, and an
+  operator's own use of the vendor's CLI against the same bucket would —
+  count as one unattributed tenant between them, because content sharing a
+  domain's key that nothing can attribute is still content sharing the
+  key. This is the contents-level half of ADR 0010's isolation promise: the
+  model decides what *may* share a domain, and only this number can find a
+  boundary that has already been crossed.
+- `Health` returns a populated report *and* an error when a repository is
+  unreachable, rather than an error alone. The error is for the caller that
+  must refuse to start a backup; the report is for the caller that must
+  show an operator a status, and "unreachable" and "healthy" have to be
+  distinguishable without parsing an error string. Every probe failure is
+  `Reachable: false` plus a `HealthWarningUnreachable` carrying the
+  measurement — including the failures where the endpoint answered, because
+  storage that accepts a blob and then does not list it is not reachable
+  for a repository's purposes.
+- **Local caching is off, deliberately.** The spike set a `CacheDirectory`
+  and no sizes, which was dead code: the vendor short-circuits on
+  `ContentCacheSizeBytes == 0` and writes an empty `CachingOptions`. The
+  obvious repair — set the sizes — was made, measured and reverted, because
+  the vendor's caching switch is all-or-nothing and with the content cache
+  on, a repository missing a pack blob VERIFIES CLEAN: the verifier reads
+  the content out of `<StateDir>/<domain>.cache/contents` while the bucket
+  no longer holds it. Verification failed again only once the cache
+  directory was deleted. That is disqualifying for a product whose claim is
+  restorability, and the case where the cache is warmest is
+  verify-immediately-after-backup, so caching would be most likely to lie
+  in exactly the flow that matters most; a restore served from cache proves
+  a restore nobody can repeat. The cost is that every content, metadata and
+  index read goes to the storage. Re-enabling it needs a read path that
+  bypasses the cache for verification and restore, which the vendor does
+  not offer at this pin.
+  `TestVerifyReportsDamageAsBothErrorAndFindings` is the guard on this
+  decision: it fails if caching is turned back on.
 - Space reclamation is still not observable immediately after maintenance,
   and the S3 matrix says so rather than asserting otherwise. Maintenance
   runs at full safety, which keeps recently written content out of garbage

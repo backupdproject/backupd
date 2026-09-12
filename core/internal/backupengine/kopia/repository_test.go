@@ -260,6 +260,77 @@ func TestLookupSnapshotRefusesAnUnknownId(t *testing.T) {
 	}
 }
 
+// TestHealthDistinguishesUnreachableFromHealthy is the report contract,
+// and the reason it is a test is that the interesting value used to be
+// unreachable in a different sense: Health returned a ZERO report beside
+// its error, so a caller rendering a status had "Reachable: false" for a
+// healthy repository it had simply not asked about yet, and no way to tell
+// that apart from a NAS that had gone away.
+//
+// Both directions are asserted in one test because the claim is the
+// DIFFERENCE between them. One of them alone passes against a Health that
+// always says the same thing.
+func TestHealthDistinguishesUnreachableFromHealthy(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	loc := localLocation(t, root, "production")
+	eng := kopia.New()
+
+	if err := eng.CreateRepository(ctx, loc); err != nil {
+		t.Fatalf("CreateRepository: %v", err)
+	}
+
+	rep, err := eng.OpenRepository(ctx, loc)
+	if err != nil {
+		t.Fatalf("OpenRepository: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := rep.Close(context.Background()); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	healthy, err := rep.Health(ctx)
+	if err != nil {
+		t.Fatalf("Health: %v", err)
+	}
+
+	if !healthy.Reachable || len(healthy.Warnings) != 0 {
+		t.Fatalf("Health on a working repository = %+v; want reachable with no warnings", healthy)
+	}
+
+	// The storage goes away underneath an open handle, which is what a NAS
+	// unmounting, a network share dropping or an operator's tidy-up looks
+	// like from here. The handle stays open, which is the whole reason
+	// Health has to prove reachability rather than report that it holds
+	// one.
+	if err := os.RemoveAll(repoDir(t, loc)); err != nil {
+		t.Fatalf("removing the repository storage: %v", err)
+	}
+
+	report, err := rep.Health(ctx)
+	if err == nil {
+		t.Fatal("Health passed a repository whose storage is gone")
+	}
+
+	if report.Reachable {
+		t.Errorf("Health reports a repository whose storage is gone as reachable: %+v", report)
+	}
+
+	// And the report says WHICH way it is broken, because "unreachable"
+	// with nothing else in it is a page nobody can act on.
+	if len(report.Warnings) != 1 || report.Warnings[0].Kind != backupengine.HealthWarningUnreachable {
+		t.Fatalf("Health = %+v; want exactly one %q warning", report, backupengine.HealthWarningUnreachable)
+	}
+
+	if report.Warnings[0].Detail == "" {
+		t.Error("the unreachable warning carries no detail, so an operator is told only that something is wrong")
+	}
+}
+
 // TestClockSkewIsAWarningNotARefusal is the clock-health requirement.
 //
 // The skew is injected through the adapter's clock rather than by changing
@@ -525,8 +596,19 @@ func TestApprovedDomainAdmitsSeveralBackupSets(t *testing.T) {
 	sourceA := backupengine.Source{Host: "host-a", User: "backupd", Path: dirA}
 	sourceB := backupengine.Source{Host: "host-b", User: "backupd", Path: dirB}
 
-	if _, err := rep.Snapshot(ctx, backupengine.SnapshotRequest{Source: sourceA}); err != nil {
-		t.Fatalf("Snapshot of the first set: %v", err)
+	// The tags are how the repository knows which set a snapshot belongs
+	// to, and they are what Stats counts: this is the production sink's
+	// own contract (backupengine.TagKeyBackupSet / TagKeyDomain), not test
+	// decoration. Each set writes several snapshots here, because the
+	// number that must not move with the snapshot count is the source
+	// count.
+	for range 3 {
+		if _, err := rep.Snapshot(ctx, backupengine.SnapshotRequest{
+			Source: sourceA,
+			Tags:   setTags(first),
+		}); err != nil {
+			t.Fatalf("Snapshot of the first set: %v", err)
+		}
 	}
 
 	afterFirst, err := rep.Stats(ctx)
@@ -534,7 +616,18 @@ func TestApprovedDomainAdmitsSeveralBackupSets(t *testing.T) {
 		t.Fatalf("Stats: %v", err)
 	}
 
-	if _, err := rep.Snapshot(ctx, backupengine.SnapshotRequest{Source: sourceB}); err != nil {
+	// Three snapshots of one set are ONE co-tenant. A count over the
+	// engine's own sources could not say that, and a streaming set writes
+	// one engine source per object.
+	if afterFirst.Sources != 1 || afterFirst.Snapshots != 3 {
+		t.Errorf("after three snapshots of one set: %d source(s), %d snapshot(s); want 1 and 3",
+			afterFirst.Sources, afterFirst.Snapshots)
+	}
+
+	if _, err := rep.Snapshot(ctx, backupengine.SnapshotRequest{
+		Source: sourceB,
+		Tags:   setTags(second),
+	}); err != nil {
 		t.Fatalf("Snapshot of the second set: %v", err)
 	}
 
@@ -543,8 +636,8 @@ func TestApprovedDomainAdmitsSeveralBackupSets(t *testing.T) {
 		t.Fatalf("Stats: %v", err)
 	}
 
-	if afterSecond.Sources != 2 || afterSecond.Snapshots != 2 {
-		t.Errorf("after two sets snapshotted into one repository: %d source(s), %d snapshot(s); want 2 and 2",
+	if afterSecond.Sources != 2 || afterSecond.Snapshots != 4 {
+		t.Errorf("after a second set snapshotted into one repository: %d source(s), %d snapshot(s); want 2 and 4",
 			afterSecond.Sources, afterSecond.Snapshots)
 	}
 
@@ -577,6 +670,108 @@ func repositoryRef(t *testing.T, domain model.RepositoryDomainID, source, set st
 	}
 
 	return model.RepositoryRef{Domain: domain, Set: id}
+}
+
+// setTags is the tag pair every snapshot the production sink writes
+// carries, built from the model's own ids rather than from literals, so a
+// test cannot agree with the adapter on a spelling the product does not
+// use.
+func setTags(ref model.RepositoryRef) map[string]string {
+	return map[string]string{
+		backupengine.TagKeyBackupSet: ref.Set.String(),
+		backupengine.TagKeyDomain:    ref.Domain.String(),
+	}
+}
+
+// TestStatsSeesACrossedIsolationBoundary is the audit half of ADR 0010's
+// promise, and it is about the case where the model's refusal did not
+// happen: the configuration was changed to isolated after the fact, a set
+// was pointed at the wrong domain, or somebody wrote into the bucket with
+// the vendor's own CLI.
+//
+// The model decides what MAY share a domain, and it cannot see storage. So
+// the only place a boundary that has ALREADY been crossed can be found is
+// here, in what the repository reports about itself, which is why the
+// number has to be counted over backup sets: an isolated domain holding
+// two sets must report two, whatever the model would have said about the
+// pair.
+func TestStatsSeesACrossedIsolationBoundary(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+
+	isolated := model.RepositoryDomain{
+		ID:          testDomain(t, "regulated"),
+		Description: "one set, and the key is not shared",
+		Isolation:   model.RepositoryIsolated,
+	}
+
+	own := repositoryRef(t, isolated.ID, "regulated", "ledger")
+	intruder := repositoryRef(t, isolated.ID, "regulated", "analytics-copy")
+
+	if err := isolated.MayShare(own, intruder); !errors.Is(err, model.ErrIsolationViolated) {
+		t.Fatalf("an isolated domain admitted a second set in the model: %v", err)
+	}
+
+	loc := localLocation(t, root, isolated.ID.String())
+	eng := kopia.New()
+
+	if err := eng.CreateRepository(ctx, loc); err != nil {
+		t.Fatalf("CreateRepository: %v", err)
+	}
+
+	rep, err := eng.OpenRepository(ctx, loc)
+	if err != nil {
+		t.Fatalf("OpenRepository: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := rep.Close(context.Background()); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	dir := filepath.Join(t.TempDir(), "ledger")
+	writeSourceTree(t, dir)
+
+	src := backupengine.Source{Host: "ledger-host", User: "backupd", Path: dir}
+
+	if _, err := rep.Snapshot(ctx, backupengine.SnapshotRequest{Source: src, Tags: setTags(own)}); err != nil {
+		t.Fatalf("Snapshot of the domain's own set: %v", err)
+	}
+
+	clean, err := rep.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+
+	if clean.Sources != 1 {
+		t.Fatalf("an isolated domain holding one set reports %d sources; want 1, or the number below means nothing", clean.Sources)
+	}
+
+	// The breach: a second set's snapshot in a repository whose domain
+	// admits one. Nothing below this line is allowed to be reassuring.
+	if _, err := rep.Snapshot(ctx, backupengine.SnapshotRequest{Source: src, Tags: setTags(intruder)}); err != nil {
+		t.Fatalf("Snapshot of the intruding set: %v", err)
+	}
+
+	crossed, err := rep.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+
+	if crossed.Sources != 2 {
+		t.Errorf("an isolated domain holding two backup sets reports %d source(s); want 2, which is how a crossed boundary is found",
+			crossed.Sources)
+	}
+
+	// And the same source with a second set tag is the whole point: the
+	// engine's own source identity is identical in both snapshots, so a
+	// count over sources would have reported one and called this clean.
+	if crossed.Snapshots != 2 {
+		t.Errorf("Stats reports %d snapshots; want 2", crossed.Snapshots)
+	}
 }
 
 // TestLocationRefusalsNameWhatIsMissing covers the refusals that happen

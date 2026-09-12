@@ -113,6 +113,13 @@ type repository struct {
 	// storage dispatch.
 	adapter *Adapter
 
+	// release gives back whatever opening this handle had to hold open:
+	// for a bucket repository that is the in-memory credential
+	// registration the persisted connection names. See s3connection.go for
+	// what it is, and openStorage for why it is not the storage handle's
+	// own Close.
+	release func()
+
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -405,6 +412,14 @@ func (r *repository) Close(ctx context.Context) error {
 	r.closeOnce.Do(func() {
 		if err := r.rep.Close(ctx); err != nil {
 			r.closeErr = fmt.Errorf("closing repository: %w", err)
+		}
+
+		// After the repository, and unconditionally: the registration is
+		// this process holding a credential reference on the repository's
+		// behalf, and a failed close is the case where letting go matters
+		// most. It is idempotent, and closeOnce means it happens once.
+		if r.release != nil {
+			r.release()
 		}
 	})
 

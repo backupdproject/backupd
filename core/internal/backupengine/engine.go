@@ -251,6 +251,44 @@ type Source struct {
 // stores it as a string without interpreting it.
 type SnapshotID string
 
+// The tag keys every snapshot this product writes carries.
+//
+// # Why the repository has to be told who owns a snapshot
+//
+// A repository serves a Repository Domain, and a domain may be shared by
+// several backup sets (model.RepositoryDomain.MayShare) or declared
+// isolated, in which case it may not. Nothing about a stored snapshot says
+// which set put it there: the engine's own source identity is a
+// host/user/path triple, and a streaming set writes one of those PER
+// OBJECT, so counting them answers a different question from the one the
+// isolation rule asks. These two tags are how a snapshot carries the
+// answer, and RepositoryStats.Sources is counted from the first of them.
+//
+// # Why the literal strings are here and not at the caller
+//
+// Because they are a WRITE/READ contract between two packages that never
+// call each other: the sink that stores a snapshot sets them, and this
+// package's repository adapter counts them. A literal at each end is two
+// strings that agree until somebody edits one.
+//
+// The "backupd." prefix keeps them out of the way of the vendor's own
+// manifest labels and of any tag an operator sets by hand with the
+// vendor's CLI against their own bucket.
+const (
+	// TagKeyBackupSet is the backup set a snapshot belongs to, as
+	// model.BackupSetID renders it ("source/set").
+	TagKeyBackupSet = "backupd.set"
+
+	// TagKeyDomain is the Repository Domain the snapshot was written for,
+	// as model.RepositoryDomainID renders it.
+	//
+	// It is redundant with the repository a snapshot is in, and that is
+	// the point: a snapshot whose domain tag disagrees with the repository
+	// holding it is a snapshot written somewhere it does not belong, and
+	// the tag is the only evidence that would survive to say so.
+	TagKeyDomain = "backupd.domain"
+)
+
 // SnapshotRequest asks for one snapshot of one source.
 type SnapshotRequest struct {
 	Source Source
@@ -261,6 +299,11 @@ type SnapshotRequest struct {
 
 	// Tags are stored with the snapshot for later selection. Keys and
 	// values are ours; the engine only records them.
+	//
+	// Every snapshot this product writes carries TagKeyBackupSet and
+	// TagKeyDomain. See them: the co-tenancy number in RepositoryStats is
+	// counted from the first, and a snapshot without it is one nothing can
+	// attribute.
 	Tags map[string]string
 }
 
@@ -395,6 +438,20 @@ const (
 	// it is time synchronisation, which is the operating system's job and
 	// not this product's.
 	HealthWarningClockSkew HealthWarningKind = "clock_skew"
+
+	// HealthWarningUnreachable means the repository's storage did not
+	// answer, or answered without providing what a repository needs.
+	//
+	// It accompanies HealthReport.Reachable == false, and it exists so
+	// that "unreachable" carries WHICH part failed: a NAS that is asleep,
+	// a bucket policy that started denying deletes and a credential that
+	// expired are the same unreachable and three different jobs to do.
+	//
+	// Unlike the kind above this is not a "working but worth attention"
+	// condition. Health returns it beside an error, and a caller that
+	// must decide whether to start a backup reads the error; a caller
+	// that must show an operator a status reads this.
+	HealthWarningUnreachable HealthWarningKind = "unreachable"
 )
 
 // HealthWarning is one thing worth an operator's attention about a
@@ -439,10 +496,22 @@ type HealthReport struct {
 // to know is how much storage the repository is actually occupying, which
 // only the storage can answer.
 type RepositoryStats struct {
-	// Sources is how many distinct sources have snapshots here. It is the
-	// co-tenancy number: a Repository Domain declared isolated whose
-	// repository reports three sources is a boundary that has already
-	// been crossed.
+	// Sources is how many distinct BACKUP SETS have snapshots here.
+	//
+	// It is the co-tenancy number: a Repository Domain declared isolated
+	// whose repository reports two sources is a boundary that has already
+	// been crossed, and that claim is why the count is over backup sets
+	// and not over the engine's own source identities. A streaming set
+	// writes one engine source per OBJECT, so a count of those would
+	// report forty co-tenants for one set of forty database dumps.
+	//
+	// The identity counted is the TagKeyBackupSet tag every snapshot this
+	// product writes carries. Snapshots carrying no such tag -- which
+	// this product does not produce, and an operator's own use of the
+	// vendor's CLI against the same bucket would -- count as one
+	// unattributed tenant between them, because content sharing a
+	// domain's key that nothing can attribute is still content sharing
+	// the domain's key.
 	Sources int
 
 	// Snapshots is how many snapshots the repository holds across every

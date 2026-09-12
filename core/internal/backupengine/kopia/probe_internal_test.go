@@ -1,6 +1,7 @@
 package kopia
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -147,7 +148,7 @@ func TestProbeRefusesStorageThatIsMissingARequiredProperty(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := New().probeStorage(context.Background(), tc.wrap(probeFixture(t)))
+			_, err := New().probeStorage(context.Background(), tc.wrap(probeFixture(t)), probeOptions{})
 			if err == nil {
 				t.Fatalf("probeStorage accepted %s", tc.name)
 			}
@@ -171,7 +172,7 @@ func TestProbeRefusesStorageThatIsMissingARequiredProperty(t *testing.T) {
 func TestProbeAcceptsAConformingStorage(t *testing.T) {
 	t.Parallel()
 
-	skew, err := New().probeStorage(context.Background(), probeFixture(t))
+	skew, err := New().probeStorage(context.Background(), probeFixture(t), probeOptions{})
 	if err != nil {
 		t.Fatalf("probeStorage refused a real filesystem storage: %v", err)
 	}
@@ -192,13 +193,13 @@ func TestProbeLeavesNothingBehind(t *testing.T) {
 	ctx := context.Background()
 	st := probeFixture(t)
 
-	if _, err := New().probeStorage(ctx, st); err != nil {
+	if _, err := New().probeStorage(ctx, st, probeOptions{}); err != nil {
 		t.Fatalf("probeStorage: %v", err)
 	}
 
 	// And once more on a storage the probe refuses, because the cleanup on
 	// the failure path is the one that gets forgotten.
-	if _, err := New().probeStorage(ctx, noRanges{st}); err == nil {
+	if _, err := New().probeStorage(ctx, noRanges{st}, probeOptions{}); err == nil {
 		t.Fatalf("probeStorage accepted a storage that ignores ranges")
 	}
 
@@ -214,5 +215,66 @@ func TestProbeLeavesNothingBehind(t *testing.T) {
 
 	if len(left) != 0 {
 		t.Errorf("the probe left %v behind", left)
+	}
+}
+
+// corruptsLargeWrites stores small blobs faithfully and mangles one byte
+// of anything big enough to have been uploaded in parts.
+//
+// It is the endpoint the cheap probe cannot see: 256 bytes round-trip
+// perfectly, every request succeeds, the object comes back with exactly
+// the right length, and a repository's 20 MiB pack blobs come back wrong.
+// That is a real class of S3 impostor -- a gateway that reassembles a
+// chunked-signature body incorrectly, a proxy with a body limit -- and it
+// is the one whose damage is unrecoverable, because the bytes are accepted
+// and only wrong.
+type corruptsLargeWrites struct{ blob.Storage }
+
+func (s corruptsLargeWrites) PutBlob(ctx context.Context, id blob.ID, data blob.Bytes, opts blob.PutOptions) error {
+	if data.Length() <= multipartPartSize {
+		return s.Storage.PutBlob(ctx, id, data, opts)
+	}
+
+	var buf bytes.Buffer
+
+	if _, err := data.WriteTo(&buf); err != nil {
+		return err
+	}
+
+	raw := buf.Bytes()
+	raw[len(raw)/2] ^= 0xff
+
+	return s.Storage.PutBlob(ctx, id, probeBytes(raw), opts)
+}
+
+// TestProbeRefusesStorageThatCorruptsLargeWrites is why the create-time
+// probe writes more than 256 bytes, and the second half of it is the
+// point: the same storage passes the cheap probe.
+//
+// Both halves are asserted together because either one alone is
+// misleading. The refusal alone would not say that the large write is what
+// found it, and the pass alone would look like a hole rather than the
+// documented create-versus-health trade in probeOptions.
+func TestProbeRefusesStorageThatCorruptsLargeWrites(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := corruptsLargeWrites{probeFixture(t)}
+
+	_, err := New().probeStorage(ctx, st, probeOptions{LargeBody: true})
+	if err == nil {
+		t.Fatalf("probeStorage accepted a storage that corrupts every write over %d bytes", multipartPartSize)
+	}
+
+	if !errors.Is(err, backupengine.ErrStorageUnsupported) {
+		t.Errorf("the refusal is %v; want one wrapping ErrStorageUnsupported so a caller can route on it", err)
+	}
+
+	if !strings.Contains(err.Error(), "are not the") {
+		t.Errorf("the refusal does not say the bytes came back wrong: %v", err)
+	}
+
+	if _, err := New().probeStorage(ctx, st, probeOptions{LargeBody: false}); err != nil {
+		t.Errorf("the cheap probe refused a storage that only corrupts large writes (%v), so this test is not proving what it says", err)
 	}
 }

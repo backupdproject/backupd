@@ -42,24 +42,27 @@ import (
 // repositoryPassphrase is this suite's own, written to a file per test.
 const repositoryPassphrase = "s3-repository-passphrase-not-a-secret"
 
-// multipartPayload is large enough to force the S3 client past a single
-// PUT.
+// multipartPayload is large enough to force the S3 client to push a body
+// far bigger than one pack blob.
 //
-// The vendor writes content into pack blobs of up to about 20 MB, and
-// minio-go switches to a multipart upload above its 16 MiB part size, so
-// one incompressible file this size guarantees at least one blob is
-// uploaded in parts. That matters because a multipart upload is a
-// different code path on both sides -- three API calls, an ETag that is
-// not a content hash, and a failure mode where an aborted upload leaves
-// parts behind -- and "we wrote some small blobs successfully" says
-// nothing about it.
+// The vendor writes content into pack blobs of up to about 20 MiB, so one
+// incompressible file this size guarantees several full-size blobs go over
+// the wire. That matters because a large body is a different code path on
+// both sides -- a signature over megabytes, a content-length the server
+// has to honour, a connection held open -- and "we wrote some small blobs
+// successfully" says nothing about it.
 const multipartPayload = 48 << 20
 
-// multipartThreshold is the part size minio-go switches to a multipart
-// upload above (its minPartSize). It is restated here because it is the
-// number the check below is about, and because a client upgrade that
-// changed it should make this test say so rather than quietly stop
-// covering the parts path.
+// multipartThreshold is minio-go's part size (its minPartSize), which is
+// the size an object has to exceed for this run to have exercised the
+// large-body path at all.
+//
+// It is restated here because it is the number the check below is about,
+// and because a client upgrade that changed it should make this test say
+// so rather than quietly stop covering that path. Note that nothing this
+// product writes is actually split into parts: the vendor sets
+// DisableMultipart on every PutObject (repo/blob/s3/s3_storage.go), so
+// this threshold is a size, not a code-path switch. See the check itself.
 const multipartThreshold = 16 << 20
 
 // s3Location builds a repository location pointing at the fixture's own
@@ -183,7 +186,17 @@ func TestS3RepositoryMatrix(t *testing.T) {
 
 	src := backupengine.Source{Host: "nas-01", User: "backupd", Path: srcDir}
 
-	snap, err := rep.Snapshot(ctx, backupengine.SnapshotRequest{Source: src, Description: "the s3 matrix"})
+	snap, err := rep.Snapshot(ctx, backupengine.SnapshotRequest{
+		Source:      src,
+		Description: "the s3 matrix",
+		// The tags the production sink sets on every snapshot, so what
+		// Stats counts below is counted the way it is counted in
+		// production rather than falling back to the unattributed case.
+		Tags: map[string]string{
+			backupengine.TagKeyBackupSet: "nas-01/matrix",
+			backupengine.TagKeyDomain:    "production",
+		},
+	})
 	if err != nil {
 		t.Fatalf("Snapshot into s3: %v", err)
 	}
@@ -192,18 +205,25 @@ func TestS3RepositoryMatrix(t *testing.T) {
 		t.Errorf("the snapshot recorded %d bytes for a source tree of at least %d", snap.Bytes, multipartPayload)
 	}
 
-	// The multipart claim, checked rather than asserted. The vendor fills
-	// pack blobs to about 20 MiB before flushing them and the S3 client
-	// switches to a parts upload above 16 MiB, so an object on the drive
-	// bigger than that threshold is one this run uploaded in parts.
+	// The large-body claim, checked rather than asserted.
 	//
-	// Without this, "we wrote 48 MiB so it must have been multipart" is a
-	// claim about somebody else's internal threshold with nothing
+	// The vendor fills pack blobs to about 20 MiB (MaxPackSize defaults to
+	// 20<<20) before flushing them, so an object on the drive bigger than
+	// minio-go's 16 MiB part size is one this run pushed in a SINGLE PUT:
+	// repo/blob/s3/s3_storage.go sets DisableMultipart on every
+	// PutObject, so nothing this product writes is ever split into parts.
+	// That is the path worth pinning -- a 21 MiB body in one request, with
+	// a signature over it -- because it is the one an S3 impostor, a proxy
+	// with a body limit or a gateway that mishandles a chunked stream gets
+	// wrong while answering 200 to everything small.
+	//
+	// Without this, "we wrote 48 MiB so the large-body path ran" is a
+	// claim about somebody else's internal pack size with nothing
 	// watching it, and a future pack-size default could quietly turn this
-	// whole case back into a series of single PUTs.
+	// whole case back into a series of small PUTs.
 	if largest := fixture.LargestObjectBytes(t, bucket); largest <= multipartThreshold {
 		t.Errorf("the largest object in the bucket is %d bytes, at or below the %d-byte part size; "+
-			"nothing in this run went through a multipart upload, so that path is untested",
+			"nothing in this run wrote a large body, so that path is untested",
 			largest, multipartThreshold)
 	}
 
@@ -451,6 +471,140 @@ func TestS3CredentialsNeverReachAnErrorOrAReport(t *testing.T) {
 		if strings.Contains(surface.text, repositoryPassphrase) {
 			t.Errorf("%s carries the repository passphrase: %s", surface.label, surface.text)
 		}
+	}
+}
+
+// TestS3CredentialsAreNeverWrittenToTheStateDirectory is the regression
+// test for the worst defect this adapter has had.
+//
+// Connecting to a bucket repository persists a connection to
+// <StateDir>/<domain>.config, and with the vendor's own s3 provider the
+// persisted connection IS the provider's options struct -- AccessKeyID,
+// SecretAccessKey and SessionToken included, with ordinary json tags. So
+// every open used to write the operator's live cloud credentials to the
+// backup host in cleartext and leave them there, which defeats the entire
+// point of resolving them from a secretref at the last moment: an operator
+// who kept the secret in a 0600 file or behind a Vault command got a
+// plaintext copy anyway, made by the program they were trusting.
+//
+// The assertion is on the BYTES of everything under the state directory,
+// not on a type or a field list, because that is the only assertion that
+// stays true through a vendor upgrade that adds a field or renames one.
+// The suite's other leak test (TestS3CredentialsNeverReachAnErrorOrAReport)
+// covers what this adapter SAYS; this one covers what it WRITES DOWN.
+func TestS3CredentialsAreNeverWrittenToTheStateDirectory(t *testing.T) {
+	fixture := machines.Start(t).Medium(t)
+	ctx := context.Background()
+
+	loc := s3Location(t, fixture, bucketName(t, fixture), "production")
+	eng := kopia.New()
+
+	if err := eng.CreateRepository(ctx, loc); err != nil {
+		t.Fatalf("CreateRepository: %v", err)
+	}
+
+	rep, err := eng.OpenRepository(ctx, loc)
+	if err != nil {
+		t.Fatalf("OpenRepository: %v", err)
+	}
+
+	if _, err := rep.Stats(ctx); err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+
+	if err := rep.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	config := filepath.Join(loc.StateDir, "production.config")
+
+	raw, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatalf("reading the connection config this adapter wrote: %v", err)
+	}
+
+	// Every file, not only the config: a cache file, a lock or a log
+	// holding the same bytes would be the same disclosure.
+	if err := filepath.WalkDir(loc.StateDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		rel, relErr := filepath.Rel(loc.StateDir, path)
+		if relErr != nil {
+			rel = path
+		}
+
+		assertNoCredentials(t, fixture, "the state file "+rel, string(body))
+
+		if strings.Contains(string(body), repositoryPassphrase) {
+			t.Errorf("the state file %s carries the repository passphrase", rel)
+		}
+
+		return nil
+	}); err != nil {
+		t.Fatalf("walking the state directory: %v", err)
+	}
+
+	// A session token is the one credential this fixture cannot have --
+	// MinIO would reject a bogus one before anything was written -- so it
+	// is covered the only way it can be: the persisted connection must
+	// have no FIELD that one fits in. These are the vendor's own names for
+	// the three, and finding any of them means the config was written by
+	// the provider's options struct again.
+	for _, field := range []string{"accessKeyID", "secretAccessKey", "sessionToken"} {
+		if strings.Contains(string(raw), field) {
+			t.Errorf("the connection config has a %q field, which is where a credential ends up on disk: %s", field, raw)
+		}
+	}
+
+	// The modes are this project's, not the vendor's default: the state
+	// directory holds what a repository is connected to and, if caching is
+	// ever enabled, repository content.
+	dirInfo, err := os.Stat(loc.StateDir)
+	if err != nil {
+		t.Fatalf("stat of the state directory: %v", err)
+	}
+
+	if mode := dirInfo.Mode().Perm(); mode != 0o700 {
+		t.Errorf("the state directory is %04o; want 0700", mode)
+	}
+
+	fileInfo, err := os.Stat(config)
+	if err != nil {
+		t.Fatalf("stat of the connection config: %v", err)
+	}
+
+	if mode := fileInfo.Mode().Perm(); mode&0o077 != 0 {
+		t.Errorf("the connection config is %04o, which another local account can read", mode)
+	}
+
+	// And the repository still opens, which is the half that makes the
+	// scrubbing a fix rather than a break: the credential comes from the
+	// operator's declared source again on every open, and the config alone
+	// is not expected to be enough.
+	reopened, err := eng.OpenRepository(ctx, loc)
+	if err != nil {
+		t.Fatalf("reopening a repository whose config holds no credentials: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := reopened.Close(context.Background()); err != nil {
+			t.Errorf("closing the reopened repository: %v", err)
+		}
+	})
+
+	if _, err := reopened.Stats(ctx); err != nil {
+		t.Errorf("Stats on the reopened repository: %v", err)
 	}
 }
 

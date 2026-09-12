@@ -17,8 +17,6 @@ import (
 	"github.com/kopia/kopia/repo"
 	"github.com/kopia/kopia/repo/blob"
 	"github.com/kopia/kopia/repo/blob/filesystem"
-	"github.com/kopia/kopia/repo/blob/s3"
-	"github.com/kopia/kopia/repo/content"
 	"github.com/kopia/kopia/repo/format"
 	"github.com/kopia/kopia/snapshot"
 
@@ -63,11 +61,66 @@ import (
 // process is inert.
 const probePrefix = "_backupd_probe_"
 
-// probeSize is how many bytes the probe writes. It is larger than one
-// range read so that a partial read can be checked against an offset that
-// is neither the start nor the end of the blob, which is the case a
+// probeSize is how many bytes the cheap probe writes. It is larger than
+// one range read so that a partial read can be checked against an offset
+// that is neither the start nor the end of the blob, which is the case a
 // storage that ignores Range headers gets wrong while looking fine.
 const probeSize = 256
+
+// probeRangeOffset and probeRangeLength are the range the cheap probe
+// reads back: an offset that is neither the start nor the end, because a
+// storage that ignores the range and returns the whole object passes any
+// check anchored at zero.
+const (
+	probeRangeOffset = 64
+	probeRangeLength = 32
+)
+
+// largeProbeSize is how many bytes the create-time probe writes, and the
+// number is the vendor's own largest write plus a margin.
+//
+// # Why a second, large probe exists
+//
+// A 256-byte PUT proves almost nothing about a bucket that will be asked
+// to hold 20 MiB pack blobs. The vendor's default MaxPackSize is 20 MiB
+// (repo/initialize.go and repo/format/format_provider.go both default it
+// to 20<<20), so this is the size of the largest single object this
+// product will ever ask a bucket to store, written through exactly the
+// code path production writes it through, and compared back BYTE FOR
+// BYTE. What that catches is the whole class of endpoint that answers 200
+// to everything and mangles large bodies: a chunked-signature stream
+// reassembled wrongly, a proxy with a body limit, a gateway that silently
+// truncates.
+//
+// # On "multipart"
+//
+// This size is also above minio-go's 16 MiB part size, which is what the
+// review that asked for this probe was aiming at. It is worth recording
+// that the vendor does NOT use multipart uploads for blobs at this pin:
+// repo/blob/s3/s3_storage.go:176 sets DisableMultipart on every PutObject,
+// with a comment saying Kopia's own packing makes further splitting
+// pointless. So a backend that corrupts ONLY multipart uploads cannot
+// corrupt this product's repository writes today -- and if a future
+// version bump drops that flag, this probe is already over the threshold
+// and covers it without needing to be revisited.
+const largeProbeSize = 21 << 20
+
+// multipartPartSize is minio-go's part size, restated here because it is
+// the offset the large probe's range read straddles. See largeProbeSize.
+const multipartPartSize = 16 << 20
+
+// probeOptions selects how much a storage probe is prepared to spend.
+//
+// The distinction is create versus health, and it is a cost decision made
+// once: CreateRepository decides whether a target may hold a repository at
+// all, and 21 MiB of proof is cheap exactly once. Health runs before every
+// backup, and a 21 MiB upload per preflight would make the health check
+// the most expensive thing in a cycle for a NAS on a domestic uplink.
+// Everything a develop-over-time fault can break -- read-after-write, the
+// listing, the range, the delete -- is in both.
+type probeOptions struct {
+	LargeBody bool
+}
 
 // maxClockSkew is how far this machine's clock may differ from the
 // storage's own before health says so.
@@ -112,14 +165,15 @@ func (a *Adapter) CreateRepository(ctx context.Context, loc backupengine.Reposit
 		return err
 	}
 
-	st, err := a.openStorage(ctx, loc, true)
+	st, release, err := a.openStorage(ctx, loc, true)
 	if err != nil {
 		return err
 	}
 
+	defer release()
 	defer st.Close(ctx) //nolint:errcheck
 
-	if _, err := a.probeStorage(ctx, st); err != nil {
+	if _, err := a.probeStorage(ctx, st, probeOptions{LargeBody: loc.Kind == backupengine.LocationS3}); err != nil {
 		return err
 	}
 
@@ -161,7 +215,7 @@ func (a *Adapter) OpenRepository(ctx context.Context, loc backupengine.Repositor
 		return nil, fmt.Errorf("kopia: resolving the repository passphrase: %w", err)
 	}
 
-	st, err := a.openStorage(ctx, loc, false)
+	st, release, err := a.openStorage(ctx, loc, false)
 	if err != nil {
 		return nil, err
 	}
@@ -176,20 +230,37 @@ func (a *Adapter) OpenRepository(ctx context.Context, loc backupengine.Repositor
 	// repository moved would keep writing snapshots into the old one,
 	// successfully and silently, while the new location stayed empty.
 	//
+	// It is also what makes the credential registration behind a bucket
+	// connection sound: the config this process is about to open is always
+	// one this process just wrote, naming a registration this process
+	// holds. See s3connection.go.
+	//
 	// The storage handle is only needed to read the format blob; the
 	// repository opened below builds its own from the config file.
 	connectErr := repo.Connect(ctx, configPath, st, passphrase.Reveal(), connectOptions(loc))
 
 	if err := st.Close(ctx); err != nil {
+		release()
+
 		return nil, fmt.Errorf("closing repository storage: %w", err)
 	}
 
 	if connectErr != nil {
+		release()
+
 		return nil, translate(connectErr, "connecting to repository")
+	}
+
+	if err := hardenStateDir(loc); err != nil {
+		release()
+
+		return nil, err
 	}
 
 	rep, err := repo.Open(ctx, configPath, passphrase.Reveal(), &repo.Options{})
 	if err != nil {
+		release()
+
 		return nil, translate(err, "opening repository")
 	}
 
@@ -201,6 +272,8 @@ func (a *Adapter) OpenRepository(ctx context.Context, loc backupengine.Repositor
 	// a nil dereference.
 	direct, ok := rep.(repo.DirectRepository)
 	if !ok {
+		release()
+
 		if cerr := rep.Close(ctx); cerr != nil {
 			return nil, fmt.Errorf("repository does not support maintenance, and closing it failed: %w", cerr)
 		}
@@ -215,6 +288,8 @@ func (a *Adapter) OpenRepository(ctx context.Context, loc backupengine.Repositor
 	// to this adapter -- a snapshot successfully stored in the wrong
 	// repository -- into a refusal at open time.
 	if err := checkStorageIdentity(direct, loc); err != nil {
+		release()
+
 		if cerr := rep.Close(ctx); cerr != nil {
 			return nil, fmt.Errorf("%w; closing it also failed: %w", err, cerr)
 		}
@@ -222,7 +297,7 @@ func (a *Adapter) OpenRepository(ctx context.Context, loc backupengine.Repositor
 		return nil, err
 	}
 
-	return &repository{rep: rep, direct: direct, loc: loc, adapter: a}, nil
+	return &repository{rep: rep, direct: direct, loc: loc, adapter: a, release: release}, nil
 }
 
 // LookupSnapshot implements backupengine.Repository.
@@ -248,23 +323,33 @@ func (r *repository) LookupSnapshot(ctx context.Context, id backupengine.Snapsho
 // whether a target can hold a repository at all. Running the same code in
 // both places is deliberate: a storage that DEVELOPS one of these faults
 // -- a bucket policy that starts denying deletes, a filesystem that fills
-// up -- is as interesting as one that never had the property.
+// up -- is as interesting as one that never had the property. What it does
+// NOT repeat is the create-time large-body write: see probeOptions.
+//
+// # Both return values are populated, always
+//
+// A failure returns a report AND an error, and neither is redundant. The
+// error is for the caller that has to refuse -- a backup must not start
+// against storage that cannot store -- and the report is for the caller
+// that has to DISPLAY: "unreachable" and "healthy" are two states an
+// operator's dashboard has to be able to show differently, and a zero
+// report beside an error cannot say which one this is. Reachable is false
+// for every probe failure, deliberately, including the ones where the
+// endpoint answered: a storage that accepts a blob and then does not list
+// it is not reachable FOR A REPOSITORY'S PURPOSES, and softening that into
+// "reachable with a warning" is how a caller ends up proceeding.
 func (r *repository) Health(ctx context.Context) (backupengine.HealthReport, error) {
-	st, err := r.adapter.openStorage(ctx, r.loc, false)
+	st, release, err := r.adapter.openStorage(ctx, r.loc, false)
 	if err != nil {
-		return backupengine.HealthReport{}, err
+		return unreachable(err), err
 	}
 
+	defer release()
 	defer st.Close(ctx) //nolint:errcheck
 
-	skew, err := r.adapter.probeStorage(ctx, st)
+	skew, err := r.adapter.probeStorage(ctx, st, probeOptions{})
 	if err != nil {
-		// Reachable stays false and the error says what failed. There is
-		// deliberately no "reachable but broken" report: every failure
-		// probeStorage can return is one that makes the repository
-		// unusable now, and softening it into a warning would have a
-		// caller proceed with a backup into storage that cannot store it.
-		return backupengine.HealthReport{}, err
+		return unreachable(err), err
 	}
 
 	report := backupengine.HealthReport{Reachable: true}
@@ -288,28 +373,85 @@ func (r *repository) Health(ctx context.Context) (backupengine.HealthReport, err
 	return report, nil
 }
 
+// unreachable is the report that accompanies a failed health probe.
+//
+// The warning carries the failure's own sentence rather than a category,
+// because what an operator needs from "unreachable" is WHICH part failed:
+// a bucket policy that denies deletes, a NAS that is asleep and a
+// credential that expired are the same Reachable=false and three different
+// jobs to do. The error text is this adapter's own and carries no
+// credential; the probe and the resolver are the two places that guarantee
+// it, and both are tested for it.
+func unreachable(err error) backupengine.HealthReport {
+	return backupengine.HealthReport{
+		Reachable: false,
+		Warnings: []backupengine.HealthWarning{{
+			Kind:   backupengine.HealthWarningUnreachable,
+			Detail: err.Error(),
+		}},
+	}
+}
+
 // Stats implements backupengine.Repository.
 //
 // Blobs and PhysicalBytes come from the storage's own listing rather than
 // from the repository index, because the question is what this repository
 // is costing and the answer to that includes blobs an interrupted
 // maintenance left behind, which the index does not mention.
+//
+// # Sources counts BACKUP SETS, not the engine's own sources
+//
+// RepositoryStats.Sources is documented as the co-tenancy number: an
+// isolated Repository Domain whose repository reports more than one is a
+// boundary that has already been crossed. The vendor's own source count
+// cannot answer that question. A streaming backup set writes one Kopia
+// source PER OBJECT (see stream.go and #782's sink), so one set of forty
+// database dumps would report forty "sources" and an isolation check built
+// on that number would fire on a domain nobody has crossed -- and, worse,
+// two sets that happened to write one object each would report two and be
+// indistinguishable from the breach this number exists to find.
+//
+// So the count is over the backup-set TAG every snapshot this product
+// writes carries (backupengine.TagKeyBackupSet, set by the sink that owns
+// the snapshot), which is the identity the isolation rule in
+// model.RepositoryDomain.MayShare is actually expressed in.
+//
+// Snapshots that carry no set tag are counted as ONE unattributed tenant
+// rather than as none. A snapshot in this repository that this product did
+// not attribute is still content sharing the domain's key, and reporting
+// zero for it would mean an operator who ran the vendor's CLI against
+// their own bucket saw an isolated domain reporting no co-tenants while
+// holding somebody else's snapshots.
 func (r *repository) Stats(ctx context.Context) (backupengine.RepositoryStats, error) {
-	sources, err := snapshot.ListSources(ctx, r.rep)
+	ids, err := snapshot.ListSnapshotManifests(ctx, r.rep, nil, nil)
 	if err != nil {
-		return backupengine.RepositoryStats{}, fmt.Errorf("listing repository sources: %w", err)
+		return backupengine.RepositoryStats{}, fmt.Errorf("listing repository snapshots: %w", err)
 	}
 
-	stats := backupengine.RepositoryStats{Sources: len(sources)}
+	stats := backupengine.RepositoryStats{Snapshots: len(ids)}
 
-	for _, src := range sources {
-		ids, err := snapshot.ListSnapshotManifests(ctx, r.rep, &src, nil)
-		if err != nil {
-			return backupengine.RepositoryStats{}, fmt.Errorf("listing snapshots of %s: %w", src, err)
+	manifests, err := snapshot.LoadSnapshots(ctx, r.rep, ids)
+	if err != nil {
+		return backupengine.RepositoryStats{}, fmt.Errorf("loading repository snapshots: %w", err)
+	}
+
+	sets := make(map[string]struct{}, len(manifests))
+
+	for _, man := range manifests {
+		// LoadSnapshots leaves a nil entry for a manifest it could not
+		// parse rather than failing the batch. One of those is a snapshot
+		// whose tags cannot be read, which is the unattributed case and is
+		// counted as such.
+		if man == nil {
+			sets[""] = struct{}{}
+
+			continue
 		}
 
-		stats.Snapshots += len(ids)
+		sets[man.Tags[backupengine.TagKeyBackupSet]] = struct{}{}
 	}
+
+	stats.Sources = len(sets)
 
 	// The empty prefix lists everything, which is what "physical size"
 	// means. A prefix-filtered count would silently exclude whichever blob
@@ -351,44 +493,20 @@ func (r *repository) Stats(ctx context.Context) (backupengine.RepositoryStats, e
 // BECAUSE listings are eventually consistent" are the same refusal to a
 // caller and completely different information to the operator who has to
 // choose another target.
-func (a *Adapter) probeStorage(ctx context.Context, st blob.Storage) (time.Duration, error) {
-	suffix := make([]byte, 8)
-	if _, err := rand.Read(suffix); err != nil {
-		return 0, fmt.Errorf("kopia: generating a storage probe id: %w", err)
-	}
-
-	id := blob.ID(probePrefix + hex.EncodeToString(suffix))
-
-	payload := make([]byte, probeSize)
-	if _, err := rand.Read(payload); err != nil {
-		return 0, fmt.Errorf("kopia: generating storage probe content: %w", err)
-	}
-
-	meta, err := blob.PutBlobAndGetMetadata(ctx, st, id, probeBytes(payload), blob.PutOptions{})
+func (a *Adapter) probeStorage(ctx context.Context, st blob.Storage, opts probeOptions) (time.Duration, error) {
+	meta, err := a.probeBlob(ctx, st, probeSize, probeRangeOffset, probeRangeLength)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %s cannot store a blob: %w", backupengine.ErrStorageUnsupported, st.DisplayName(), err)
-	}
-
-	// The delete is deferred so that a failure anywhere below still cleans
-	// up: a probe blob left in a bucket is harmless but it is litter, and
-	// litter in a storage target somebody is about to be told is unusable
-	// is litter nobody will come back for.
-	defer st.DeleteBlob(ctx, id) //nolint:errcheck // the checked delete is below; this is the failure path
-
-	if err := probeReadBack(ctx, st, id, payload); err != nil {
 		return 0, err
 	}
 
-	if err := probeListing(ctx, st, id, true); err != nil {
-		return 0, err
-	}
-
-	if err := st.DeleteBlob(ctx, id); err != nil {
-		return 0, fmt.Errorf("%w: %s cannot delete a blob: %w", backupengine.ErrStorageUnsupported, st.DisplayName(), err)
-	}
-
-	if err := probeListing(ctx, st, id, false); err != nil {
-		return 0, err
+	if opts.LargeBody {
+		// The range straddles the part boundary a client that did split
+		// the upload would have used, so a backend that stitches parts
+		// back together in the wrong order fails the range read as well as
+		// the whole read.
+		if _, err := a.probeBlob(ctx, st, largeProbeSize, multipartPartSize-32, 64); err != nil {
+			return 0, err
+		}
 	}
 
 	if meta.Timestamp.IsZero() {
@@ -400,25 +518,80 @@ func (a *Adapter) probeStorage(ctx context.Context, st blob.Storage) (time.Durat
 	return a.now().Sub(meta.Timestamp), nil
 }
 
-// probeReadBack checks read-after-write for both a whole read and a range
-// read.
-func probeReadBack(ctx context.Context, st blob.Storage, id blob.ID, want []byte) error {
-	var buf probeBuffer
+// probeBlob runs the whole property sequence against one blob of a given
+// size and reports what the storage said about it.
+func (a *Adapter) probeBlob(ctx context.Context, st blob.Storage, size int, offset, length int64) (blob.Metadata, error) {
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return blob.Metadata{}, fmt.Errorf("kopia: generating a storage probe id: %w", err)
+	}
 
-	if err := st.GetBlob(ctx, id, 0, -1, &buf); err != nil {
-		return fmt.Errorf("%w: %s cannot read back a blob it just stored: %w",
+	id := blob.ID(probePrefix + hex.EncodeToString(suffix))
+
+	// Random bytes, so no layer between here and the storage can make the
+	// comparison pass by compressing the payload away, and so a backend
+	// that returns a plausible-looking buffer of its own is caught.
+	payload := make([]byte, size)
+	if _, err := rand.Read(payload); err != nil {
+		return blob.Metadata{}, fmt.Errorf("kopia: generating storage probe content: %w", err)
+	}
+
+	meta, err := blob.PutBlobAndGetMetadata(ctx, st, id, probeBytes(payload), blob.PutOptions{})
+	if err != nil {
+		return blob.Metadata{}, fmt.Errorf("%w: %s cannot store a blob of %d bytes: %w",
+			backupengine.ErrStorageUnsupported, st.DisplayName(), size, err)
+	}
+
+	// The delete is deferred so that a failure anywhere below still cleans
+	// up: a probe blob left in a bucket is harmless but it is litter, and
+	// litter in a storage target somebody is about to be told is unusable
+	// is litter nobody will come back for.
+	defer st.DeleteBlob(ctx, id) //nolint:errcheck // the checked delete is below; this is the failure path
+
+	if err := probeReadBack(ctx, st, id, payload, offset, length); err != nil {
+		return blob.Metadata{}, err
+	}
+
+	if err := probeListing(ctx, st, id, true); err != nil {
+		return blob.Metadata{}, err
+	}
+
+	if err := st.DeleteBlob(ctx, id); err != nil {
+		return blob.Metadata{}, fmt.Errorf("%w: %s cannot delete a blob: %w",
 			backupengine.ErrStorageUnsupported, st.DisplayName(), err)
 	}
 
-	if !bytes.Equal(buf.Bytes(), want) {
-		return fmt.Errorf("%w: %s returned %d bytes for a blob of %d that was just written to it",
-			backupengine.ErrStorageUnsupported, st.DisplayName(), buf.Length(), len(want))
+	if err := probeListing(ctx, st, id, false); err != nil {
+		return blob.Metadata{}, err
 	}
 
-	// An offset that is neither the start nor the end, because a storage
-	// that ignores the range and returns the whole object passes any check
-	// anchored at zero.
-	const offset, length = 64, 32
+	return meta, nil
+}
+
+// probeReadBack checks read-after-write for both a whole read and a range
+// read.
+//
+// The range is the caller's, because where an interesting offset IS
+// depends on how big the blob is: for the small probe any offset that is
+// neither the start nor the end catches a storage that ignores ranges, and
+// for the large one the offset that matters is the part boundary an upload
+// of that size might have been split at.
+func probeReadBack(ctx context.Context, st blob.Storage, id blob.ID, want []byte, offset, length int64) error {
+	var buf probeBuffer
+
+	if err := st.GetBlob(ctx, id, 0, -1, &buf); err != nil {
+		return fmt.Errorf("%w: %s cannot read back a blob of %d bytes it just stored: %w",
+			backupengine.ErrStorageUnsupported, st.DisplayName(), len(want), err)
+	}
+
+	if !bytes.Equal(buf.Bytes(), want) {
+		// The byte comparison is the assertion, not the length: a backend
+		// that corrupts a large upload -- by reassembling parts in the
+		// wrong order, or by mishandling a chunked-signature stream --
+		// returns exactly the right number of exactly the wrong bytes.
+		return fmt.Errorf("%w: %s returned %d bytes that are not the %d that were just written to it",
+			backupengine.ErrStorageUnsupported, st.DisplayName(), buf.Length(), len(want))
+	}
 
 	buf.Reset()
 
@@ -591,15 +764,26 @@ func validateS3(loc backupengine.RepositoryLocation) error {
 	return nil
 }
 
-// openStorage builds one of the two backends this adapter registers.
-func (a *Adapter) openStorage(ctx context.Context, loc backupengine.RepositoryLocation, create bool) (blob.Storage, error) {
+// openStorage builds one of the two backends this adapter registers, and
+// returns the release function for whatever it had to hold open to do it.
+//
+// The release is separate from Storage.Close, and it has to be: for a
+// bucket repository what is being held is the in-memory credential
+// registration the persisted connection points at (see s3connection.go),
+// and that registration has to outlive the storage handle this adapter
+// hands to repo.Connect -- repo.Open builds its own storage from the
+// config afterwards, and would find the registration already gone. It is
+// always non-nil, so a caller can defer it without a check.
+func (a *Adapter) openStorage(ctx context.Context, loc backupengine.RepositoryLocation, create bool) (blob.Storage, func(), error) {
 	switch loc.Kind {
 	case backupengine.LocationLocal:
-		return openFilesystemStorage(ctx, loc, create)
+		st, err := openFilesystemStorage(ctx, loc, create)
+
+		return st, func() {}, err
 	case backupengine.LocationS3:
 		return openS3Storage(ctx, loc, create)
 	default:
-		return nil, fmt.Errorf("kopia: unsupported repository kind %q", loc.Kind)
+		return nil, func() {}, fmt.Errorf("kopia: unsupported repository kind %q", loc.Kind)
 	}
 }
 
@@ -643,68 +827,37 @@ func openFilesystemStorage(ctx context.Context, loc backupengine.RepositoryLocat
 	return st, nil
 }
 
-// openS3Storage opens the bucket an S3 repository lives in, resolving the
-// operator's credential reference at the last possible moment.
+// openS3Storage opens the bucket an S3 repository lives in.
 //
-// The resolved material is used to build the provider's options and is not
-// retained by this adapter: the options struct belongs to the storage
-// handle, which is closed when the caller is done with it. That is the
-// shortest lifetime available here -- the provider needs the key for every
-// signed request -- and it is why the credential is a reference
-// everywhere above this line.
-func openS3Storage(ctx context.Context, loc backupengine.RepositoryLocation, create bool) (blob.Storage, error) {
-	creds, err := secretref.ResolveAWS(ctx, loc.S3.Credentials)
+// It registers the operator's credential REFERENCE in memory and builds
+// the storage from that registration, which is the same path repo.Open
+// takes when it rebuilds the storage from the persisted connection. See
+// s3connection.go for why the credential is resolved per storage build and
+// never written down, and why the registration is what the caller has to
+// release.
+func openS3Storage(ctx context.Context, loc backupengine.RepositoryLocation, create bool) (blob.Storage, func(), error) {
+	handle, err := registerS3Credentials(loc.S3.Credentials)
 	if err != nil {
-		return nil, fmt.Errorf("kopia: resolving s3 credentials for bucket %s: %w", loc.S3.Bucket, err)
+		return nil, func() {}, err
 	}
 
-	opts, err := s3Options(loc)
+	release := func() { releaseS3Credentials(handle) }
+
+	conn, err := s3ConnectionFor(loc, handle)
 	if err != nil {
-		return nil, err
+		release()
+
+		return nil, func() {}, err
 	}
 
-	opts.AccessKeyID = creds.AccessKeyID
-	opts.SecretAccessKey = creds.SecretAccessKey.Reveal()
-
-	if creds.HasSession {
-		opts.SessionToken = creds.SessionToken.Reveal()
-	}
-
-	st, err := s3.New(ctx, opts, create)
+	st, err := newS3Storage(ctx, &conn, create)
 	if err != nil {
-		return nil, fmt.Errorf("kopia: opening s3 bucket %s: %w", loc.S3.Bucket, err)
+		release()
+
+		return nil, func() {}, err
 	}
 
-	return st, nil
-}
-
-// s3Options is the credential-free half of the provider's options, kept
-// separate so that the identity check can rebuild it and compare without
-// resolving a secret to do so.
-func s3Options(loc backupengine.RepositoryLocation) (*s3.Options, error) {
-	opts := &s3.Options{
-		BucketName: loc.S3.Bucket,
-		Prefix:     s3Prefix(loc),
-		Region:     loc.S3.Region,
-		RootCA:     loc.S3.RootCA,
-	}
-
-	if loc.S3.Endpoint == "" {
-		return opts, nil
-	}
-
-	u, err := url.Parse(loc.S3.Endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("kopia: endpoint %q is not a URL: %w", loc.S3.Endpoint, err)
-	}
-
-	// The provider takes a host and a boolean, not a URL. An http endpoint
-	// means no TLS and says so; see backupengine.S3Storage for why there
-	// is no third option that keeps TLS and stops verifying it.
-	opts.Endpoint = u.Host
-	opts.DoNotUseTLS = u.Scheme == "http"
-
-	return opts, nil
+	return st, release, nil
 }
 
 // s3Prefix is the key namespace one repository occupies inside a bucket:
@@ -777,32 +930,86 @@ func configPath(loc backupengine.RepositoryLocation) (string, error) {
 	return filepath.Join(dir, loc.Domain.String()+".config"), nil
 }
 
-// connectOptions carries the cache placement into the connection the
-// vendor records.
+// connectOptions is what this adapter records about a connection, and
+// LOCAL CACHING IS DELIBERATELY NOT PART OF IT.
+//
+// # Why there is no cache
+//
+// This used to set content.CachingOptions.CacheDirectory under the state
+// directory and nothing else, which was dead code: the vendor's
+// setupCachingOptionsWithDefaults (repo/caching.go) short-circuits on
+// ContentCacheSizeBytes == 0 and writes an empty CachingOptions, so a
+// directory without a size cached nothing. Reviewing that found the dead
+// code and the obvious repair was to set the sizes.
+//
+// The sizes were set, and the repair is not available to this product. The
+// vendor's caching switch is all-or-nothing -- a zero content size wipes
+// the metadata and index caches too -- and with the content cache on, a
+// repository missing a pack blob VERIFIES CLEAN: the content the verifier
+// wants is in <StateDir>/<domain>.cache/contents, so the read succeeds
+// against a bucket that no longer holds it. That was measured, not
+// reasoned about, by deleting a pack blob and verifying twice; the
+// verification failed only once the cache directory was removed.
+//
+// That is disqualifying here in a way it would not be in a file-sync tool.
+// This product's claim is that a backup is restorable, the check behind
+// that claim is Verify, and the case where the cache is warmest is
+// verify-immediately-after-backup -- so caching would be most likely to
+// lie in exactly the flow that matters most. The same applies to Restore:
+// a restore satisfied from local cache proves a restore nobody can repeat.
+//
+// TestVerifyReportsDamageAsBothErrorAndFindings is the guard on this
+// decision rather than a test of its own: it fails if caching is turned
+// on, which is how a future attempt to enable it will find this comment.
+//
+// # What it costs, and what would have to change first
+//
+// Every content, metadata and index read goes to the storage, which for a
+// bucket is a GET per index lookup on a link an operator pays for.
+// Re-enabling caching needs a read path that BYPASSES the cache for
+// verification and restore -- the vendor offers none at this pin -- and
+// the cache would then belong under stateDir(loc), which is where the
+// deleted CacheDirectory pointed and the only place under a backup root
+// artifact management may not touch.
 func connectOptions(loc backupengine.RepositoryLocation) *repo.ConnectOptions {
-	opt := &repo.ConnectOptions{
+	return &repo.ConnectOptions{
 		ClientOptions: repo.ClientOptions{
 			Description: "backupd:" + loc.Domain.String(),
 		},
 	}
+}
 
+// hardenStateDir puts this project's modes on the state the vendor just
+// wrote.
+//
+// The vendor creates the config directory 0700 and writes the config file
+// through its own atomic-write helper, so this is belt and braces rather
+// than a repair -- but the state directory is where a repository's content
+// cache lives, and content in a cache is repository content: readable by
+// another local account is exactly as bad there as it is in the bucket.
+// Asserting the modes here means this project decided them, and the test
+// that reads them back is checking a decision rather than an upstream
+// default that a version bump may revise.
+func hardenStateDir(loc backupengine.RepositoryLocation) error {
 	dir, err := stateDir(loc)
 	if err != nil {
-		// A state directory this adapter could not resolve is already a
-		// refusal from configPath, which every caller reaches first. There
-		// is nothing to cache into and nothing to say here; an unset cache
-		// directory is slower and always correct.
-		return opt
+		return err
 	}
 
-	// The vendor insists on an absolute cache directory and deletes it on
-	// disconnect, so a relative path here would be both rejected and, if it
-	// were not, dangerous.
-	opt.CachingOptions = content.CachingOptions{
-		CacheDirectory: filepath.Join(dir, loc.Domain.String()+".cache"),
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("kopia: restricting the repository state directory %s: %w", dir, err)
 	}
 
-	return opt
+	path, err := configPath(loc)
+	if err != nil {
+		return err
+	}
+
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("kopia: restricting the repository connection config %s: %w", path, err)
+	}
+
+	return nil
 }
 
 // checkStorageIdentity refuses an open whose repository is not the storage
@@ -843,21 +1050,25 @@ func checkStorageIdentity(direct repo.DirectRepository, loc backupengine.Reposit
 				ci.Type, loc.S3.Bucket)
 		}
 
-		want, err := s3Options(loc)
+		// The comparison is against the connection this adapter would
+		// write for the location asked for, with the credential handle
+		// left out of it: a handle differs on every open by construction,
+		// and what is being checked is which bucket and which key
+		// namespace, not which registration.
+		want, err := s3ConnectionFor(loc, "")
 		if err != nil {
 			return err
 		}
 
-		if got.BucketName == want.BucketName && got.Prefix == want.Prefix && got.Endpoint == want.Endpoint {
+		if got.Bucket == want.Bucket && got.Prefix == want.Prefix && got.Endpoint == want.Endpoint {
 			return nil
 		}
 
-		// Neither side of this message carries a credential: the
-		// provider's options hold one, and only these three fields are
-		// read out of them.
+		// Neither side of this message can carry a credential: the
+		// persisted connection has no field one fits in.
 		return fmt.Errorf(
 			"kopia: this repository's config is connected to bucket %q prefix %q at endpoint %q, not the requested bucket %q prefix %q at endpoint %q",
-			got.BucketName, got.Prefix, got.Endpoint, want.BucketName, want.Prefix, want.Endpoint)
+			got.Bucket, got.Prefix, got.Endpoint, want.Bucket, want.Prefix, want.Endpoint)
 	default:
 		return fmt.Errorf("kopia: unsupported repository kind %q", loc.Kind)
 	}
@@ -873,19 +1084,6 @@ func filesystemPath(ci blob.ConnectionInfo) (string, bool) {
 		return cfg.Path, true
 	default:
 		return "", false
-	}
-}
-
-// s3Identity reports the bucket, prefix and endpoint behind an s3
-// storage's connection info, and whether it was an s3 storage at all.
-func s3Identity(ci blob.ConnectionInfo) (s3.Options, bool) {
-	switch cfg := ci.Config.(type) {
-	case *s3.Options:
-		return *cfg, true
-	case s3.Options:
-		return cfg, true
-	default:
-		return s3.Options{}, false
 	}
 }
 
