@@ -9,7 +9,10 @@
 // delete decision away from the lifecycle manager (FR-11).
 package transport
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // HashAlgorithm names a checksum the manager may ask a backend for.
 type HashAlgorithm string
@@ -153,6 +156,20 @@ type RemoteArtifact struct {
 	Hash    string
 	HashAlg HashAlgorithm
 	ID      string // backend-specific stable identifier, empty when unavailable
+
+	// Kind is what the source said is at this path, for the callers that
+	// may not guess: a backup source adapter has to decide whether to
+	// open a thing before it opens it, and opening a FIFO because it was
+	// assumed to be a file is a read that never returns.
+	//
+	// EntryKindUnknown is the zero value and is what every path into this
+	// type that does not answer the question produces, including
+	// transport/rclone's own listing: rclone's fs.Object is an object,
+	// and the local backend it wraps skips everything that is not one.
+	// Unknown is therefore an honest "nobody said", never "regular", and
+	// a consumer that needs the answer refuses rather than assuming it.
+	// LocalEnumerator answers it for every entry it yields.
+	Kind EntryKind
 }
 
 // TransferResult reports what a copy actually did.
@@ -196,4 +213,49 @@ type Transport interface {
 	CopyToLocal(ctx context.Context, source Source, remotePath, localPartialPath string) (TransferResult, error)
 	RemoteHash(ctx context.Context, source Source, remotePath string, algorithm HashAlgorithm) (string, error)
 	DeleteRemote(ctx context.Context, source Source, remotePath string) error
+}
+
+// SourceSession is one conversation with one backup source, held open for
+// as long as the caller is reading that source.
+//
+// It exists because the per-operation shape of Transport is the wrong unit
+// for a backup run. Every method above builds its backend connection from
+// the Source it is handed and releases it on the way out, which is the
+// right trade when a call is the whole operation: no cached connection
+// means no caller's bandwidth limit or timeout leaking into another
+// caller's transfer through an Fs that captured it once (see
+// transport/rclone's shutdownFs). A backup run is not one operation. It
+// opens and stats every object under a source root, so the same discipline
+// costs a full SSH handshake - key exchange, publickey authentication,
+// subsystem start - twice per file, and a run over ten thousand small
+// objects spends its window dialing.
+//
+// A session is the same discipline at the right scope. It is opened by ONE
+// caller for ONE source, holds whatever the backend needs for the duration,
+// and is closed by the caller that opened it; nothing is shared between
+// runs and nothing outlives the run that asked for it, so the settings a
+// session captures are that run's own.
+//
+// It is a separate interface rather than more methods on Transport because
+// it is a capability: a caller type-asserts for it, and a transport that
+// cannot hold a conversation open says so by not having the method, which
+// is a compile-time answer rather than a runtime ErrUnsupported.
+type SourceSession interface {
+	// OpenStream opens one object for a single forward read. The reader
+	// is the caller's to close, and closing it does NOT close the
+	// session: the session outlives every stream taken from it.
+	OpenStream(ctx context.Context, remotePath string) (io.ReadCloser, error)
+
+	// StatSource reports what the source says about one object from its
+	// METADATA alone. It never reads the object's bytes, which is the
+	// distinction Transport.Stat does not make (see transport/rclone's
+	// StatSource for the measured reason that matters on a backup
+	// source).
+	StatSource(ctx context.Context, remotePath string) (RemoteArtifact, error)
+
+	// Close releases everything the session holds. It is safe to call
+	// twice, and it is the caller's obligation exactly once: a session
+	// that is not closed is an open connection for as long as the
+	// process lives.
+	Close() error
 }
