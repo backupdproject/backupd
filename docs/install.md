@@ -59,8 +59,14 @@ reactions:
   command.
 - **An administrator already exists (53).** Enrollment is a one-time door and it
   closed when that account was created. Sign in instead. If the password is lost,
-  `install --mode factory-reset` archives the administrator record, the catalog and
-  the configuration and reopens enrollment, leaving the retained backups on disk.
+  use **Forgot password** on the sign-in page: it mails a single-use reset link,
+  valid 30 minutes, to the recovery address that account was enrolled with, and
+  completing the reset signs every existing session out. `install --mode
+  factory-reset` is the answer only when that route is gone too — no recovery
+  address was ever confirmed, or the mail server it was configured against no
+  longer accepts the message — and it is destructive: it archives the
+  administrator record, the catalog and the configuration and reopens enrollment,
+  leaving the retained backups on disk.
   Its own exit code because retrying will never change the answer, where retrying
   a 30 is reasonable.
 

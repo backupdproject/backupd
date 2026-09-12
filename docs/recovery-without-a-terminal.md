@@ -164,10 +164,24 @@ in the first ten minutes.
   and it needs no terminal.
 - **The interface does not load at all.** The application is stopped. Start it the same
   way.
-- **You cannot sign in.** The administrator record lives in the application's state
-  directory, which survives restarts and upgrades. Your platform's procedure for
-  reinstalling the application while keeping its state is in that target's own
-  documentation; reinstalling does not touch your retained artifacts, which live outside
-  the application's state on purpose.
+- **You have forgotten the password.** Use **Forgot password** on the sign-in page. It
+  asks for the username and nothing else, and it always says the same thing back, so the
+  page is not where you find out whether you typed the right name. What decides is your
+  mailbox: if the name matches the administrator and that account has a confirmed
+  recovery address, a single-use reset link valid for 30 minutes arrives there, sent
+  through the mail server configured at setup. Following it sets a new password and signs
+  every session out, including any still open elsewhere, so the next thing to do is sign
+  in with the new one. Nothing arrives? The address or the mail server is the problem, not
+  the password, and that is the case below.
+- **You cannot sign in and no reset mail arrives.** The administrator record lives in the
+  application's state directory, which survives restarts and upgrades, and so do the
+  recovery address and the SMTP settings — which is also why a mail server that has since
+  changed its password or stopped accepting that sender will keep failing silently from
+  your side. With no terminal there is no way to edit either from outside the interface
+  you cannot reach. Your platform's procedure for reinstalling the application while
+  keeping its state is in that target's own documentation; reinstalling does not touch
+  your retained artifacts, which live outside the application's state on purpose. Once
+  you are signed in again, Settings is where the recovery address and the SMTP details
+  are corrected, and it offers a test send so the next time is not another guess.
 - **Anything else.** Open an issue with the set's detail page and the failing run's error
   message. https://github.com/backupdproject/backupd/issues
