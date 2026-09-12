@@ -16,24 +16,41 @@ import (
 	"github.com/backupdproject/backupd/core/tests/machines"
 )
 
-// An SFTP source, end to end, against a real SSH server in a container:
-// real keys, a real host-key check, real pkg/sftp reads, this adapter,
-// and a real Kopia repository.
+// An SFTP source, end to end, against a real SSH server in a container
+// this test stands up for itself: real keys, a real host-key check, real
+// pkg/sftp reads, this adapter, and a real Kopia repository.
 //
-// It is the SFTP acceptance criterion, and it is a BackupPaths run rather
-// than a Backup one, which is the finding rather than a shortcut.
-// bundled/sftp.json declares bounded_listing false - rclone's sftp
-// backend reads a directory through pkg/sftp's ReadDir, which returns the
-// whole directory as one slice with no resumable cursor - so a walk of an
-// SFTP source is refused by the capability gate before anything is
-// dialed, and the first half of this test proves that the refusal fires
-// against the real backend rather than only against a synthetic profile.
-// What SFTP DOES declare is streaming_open, so its objects stream, and
-// the second half proves that too.
+// # It depends on no service that was already running
 //
-// It skips cleanly where docker is absent and fails loudly inside the
-// gate, which is machines.Start's own contract: a skip there would delete
-// the machine tier from a run that went on reporting ok.
+// The server is SIMULATED infrastructure, not ambient infrastructure.
+// machines.Start builds a dedicated docker network and an atmoz/sftp
+// container for this run, with freshly generated host and client keys
+// and a run directory under core/tests/.run, and registers its single
+// teardown (Source.finish) BEFORE anything can fail - so the container,
+// the network and the directory go away on a failing test, a panicking
+// test and a killed one alike, the last of those through
+// tests/dockerlease's sweep. Nothing here reads a host, a port, a key or
+// a credential from the environment, so there is no configuration under
+// which this test silently starts talking to somebody's real server.
+//
+// # A skip is a developer convenience and never the CI path
+//
+// machines.Start FAILS, loudly and marked INFRA:, when docker is missing
+// inside the gate (CI_LOCAL=1), and skips only on a laptop that has no
+// daemon. That asymmetry is the contract: a skip in CI would delete the
+// machine tier from a run that went on printing ok, which is #456.
+//
+// # Why BackupPaths and not Backup
+//
+// It is the finding rather than a shortcut. bundled/sftp.json declares
+// bounded_listing false - rclone's sftp backend reads a directory
+// through pkg/sftp's ReadDir, which returns the whole directory as one
+// slice with no resumable cursor - so a walk of an SFTP source is
+// refused by the capability gate before anything is dialed, and the
+// first half of this test proves that the refusal fires against the real
+// backend rather than only against a synthetic profile. What SFTP DOES
+// declare is streaming_open, so its objects stream, and the second half
+// proves that too.
 func TestAnSFTPSourceStreamsThroughTheAdapter(t *testing.T) {
 	fixture := machines.Start(t).Source(t)
 
