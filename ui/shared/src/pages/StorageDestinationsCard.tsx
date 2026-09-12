@@ -59,6 +59,7 @@ import type {
   StorageMediumUsage
 } from "@shared/api/contracts";
 import { useAsync } from "@shared/hooks/useAsync";
+import { useHoverTitle } from "@shared/hooks/useTooltips";
 import { Banner } from "@shared/components/Banner";
 import { ErrorState } from "@shared/components/EmptyState";
 import { ConfirmationDialog } from "@shared/components/ConfirmationDialog";
@@ -339,6 +340,10 @@ function DestinationRow({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<ApiError | null>(null);
   const [confirmingTransfer, setConfirmingTransfer] = useState(false);
+  // #829: both badges below explain themselves on hover, and that hover
+  // copy is a tooltip. The badges themselves are never conditional — what
+  // the preference removes is the pop-up, not the mark.
+  const hoverTitle = useHoverTitle();
 
   async function testConnection() {
     setBusy(true);
@@ -451,7 +456,7 @@ function DestinationRow({
           {describeDestination(medium)}
         </span>
         {medium.isDefault ? (
-          <span className="badge" title="A retention tier created from here on starts on this destination.">
+          <span className="badge" title={hoverTitle("A retention tier created from here on starts on this destination.")}>
             Default
           </span>
         ) : null}
@@ -464,7 +469,7 @@ function DestinationRow({
           <span
             className="badge"
             style={{ color: "var(--warn)" }}
-            title="This destination was declared without a check. A test connection that passes clears this."
+            title={hoverTitle("This destination was declared without a check. A test connection that passes clears this.")}
           >
             never proven
           </span>

@@ -51,6 +51,7 @@ import { ConfigurationSavedPage } from "@shared/pages/ConfigurationSavedPage";
 import { LoginPage } from "@shared/auth/LoginPage";
 import { EnrollmentPage } from "@shared/auth/EnrollmentPage";
 import { ServiceUnreachablePage, SessionCheckFailedPage } from "@shared/pages/SessionCheckFailure";
+import { TooltipOptOutDialog } from "@shared/components/TooltipOptOutDialog";
 import { isServiceUnreachable } from "@shared/api/failure";
 
 const THEME_KEY = "backupd.theme";
@@ -317,6 +318,15 @@ export function App() {
           Catalog recovery
         </button>
       </p>
+
+      {/* Issue #829, mounted once here rather than inside any tooltip
+          host: it is a modal, it is raised from the "x" of whichever
+          pop-up the operator closed first, and by the time it is answered
+          that pop-up is gone. Above every route deliberately, so the
+          answer is the same question wherever it was asked from, and
+          inside the shell so its Settings link has a page to reach.
+          Renders nothing until its node says otherwise. */}
+      <TooltipOptOutDialog />
     </AppShell>
   );
 }

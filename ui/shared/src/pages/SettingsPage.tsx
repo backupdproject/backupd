@@ -35,6 +35,8 @@ import { StorageDestinationsCard } from "@shared/pages/StorageDestinationsCard";
 import { HelpField } from "@shared/components/FieldHelp";
 import { PasswordInput } from "@shared/components/PasswordInput";
 import { FIELD_HELP } from "@shared/components/fieldHelpCopy";
+import { useTooltipsEnabled } from "@shared/hooks/useTooltips";
+import { setTooltipsEnabled } from "@shared/state/tooltipNodes";
 
 export function SettingsPage({ readOnly }: { readOnly: boolean }) {
   const navigate = useNavigate();
@@ -45,6 +47,11 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
   // which version is current.
   const version = useCausl(versionNode);
   const configured = useCausl(configuredNode);
+  // #829's toggle reads the PREFERENCE, not `useTooltipsVisible()`: a
+  // checkbox has to show what is stored, and a surface that suppressed
+  // tooltips locally would otherwise draw this control as "off" while the
+  // stored answer was on.
+  const tooltipsEnabled = useTooltipsEnabled();
 
   // The two cards below read the same destinations twice, from two
   // endpoints, into two independent fetches: the destinations card lists
@@ -127,6 +134,45 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
                   design decision, which this issue does not do. This was
                   the most urgent item in #299: not a control that merely
                   failed to save, a specific fake fact stated as true. */}
+            </div>
+          </section>
+
+          {/* Issue #829. Deliberately NOT disabled by `readOnly`: §38
+              disables management actions because this build and the
+              service disagree about the /api/v1 contract, and this
+              preference is not a management action. It is stored in this
+              browser, it is never sent anywhere, and the dialog that
+              offers the opt-out points every operator who takes it at
+              exactly this control — a version mismatch leaving it
+              unusable would mean an operator who turned tooltips off
+              having no way to turn them back on. */}
+          <section className="card">
+            <div className="card__header"><h2 className="eyebrow">Interface</h2></div>
+            <div className="card__body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <label
+                style={{
+                  display: "flex", alignItems: "center", gap: 10, padding: "11px 13px",
+                  border: "1px solid var(--border)", borderRadius: 7, fontSize: 13,
+                  cursor: "pointer"
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={tooltipsEnabled}
+                  style={{ accentColor: "var(--accent)" }}
+                  onChange={(e) => setTooltipsEnabled(e.target.checked)}
+                />
+                <span style={{ flex: 1 }}>Show tooltips on hover</span>
+                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+                  {tooltipsEnabled ? "on" : "off"}
+                </span>
+              </label>
+              <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", maxWidth: "74ch" }}>
+                Tooltips explain what a field does and what it changes. With this off,
+                no tooltip appears on hover anywhere in this interface. The setting is
+                stored in this browser only, so it does not affect anyone else using
+                this instance.
+              </p>
             </div>
           </section>
 

@@ -24,6 +24,7 @@ import { ErrorState } from "@shared/components/EmptyState";
 import { HelpField } from "@shared/components/FieldHelp";
 import { PasswordInput } from "@shared/components/PasswordInput";
 import { FIELD_HELP } from "@shared/components/fieldHelpCopy";
+import { TooltipsSuppressed } from "@shared/hooks/useTooltips";
 
 /** Issue #274, one view over from the enrolment page it was filed against:
  *  a wrong password and a rate-limited address are different problems with
@@ -44,8 +45,30 @@ export function describeLoginFailure(e: unknown): OperatorFailure {
 }
 
 /** §30 — deliberately NOT styled like a NAS system login. An operator must never
- *  believe they are handing NAS OS credentials to this app. */
+ *  believe they are handing NAS OS credentials to this app.
+ *
+ *  Issue #829's requirement 2: this screen carries no hover tooltips at
+ *  all, whatever the global preference says, so it is wrapped in the
+ *  suppression scope rather than reading the preference. It is a screen
+ *  with two fields and one button, shown to somebody who has not signed in
+ *  yet and whose first job is to not mistake it for their NAS login (see
+ *  above): pop-ups opening over that are noise on the one screen that can
+ *  least afford any. The fields keep their aria-describedby copy, which is
+ *  a description and not a pop-up, so the sign-in form stays as explained
+ *  to a screen reader as it ever was.
+ *
+ *  A wrapper rather than a provider around the body, so the scope covers
+ *  the whole screen and not only the fields that happen to have help
+ *  today. */
 export function LoginPage({ onSignedIn }: { onSignedIn(): void }) {
+  return (
+    <TooltipsSuppressed.Provider value={true}>
+      <SignInForm onSignedIn={onSignedIn} />
+    </TooltipsSuppressed.Provider>
+  );
+}
+
+function SignInForm({ onSignedIn }: { onSignedIn(): void }) {
   const api = useApi();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

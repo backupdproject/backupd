@@ -24,6 +24,7 @@ import { WarningBanner } from "@shared/components/WarningBanner";
 import { describeFailure } from "@shared/api/failure";
 import { isNotConfigured } from "@shared/api/failure";
 import { Icon } from "@shared/design-system/icons";
+import { useHoverTitle } from "@shared/hooks/useTooltips";
 import { stamp } from "@shared/utilities/format";
 import type { BackupArtifact, QuarantineReason } from "@shared/types/backup";
 
@@ -103,6 +104,10 @@ export function QuarantinePage({
   quarantine: AsyncState<BackupArtifact[]>;
 }) {
   const api = useApi();
+  // #829: the truncated detail line reveals its full text on hover, which
+  // is a tooltip the browser draws. An operator who turned tooltips off
+  // keeps the line and loses the pop-up.
+  const hoverTitle = useHoverTitle();
   // Revalidate and Retry ingestion resolve with nothing worth keeping, so
   // the reload of `quarantine` is what updates the row. This state
   // exists so that a rejected call has a visible outcome instead of a
@@ -267,7 +272,7 @@ export function QuarantinePage({
                         {a.quarantine?.detail ? (
                           <div
                             className="mono"
-                            title={a.quarantine.detail}
+                            title={hoverTitle(a.quarantine.detail)}
                             style={{
                               fontSize: "var(--text-xs)",
                               color: "var(--text-2)",
