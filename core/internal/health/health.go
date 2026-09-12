@@ -213,6 +213,13 @@ type BackupSetInputs struct {
 	// runs on every report and its empty result is a confirmation that ran
 	// rather than a question nobody asked.
 	RetentionHoldReason string
+
+	// Snapshot is the incremental engine's measurements for this set, or
+	// nil for an artifact set and for an incremental set that has never
+	// run. The caller reads it off the snapshot catalog
+	// (internal/state's snapshot runs); this package computes none of
+	// it, exactly as it computes none of the four facts above.
+	Snapshot *SnapshotHealth
 }
 
 // TransferInProgress names one artifact currently in the TRANSFERRING
@@ -429,6 +436,84 @@ type BackupSetHealth struct {
 	// lasts, next to the state, where the thing to do about it can be
 	// said in a sentence (reconcile the set, FR-17).
 	RetentionHoldReason string
+
+	// Snapshot is the incremental engine's half of this set's health, and
+	// nil for every artifact set.
+	//
+	// A pointer, so absent and empty stay different answers: a row of
+	// zeroes beside an artifact set would read as an incremental engine
+	// that ran and stored nothing, which is a claim about a pipeline that
+	// set never runs.
+	//
+	// Nothing in here reaches decideState. What an incremental set's
+	// verdict is made of is a question with its own answer (#784's
+	// verification policy and #785's retention decide when an unverified
+	// or unprotected snapshot is a degraded set), and inventing that
+	// answer here -- from four byte counts -- would be a verdict built
+	// out of throughput.
+	Snapshot *SnapshotHealth
+}
+
+// SnapshotHealth is what this set's newest snapshot run measured, in the
+// four numbers EPIC K requires to be reported separately.
+//
+// The separation is the entire content of this type. A single "bytes
+// backed up" figure cannot distinguish a 100 GB tree that was scanned,
+// read and deduplicated down to 200 MB of new content from 100 GB of
+// fresh upload, and reporting the first as the second is the specific
+// misrepresentation EPIC K names. So a surface gets four fields and can
+// render all four, and there is deliberately no total.
+type SnapshotHealth struct {
+	// RunID and SnapshotID identify the newest run and what it stored.
+	// SnapshotID is empty for a run that never committed a manifest.
+	RunID      string
+	SnapshotID string
+
+	// Phase is the newest run's durable phase (internal/state's
+	// SnapshotPhase vocabulary), so a set whose last pass failed says so
+	// rather than reporting its measurements as though they were a
+	// restore point.
+	Phase string
+
+	// EntriesScanned is how many source entries the run considered.
+	EntriesScanned int64
+
+	// LogicalBytes is the size of the tree as the source described it.
+	LogicalBytes int64
+
+	// SourceBytesRead is what the run actually pulled off the source.
+	SourceBytesRead int64
+
+	// RepositoryBytesWritten is what actually landed in the repository.
+	RepositoryBytesWritten int64
+
+	// ContentReusedBytes is what the repository did not have to store
+	// again.
+	ContentReusedBytes int64
+
+	// Measured is false when the run's counters were never taken, which
+	// is the state of a snapshot adopted by crash reconciliation: the
+	// manifest exists and the process that would have counted the bytes
+	// died. A surface renders that as "not measured", never as zero.
+	Measured bool
+
+	// VerificationStatus and VerificationLevel are what was proven and
+	// how far the set asked for it to be proven. They are two fields for
+	// the reason the catalog keeps two columns: a set configured for a
+	// restore drill whose run only verified content must not read as
+	// having drilled.
+	VerificationStatus string
+	VerificationLevel  string
+
+	// LastKnownGoodAt is when the set's last-known-good snapshot
+	// completed, nil when it has none: no successful run yet, or every
+	// successful run's snapshot has since gone from the repository.
+	LastKnownGoodAt *time.Time
+
+	// UnfinishedRuns is how many of this set's runs are in a
+	// non-terminal phase, which after a clean cycle is zero and after a
+	// crash is what reconciliation will decide about on the next one.
+	UnfinishedRuns int
 }
 
 // Report bundles one ProcessHealth with every configured backup set's

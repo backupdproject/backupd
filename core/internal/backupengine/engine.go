@@ -740,3 +740,189 @@ type StreamingRepository interface {
 	// caller closes it.
 	OpenSnapshotStream(ctx context.Context, id SnapshotID) (io.ReadCloser, error)
 }
+
+// --- the set-scoped tree snapshot (#783) ---------------------------------
+
+// SourceDir is one directory of a backup source, seen the way a
+// pull-based engine needs to see it: something that can be ASKED for its
+// children, one at a time, when the engine gets to it.
+//
+// # Why the control flow is this way round
+//
+// StreamingRepository above is push-shaped -- a caller reads an object
+// and hands the bytes over -- and that shape is what forces one snapshot
+// per object, because the caller is the one deciding when a snapshot
+// starts and ends. A snapshot that spans a whole backup set has to be
+// the other way round: the engine walks, decides what it already holds,
+// and only asks for the bytes it actually needs. So the source is
+// expressed here as a tree that can be iterated rather than as a
+// sequence of stores, and the run's errors travel back up through
+// SourceDirIterator.Next and StreamSource.Open while the engine is
+// pulling.
+//
+// Iteration is one-shot and stated as such: Open starts a pass, and a
+// source whose directory listing is a forward cursor over a remote
+// (transport.DirReader, and every backend that declares bounded_listing)
+// cannot rewind. An engine that needs a second pass opens a second
+// iterator, and an implementation that cannot serve one says so by
+// failing Open rather than by silently replaying a buffer it would have
+// had to keep.
+type SourceDir interface {
+	// Open begins one pass over this directory's children. The caller
+	// closes the iterator.
+	Open(ctx context.Context) (SourceDirIterator, error)
+}
+
+// SourceDirIterator is one pass over one directory's children.
+//
+// The three-value Next is deliberate: "no more entries" and "this walk
+// failed" are different answers, and an iterator that reported the end
+// of a directory as an error, or a failed listing as the end of one,
+// would turn an unreadable source into a snapshot that claims the
+// directory was empty. That is the one failure mode a backup must never
+// have, so it is spelled out in the signature rather than left to a
+// sentinel comparison.
+type SourceDirIterator interface {
+	// Next returns the next entry. ok is false, with a nil error, at the
+	// end of the directory. A non-nil error ends the whole snapshot: no
+	// manifest is written for a tree whose listing could not be
+	// completed.
+	Next(ctx context.Context) (entry SourceEntry, ok bool, err error)
+
+	// Close releases the pass. It is called exactly once, including on
+	// the paths where iteration stopped early.
+	Close() error
+}
+
+// SourceEntry is one child of a source directory.
+//
+// Exactly one of Dir and Stream is set, and which one it is IS the
+// entry's kind: there is no Kind field to disagree with them. An entry
+// with neither is refused by the engine rather than stored as an empty
+// file, because an entry nothing can be read from is a hole in a backup
+// and a zero-byte file is how a hole gets hidden.
+//
+// A symbolic link that a source is configured to preserve arrives here
+// as a Stream over its target string, which is what
+// backupengine/source's reading path already produces; nothing in this
+// boundary follows a link.
+type SourceEntry struct {
+	// Name is a single path element -- no slashes, never "." or ".." --
+	// in the source's own namespace. The engine joins it onto the path
+	// it is already walking, so a name carrying a separator would let a
+	// source's own directory listing decide where in the snapshot its
+	// content lands.
+	Name string
+
+	// ModTime is what the source said, at scan time. It is recorded with
+	// the entry and is not evidence about content: see SnapshotTree on
+	// why a tree snapshot does not reuse a file on the strength of it.
+	ModTime time.Time
+
+	// Size is what the listing reported, for progress and for the
+	// scanned-bytes accounting. A negative value means the source does
+	// not report one, which a streaming source legitimately does not,
+	// and nothing derives "unchanged" from this number.
+	Size int64
+
+	// Dir is the child directory, for a directory entry.
+	Dir SourceDir
+
+	// Stream is the child's content, for a file entry. It is opened by
+	// the engine, at most once, when the engine reaches it.
+	Stream StreamSource
+}
+
+// IsDir reports whether this entry is a directory, which is the same
+// question as "is Dir set".
+func (e SourceEntry) IsDir() bool { return e.Dir != nil }
+
+// TreeSnapshotRequest asks for ONE snapshot of one backup set's whole
+// source tree.
+//
+// One request is one run of one backup set, and Source is the set's own
+// identity (model.SourceIdentity), not an object's path. That is the
+// difference from StreamSnapshotRequest that the whole type exists for: a
+// run produces one manifest, under one source, so the repository's own
+// accounting -- how many sources share this domain, which snapshots
+// belong to this set, what the previous restore point was -- answers the
+// question an operator actually asked.
+type TreeSnapshotRequest struct {
+	// Source is the backup set's source identity in the repository's
+	// namespace: host, user and the set's root path.
+	Source Source
+
+	// Root is the tree to store. A nil Root is refused rather than
+	// stored as an empty snapshot.
+	Root SourceDir
+
+	// Description is operator-facing text stored with the snapshot.
+	Description string
+
+	// Tags are stored with the snapshot. Every snapshot this product
+	// writes carries TagKeyBackupSet and TagKeyDomain, and the engine
+	// sets neither: the caller owns attribution, because the caller is
+	// the only thing that knows which backup set is running.
+	Tags map[string]string
+}
+
+// TreeSnapshotInfo reports one stored tree snapshot.
+//
+// The three byte counts are three different numbers and a surface must
+// never present one as another (#783's metrics requirement):
+//
+//   - SnapshotInfo.Bytes is what was SCANNED: the logical size of the
+//     tree as the source described it.
+//   - SourceBytesRead is what this run actually pulled off the source.
+//   - RepositoryBytesWritten is what this run actually pushed into the
+//     repository's storage, after deduplication and compression.
+//
+// On a second run over a mostly-unchanged tree the first two are the
+// whole tree and the third is nearly nothing, and that gap is the only
+// honest evidence that content was reused. Reporting Bytes as "uploaded"
+// would report a deduplicated repository as growing by the size of the
+// source every night, which is the specific lie this type is shaped to
+// prevent.
+type TreeSnapshotInfo struct {
+	SnapshotInfo
+
+	// SourceBytesRead is how many bytes the run read from the source.
+	SourceBytesRead int64
+
+	// RepositoryBytesWritten is how many bytes the run wrote to the
+	// repository's storage.
+	RepositoryBytesWritten int64
+}
+
+// TreeRepository is the capability a Repository advertises when it can
+// store a whole source tree as one snapshot.
+//
+// It is a capability interface for the same reason StreamingRepository
+// is: a caller type-asserts, and an engine that cannot do this says so by
+// not satisfying it. It is not an implementation of StreamingRepository
+// and does not replace it as an interface; what it replaces is the SHAPE
+// a backup set is stored in, which is why the per-object port's own doc
+// points here.
+type TreeRepository interface {
+	Repository
+
+	// SnapshotTree walks req.Root and stores everything under it as one
+	// snapshot of req.Source, or stores nothing at all.
+	//
+	// Nothing at all is the load-bearing half. A tree whose listing
+	// failed, whose stream broke, or whose read was found to have been
+	// torn is not a snapshot with a gap in it: it is a run that produced
+	// no manifest, so no restore point is advertised and no later pass
+	// has to work out which parts of it to trust.
+	//
+	// Content is reused, files are not. Deduplication happens below this
+	// boundary, on content that has already been read, and every run
+	// reads every byte the source offers: a source's size and
+	// modification time are scan-time metadata from a live directory
+	// somebody else is writing to, and skipping a file's content on the
+	// strength of them is how a rewritten file silently stays at its old
+	// content for ever. TreeSnapshotInfo is where the resulting
+	// arithmetic is reported, and RepositoryBytesWritten is what shows
+	// the reuse actually happened.
+	SnapshotTree(ctx context.Context, req TreeSnapshotRequest) (TreeSnapshotInfo, error)
+}

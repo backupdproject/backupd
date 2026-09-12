@@ -207,6 +207,29 @@ const (
 	// to go on.
 	EventAPIAction = "api_action"
 
+	// EventSnapshotPhase records one incremental (EPIC K) snapshot run
+	// moving from one durable phase to another: the snapshot engine's
+	// half of what EventLifecycleTransition says about an artifact.
+	//
+	// It is a second event rather than a reuse of that one because the
+	// two name different things and a reader routing on either must not
+	// have to guess which it got: a lifecycle transition is about one
+	// FILE and carries an artifact id, and this is about one PASS over a
+	// whole source tree and carries a backup set, a run id and a phase
+	// vocabulary of its own (internal/state's SnapshotPhase).
+	EventSnapshotPhase = "snapshot_phase"
+
+	// EventSnapshotStats records what one finished snapshot run
+	// measured, and exists to keep four numbers apart that a single
+	// "bytes" field would collapse: entries SCANNED, bytes READ off the
+	// source, bytes WRITTEN to the repository, and bytes the repository
+	// did not have to store again.
+	//
+	// EPIC K names that collapse as the thing never to do -- reporting a
+	// 100 GB tree as 100 GB uploaded -- and a log line with one byte
+	// count is the easiest place in the product to do it by accident.
+	EventSnapshotStats = "snapshot_stats"
+
 	// EventError is the catch-all for an error that does not already have
 	// a more specific event above attached to it (for example, a failure
 	// reading config, or an unexpected panic recovered at the top of a
@@ -454,6 +477,65 @@ func (l *Logger) Retention(ctx context.Context, artifact, backupSet, tier, decis
 		slog.String("backup_set", backupSet),
 		slog.String("tier", tier),
 		slog.String("decision", decision),
+	)
+}
+
+// SnapshotPhase logs EventSnapshotPhase for one incremental snapshot run
+// changing phase.
+//
+// runID is this manager's own run identifier and snapshotID is the
+// engine's opaque manifest id, empty until a manifest exists. Neither is
+// a path and neither is a secret: a snapshot's identity in a repository
+// is a digest, which is what makes this line safe to ship to a log
+// collector for a deployment whose source paths are sensitive (#295).
+//
+// reason is the run's own sentence, and it is passed through the same
+// redaction the rest of this logger applies rather than being trusted:
+// it is assembled out of errors from the transport and the engine, by
+// code that was not written to a redaction contract.
+func (l *Logger) SnapshotPhase(ctx context.Context, backupSet, runID, snapshotID, from, to, reason string, failed bool) {
+	result := ResultInfo
+	msg := "snapshot run phase"
+
+	if failed {
+		result = ResultError
+		msg = "snapshot run failed"
+	}
+
+	l.emitMarked(ctx, result.Level(), mark{result: result}, EventSnapshotPhase, msg,
+		slog.String("backup_set", backupSet),
+		slog.String("run", runID),
+		slog.String("snapshot", snapshotID),
+		slog.String("from", from),
+		slog.String("to", to),
+		slog.String("reason", reason),
+	)
+}
+
+// SnapshotStats logs EventSnapshotStats: what one snapshot run measured,
+// in the four numbers that must never be presented as one.
+//
+// entriesScanned and logicalBytes are what the source said it holds;
+// sourceBytesRead is what this run actually pulled off it;
+// repositoryBytesWritten is what actually landed in storage; and
+// contentReusedBytes is the difference the deduplication did. A surface
+// showing logicalBytes where a reader expects "uploaded" reports a
+// deduplicated repository as growing by the whole source every night,
+// which is the claim EPIC K forbids and the reason these are five
+// separate fields on one line rather than a total.
+func (l *Logger) SnapshotStats(
+	ctx context.Context,
+	backupSet, runID string,
+	entriesScanned, logicalBytes, sourceBytesRead, repositoryBytesWritten, contentReusedBytes int64,
+) {
+	l.emitMarked(ctx, LevelInfo, mark{result: ResultInfo}, EventSnapshotStats, "snapshot run measurements",
+		slog.String("backup_set", backupSet),
+		slog.String("run", runID),
+		slog.Int64("entries_scanned", entriesScanned),
+		slog.Int64("logical_bytes", logicalBytes),
+		slog.Int64("source_bytes_read", sourceBytesRead),
+		slog.Int64("repository_bytes_written", repositoryBytesWritten),
+		slog.Int64("content_reused_bytes", contentReusedBytes),
 	)
 }
 

@@ -13,14 +13,20 @@ state:
   database: /var/lib/backupd/state.db
 
 # The security boundaries, declared where an operator can see them. Every
-# domain states its isolation: co-tenancy is never inferred.
+# domain states its isolation: co-tenancy is never inferred. Every domain a
+# set actually names also says where its repository passphrase comes from
+# -- never the passphrase itself, only where to get it.
 repository_domains:
   - id: production
     description: Production snapshots for this deployment
     isolation: shared
+    passphrase:
+      file: /run/secrets/backupd_repo_production
   - id: customer-a
     description: One customer's data, deliberately not deduplicated against anybody else's
     isolation: isolated
+    # No passphrase: nothing points at this domain yet, and a secret for a
+    # repository nothing will open is a secret with no purpose.
 
 sources:
   - id: production

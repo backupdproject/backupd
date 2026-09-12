@@ -162,6 +162,12 @@ func (s *Service) BuildHealthReport(ctx context.Context, versionInfo VersionInfo
 				// FR-30's own question, asked of every set on every report
 				// (issue #602). See retentionHoldReason.
 				RetentionHoldReason: retentionHoldReason(now, bs, records),
+
+				// EPIC K's half, for an incremental set only (#783).
+				// An artifact set gets nil, which is what keeps "this
+				// set runs no snapshots" and "its snapshots measured
+				// zero" apart on every surface that renders them.
+				Snapshot: s.snapshotHealth(ctx, bs),
 			}
 			if stat, statErr := capacity.StatPath(bs.LocalPath); statErr == nil {
 				free := stat.AvailableBytes

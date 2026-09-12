@@ -363,5 +363,12 @@ func ComputeBackupSetHealth(set model.BackupSetID, records []state.Record, reins
 		// whose retention is held is not thereby a set whose backups are
 		// degraded.
 		RetentionHoldReason: in.RetentionHoldReason,
+
+		// The sixth, and the only one that is absent rather than empty
+		// for most deployments: an artifact set has no snapshot run to
+		// report, and a zeroed block would read as one that stored
+		// nothing. Like the five above it, nothing in it reaches
+		// decideState; see BackupSetHealth.Snapshot.
+		Snapshot: in.Snapshot,
 	}
 }

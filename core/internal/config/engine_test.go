@@ -47,6 +47,11 @@ func incrementalConfig() Config {
 		ID:          "production",
 		Description: "Production snapshots for this deployment",
 		Isolation:   string(model.RepositoryShared),
+		// A domain a set actually names needs the secret that opens its
+		// repository (#783): env rather than a file so the fixture does
+		// not have to own a path, and secretref's custody rules are its
+		// own package's subject.
+		Passphrase: Passphrase{Env: "BACKUPD_TEST_REPO_PASSPHRASE"},
 	}}
 
 	incremental := c.Sources[0].BackupSets[0]
