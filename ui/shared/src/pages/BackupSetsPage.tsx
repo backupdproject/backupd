@@ -33,6 +33,7 @@ import { RemoveBackupSetDialog } from "@shared/components/RemoveBackupSetDialog"
 import { EmptyState, ErrorState } from "@shared/components/EmptyState";
 import { RunControlNotice } from "@shared/components/RunControlNotice";
 import { useRunControls } from "@shared/hooks/useRunControls";
+import { useHoverTitle } from "@shared/hooks/useTooltips";
 import { isNotConfigured } from "@shared/api/failure";
 import { backupSetPath } from "@shared/utilities/routes";
 
@@ -45,6 +46,10 @@ export function BackupSetsPage({
 }) {
   const api = useApi();
   const navigate = useNavigate();
+  // #829: the run control's hover copy is a tooltip, so it goes when the
+  // operator has turned tooltips off. Resolved here, above the page's
+  // early returns, because that is where a hook can be called.
+  const hoverTitle = useHoverTitle();
   // Reads the same shared node DashboardPage does (#95) — previously this
   // page ran its own independent listOperations() poll, so the two could
   // disagree about what was currently running for a given set.
@@ -186,7 +191,7 @@ export function BackupSetsPage({
             <button
               className="btn"
               disabled={readOnly || run.busy}
-              title="Runs one pass over every enabled backup set, not only this one."
+              title={hoverTitle("Runs one pass over every enabled backup set, not only this one.")}
               onClick={run.runAll}
             >
               Run all enabled sets

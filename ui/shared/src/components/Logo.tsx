@@ -1,6 +1,14 @@
 /** Option 1a "Cycle" — the selected mark. A broken ring reads as a transfer
  *  cycle in progress and survives 16px. Colour comes from currentColor so the
- *  provider accent token drives it with no per-provider asset. */
+ *  provider accent token drives it with no per-provider asset.
+ *
+ *  `title` is the accessible name and nothing else. It used to be rendered
+ *  as an SVG <title> child as well, which names the mark to a screen
+ *  reader but ALSO has the browser draw it as a hover tooltip — and this
+ *  mark sits in the app header and on the sign-in screen, which #829 says
+ *  carries no tooltips at all. `aria-label` on role="img" is the same name
+ *  to a screen reader with nothing drawn on hover, so the name survives
+ *  the tooltip preference rather than depending on it. */
 export function Logo({ size = 24, title }: { size?: number; title?: string }) {
   return (
     <svg
@@ -12,7 +20,6 @@ export function Logo({ size = 24, title }: { size?: number; title?: string }) {
       aria-label={title}
       style={{ color: "var(--accent)", flex: "none" }}
     >
-      {title ? <title>{title}</title> : null}
       <circle
         cx="24" cy="24" r="17" fill="none" stroke="currentColor"
         strokeWidth={size <= 20 ? 5.5 : 5} strokeLinecap="round"

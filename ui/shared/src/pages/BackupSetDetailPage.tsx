@@ -55,6 +55,7 @@ import { HelpField } from "@shared/components/FieldHelp";
 import { ErrorState } from "@shared/components/EmptyState";
 import { RunControlNotice } from "@shared/components/RunControlNotice";
 import { useRunControls } from "@shared/hooks/useRunControls";
+import { useHoverTitle } from "@shared/hooks/useTooltips";
 import { RetentionPreviewDialog } from "./RetentionPreviewDialog";
 import { BackupSetRetentionCard } from "./BackupSetRetentionCard";
 import { EDIT_FIELDS, readEditFields, visibleEditFields, withCompanions } from "./backupSetEditFields";
@@ -90,6 +91,11 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
   const setId = source && setName ? source + "/" + setName : "";
   const api = useApi();
   const navigate = useNavigate();
+  // #829: the two run controls' hover copy is tooltip text like any
+  // other, so it goes when the operator has turned tooltips off. Resolved
+  // here, above this page's early returns, because that is where a hook
+  // can be called.
+  const hoverTitle = useHoverTitle();
   // B2.2 (#97) — graph-backed, not page-local useAsync state: an edit
   // form opened against `set.data` needs a value with a real commit
   // history behind it to check staleness against (see
@@ -652,11 +658,11 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
             <button
               className="btn btn--primary"
               disabled={readOnly || run.busy || !s.enabled}
-              title={
+              title={hoverTitle(
                 s.enabled
                   ? "Runs one pass over this backup set only."
                   : "This backup set is disabled, so a run would not visit it."
-              }
+              )}
               onClick={() => run.runBackupSet(s.id)}
             >
               Run this backup set
@@ -664,7 +670,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
             <button
               className="btn"
               disabled={readOnly || run.busy}
-              title="Runs one pass over every enabled backup set, not only this one."
+              title={hoverTitle("Runs one pass over every enabled backup set, not only this one.")}
               onClick={run.runAll}
             >
               Run all enabled sets
