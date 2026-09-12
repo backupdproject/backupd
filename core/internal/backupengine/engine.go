@@ -43,6 +43,9 @@ import (
 	"errors"
 	"io"
 	"time"
+
+	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/backupdproject/backupd/core/internal/secretref"
 )
 
 // ErrRepositoryExists is returned by CreateRepository when the location
@@ -63,41 +66,171 @@ var ErrPassphrase = errors.New("backupengine: incorrect repository passphrase")
 // the case where it named something that a previous DeleteSnapshot removed.
 var ErrSnapshotNotFound = errors.New("backupengine: snapshot not found")
 
-// RepositoryLocation says where a repository lives and how to unlock it.
+// ErrStorageUnsupported is returned when a storage target is reachable and
+// authenticated but does not provide the semantics a content-addressed
+// repository needs -- read-after-write on both reads and listings, atomic
+// whole-blob writes, range reads, and timestamps that do not run
+// backwards.
 //
-// Kind is a closed set (LocationLocal is currently its only member) rather
-// than a free-form backend URL, because every additional backend is a
-// decision with a dependency and a failure mode attached, the way
-// internal/transport/rclone treats registered backends.
+// It exists because "S3-compatible" is a marketing claim, not a
+// specification, and the ways a partial implementation fails are exactly
+// the ways that cannot be recovered from later: an index blob that is not
+// visible in a listing right after it was written does not produce an
+// error, it produces a repository that has forgotten some of its content.
+// So the gap is found by probing at create time and reported as a
+// refusal, rather than discovered as corruption during the first restore
+// somebody needed.
+var ErrStorageUnsupported = errors.New("backupengine: storage target does not provide the semantics a repository requires")
+
+// RepositoryLocation says which repository is wanted, where its bytes
+// live, and where the two secrets that reach it come from.
+//
+// Kind is a closed set rather than a free-form backend URL, because every
+// additional backend is a decision with a dependency and a failure mode
+// attached, the way internal/transport/rclone treats registered backends.
+//
+// # Why a Domain rather than a path
+//
+// A repository's identity is its Repository Domain
+// (model.RepositoryDomain), not the directory or bucket it happens to sit
+// in. That is what makes "reopen the same repository after a restart" a
+// question with an answer: the process that comes back up has the config
+// file, the cache and possibly the mount point in a different state, and
+// the only stable thing is the id an operator declared. Deriving the
+// storage location FROM the id, rather than carrying both and hoping they
+// agree, also removes the failure this package's checkStorageIdentity
+// exists to catch at its source.
+//
+// # Why the secrets are references
+//
+// Passphrase and S3.Credentials name where a secret comes from and never
+// carry one, so a RepositoryLocation is safe to log, to render into an
+// error and to keep in a struct for the life of a daemon. The material is
+// resolved by the adapter at the moment it opens storage and dropped
+// immediately afterwards, which is the shortest lifetime available to a
+// library that has to hand a passphrase to somebody else's Open call.
 type RepositoryLocation struct {
 	Kind LocationKind
 
-	// Path is the directory holding repository blobs, for LocationLocal.
-	Path string
+	// Domain is the repository's stable identity. It names the encryption,
+	// credential, maintenance, deduplication, corruption and
+	// administrative boundary every backup set stored here shares; see
+	// model.RepositoryDomain, which is where that argument lives and where
+	// co-tenancy is decided.
+	Domain model.RepositoryDomainID
 
-	// ConfigPath is the file this process writes its connection parameters
-	// to. It is ours to place, not the engine's to choose, because a
-	// process-wide default config location is shared mutable state between
-	// unrelated backupd invocations.
-	ConfigPath string
+	// Root is the backup root for LocationLocal: the directory this
+	// manager already owns on the machine it runs on. The repository is
+	// NOT placed directly in it. It goes under the reserved namespace
+	// ReservedLocalDir computes, because a backup root is the directory a
+	// NAS deployment exports and an artifact catalog walks, and pack files
+	// sitting next to artifacts are pack files something eventually
+	// treats as artifacts.
+	Root string
 
-	// CachePath is where the engine may keep its index and metadata caches.
-	// Empty means no persistent cache, which is slower and always correct.
-	CachePath string
+	// S3 is the bucket for LocationS3, and is ignored for every other
+	// kind.
+	S3 S3Storage
 
-	// Passphrase unlocks the repository. It is carried here and nowhere
-	// else; nothing in this package logs, formats or persists it.
-	Passphrase string
+	// StateDir is where this process keeps the repository's connection
+	// config, its index cache and its maintenance-ownership record: local
+	// state about a repository, never repository content.
+	//
+	// It is ours to place, not the engine's to choose, because a
+	// process-wide default config location is shared mutable state
+	// between unrelated backupd invocations. It belongs under this
+	// manager's private state directory (/var/lib/backupd), never under
+	// Root: #298 was filed over exactly that exposure for the SSH key,
+	// and a cache directory under an exported backup root is the same
+	// mistake with more bytes in it.
+	//
+	// Empty is accepted only for LocationLocal, where it resolves to the
+	// reserved namespace under Root. An S3 repository has nowhere to put
+	// local state implicitly, so it must be told.
+	StateDir string
+
+	// Passphrase names where the repository passphrase comes from. It is
+	// required for every kind: a repository this product creates is
+	// always encrypted.
+	Passphrase secretref.Ref
 }
 
 // LocationKind names a repository storage backend this boundary speaks.
 type LocationKind string
 
-// LocationLocal is a repository in a directory on a locally reachable
-// filesystem, which includes an already-mounted network share. It is the only
-// kind Phase 0 proves, and the absence of a second constant is deliberate:
-// adding one means proving it, not typing it.
-const LocationLocal LocationKind = "local"
+const (
+	// LocationLocal is a repository under the backup root on a locally
+	// reachable filesystem, which includes an already-mounted network
+	// share.
+	LocationLocal LocationKind = "local"
+
+	// LocationS3 is a repository in an S3 bucket, reached natively.
+	//
+	// Natively is the load-bearing word. The embedded engine also has a
+	// provider that proxies through rclone, and using it would have made
+	// every backend rclone speaks available for free; it is refused
+	// because a repository is not a file copy. It needs read-after-write
+	// listings, atomic writes and stable timestamps from the thing
+	// underneath it, an rclone remote provides whatever its own backend
+	// provides, and the failure mode of getting that wrong is a
+	// repository that silently forgets content. rclone stays on the
+	// source side, where a wrong answer is a failed read.
+	LocationS3 LocationKind = "s3"
+)
+
+// S3Storage is the operator-configured description of an S3 bucket a
+// repository lives in.
+//
+// It is deliberately the same set of facts config.StorageMedium already
+// collects for an artifact destination -- endpoint, region, bucket,
+// prefix, and a credential REFERENCE -- because an operator who has
+// already told this product how to reach a bucket should not have to
+// describe it a second time in a second vocabulary for the repository
+// that lives in it.
+//
+// There is no field for "do not verify TLS", and there will not be. A
+// knob that disables authentication of the endpoint, on the connection
+// carrying every backup this product holds, is not a convenience; a
+// private CA is a real situation and RootCA is the answer to it.
+type S3Storage struct {
+	// Endpoint is the service endpoint as a URL, e.g.
+	// https://minio.example:9000, spelled exactly as
+	// config.StorageMedium.Endpoint spells it. Empty means AWS's own
+	// endpoint for Region.
+	//
+	// An http:// endpoint is accepted and means what it says: no TLS.
+	// That is a real deployment (a MinIO on a trusted LAN segment, a test
+	// fixture) and pretending otherwise would only push operators towards
+	// disabling verification instead, which is worse.
+	Endpoint string
+
+	// Region is the provider region, passed through unexamined for
+	// config.StorageMedium.Region's reason: the set of legal regions
+	// belongs to the provider and changes without this product being
+	// rebuilt.
+	Region string
+
+	// Bucket holds the repository. This product never creates a bucket:
+	// bucket creation is an account-level act with billing and policy
+	// consequences, and an operator who mistyped a name deserves a
+	// refusal rather than a second empty bucket.
+	Bucket string
+
+	// Prefix is the key namespace inside Bucket, so one bucket can hold
+	// more than one repository, or a repository beside something else
+	// entirely. Empty puts the repository at the root of the bucket.
+	Prefix string
+
+	// Credentials names where this bucket's credentials come from. The
+	// material behind it is AWS shared-credentials text, which is what
+	// config.MediumCredentials already points at.
+	Credentials secretref.Ref
+
+	// RootCA is a PEM certificate bundle to trust in addition to the
+	// system roots, for an endpoint behind a private CA. Empty means the
+	// system roots, which is the ordinary case.
+	RootCA []byte
+}
 
 // Source identifies what gets backed up, in the engine's own namespace.
 //
@@ -118,6 +251,44 @@ type Source struct {
 // stores it as a string without interpreting it.
 type SnapshotID string
 
+// The tag keys every snapshot this product writes carries.
+//
+// # Why the repository has to be told who owns a snapshot
+//
+// A repository serves a Repository Domain, and a domain may be shared by
+// several backup sets (model.RepositoryDomain.MayShare) or declared
+// isolated, in which case it may not. Nothing about a stored snapshot says
+// which set put it there: the engine's own source identity is a
+// host/user/path triple, and a streaming set writes one of those PER
+// OBJECT, so counting them answers a different question from the one the
+// isolation rule asks. These two tags are how a snapshot carries the
+// answer, and RepositoryStats.Sources is counted from the first of them.
+//
+// # Why the literal strings are here and not at the caller
+//
+// Because they are a WRITE/READ contract between two packages that never
+// call each other: the sink that stores a snapshot sets them, and this
+// package's repository adapter counts them. A literal at each end is two
+// strings that agree until somebody edits one.
+//
+// The "backupd." prefix keeps them out of the way of the vendor's own
+// manifest labels and of any tag an operator sets by hand with the
+// vendor's CLI against their own bucket.
+const (
+	// TagKeyBackupSet is the backup set a snapshot belongs to, as
+	// model.BackupSetID renders it ("source/set").
+	TagKeyBackupSet = "backupd.set"
+
+	// TagKeyDomain is the Repository Domain the snapshot was written for,
+	// as model.RepositoryDomainID renders it.
+	//
+	// It is redundant with the repository a snapshot is in, and that is
+	// the point: a snapshot whose domain tag disagrees with the repository
+	// holding it is a snapshot written somewhere it does not belong, and
+	// the tag is the only evidence that would survive to say so.
+	TagKeyDomain = "backupd.domain"
+)
+
 // SnapshotRequest asks for one snapshot of one source.
 type SnapshotRequest struct {
 	Source Source
@@ -128,6 +299,11 @@ type SnapshotRequest struct {
 
 	// Tags are stored with the snapshot for later selection. Keys and
 	// values are ours; the engine only records them.
+	//
+	// Every snapshot this product writes carries TagKeyBackupSet and
+	// TagKeyDomain. See them: the co-tenancy number in RepositoryStats is
+	// counted from the first, and a snapshot without it is one nothing can
+	// attribute.
 	Tags map[string]string
 }
 
@@ -233,6 +409,126 @@ type MaintenanceReport struct {
 	Ran bool
 }
 
+// HealthWarningKind names a condition a repository can be in that is not
+// a failure and is not fine either.
+//
+// The set is closed so that a caller can route on one -- raise an alert,
+// refuse to start a maintenance window -- without matching prose, and so
+// that adding a condition is a deliberate act with a name an operator will
+// read.
+type HealthWarningKind string
+
+const (
+	// HealthWarningClockSkew means this machine's clock and the storage's
+	// own idea of the time disagree by more than a repository can safely
+	// tolerate.
+	//
+	// It matters because almost everything a repository does about
+	// concurrency and reclamation is expressed in timestamps: a
+	// maintenance lock is held until a time, a blob is too recent to
+	// garbage-collect until a time, and a snapshot's own start time is
+	// what retention later reasons about. A clock an hour fast can make
+	// one process believe another's lock has expired while it is still
+	// held; a clock an hour slow can make freshly written content look old
+	// enough to reclaim. Neither produces an error at the time.
+	//
+	// This is a WARNING and never a refusal, deliberately. The
+	// alternative is a product that stops backing up because an NTP
+	// server was unreachable, which trades a risk for a certainty. Fixing
+	// it is time synchronisation, which is the operating system's job and
+	// not this product's.
+	HealthWarningClockSkew HealthWarningKind = "clock_skew"
+
+	// HealthWarningUnreachable means the repository's storage did not
+	// answer, or answered without providing what a repository needs.
+	//
+	// It accompanies HealthReport.Reachable == false, and it exists so
+	// that "unreachable" carries WHICH part failed: a NAS that is asleep,
+	// a bucket policy that started denying deletes and a credential that
+	// expired are the same unreachable and three different jobs to do.
+	//
+	// Unlike the kind above this is not a "working but worth attention"
+	// condition. Health returns it beside an error, and a caller that
+	// must decide whether to start a backup reads the error; a caller
+	// that must show an operator a status reads this.
+	HealthWarningUnreachable HealthWarningKind = "unreachable"
+)
+
+// HealthWarning is one thing worth an operator's attention about a
+// repository that is nonetheless working.
+type HealthWarning struct {
+	// Kind is what was found, from the closed set above.
+	Kind HealthWarningKind
+
+	// Detail is the operator-facing sentence: what was measured, what was
+	// expected, and what to do. It never carries a credential, a
+	// passphrase or any part of either.
+	Detail string
+}
+
+// HealthReport is what a health check found.
+//
+// Reachable and Warnings answer two different questions and a caller needs
+// both: a repository can be perfectly reachable and have a clock that will
+// corrupt its next maintenance window, and it can be unreachable for a
+// reason that has nothing wrong with it (a NAS that is asleep).
+type HealthReport struct {
+	// Reachable is whether the storage answered a read and a write.
+	//
+	// It is proved rather than assumed: a repository handle stays open
+	// across a network partition and every method on it would fail, so
+	// "we have a handle" is not evidence and this check does not treat it
+	// as any.
+	Reachable bool
+
+	// Warnings is everything found that is not a failure, in the order it
+	// was checked. Empty means nothing was found, which is the answer an
+	// operator wants and the only one they should get when it is true.
+	Warnings []HealthWarning
+}
+
+// RepositoryStats reports what a repository holds.
+//
+// The numbers here are the PHYSICAL ones, which is the distinction that
+// makes this type worth having beside SnapshotInfo. A snapshot's Bytes is
+// the logical size of what was backed up and is the same for the tenth
+// snapshot of an unchanged tree as for the first; what an operator needs
+// to know is how much storage the repository is actually occupying, which
+// only the storage can answer.
+type RepositoryStats struct {
+	// Sources is how many distinct BACKUP SETS have snapshots here.
+	//
+	// It is the co-tenancy number: a Repository Domain declared isolated
+	// whose repository reports two sources is a boundary that has already
+	// been crossed, and that claim is why the count is over backup sets
+	// and not over the engine's own source identities. A streaming set
+	// writes one engine source per OBJECT, so a count of those would
+	// report forty co-tenants for one set of forty database dumps.
+	//
+	// The identity counted is the TagKeyBackupSet tag every snapshot this
+	// product writes carries. Snapshots carrying no such tag -- which
+	// this product does not produce, and an operator's own use of the
+	// vendor's CLI against the same bucket would -- count as one
+	// unattributed tenant between them, because content sharing a
+	// domain's key that nothing can attribute is still content sharing
+	// the domain's key.
+	Sources int
+
+	// Snapshots is how many snapshots the repository holds across every
+	// source.
+	Snapshots int
+
+	// Blobs is how many storage objects the repository occupies, and
+	// PhysicalBytes is their total size.
+	//
+	// Both are read from the storage's own listing rather than from the
+	// repository's index, because the question they answer is "what is
+	// this costing" and the answer to that is whatever is really there,
+	// including blobs an interrupted maintenance left behind.
+	Blobs         int
+	PhysicalBytes int64
+}
+
 // Engine creates and opens repositories. It holds no repository state.
 type Engine interface {
 	// CreateRepository initializes a new repository at the location and
@@ -262,6 +558,16 @@ type Repository interface {
 	// ListSnapshots returns snapshots of one source, oldest first.
 	ListSnapshots(ctx context.Context, src Source) ([]SnapshotInfo, error)
 
+	// LookupSnapshot returns one snapshot by its identity, or
+	// ErrSnapshotNotFound.
+	//
+	// It exists beside ListSnapshots because the catalog stores a
+	// SnapshotID and later has to ask what became of it, and answering
+	// that by listing a source's snapshots and scanning for a match costs
+	// a manifest load per snapshot and cannot answer at all for a source
+	// whose identity has since changed.
+	LookupSnapshot(ctx context.Context, id SnapshotID) (SnapshotInfo, error)
+
 	// Verify reads a snapshot's content back and reports damage. A nil
 	// error means it completed and found nothing; anything else is an
 	// error plus a report of what it managed to read. See VerifyReport,
@@ -281,6 +587,22 @@ type Repository interface {
 	// Maintain performs repository housekeeping, including reclaiming
 	// space for content that DeleteSnapshot orphaned.
 	Maintain(ctx context.Context, mode MaintenanceMode) (MaintenanceReport, error)
+
+	// Health reports whether this repository is usable right now, and
+	// what is worth an operator's attention even though it still works.
+	//
+	// A nil error means the check completed; it does NOT mean everything
+	// is fine, because the interesting answers are warnings rather than
+	// failures. Read HealthReport.
+	Health(ctx context.Context) (HealthReport, error)
+
+	// Stats reports what the repository holds and what it costs.
+	//
+	// It is separate from Health because the two have different costs and
+	// different callers: health is a cheap preflight something runs before
+	// every backup, and stats walks the storage's blob listing, which on a
+	// bucket with a large repository in it is a real number of requests.
+	Stats(ctx context.Context) (RepositoryStats, error)
 
 	// Close releases the repository. Safe to call twice.
 	Close(ctx context.Context) error
