@@ -194,6 +194,65 @@ owned this yet; claim it) from "unreadable record" (something is wrong;
 absolutely do not claim it), because reading the second as the first is how
 two instances both decide they own maintenance.
 
+### S3 test fixture: why MinIO, not kumo
+
+AWS-service simulation in this repository is otherwise the kumo emulator
+(`ghcr.io/sivchari/kumo`), and this suite is a deliberate, recorded
+exception rather than an oversight.
+
+kumo cannot back a Kopia repository. It accepts an AWS SigV4 **streaming**
+upload (`x-amz-content-sha256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, an
+`aws-chunked` body) with a 200 and then stores the chunk-framed request
+body verbatim instead of decoding the framing, so every object arrives
+corrupt. Measured through this adapter's own capability probe:
+
+| written | read back |
+| --- | --- |
+| 1 byte | 173 bytes |
+| 256 bytes | 430 bytes |
+
+A constant +172 bytes, which is exactly the framing: a chunk header
+(`100;chunk-signature=` plus a 64-character signature), a CRLF, a
+terminating zero-length chunk, and a final CRLF. An **unsigned** `curl`
+PUT to the same server round-trips byte-identically, which places the
+fault on the signed streaming path rather than on storage. Streaming
+signatures are minio-go's default for a plaintext endpoint, and minio-go
+is the client inside the vendor's native S3 provider, so this is the
+default path for every write this product would make.
+
+The probe refuses it with `ErrStorageUnsupported` and the message
+"returned 430 bytes for a blob of 256 that was just written to it". That
+is the probe doing exactly what the section above builds it for, and it is
+the reason the probe is not negotiable: weakening it so a convenient
+fixture passes would delete the only check that catches silent write
+corruption.
+
+**The rule this sets:** an S3 emulator is chosen by fidelity to the exact
+wire protocol the client speaks — `aws-chunked` streaming uploads, range
+reads, listing consistency, server timestamps — and never by how little it
+costs to start. A fixture that is wrong about the protocol does not make a
+client test easier, it makes it meaningless. MinIO is used here because it
+is right about the protocol, and it runs as an **ephemeral container,
+started per run and torn down per run including on the failure path**: the
+teardown is registered as soon as the container exists and before
+readiness is waited on, so a server that never comes up is still removed,
+and the container carries the `tests/dockerlease` label so a process that
+is killed outright is swept later.
+
+**What this costs, stated rather than papered over:** kumo does not
+authenticate requests at all, and MinIO does, so a refusal that depends on
+the endpoint rejecting a signature is provable on MinIO and would not have
+been on kumo. The coverage that matters either way is the refusal this
+product owns: a credential source that does not contain
+shared-credentials text is refused *before* a request is made, naming the
+file and echoing none of the material, because the alternative is an
+`AccessDenied` nobody can trace back to a bad resolver. Both are in the
+S3 matrix.
+
+The defect is worth reporting upstream and is not this repository's to
+fix; the reproduction above is byte-exact and does not depend on anything
+in this tree.
+
 ## Consequences
 
 - `Repository` gains `LookupSnapshot`, `Health` and `Stats`. Lookup exists

@@ -145,6 +145,13 @@ func startMedium(t *testing.T, opts mediumOptions) *Medium {
 		t.Fatalf("machines: docker run: %v\n%s", err, errOut)
 	}
 	f.containerID = strings.TrimSpace(stdout)
+	// Registered as soon as the container exists and BEFORE readiness is
+	// waited on, so a server that never comes up is still removed.
+	// t.Cleanup runs on the failure path too, which is what makes "the
+	// container always goes away" true rather than usually true; the
+	// labelled sweep in tests/dockerlease is the backstop for a process
+	// that is killed outright. ADR 0011 records this as the hermetic
+	// requirement the S3 fixture has to meet.
 	t.Cleanup(func() {
 		_, _, _ = dockerRun(dockerExecTimeout, "rm", "-f", f.containerID)
 	})
