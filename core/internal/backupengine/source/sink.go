@@ -149,15 +149,8 @@ type Sink interface {
 // domain, which is a co-tenancy signal that says the opposite of the
 // truth and is the reason these exist.
 //
-// They are string literals here and constants in backupengine after
-// #781 lands (backupengine.TagKeyBackupSet, backupengine.TagKeyDomain).
-// The literals are agreed across both branches; when that port merges
-// these two declarations go away and the references below become the
-// constants, with no change to what is written.
-const (
-	tagKeyBackupSet = "backupd.set"
-	tagKeyDomain    = "backupd.domain"
-)
+// The keys are backupengine.TagKeyBackupSet and
+// backupengine.TagKeyDomain, plumbed through the snapshot port (#781).
 
 // RepositorySink stores each object as one streamed snapshot in a backup
 // repository.
@@ -282,8 +275,8 @@ func (s RepositorySink) snapshotTags() (map[string]string, error) {
 		tags[k] = v
 	}
 
-	tags[tagKeyBackupSet] = s.Ref.Set.String()
-	tags[tagKeyDomain] = s.Ref.Domain.String()
+	tags[backupengine.TagKeyBackupSet] = s.Ref.Set.String()
+	tags[backupengine.TagKeyDomain] = s.Ref.Domain.String()
 
 	return tags, nil
 }

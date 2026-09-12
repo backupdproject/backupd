@@ -20,6 +20,7 @@ import (
 	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
 	"github.com/backupdproject/backupd/core/internal/backupengine/source"
 	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/backupdproject/backupd/core/internal/secretref"
 	"github.com/backupdproject/backupd/core/internal/transport"
 	"github.com/backupdproject/backupd/core/internal/transport/rclone"
 )
@@ -29,19 +30,24 @@ const integrationPassphrase = "a-passphrase-long-enough-to-be-a-passphrase"
 // realRepository opens a filesystem repository under a fresh temp root and
 // returns it with that root, so a test can assert that nothing staged the
 // source anywhere near it.
-func realRepository(t *testing.T) (backupengine.StreamingRepository, string) {
+func realRepository(t *testing.T) (backupengine.StreamingRepository, string, string) {
 	t.Helper()
 
 	root := t.TempDir()
+	domain, err := model.NewRepositoryDomainID("production")
+	if err != nil {
+		t.Fatalf("NewRepositoryDomainID: %v", err)
+	}
+	passFile := filepath.Join(t.TempDir(), "passphrase")
+	if err := os.WriteFile(passFile, []byte(integrationPassphrase), 0o600); err != nil {
+		t.Fatalf("writing the passphrase file: %v", err)
+	}
 	loc := backupengine.RepositoryLocation{
 		Kind:       backupengine.LocationLocal,
-		Path:       filepath.Join(root, "repo"),
-		ConfigPath: filepath.Join(root, "state", "repository.config"),
-		Passphrase: integrationPassphrase,
-	}
-
-	if err := os.MkdirAll(filepath.Dir(loc.ConfigPath), 0o750); err != nil {
-		t.Fatalf("creating the state directory: %v", err)
+		Domain:     domain,
+		Root:       root,
+		StateDir:   filepath.Join(t.TempDir(), "state"),
+		Passphrase: secretref.Ref{File: passFile},
 	}
 
 	eng := kopia.New()
@@ -67,7 +73,12 @@ func realRepository(t *testing.T) (backupengine.StreamingRepository, string) {
 		t.Fatalf("%T is not a streaming repository", rep)
 	}
 
-	return streaming, root
+	repoDir, err := backupengine.ReservedLocalDir(root, domain)
+	if err != nil {
+		t.Fatalf("ReservedLocalDir: %v", err)
+	}
+
+	return streaming, root, repoDir
 }
 
 // testRef is a valid repository reference, which the production sink
@@ -123,7 +134,7 @@ func TestALocalTreeStreamsThroughTheAdapterIntoARealRepository(t *testing.T) {
 	adapter := rclone.New()
 	src := transport.Source{ID: "local-source", Type: "local", Root: sourceDir}
 
-	repo, repoRoot := realRepository(t)
+	repo, repoRoot, repoDir := realRepository(t)
 
 	sink := source.RepositorySink{
 		Repo:        repo,
@@ -214,7 +225,7 @@ func TestALocalTreeStreamsThroughTheAdapterIntoARealRepository(t *testing.T) {
 	// there; everywhere else under the run's root - a cache, a temp
 	// directory, a partial file - must hold nothing the size of an
 	// object, because a staging copy is exactly what that would be.
-	assertNothingStaged(t, repoRoot, filepath.Join(repoRoot, "repo"))
+	assertNothingStaged(t, repoRoot, repoDir)
 
 	// And the source is untouched.
 	for name, body := range files {
@@ -439,7 +450,7 @@ func TestCancellationAgainstARealSourceLeavesNothingRunning(t *testing.T) {
 
 	adapter := rclone.New()
 	src := transport.Source{ID: "cancel", Type: "local", Root: sourceDir}
-	repo, _ := realRepository(t)
+	repo, _, _ := realRepository(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -503,7 +514,7 @@ func TestARealFileRewrittenMidReadIsNotLeftInTheRepository(t *testing.T) {
 
 	adapter := rclone.New()
 	src := transport.Source{ID: "busy", Type: "local", Root: sourceDir}
-	repo, _ := realRepository(t)
+	repo, _, _ := realRepository(t)
 
 	var (
 		rewritten atomic.Bool
@@ -687,7 +698,7 @@ func TestACancelAfterAStoreLeavesNoUnverifiedSnapshotBehind(t *testing.T) {
 
 	adapter := rclone.New()
 	src := transport.Source{ID: "late", Type: "local", Root: sourceDir}
-	repo, _ := realRepository(t)
+	repo, _, _ := realRepository(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

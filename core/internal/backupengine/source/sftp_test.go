@@ -77,7 +77,7 @@ func TestAnSFTPSourceStreamsThroughTheAdapter(t *testing.T) {
 	adapter := rclone.New()
 	src := fixture.TransportSource("sftp-source", "")
 
-	repo, repoRoot := realRepository(t)
+	repo, repoRoot, repoDir := realRepository(t)
 
 	sink := source.RepositorySink{
 		Repo:        repo,
@@ -173,7 +173,7 @@ func TestAnSFTPSourceStreamsThroughTheAdapter(t *testing.T) {
 	// over SFTP is the claim that matters most: the obvious
 	// implementation is an sftp GET to a temp file followed by a local
 	// read of it.
-	assertNothingStaged(t, repoRoot, filepath.Join(repoRoot, "repo"))
+	assertNothingStaged(t, repoRoot, repoDir)
 
 	// And the SFTP source still holds everything it did.
 	for name, body := range seed {
@@ -241,7 +241,7 @@ func TestAnSFTPRunsLoginCostDoesNotGrowWithTheObjectCount(t *testing.T) {
 
 	adapter := rclone.New()
 	src := fixture.TransportSource("sftp-session", "")
-	repo, _ := realRepository(t)
+	repo, _, _ := realRepository(t)
 
 	a, err := source.New(source.Deps{Streamer: adapter, Stater: adapter}, source.Options{
 		Mode:   model.ModeLiveBestEffort,
