@@ -2,12 +2,15 @@ package secretref_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/backupdproject/backupd/core/internal/config"
@@ -259,6 +262,237 @@ func TestRefStringNamesTheSourceNeverTheMaterial(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRefNeverRendersTheResolverArgvOnAnyPath is the CRITICAL half of the
+// "a Ref is safe to log" claim, and String() is not enough to make it.
+//
+// Production logging goes through slog.NewJSONHandler, which does not
+// consult fmt.Stringer: it reflects over the value and emits every
+// exported field, so a Ref logged as a structured attribute used to print
+// its whole Command array -- the vault path, the role and, in the shape
+// below, a token. encoding/json does the same to any struct a Ref is a
+// field of, and %#v does it to a debug print. Each rendering below is a
+// separate mechanism with its own opt-in method, which is why each one is
+// asserted rather than assumed to follow from String().
+func TestRefNeverRendersTheResolverArgvOnAnyPath(t *testing.T) {
+	t.Parallel()
+
+	ref := secretref.Ref{Command: []string{"/bin/vault", "read", "--token", argvCanary}}
+
+	encoded, err := json.Marshal(ref)
+	if err != nil {
+		t.Fatalf("json.Marshal(Ref): %v", err)
+	}
+
+	// A Ref is a field of a repository location, and that is how it
+	// reaches a diagnostic dump or an API response: inside something else.
+	type location struct {
+		Domain     string
+		Passphrase secretref.Ref
+	}
+
+	nested, err := json.Marshal(location{Domain: "production", Passphrase: ref})
+	if err != nil {
+		t.Fatalf("json.Marshal(struct holding a Ref): %v", err)
+	}
+
+	text, err := ref.MarshalText()
+	if err != nil {
+		t.Fatalf("MarshalText: %v", err)
+	}
+
+	var logged, loggedNested strings.Builder
+
+	slog.New(slog.NewJSONHandler(&logged, nil)).Info("opening repository", "passphrase", ref)
+	slog.New(slog.NewJSONHandler(&loggedNested, nil)).Info("opening repository",
+		"location", location{Domain: "production", Passphrase: ref})
+
+	for _, rendering := range []struct {
+		label string
+		text  string
+	}{
+		{"%v", fmt.Sprintf("%v", ref)},
+		{"%+v", fmt.Sprintf("%+v", ref)},
+		{"%#v", fmt.Sprintf("%#v", ref)},
+		{"json", string(encoded)},
+		{"json inside a struct", string(nested)},
+		{"MarshalText", string(text)},
+		{"slog json handler", logged.String()},
+		{"slog json handler, nested in a struct", loggedNested.String()},
+	} {
+		if strings.Contains(rendering.text, argvCanary) {
+			t.Errorf("the %s rendering carries the resolver's token: %s", rendering.label, rendering.text)
+		}
+
+		// The whole argv is refused, not only the token in it: the
+		// argument that carries a secret is whichever one the operator's
+		// secrets manager takes it in, and this package does not get to
+		// guess which position that is.
+		if strings.Contains(rendering.text, "--token") || strings.Contains(rendering.text, "read") {
+			t.Errorf("the %s rendering carries the resolver's arguments: %s", rendering.label, rendering.text)
+		}
+
+		// And the executable IS rendered, on every path. A redaction that
+		// hid which resolver ran would make a broken resolver
+		// undiagnosable, which is the mistake in the other direction.
+		if !strings.Contains(rendering.text, "/bin/vault") {
+			t.Errorf("the %s rendering does not name the resolver executable, so a broken resolver cannot be found: %s",
+				rendering.label, rendering.text)
+		}
+	}
+}
+
+// argvCanary is the token the resolver invocation above carries in its
+// arguments, which is where a secrets-manager call really does put one.
+const argvCanary = "s.canary-vault-token-6d41b0"
+
+// TestResolveRefusesASecretFileOutOfCustody is the file source's half of
+// the custody model, and it is the same rule the medium plane already
+// enforces on a credentials file (internal/transport/rclone/mediumcreds.go):
+// a secret this process reads must be one no other local account could
+// read, replace or substitute.
+//
+// Every row is a real deployment mistake rather than an exotic one, and
+// each one defeats the custody argument completely on its own: a
+// world-readable passphrase is readable by every account on the NAS, a
+// group-writable containing directory lets any member of that group swap
+// the file whatever its own mode says, and a fifo or a device in place of
+// the file is material supplied by whoever opened the other end.
+func TestResolveRefusesASecretFileOutOfCustody(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name string
+		// path returns the file to declare, having put whatever the case
+		// is about in place.
+		path func(t *testing.T) string
+	}{
+		{"world-readable", func(t *testing.T) string {
+			t.Helper()
+
+			return writeFileMode(t, "world-readable", theSecret, 0o644)
+		}},
+		{"group-readable", func(t *testing.T) string {
+			t.Helper()
+
+			return writeFileMode(t, "group-readable", theSecret, 0o640)
+		}},
+		{"a symbolic link", func(t *testing.T) string {
+			t.Helper()
+
+			real := writeFile(t, "passphrase", theSecret)
+			link := filepath.Join(t.TempDir(), "link-to-passphrase")
+
+			if err := os.Symlink(real, link); err != nil {
+				t.Fatalf("creating a symbolic link: %v", err)
+			}
+
+			return link
+		}},
+		{"a fifo rather than a file", func(t *testing.T) string {
+			t.Helper()
+
+			path := filepath.Join(t.TempDir(), "fifo")
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Fatalf("creating a fifo: %v", err)
+			}
+
+			return path
+		}},
+		{"a directory rather than a file", func(t *testing.T) string {
+			t.Helper()
+
+			return t.TempDir()
+		}},
+		{"a group-writable containing directory", func(t *testing.T) string {
+			t.Helper()
+
+			dir := filepath.Join(t.TempDir(), "shared")
+			if err := os.Mkdir(dir, 0o770); err != nil {
+				t.Fatalf("creating a group-writable directory: %v", err)
+			}
+
+			// Past the umask, which would otherwise take the group write
+			// bit straight back off and make this row assert nothing.
+			if err := os.Chmod(dir, 0o770); err != nil {
+				t.Fatalf("chmod 0770: %v", err)
+			}
+
+			path := filepath.Join(dir, "passphrase")
+			if err := os.WriteFile(path, []byte(theSecret), 0o600); err != nil {
+				t.Fatalf("writing the secret file: %v", err)
+			}
+
+			return path
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := tc.path(t)
+
+			secret, err := secretref.Resolve(ctx, secretref.Ref{File: path})
+			if !errors.Is(err, secretref.ErrCustody) {
+				t.Fatalf("Resolve(%s) = %v, want ErrCustody", tc.name, err)
+			}
+
+			// The refusal names the path so an operator can fix it, and
+			// carries nothing that was behind it.
+			if !strings.Contains(err.Error(), path) {
+				t.Errorf("the refusal does not name the file it refused: %v", err)
+			}
+
+			assertNoSecret(t, "the custody refusal", err.Error())
+			assertNoSecret(t, "the secret returned beside it", fmt.Sprintf("%v", secret))
+		})
+	}
+}
+
+// TestResolveAcceptsATightlyHeldSecretFile is the other side of the rows
+// above, and it is what makes them a rule rather than a refusal of
+// everything: the mode this project writes a secret file with is accepted,
+// and so is the read-only 0400 an operator hand-writes.
+func TestResolveAcceptsATightlyHeldSecretFile(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	for _, mode := range []os.FileMode{0o600, 0o400, 0o700} {
+		t.Run(fmt.Sprintf("%04o", mode), func(t *testing.T) {
+			t.Parallel()
+
+			secret, err := secretref.Resolve(ctx, secretref.Ref{File: writeFileMode(t, "passphrase", theSecret, mode)})
+			if err != nil {
+				t.Fatalf("Resolve of a %04o secret file: %v", mode, err)
+			}
+
+			if secret.Reveal() != theSecret {
+				t.Errorf("Resolve returned material that is not what the file held")
+			}
+		})
+	}
+}
+
+// writeFileMode writes a secret file with an explicit mode, for the
+// custody rows. It bypasses os.WriteFile's umask interaction by chmoding
+// after the write, so a permissive row really is permissive on every
+// machine.
+func writeFileMode(t *testing.T, name, contents string, mode os.FileMode) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(contents), mode); err != nil {
+		t.Fatalf("writing %s: %v", name, err)
+	}
+
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatalf("chmod %04o %s: %v", mode, name, err)
+	}
+
+	return path
 }
 
 // assertNoSecret fails when text contains the material this package is

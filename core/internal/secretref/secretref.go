@@ -63,11 +63,14 @@ package secretref
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -131,6 +134,18 @@ var ErrEmpty = errors.New("secretref: the declared source resolved to no materia
 // bytes. The refusal is deliberate rather than a truncation.
 var ErrTooLarge = errors.New("secretref: the declared source produced more material than a secret can be")
 
+// ErrCustody is returned when a declared secret FILE is one this process
+// cannot vouch for: readable by an account other than its owner, sitting
+// in a directory another account can write, not a regular file, or reached
+// through a symbolic link.
+//
+// It is a refusal rather than a warning for the reason
+// internal/transport/rclone/ssh.go sets out at length about a drifted key
+// mode: a secret another local account can read or replace is not a secret
+// this product can keep a custody claim about, and a product that read it
+// anyway while logging a warning would be making that claim falsely.
+var ErrCustody = errors.New("secretref: the declared secret file is not in this process's sole custody")
+
 // Ref names WHERE a secret comes from, and carries no material.
 //
 // Exactly one of the three may be set. It is the runtime form of
@@ -140,13 +155,19 @@ var ErrTooLarge = errors.New("secretref: the declared source produced more mater
 // A Ref is safe to log, and that property is load-bearing rather than
 // incidental. It is what lets a repository location -- which carries two
 // of these -- be part of an error message, a diagnostic dump or a
-// structured log field without a custody review each time.
+// structured log field without a custody review each time. It takes four
+// methods to be true rather than one; see them below String.
 type Ref struct {
 	// File is a path to a file holding the secret. Preferred, because a
 	// file has an owner and a mode and the operating system enforces
 	// both, and because it is the only source that does not put the
 	// material into an environment block or a process argument list on
 	// its way here.
+	//
+	// That preference is checked rather than assumed: a file another
+	// account can read or replace is refused with ErrCustody instead of
+	// read, because the claim being made about this source is the
+	// operating system's enforcement of it.
 	File string
 
 	// Env names an environment variable holding the secret.
@@ -221,6 +242,48 @@ func (r Ref) String() string {
 		return "no source"
 	}
 }
+
+// The four methods below exist because String() alone does not make a Ref
+// safe to log, and the "a Ref is safe to log" claim above is load-bearing.
+//
+// Each rendering mechanism has its own opt-in and consults NONE of the
+// others:
+//
+//   - log/slog's JSON and text handlers ignore fmt.Stringer entirely. They
+//     reflect over the value and emit every exported field, so a Ref
+//     logged as a structured attribute printed its whole Command array --
+//     the vault path, the role, and whatever token the operator's resolver
+//     takes. LogValuer is the only thing they honour.
+//   - encoding/json ignores both, and reaches a Ref as a FIELD of anything
+//     that gets marshalled: a repository location in an API response, a
+//     diagnostic dump. MarshalText would be enough for json, and
+//     MarshalJSON is stated anyway so that the redaction does not depend
+//     on which of the two encoding/json happens to prefer.
+//   - fmt's %#v honours GoStringer only, and a %#v of a struct holding a
+//     Ref is a normal thing to find in a debug statement.
+//
+// All four render exactly what String() does, and none of them is
+// reversible: there is deliberately no UnmarshalJSON, because a Ref must
+// not be a persisted or accepted JSON field. What an operator writes is
+// config.Passphrase and config.MediumCredentials, which are the schema
+// types with their own yaml tags, and a Ref that could be parsed back out
+// of JSON would be a second, undocumented way to declare a secret source
+// -- exactly what this package's doc says does not exist.
+func (r Ref) LogValue() slog.Value { return slog.StringValue(r.String()) }
+
+// MarshalText renders a Ref for encoding/json, encoding/xml and anything
+// else that honours encoding.TextMarshaler. See the note on LogValue.
+func (r Ref) MarshalText() ([]byte, error) { return []byte(r.String()), nil }
+
+// MarshalJSON renders a Ref as the redacted string String() produces. See
+// the note on LogValue, and note the absence of UnmarshalJSON.
+func (r Ref) MarshalJSON() ([]byte, error) {
+	//nolint:wrapcheck // marshalling a string cannot fail for a reason a caller can act on
+	return json.Marshal(r.String())
+}
+
+// GoString renders a Ref for %#v. See the note on LogValue.
+func (r Ref) GoString() string { return "secretref.Ref{" + r.String() + "}" }
 
 // declared lists every source that is set, for the ambiguity refusal. It
 // exists so that refusal can say which two an operator wrote rather than
@@ -298,11 +361,9 @@ func resolve(ctx context.Context, ref Ref) ([]byte, error) {
 // operator-supplied path would allocate whatever the file's size happens
 // to be before anybody got the chance to object to it.
 func fromFile(path string) ([]byte, error) {
-	f, err := os.Open(path)
+	f, err := openSecretFile(path)
 	if err != nil {
-		// err carries the path and the errno and nothing from inside the
-		// file, which is the only thing that matters here.
-		return nil, fmt.Errorf("secretref: opening secret file: %w", err)
+		return nil, err
 	}
 
 	defer f.Close() //nolint:errcheck // read-only
@@ -323,6 +384,170 @@ func fromFile(path string) ([]byte, error) {
 	}
 
 	return buf, nil
+}
+
+// openSecretFile opens a declared secret file and refuses one whose
+// custody this process cannot vouch for.
+//
+// It is the same rule the medium plane applies to a credentials file
+// (internal/transport/rclone/mediumcreds.go, checkCredentialsFileCustody)
+// and the one #293 applied to an ssh key, and it is here for the same
+// reason: this package's whole claim is that a secret reaches memory from
+// a source the operating system protects, and a 0644 passphrase in a
+// group-writable directory is a source the operating system is not
+// protecting from anybody.
+//
+// The order of the checks is the point:
+//
+//   - the FINAL component must not be a symbolic link. The ancestor walk
+//     below vouches for the directories in the path the operator wrote,
+//     and a link's target lives somewhere those directories say nothing
+//     about; following it would mean applying a custody rule to a path
+//     nobody declared. The refusal names the resolved target so the fix is
+//     to declare that path instead.
+//   - the mode and the file type are checked on the OPEN DESCRIPTOR rather
+//     than on the path, so there is no window between the check and the
+//     read in which the thing being described could be replaced.
+//   - O_NONBLOCK, because a fifo or a character device left where the file
+//     should be would otherwise make this open BLOCK until somebody wrote
+//     to the other end. The refusal below is what rejects it; the flag is
+//     what makes sure the refusal is reached at all.
+func openSecretFile(path string) (*os.File, error) {
+	li, err := os.Lstat(path)
+	if err != nil {
+		// err carries the path and the errno and nothing from inside the
+		// file, which is the only thing that matters here.
+		return nil, fmt.Errorf("secretref: opening secret file: %w", err)
+	}
+
+	if li.Mode()&os.ModeSymlink != 0 {
+		target, rerr := filepath.EvalSymlinks(path)
+		if rerr != nil {
+			return nil, fmt.Errorf("%w: %s is a symbolic link whose target cannot be resolved: %w", ErrCustody, path, rerr)
+		}
+
+		return nil, fmt.Errorf(
+			"%w: %s is a symbolic link to %s, and the directories protecting the link say nothing about the ones protecting the file; "+
+				"declare %s directly",
+			ErrCustody, path, target, target)
+	}
+
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("secretref: opening secret file: %w", err)
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		f.Close() //nolint:errcheck // the open failed to be useful; this is the cleanup
+
+		return nil, fmt.Errorf("secretref: checking secret file %s: %w", path, err)
+	}
+
+	if err := checkSecretFileCustody(path, info); err != nil {
+		f.Close() //nolint:errcheck // refused before a single byte was read
+
+		return nil, err
+	}
+
+	return f, nil
+}
+
+// checkSecretFileCustody is the refusal itself, separated from the open so
+// that what is being decided is readable without the descriptor handling
+// around it.
+//
+// The mode test is &0o077 rather than an exact 0600: an operator writes a
+// passphrase file by hand and 0400 is a perfectly good answer, so what is
+// checked is the property that matters -- nobody but the owner can read it
+// -- and not a mode a hand-written file has no reason to match. That is
+// mediumcreds.go's reasoning, and the difference from ssh.go's exact-0600
+// rule is that there is no import flow here that wrote the file.
+func checkSecretFileCustody(path string, info os.FileInfo) error {
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf(
+			"%w: %s is a %s and not a regular file, so its contents are supplied by whoever is on the other end of it",
+			ErrCustody, path, fileKind(info.Mode()))
+	}
+
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		return fmt.Errorf(
+			"%w: %s has permissions %04o, which lets an account other than its owner read it: "+
+				"this secret opens an encrypted repository, or the bucket holding one; correct it (chmod go-rwx %s)",
+			ErrCustody, path, mode, path)
+	}
+
+	dir, mode, err := firstWritableAncestor(path)
+	if err != nil {
+		return fmt.Errorf("%w: checking the directories containing %s: %w", ErrCustody, path, err)
+	}
+
+	if dir != "" {
+		return fmt.Errorf(
+			"%w: %s has a containing directory %s with permissions %04o: a group- or world-writable directory lets any local "+
+				"actor replace the file regardless of its own mode; correct it (chmod go-w %s) or move the file",
+			ErrCustody, path, dir, mode.Perm(), dir)
+	}
+
+	return nil
+}
+
+// fileKind names what was found where a regular file was expected, so the
+// refusal is one an operator can act on rather than "not a regular file".
+func fileKind(m os.FileMode) string {
+	switch {
+	case m.IsDir():
+		return "directory"
+	case m&os.ModeNamedPipe != 0:
+		return "named pipe"
+	case m&os.ModeSocket != 0:
+		return "socket"
+	case m&os.ModeDevice != 0:
+		return "device"
+	default:
+		return "special file"
+	}
+}
+
+// firstWritableAncestor walks from the file's own directory to the
+// filesystem root and reports the first ancestor any account other than
+// its owner can write to, or "" when none of them is.
+//
+// It is deliberately a second copy of
+// internal/transport/rclone/ssh.go's function of the same name rather than
+// a shared helper, and the package doc says why the MECHANISM is
+// duplicated across the two planes: unifying them is a refactor of that
+// package's most security-sensitive file, tracked separately, and not
+// something to attempt sideways from the repository adapter. The RULE is
+// identical, sticky-bit exception included: a directory carrying
+// os.ModeSticky (/tmp on every mainstream Unix) is not refused for being
+// world-writable, because POSIX restricts unlink and rename inside one to
+// the entry's owner, the directory's owner or root, which is exactly the
+// attack this walk exists to close.
+func firstWritableAncestor(path string) (dir string, mode os.FileMode, err error) {
+	dir, err = filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return "", 0, fmt.Errorf("resolving the directory containing %s: %w", path, err)
+	}
+
+	for {
+		info, statErr := os.Stat(dir)
+		if statErr != nil {
+			return "", 0, fmt.Errorf("checking permissions on %s: %w", dir, statErr)
+		}
+
+		m := info.Mode()
+		if m.Perm()&0o022 != 0 && m&os.ModeSticky == 0 {
+			return dir, m, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", 0, nil
+		}
+
+		dir = parent
+	}
 }
 
 // fromEnv copies a secret out of the environment.
