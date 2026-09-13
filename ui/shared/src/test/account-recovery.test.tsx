@@ -302,12 +302,52 @@ describe("the Settings recovery card", () => {
 
     await user.clear(screen.getByLabelText("Port"));
     await user.type(screen.getByLabelText("Port"), "465");
+    await user.type(screen.getByLabelText("Administrator password"), PASSPHRASE);
     await user.click(screen.getByRole("button", { name: "Save recovery settings" }));
 
     await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
     const [sent] = update.mock.calls[0];
     expect(sent.smtp?.port).toBe(465);
     expect(sent.smtp?.password).toBe("");
+    expect(sent.currentPassword).toBe(PASSPHRASE);
+  });
+
+  // The UI half of #830's first security finding: this card writes the
+  // two settings that decide where a password reset link is delivered,
+  // so it re-authenticates rather than trusting the session cookie the
+  // browser already has. A save button that stayed live without one
+  // would send a request the service refuses, and teach an operator
+  // that the refusal is a bug.
+  it("will not save until the administrator password is given", async () => {
+    const user = userEvent.setup();
+    const api = createMockApi();
+    const update = vi.spyOn(api, "updateRecoverySettings");
+    await renderSettings(api);
+
+    const save = screen.getByRole("button", { name: "Save recovery settings" });
+    expect(save).toBeDisabled();
+
+    await user.type(screen.getByLabelText("Administrator password"), PASSPHRASE);
+    expect(save).toBeEnabled();
+    await user.click(save);
+
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(update.mock.calls[0][0].currentPassword).toBe(PASSPHRASE);
+    // The credential is not kept around afterwards: the field is blank
+    // again, so a second save has to be authorised on its own.
+    await waitFor(() => expect(screen.getByLabelText("Administrator password")).toHaveValue(""));
+  });
+
+  it("reports a refused password as a refusal rather than as a mail problem", async () => {
+    const user = userEvent.setup();
+    const api = createMockApi();
+    await renderSettings(api);
+
+    await user.type(screen.getByLabelText("Administrator password"), "wrong-current-password");
+    await user.click(screen.getByRole("button", { name: "Save recovery settings" }));
+
+    expect(await screen.findByText(/that password was not accepted/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing was changed/i)).toBeInTheDocument();
   });
 
   it("reports the mail server's own words when a test message is refused", async () => {
@@ -367,7 +407,7 @@ describe("the write-only SMTP password on the wire", () => {
   it("omits the password entirely rather than sending an empty one", async () => {
     const fetchMock = stubbedFetch();
 
-    await httpApi.updateRecoverySettings({ smtp });
+    await httpApi.updateRecoverySettings({ currentPassword: PASSPHRASE, smtp });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/v1/auth/recovery");
@@ -383,7 +423,7 @@ describe("the write-only SMTP password on the wire", () => {
   it("sends a typed password, and reads the answer back without one", async () => {
     const fetchMock = stubbedFetch();
 
-    const answer = await httpApi.updateRecoverySettings({ smtp: { ...smtp, password: "new-secret" } });
+    const answer = await httpApi.updateRecoverySettings({ currentPassword: PASSPHRASE, smtp: { ...smtp, password: "new-secret" } });
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as { smtp: Record<string, unknown> };

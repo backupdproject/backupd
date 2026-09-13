@@ -109,6 +109,11 @@ const testSMTPPassword = "smtp-canary-pa55word"
 
 const testRecoveryEmail = "admin@example.test"
 
+// testAdminPassword is what enrollDefaultAdmin sets, and therefore what
+// every re-authenticated route (POST /password, PATCH /recovery) has to
+// be given to get past its password check.
+const testAdminPassword = "correct-horse-battery"
+
 func enrollBody(username, password string) enrollRequest {
 	return enrollRequest{
 		Username:      username,
@@ -138,7 +143,8 @@ func testServerWithMail(t *testing.T) (*Service, *httptest.Server, *http.Client,
 		BaseURL:   "https://nas.example.test:8080",
 		// Discarded rather than left on stderr: the forgot-password
 		// branches log deliberately, and a passing test should not print.
-		Log: io.Discard,
+		Log:    io.Discard,
+		Notice: io.Discard,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -457,7 +463,7 @@ func TestHandler_TrustedForwardedForKeepsRateLimitBucketsPerClient(t *testing.T)
 // apps/common/webhost/serve.NewUI's reverse proxy) whose X-Forwarded-Proto says
 // "https" must still get a Secure session cookie.
 func TestHandler_SessionCookieIsSecureWhenForwardedProtoIsTrustedAndHTTPS(t *testing.T) {
-	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json"), TrustForwardedHeaders: true, SendMail: (&mailRecorder{}).send, Log: io.Discard})
+	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json"), TrustForwardedHeaders: true, SendMail: (&mailRecorder{}).send, Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -658,7 +664,7 @@ func TestHandler_RotatePasswordRequiresMatchingCSRFHeader(t *testing.T) {
 }
 
 func TestHandler_RotatePasswordIsRateLimitedPerIP(t *testing.T) {
-	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json"), PasswordRateLimit: 2, SendMail: (&mailRecorder{}).send, Log: io.Discard})
+	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json"), PasswordRateLimit: 2, SendMail: (&mailRecorder{}).send, Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

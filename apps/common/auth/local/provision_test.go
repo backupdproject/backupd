@@ -161,7 +161,7 @@ func TestCreateAdmin_RefusesWhileARunningServiceHoldsTheStore(t *testing.T) {
 	// New acquires the store's exclusive lock and (deliberately) never
 	// releases it for as long as this Service value is reachable,
 	// exactly like the real long-lived server process.
-	svc, err := New(Config{StorePath: path, SendMail: (&mailRecorder{}).send, Log: io.Discard})
+	svc, err := New(Config{StorePath: path, SendMail: (&mailRecorder{}).send, Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestCreateAdmin_ThenTheSameCredentialsLogInThroughTheNormalHTTPFlow(t *test
 	// Only now does the server start, against the store CreateAdmin just
 	// wrote to - CreateAdmin's own lock was released when it returned
 	// above, so this must succeed rather than hit ErrStoreLocked.
-	svc, err := New(Config{StorePath: path, SendMail: (&mailRecorder{}).send, Log: io.Discard})
+	svc, err := New(Config{StorePath: path, SendMail: (&mailRecorder{}).send, Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestCreateAdmin_MailsAVerificationLinkTheNextServiceCanRedeem(t *testing.T)
 
 	// A DIFFERENT process: a Service opening the same store afterwards,
 	// exactly as `serve` does once the provisioning script finishes.
-	svc, err := New(Config{StorePath: path, SendMail: mail.send, Log: io.Discard})
+	svc, err := New(Config{StorePath: path, SendMail: mail.send, Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestCreateAdmin_WithoutSMTPHasNoDeadlineAndIsNeverReaped(t *testing.T) {
 	}
 
 	clock := created.Add(10 * 365 * 24 * time.Hour)
-	svc, err := New(Config{StorePath: path, Now: func() time.Time { return clock }, Log: io.Discard})
+	svc, err := New(Config{StorePath: path, Now: func() time.Time { return clock }, Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

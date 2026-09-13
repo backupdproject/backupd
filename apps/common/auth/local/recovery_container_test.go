@@ -271,6 +271,7 @@ func sinkServer(t *testing.T) (*Service, *httptest.Server, *http.Client, string)
 		StorePath: filepath.Join(t.TempDir(), "auth.json"),
 		BaseURL:   "https://nas.example.test:8080",
 		Log:       io.Discard,
+		Notice:    io.Discard,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

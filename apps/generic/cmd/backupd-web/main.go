@@ -515,6 +515,15 @@ func cmdServe(args []string) int {
 			// and says where to paste it rather than a link that would
 			// be confidently wrong (#830).
 			BaseURL: *publicBaseURL,
+			// The SAME stream PrintBootstrapNotice is called against
+			// below, and that is the whole requirement: when the
+			// unverified-administrator reaper reopens enrollment
+			// hours into this process's life (#830 §9), the token it
+			// mints has to appear in the container log beside the one
+			// startup printed, or an operator following
+			// docs/recovery-without-a-terminal.md has 30 minutes to
+			// find a secret nothing ever showed them.
+			Notice: os.Stdout,
 		})
 		if err != nil {
 			return fail(fmt.Errorf("open local-auth store: %w", err))

@@ -2663,6 +2663,19 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
 
     getRecoverySettings: () => delay(structuredClone(recovery)),
     updateRecoverySettings: (update) => {
+      // Mirrors apps/common/auth/local's handleUpdateRecovery, which
+      // re-checks the administrator's password before it resolves,
+      // sends or writes anything (#830 security review): one sentinel
+      // value is "wrong" here, the same shape rotatePassword below
+      // uses, so the refused-re-authentication path has something to
+      // exercise against a fixture with no real stored password.
+      if (update.currentPassword === "wrong-current-password") {
+        return Promise.reject(new BackupdError({
+          code: "UNAUTHENTICATED",
+          message: "current password is incorrect",
+          correlationId: "cid_mockrecovery401"
+        }));
+      }
       if (update.smtp) {
         recovery.smtp = {
           host: update.smtp.host,

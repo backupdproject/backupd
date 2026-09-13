@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -95,6 +96,35 @@ describe("opening the verification link", () => {
     // The message that sent them here threatened removal; this is the
     // sentence that withdraws the threat.
     expect(await screen.findByText(/no longer provisional/i)).toBeInTheDocument();
+  });
+
+  // The same property under the conditions that actually break it.
+  // React 18's development StrictMode mounts every effect twice, and
+  // this effect spends a SINGLE-USE token: an unguarded second pass
+  // reports the operator's own successful verification back to them as
+  // an already-used link, on the one screen whose whole job is to say
+  // the account is safe. The test above renders without StrictMode and
+  // would pass with the guard deleted, so this is the one that holds
+  // it.
+  it("spends the token once and renders the success under StrictMode's double mount", async () => {
+    const api = createMockApi();
+    const verify = vi.spyOn(api, "verifyRecoveryEmail");
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={["/verify-email?token=verify-tok-strict"]}>
+          <ApiProvider api={api}>
+            <Routes>
+              <Route path="/verify-email" element={<VerifyEmailPage />} />
+            </Routes>
+          </ApiProvider>
+        </MemoryRouter>
+      </StrictMode>
+    );
+
+    expect(await screen.findByText(/no longer provisional/i)).toBeInTheDocument();
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(verify).toHaveBeenCalledWith("verify-tok-strict");
+    expect(screen.queryByText(/expired or has already been used/i)).not.toBeInTheDocument();
   });
 
   it("offers nothing to submit when the link carried no token", () => {

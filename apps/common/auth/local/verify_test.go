@@ -1,13 +1,18 @@
 package local
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -33,6 +38,35 @@ import (
 // deletion is caused by the condition and not by the passage of any time
 // at all.
 
+// testClock is the injected clock every Service-backed test in this
+// package moves, and it is ATOMIC rather than a plain *time.Time for one
+// concrete reason: a Service runs a reaper goroutine for its whole life,
+// that goroutine reads Config.Now on every tick, and a test that
+// assigned through a pointer was writing a time.Time - three words, not
+// one - underneath a concurrent reader. `go test -race` reports it as
+// the data race it is, and the race is real rather than an artifact of
+// the detector: a torn read of a time.Time is a clock that briefly
+// reads as neither value, which is exactly the kind of bug the reaper's
+// deadline comparison must never be exposed to.
+//
+// Unix nanoseconds in an atomic.Int64 rather than atomic.Pointer to a
+// time.Time, because advancing is then one atomic add and every read is
+// one load. The monotonic reading is dropped, which is correct here:
+// these tests jump a clock by hours, and a monotonic component that did
+// not jump with it would make the two halves of the same instant
+// disagree.
+type testClock struct{ nanos atomic.Int64 }
+
+func newTestClock(at time.Time) *testClock {
+	c := &testClock{}
+	c.set(at)
+	return c
+}
+
+func (c *testClock) now() time.Time          { return time.Unix(0, c.nanos.Load()).UTC() }
+func (c *testClock) set(at time.Time)        { c.nanos.Store(at.UnixNano()) }
+func (c *testClock) advance(d time.Duration) { c.nanos.Add(int64(d)) }
+
 // clockedServer is testServerWithMail with the clock in the test's hands:
 // the same composition (EnsureCSRFCookie over the mounted handler, a
 // cookie jar, a mail recorder), plus the *time.Time every deadline in
@@ -43,17 +77,18 @@ import (
 // is what makes the assertions deterministic rather than
 // timing-dependent. TestReaper_TheBackgroundTimerReapsOnItsOwn is the one
 // test that deliberately does the opposite.
-func clockedServer(t *testing.T) (*Service, *httptest.Server, *http.Client, *mailRecorder, string, *time.Time) {
+func clockedServer(t *testing.T) (*Service, *httptest.Server, *http.Client, *mailRecorder, string, *testClock) {
 	t.Helper()
 	now := time.Now().UTC()
-	clock := &now
+	clock := newTestClock(now)
 	mail := &mailRecorder{}
 	svc, err := New(Config{
 		StorePath: filepath.Join(t.TempDir(), "auth.json"),
-		Now:       func() time.Time { return *clock },
+		Now:       clock.now,
 		SendMail:  mail.send,
 		BaseURL:   "https://nas.example.test:8080",
 		Log:       io.Discard,
+		Notice:    io.Discard,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -147,7 +182,7 @@ func TestEnroll_CreatesAProvisionalAdministratorAndMailsAVerificationLink(t *tes
 	if view.RecoveryEmailVerified {
 		t.Error("recoveryEmailVerified = true before the link was ever opened")
 	}
-	wantDeadline := clock.Add(minVerificationWindow).UTC().Format(time.RFC3339)
+	wantDeadline := clock.now().Add(minVerificationWindow).UTC().Format(time.RFC3339)
 	if view.VerificationDeadline != wantDeadline {
 		t.Errorf("verificationDeadline = %q, want %q (created_at + 30m)", view.VerificationDeadline, wantDeadline)
 	}
@@ -221,14 +256,14 @@ func TestVerifyEmail_RefusesAnUnknownTokenAndAnExpiredOne(t *testing.T) {
 	}
 	changed := "moved@example.test"
 	patch := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
-		recoveryUpdateRequest{RecoveryEmail: &changed}, map[string]string{CSRFHeaderName: csrf})
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword, RecoveryEmail: &changed}, map[string]string{CSRFHeaderName: csrf})
 	patch.Body.Close()
 	if patch.StatusCode != http.StatusOK {
 		t.Fatalf("PATCH /recovery status = %d, want 200", patch.StatusCode)
 	}
 	fresh := verifyTokenFromMail(t, mail)
 
-	*clock = clock.Add(verifyTokenTTL + time.Second)
+	clock.advance(verifyTokenTTL + time.Second)
 	expired := postJSON(t, client, server.URL+"/api/v1/auth/verify-email",
 		verifyEmailRequest{Token: fresh}, map[string]string{CSRFHeaderName: csrf})
 	expiredBody := readAuthError(t, expired)
@@ -262,7 +297,7 @@ func TestReaper_DeletesTheUnverifiedAdministratorAtItsDeadlineAndReopensEnrollme
 
 	// One second BEFORE the deadline: the control. A reaper that deleted
 	// on any tick at all would fail here.
-	*clock = clock.Add(minVerificationWindow - time.Second)
+	clock.advance(minVerificationWindow - time.Second)
 	if deleted, err := svc.reapUnverifiedAdmin(); err != nil || deleted {
 		t.Fatalf("reap before the deadline: deleted=%v err=%v, want false/nil", deleted, err)
 	}
@@ -270,7 +305,7 @@ func TestReaper_DeletesTheUnverifiedAdministratorAtItsDeadlineAndReopensEnrollme
 		t.Fatalf("the administrator was removed BEFORE its deadline: %v %v", admin, err)
 	}
 
-	*clock = clock.Add(time.Second)
+	clock.advance(time.Second)
 	deleted, err := svc.reapUnverifiedAdmin()
 	if err != nil {
 		t.Fatalf("reap at the deadline: %v", err)
@@ -330,7 +365,7 @@ func TestReaper_KeepsAVerifiedAdministratorAndItsSession(t *testing.T) {
 		t.Fatalf("verify status = %d, want 204", verify.StatusCode)
 	}
 
-	*clock = clock.Add(365 * 24 * time.Hour)
+	clock.advance(365 * 24 * time.Hour)
 	if deleted, err := svc.reapUnverifiedAdmin(); err != nil || deleted {
 		t.Fatalf("reap a year after a verified enrollment: deleted=%v err=%v, want false/nil", deleted, err)
 	}
@@ -359,14 +394,15 @@ func TestReaper_KeepsAVerifiedAdministratorAndItsSession(t *testing.T) {
 // request arriving at all.
 func TestReaper_TheBackgroundTimerReapsOnItsOwn(t *testing.T) {
 	now := time.Now().UTC()
-	clock := &now
+	clock := newTestClock(now)
 	mail := &mailRecorder{}
 	svc, err := New(Config{
 		StorePath: filepath.Join(t.TempDir(), "auth.json"),
-		Now:       func() time.Time { return *clock },
+		Now:       clock.now,
 		SendMail:  mail.send,
 		BaseURL:   "https://nas.example.test:8080",
 		Log:       io.Discard,
+		Notice:    io.Discard,
 		// Real milliseconds, because the TICKER is real time even when
 		// the clock it consults is not (Config.ReapInterval's own doc).
 		ReapInterval: 5 * time.Millisecond,
@@ -392,7 +428,7 @@ func TestReaper_TheBackgroundTimerReapsOnItsOwn(t *testing.T) {
 		t.Fatalf("the timer deleted an administrator before its deadline: %v %v", admin, err)
 	}
 
-	*clock = now.Add(minVerificationWindow + time.Second)
+	clock.set(now.Add(minVerificationWindow + time.Second))
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		admin, err := svc.store.Admin()
@@ -414,16 +450,17 @@ func TestReaper_TheBackgroundTimerReapsOnItsOwn(t *testing.T) {
 // record rather than in any process's memory.
 func TestServiceNew_ReapsALapsedAdministratorAtStartupAndReopensEnrollment(t *testing.T) {
 	now := time.Now().UTC()
-	clock := &now
+	clock := newTestClock(now)
 	mail := &mailRecorder{}
 	storePath := filepath.Join(t.TempDir(), "auth.json")
 	newService := func() *Service {
 		svc, err := New(Config{
 			StorePath: storePath,
-			Now:       func() time.Time { return *clock },
+			Now:       clock.now,
 			SendMail:  mail.send,
 			BaseURL:   "https://nas.example.test:8080",
 			Log:       io.Discard,
+			Notice:    io.Discard,
 		})
 		if err != nil {
 			t.Fatalf("New: %v", err)
@@ -448,7 +485,7 @@ func TestServiceNew_ReapsALapsedAdministratorAtStartupAndReopensEnrollment(t *te
 	if err := first.lock.release(); err != nil {
 		t.Fatalf("release the store lock: %v", err)
 	}
-	*clock = now.Add(2 * time.Hour)
+	clock.set(now.Add(2 * time.Hour))
 
 	second := newService()
 	t.Cleanup(second.stopReaping)
@@ -545,12 +582,12 @@ func TestResendVerifyEmail_RequiresASessionAndRefusesOnceVerified(t *testing.T) 
 // surfaces it could leak onto and the one file it is compared against.
 func TestVerifyEmail_TheTokenIsNeverReadableFromTheStoreTheAPIOrTheLog(t *testing.T) {
 	now := time.Now().UTC()
-	clock := &now
+	clock := newTestClock(now)
 	mail := &mailRecorder{}
 	var log strings.Builder
 	svc, err := New(Config{
 		StorePath: filepath.Join(t.TempDir(), "auth.json"),
-		Now:       func() time.Time { return *clock },
+		Now:       clock.now,
 		SendMail:  mail.send,
 		BaseURL:   "https://nas.example.test:8080",
 		Log:       &log,
@@ -601,7 +638,7 @@ func TestVerifyEmail_TheTokenIsNeverReadableFromTheStoreTheAPIOrTheLog(t *testin
 
 	// And the reaper's own log line names the account and the deadline,
 	// never the credential.
-	*clock = now.Add(2 * minVerificationWindow)
+	clock.set(now.Add(2 * minVerificationWindow))
 	if _, err := svc.reapUnverifiedAdmin(); err != nil {
 		t.Fatalf("reap: %v", err)
 	}
@@ -632,5 +669,312 @@ func TestVerificationDeadline_IsTheLaterOfTheEnrollmentWindowAndTheFloor(t *test
 	// expired" or as "in 1970".
 	if got, want := verificationDeadline(created, time.Time{}), created.Add(minVerificationWindow); !got.Equal(want) {
 		t.Errorf("with no enrollment window: deadline = %s, want %s", got, want)
+	}
+}
+
+// The four proofs #830's security review asked for around the reaper and
+// the verification challenge. Each one names the interleaving it refuses,
+// because "the reaper is correct" is not a property a test can assert -
+// only "this specific sequence has this specific outcome" is.
+
+// noticeBuffer is Config.Notice for a test: a bytes.Buffer the reaper
+// goroutine writes to while the test reads it, so it has to carry its
+// own lock.
+type noticeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (n *noticeBuffer) Write(p []byte) (int, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.buf.Write(p)
+}
+
+func (n *noticeBuffer) String() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.buf.String()
+}
+
+// #830 review, HIGH: a reap at RUNTIME mints a fresh single-use
+// bootstrap token and reopens enrollment, but the host calls
+// PrintBootstrapNotice exactly once, at startup. Without the reaper
+// printing its own notice the operator has a 30-minute token nothing
+// ever showed them - a deployment locked out by the mechanism that
+// exists to prevent lockouts, and the direct opposite of what
+// docs/recovery-without-a-terminal.md promises.
+func TestReaper_PrintsTheReopenedEnrollmentTokenWhereTheStartupNoticeWent(t *testing.T) {
+	now := time.Now().UTC()
+	clock := newTestClock(now)
+	notice := &noticeBuffer{}
+	mail := &mailRecorder{}
+	svc, err := New(Config{
+		StorePath: filepath.Join(t.TempDir(), "auth.json"),
+		Now:       clock.now,
+		SendMail:  mail.send,
+		BaseURL:   "https://nas.example.test:8080",
+		Log:       io.Discard,
+		Notice:    notice,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(svc.stopReaping)
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/auth/", http.StripPrefix("/api/v1/auth", svc.Handler()))
+	server := httptest.NewServer(EnsureCSRFCookie(false)(mux))
+	t.Cleanup(server.Close)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	seedCSRFCookie(t, client, server)
+	csrf := csrfTokenFromJar(t, client, server)
+	enrollDefaultAdmin(t, svc, server, client, csrf)
+
+	// Nothing has been printed yet: this process started with an
+	// administrator being created, not with enrollment open.
+	if got := notice.String(); got != "" {
+		t.Fatalf("the notice writer already received %q before any reap", got)
+	}
+
+	clock.advance(minVerificationWindow + time.Second)
+	if deleted, err := svc.reapUnverifiedAdmin(); err != nil || !deleted {
+		t.Fatalf("reap at the deadline: deleted=%v err=%v, want true/nil", deleted, err)
+	}
+
+	printed := notice.String()
+	if printed == "" {
+		t.Fatal("the reaper reopened enrollment and printed nothing; the fresh token expires in 30 minutes unseen")
+	}
+	// The token it printed is the one enrollment will now accept, which
+	// is the whole point: a notice naming a stale token would be worse
+	// than none.
+	token := currentBootstrapToken(t, svc)
+	if !strings.Contains(printed, token) {
+		t.Fatalf("the notice %q does not carry the live bootstrap token %q", printed, token)
+	}
+	if !strings.Contains(printed, "/enroll?token=") {
+		t.Errorf("the notice is not the enrollment notice an operator is taught to look for:\n%s", printed)
+	}
+}
+
+// #830 review, HIGH (the reaper's decide/delete TOCTOU), at the level an
+// operator experiences it: a verification redeemed while the background
+// ticker is running must never be answered 204 by an account that is
+// then deleted anyway. The clock jumps to the deadline concurrently with
+// the redemption, which is exactly the collision the review describes.
+func TestVerifyEmail_ARedemptionRacingTheTickingReaperIsNeverBothAcceptedAndReaped(t *testing.T) {
+	now := time.Now().UTC()
+	clock := newTestClock(now)
+	mail := &mailRecorder{}
+	svc, err := New(Config{
+		StorePath:    filepath.Join(t.TempDir(), "auth.json"),
+		Now:          clock.now,
+		SendMail:     mail.send,
+		BaseURL:      "https://nas.example.test:8080",
+		Log:          io.Discard,
+		Notice:       io.Discard,
+		ReapInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(svc.stopReaping)
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/auth/", http.StripPrefix("/api/v1/auth", svc.Handler()))
+	server := httptest.NewServer(EnsureCSRFCookie(false)(mux))
+	t.Cleanup(server.Close)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	seedCSRFCookie(t, client, server)
+	csrf := csrfTokenFromJar(t, client, server)
+	enrollDefaultAdmin(t, svc, server, client, csrf)
+	token := verifyTokenFromMail(t, mail)
+
+	// The deadline arrives from another goroutine while the redemption
+	// is in flight, with the reaper ticking every millisecond against
+	// it.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		clock.set(now.Add(minVerificationWindow))
+	}()
+	resp := postJSON(t, client, server.URL+"/api/v1/auth/verify-email",
+		verifyEmailRequest{Token: token}, map[string]string{CSRFHeaderName: csrf})
+	status := resp.StatusCode
+	resp.Body.Close()
+	wg.Wait()
+
+	// Either outcome is legitimate on its own - the deadline either beat
+	// the click or it did not. What must never happen is the pair: an
+	// operator told their address is verified, by a process that then
+	// deletes their account and signs them out.
+	if status != http.StatusNoContent && status != http.StatusUnauthorized {
+		t.Fatalf("verify status = %d, want 204 or 401", status)
+	}
+	if status != http.StatusNoContent {
+		return
+	}
+	admin, err := svc.store.Admin()
+	if err != nil {
+		t.Fatalf("Admin: %v", err)
+	}
+	if admin == nil {
+		t.Fatal("the verification was answered 204 and the administrator was reaped anyway")
+	}
+	if admin.RecoveryEmailVerifiedAt == nil {
+		t.Error("the verification was answered 204 but the record is still unverified")
+	}
+	// A verified record is permanent: no later tick may take it.
+	clock.set(now.Add(24 * time.Hour))
+	time.Sleep(20 * time.Millisecond)
+	if admin, err := svc.store.Admin(); err != nil || admin == nil {
+		t.Fatalf("the reaper deleted a VERIFIED administrator a day later: %v %v", admin, err)
+	}
+}
+
+// #830 review, HIGH (the cross-address bypass), at the same level: a
+// verification and an address change, racing. Whatever order they land
+// in, the address that ends up verified must be an address somebody
+// actually opened a link for - never the new one on the old one's
+// token.
+func TestVerifyEmail_ARedemptionRacingAnAddressChangeNeverVerifiesTheNewAddress(t *testing.T) {
+	svc, server, client, mail, csrf, _ := clockedServer(t)
+	enrollDefaultAdmin(t, svc, server, client, csrf)
+
+	// A second client for the redemption, because it is unauthenticated
+	// and arrives from the mailbox rather than from the console.
+	anon := &http.Client{}
+
+	for i := 0; i < 60; i++ {
+		mailed := verifyTokenFromMail(t, mail)
+		changed := fmt.Sprintf("moved-%d@example.test", i)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/verify-email",
+				strings.NewReader(`{"token":`+strconv.Quote(mailed)+`}`))
+			if err != nil {
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set(CSRFHeaderName, csrf)
+			req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: csrf})
+			resp, err := anon.Do(req)
+			if err == nil {
+				resp.Body.Close()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			resp := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
+				recoveryUpdateRequest{CurrentPassword: testAdminPassword, RecoveryEmail: &changed},
+				map[string]string{CSRFHeaderName: csrf})
+			resp.Body.Close()
+		}()
+		wg.Wait()
+
+		admin, err := svc.store.Admin()
+		if err != nil {
+			t.Fatalf("Admin: %v", err)
+		}
+		if admin == nil {
+			t.Fatal("the administrator disappeared")
+		}
+		if admin.RecoveryEmailVerifiedAt != nil && admin.RecoveryEmail == changed {
+			t.Fatalf("iteration %d: %q was marked verified on the token mailed to the PREVIOUS address", i, changed)
+		}
+		if admin.RecoveryEmailVerifiedAt != nil {
+			// The click won: the old address is verified, which is
+			// correct and ends the race - there is no outstanding
+			// challenge left to interleave with.
+			return
+		}
+	}
+}
+
+// The reap-before-verify ORDERING, stated as the mutation it refuses: a
+// valid, unexpired link redeemed after the deadline must NOT resurrect
+// the account. handleVerifyEmail reaps first for exactly this reason, so
+// a handler that checked the token first (or reaped afterwards) would
+// answer 204 here and leave a permanent administrator whose window had
+// closed.
+func TestVerifyEmail_ReapsBeforeItLooksAtTheTokenSoALateLinkCannotResurrectTheAccount(t *testing.T) {
+	svc, server, client, mail, csrf, clock := clockedServer(t)
+	enrollDefaultAdmin(t, svc, server, client, csrf)
+	mailed := verifyTokenFromMail(t, mail)
+
+	// The link itself is still live - its 30-minute TTL and the record's
+	// 30-minute window end at the same instant (verifyTokenTTL's doc), so
+	// this is the one moment where "the token is valid" and "the record
+	// has lapsed" are both true, and the ORDER is the whole of what
+	// decides the outcome.
+	admin, err := svc.store.Admin()
+	if err != nil || admin == nil {
+		t.Fatalf("Admin: %v %v", admin, err)
+	}
+	deadline := *admin.VerificationDeadline
+	expiry := *admin.VerificationTokenExpiresAt
+	if expiry.Before(deadline) {
+		t.Fatalf("the token expires at %s, before the deadline at %s; this test cannot isolate the ordering", expiry, deadline)
+	}
+	clock.set(deadline)
+	if !challengeAccepts(admin, mailed, clock.now()) {
+		t.Fatal("the mailed token is already invalid at the deadline; this test would pass for the wrong reason")
+	}
+
+	resp := postJSON(t, client, server.URL+"/api/v1/auth/verify-email",
+		verifyEmailRequest{Token: mailed}, map[string]string{CSRFHeaderName: csrf})
+	body := readAuthError(t, resp)
+	if resp.StatusCode != http.StatusUnauthorized || body.Code != "VERIFY_TOKEN_INVALID" {
+		t.Fatalf("a link redeemed at the deadline: status=%d code=%q, want 401 VERIFY_TOKEN_INVALID", resp.StatusCode, body.Code)
+	}
+	if admin, err := svc.store.Admin(); err != nil || admin != nil {
+		t.Fatalf("the late redemption left the administrator in place: %v %v", admin, err)
+	}
+	if token := currentBootstrapToken(t, svc); token == "" {
+		t.Error("the reap did not reopen enrollment")
+	}
+}
+
+// The rate limit on the four routes #830 added. Three of them make this
+// process SEND mail and the fourth accepts a guessable-in-principle
+// token, so an unbounded one is either a mail cannon pointed at the
+// administrator's inbox or an offline-free guessing loop.
+func TestRecoveryRoutes_AreRateLimitedPerIP(t *testing.T) {
+	for _, tc := range []struct {
+		name, path string
+		body       any
+	}{
+		{"forgot-password", "/api/v1/auth/forgot-password", forgotPasswordRequest{Username: "bm-admin"}},
+		{"reset-password", "/api/v1/auth/reset-password", resetPasswordRequest{Token: "nope", NewPassword: "long-enough-password"}},
+		{"verify-email", "/api/v1/auth/verify-email", verifyEmailRequest{Token: "nope"}},
+		{"verify-email/resend", "/api/v1/auth/verify-email/resend", struct{}{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, server, client, _ := testServerWithMail(t)
+			seedCSRFCookie(t, client, server)
+			csrf := csrfTokenFromJar(t, client, server)
+			enrollDefaultAdmin(t, svc, server, client, csrf)
+
+			// One more than the limit: the last one has to be refused
+			// for being too many rather than for being wrong.
+			var last *http.Response
+			for i := 0; i < DefaultRecoveryRateLimit+1; i++ {
+				if last != nil {
+					last.Body.Close()
+				}
+				last = postJSON(t, client, server.URL+tc.path, tc.body, map[string]string{CSRFHeaderName: csrf})
+			}
+			body := readAuthError(t, last)
+			if last.StatusCode != http.StatusTooManyRequests || body.Code != "RATE_LIMITED" {
+				t.Fatalf("%s after %d attempts: status=%d code=%q, want 429 RATE_LIMITED",
+					tc.path, DefaultRecoveryRateLimit+1, last.StatusCode, body.Code)
+			}
+			svc.drainOutboundMail()
+		})
 	}
 }

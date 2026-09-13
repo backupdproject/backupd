@@ -1918,36 +1918,38 @@ function wireSmtpSettings(smtp: SmtpSettingsInput): WireSmtpSettings {
   return body;
 }
 
-/** A PATCH body carrying only the halves the caller actually named.
- *  Spreading the update straight through would turn "I did not touch the
- *  address" into `recoveryEmail: undefined`, which JSON.stringify drops
- *  silently today and would carry as null the moment anything in front of
- *  it started serialising differently. */
+/** A PATCH body carrying the re-authentication and only the halves the
+ *  caller actually named. Spreading the update straight through would
+ *  turn "I did not touch the address" into `recoveryEmail: undefined`,
+ *  which JSON.stringify drops silently today and would carry as null the
+ *  moment anything in front of it started serialising differently.
+ *
+ *  `currentPassword` is unconditional: the service refuses the whole
+ *  request without it (RecoverySettingsUpdate's own doc has the
+ *  escalation it closes), so omitting it here would only turn a missing
+ *  field into a 401 nobody could explain. */
 function wireRecoverySettingsUpdate(update: RecoverySettingsUpdate): WireRecoverySettingsUpdate {
-  const body: WireRecoverySettingsUpdate = {};
+  const body: WireRecoverySettingsUpdate = { currentPassword: update.currentPassword };
   if (update.recoveryEmail !== undefined) body.recoveryEmail = update.recoveryEmail;
   if (update.smtp !== undefined) body.smtp = wireSmtpSettings(update.smtp);
   return body;
 }
 
-/** The read, whose one interesting field is the absence: `smtp` is null
- *  for an administrator provisioned headlessly, and the contract's
- *  generated type cannot express that (openapi nullability does not
- *  survive into these bindings). It is normalised to null HERE rather
- *  than left as whatever arrived, so every surface tests one thing for
- *  "no endpoint configured" instead of each inventing its own. */
+/** The read, whose two interesting fields are the absences. `smtp` is
+ *  omitted for an administrator provisioned headlessly, and
+ *  `verificationDeadline` for an account that cannot lapse. Both are
+ *  normalised HERE - to null and to "" - so every surface tests one
+ *  thing for each instead of each inventing its own handling of an
+ *  optional member. */
 function fromWireRecoverySettings(r: WireRecoverySettingsResponse): RecoverySettings {
   return {
     recoveryEmail: r.recoveryEmail,
     recoveryEmailConfirmed: r.recoveryEmailConfirmed,
     // Issue #830 §§8-9. Two fields, one question each, and the banner
     // needs both: whether the link has been OPENED, and by when it has
-    // to be. The deadline arrives as "" when this account cannot lapse,
-    // which is a state rather than a missing value, so it is carried
-    // through verbatim rather than normalised to null - every consumer
-    // tests the same empty string the service sends.
+    // to be.
     recoveryEmailVerified: r.recoveryEmailVerified,
-    verificationDeadline: r.verificationDeadline,
+    verificationDeadline: r.verificationDeadline ?? "",
     smtp: r.smtp
       ? {
           host: r.smtp.host,

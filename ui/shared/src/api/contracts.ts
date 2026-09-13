@@ -1675,12 +1675,16 @@ export type SmtpSettingsView = WireSmtpSettingsView;
 /** What GET /auth/recovery answers, and what a PATCH answers with once it
  *  has applied.
  *
- *  `smtp` is null rather than absent on a deployment whose administrator
- *  was provisioned headlessly (`auth create-admin` leaves recovery
+ *  Two members are NORMALISED out of the wire shape, where both are
+ *  optional members that the contract simply omits when the fact does
+ *  not exist. `smtp` is null on a deployment whose administrator was
+ *  provisioned headlessly (`auth create-admin` leaves recovery
  *  optional). That is a state a settings page must REPORT rather than
  *  hide: an account with no endpoint configured has no way back at all,
- *  and rendering an empty form over it would look like one that is simply
- *  not filled in yet.
+ *  and rendering an empty form over it would look like one that is
+ *  simply not filled in yet. `verificationDeadline` is "" when this
+ *  account cannot lapse. Both are total here so that every surface tests
+ *  one thing instead of each inventing its own handling of `undefined`.
  *
  *  `recoveryEmailConfirmed` is separate from the address for the same
  *  reason: an address that has been typed and an address a message has
@@ -1691,21 +1695,31 @@ export type SmtpSettingsView = WireSmtpSettingsView;
  *  §8): a mail server accepting a message proves the endpoint works, and
  *  a redeemed link proves somebody can READ the mailbox. Until it is
  *  true, `verificationDeadline` is the RFC3339 instant at which a
- *  provisional administrator is DELETED and enrollment reopens, or "" for
- *  an account that cannot lapse (already verified, or provisioned
- *  headlessly with no SMTP endpoint to mail a link over). */
-export type RecoverySettings = Omit<WireRecoverySettingsResponse, "smtp"> & {
+ *  provisional administrator is DELETED and enrollment reopens. */
+export type RecoverySettings = Omit<WireRecoverySettingsResponse, "smtp" | "verificationDeadline"> & {
   smtp: SmtpSettingsView | null;
+  verificationDeadline: string;
 };
 
 /** A PARTIAL recovery update: only the halves named here are touched.
  *  Sending neither is refused by the service, since a request that
- *  changes nothing is a request that has lost its subject. A changed
- *  address is re-verified by sending a confirmation over the endpoint the
- *  SAME request establishes, and the whole update is refused with
- *  SMTP_SEND_FAILED when that send fails — so this call cannot leave an
- *  account holding a recovery address nothing has ever been delivered
- *  to. */
+ *  changes nothing is a request that has lost its subject.
+ *
+ *  `currentPassword` is REQUIRED and is not a formality. The recovery
+ *  address and the SMTP endpoint decide where a password reset link is
+ *  delivered, so a caller who holds a live session but does not know the
+ *  password must not be able to repoint them - that is a stolen cookie
+ *  turning into a permanent account takeover through forgot-password.
+ *  The service re-checks it before it resolves, sends or writes
+ *  anything, and refuses with UNAUTHENTICATED exactly as POST
+ *  /auth/password does.
+ *
+ *  A changed address, and a changed ENDPOINT, are each proven by sending
+ *  over the endpoint the SAME request establishes, and the whole update
+ *  is refused with SMTP_SEND_FAILED when that send fails - so this call
+ *  cannot leave an account holding a recovery address nothing has ever
+ *  been delivered to, nor an endpoint nothing has ever been delivered
+ *  through. */
 export type RecoverySettingsUpdate = Omit<WireRecoverySettingsUpdate, "smtp"> & {
   smtp?: SmtpSettingsInput;
 };

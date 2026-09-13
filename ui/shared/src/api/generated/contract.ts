@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "d0a95c8cf83b192a706c06ae23c8994de40691a0d0c73e0027cdbea3d51a2f74";
+export const CONTRACT_SHA256 = "968e886be082dec27483df797d8b085b7b754833c3a26d3be27d100ed463a14d";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -2459,26 +2459,32 @@ export interface WirePlacement {
 
 /** GET /auth/recovery and PATCH /auth/recovery: the recovery address,
  *  the two proofs about it, the deadline an unverified one lapses at,
- *  and the SMTP endpoint without its password. `smtp` is null on a
+ *  and the SMTP endpoint without its password. `smtp` is ABSENT on a
  *  deployment whose administrator was provisioned headlessly (`auth
  *  create-admin` leaves recovery optional), which is a state a
- *  settings page has to report rather than hide. */
+ *  settings page has to report rather than hide - absent rather than
+ *  null, the same optional-member convention every other response in
+ *  this contract uses for a fact that does not exist yet. */
 export interface WireRecoverySettingsResponse {
   recoveryEmail: string;
   recoveryEmailConfirmed: boolean;
   recoveryEmailVerified: boolean;
-  smtp: WireSmtpSettingsView;
-  verificationDeadline: string;
+  smtp?: WireSmtpSettingsView;
+  verificationDeadline?: string;
 }
 
-/** PATCH /auth/recovery. Both members are optional and at least one
- *  of them is required: a request may change the recovery address,
- *  the SMTP endpoint, or both. A changed address is re-verified by
- *  sending a confirmation over the endpoint this same request
- *  establishes, and the whole update is refused with SMTP_SEND_FAILED
- *  if that send fails - so a settings page cannot leave the account
- *  with a recovery address nothing has ever been delivered to. */
+/** PATCH /auth/recovery. `currentPassword` is required on every call,
+ *  and at least one of `recoveryEmail`/`smtp` has to be named: a
+ *  request may change the recovery address, the SMTP endpoint, or
+ *  both. A changed address is re-verified by sending a confirmation
+ *  over the endpoint this same request establishes, and a changed
+ *  SMTP endpoint is proven the same way, with the whole update
+ *  refused with SMTP_SEND_FAILED if that send fails - so a settings
+ *  page cannot leave the account with a recovery address nothing has
+ *  ever been delivered to, nor claim a confirmed address over an
+ *  endpoint nothing has ever been delivered through. */
 export interface WireRecoverySettingsUpdate {
+  currentPassword: string;
   recoveryEmail?: string;
   smtp?: WireSmtpSettings;
 }

@@ -394,7 +394,27 @@ func (s *Store) SetRecoveryEmail(st RecoveryEmailState) error {
 
 // MarkRecoveryEmailVerified records that the verification link mailed to
 // the current recovery address was opened, at at, and spends the
-// challenge that link carried (#830 §8).
+// challenge that link carried (#830 §8). It reports whether it wrote:
+// false means the outstanding challenge is no longer the one tokenHash
+// names, and nothing was changed.
+//
+// The challenge is RE-CHECKED here, under this store's own mutex,
+// against the hash the caller matched, and that re-check is the whole
+// reason this method takes a hash at all. The handler's own
+// challengeAccepts runs in a first lock acquisition and this write used
+// to run in a second, and anything that replaced the challenge in
+// between - PATCH /auth/recovery pointing the account at a NEW address,
+// or /verify-email/resend minting a new link - would have been marked
+// verified on the strength of the OLD address's token. Deciding and
+// writing in one critical section is what closes that: a token that was
+// valid when it was read and superseded before it was spent now spends
+// nothing, and the handler answers VERIFY_TOKEN_INVALID.
+//
+// The comparison is constant-time over the hashes for challengeAccepts'
+// reason, and the expiry is re-read here too: the two facts that made
+// the token acceptable are both properties of the record, so both are
+// re-established against the record rather than remembered from the
+// read.
 //
 // Three fields in one write, and each one has to be in it.
 //
@@ -414,27 +434,52 @@ func (s *Store) SetRecoveryEmail(st RecoveryEmailState) error {
 // It re-states the address deliberately not at all: a verification that
 // could write one would be a second way to change it, and the address
 // this proof belongs to is already on the record.
-func (s *Store) MarkRecoveryEmailVerified(at time.Time) error {
+func (s *Store) MarkRecoveryEmailVerified(at time.Time, tokenHash string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if f.Admin == nil {
-		return ErrNotEnrolled
+		return false, ErrNotEnrolled
+	}
+	if !acceptsTokenHash(f.Admin, tokenHash, at) {
+		return false, nil
 	}
 	f.Admin.RecoveryEmailVerifiedAt = &at
 	f.Admin.VerificationDeadline = nil
 	f.Admin.VerificationTokenHash = ""
 	f.Admin.VerificationTokenExpiresAt = nil
-	return s.save(f)
+	if err := s.save(f); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-// DeleteAdmin removes the administrator record and the SMTP
-// configuration that belonged to it in ONE write, and returns the SMTP
-// record it removed (nil when there was none) so the caller can drop the
-// secret file it referenced.
+// DeleteUnverifiedAdmin removes the administrator record and the SMTP
+// configuration that belonged to it in ONE write, and only if that
+// record is STILL a provisional one whose verification deadline has
+// passed as of now. It returns the SMTP record it removed (nil when
+// there was none) so the caller can drop the secret file it referenced,
+// and whether it deleted anything at all.
+//
+// The condition is re-established HERE, under this store's own mutex,
+// rather than trusted from the caller's earlier read, and that is the
+// whole difference between this method and the unconditional delete it
+// replaces. The reaper reads the record, decides, and calls; a
+// verification committing in between turns a record that was reapable
+// into one that is not, and an unconditional delete would then remove a
+// NOW-VERIFIED administrator whose owner had just been answered 204.
+// Deciding and deleting in one critical section is what makes the
+// reaper's answer true at the instant it acts, and it is the same guard
+// doctrine Enroll and SetPassword already apply: the check that decides
+// a race lives beside the write it protects, never in the handler.
+//
+// It is also why the CLOCK is a parameter. The decision is the injected
+// clock's to make (verify.go's opening note), and passing the instant in
+// keeps this method free of one while still letting it be the only
+// place the comparison happens.
 //
 // This is the one method that reopens enrollment, and it exists for
 // exactly one caller: verify.go's reaper, deleting a PROVISIONAL
@@ -455,21 +500,24 @@ func (s *Store) MarkRecoveryEmailVerified(at time.Time) error {
 //
 // Deleting nothing is not an error: a reaper racing a verification, or
 // two reapers on one store, must both be able to run to completion.
-func (s *Store) DeleteAdmin() (*SMTPRecord, error) {
+func (s *Store) DeleteUnverifiedAdmin(now time.Time) (*SMTPRecord, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if f.Admin == nil {
-		return nil, nil
+	if f.Admin == nil || f.Admin.RecoveryEmailVerifiedAt != nil || f.Admin.VerificationDeadline == nil {
+		return nil, false, nil
+	}
+	if now.Before(*f.Admin.VerificationDeadline) {
+		return nil, false, nil
 	}
 	removed := f.SMTP
 	f.Admin = nil
 	f.SMTP = nil
 	if err := s.save(f); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return removed, nil
+	return removed, true, nil
 }

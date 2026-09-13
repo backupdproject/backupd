@@ -166,6 +166,13 @@ export const FIELD_HELP = {
       "Backupd sends a confirmation message to this address over the SMTP endpoint below, immediately, and refuses to save anything if that message cannot be delivered. So the address is never recorded as reachable on the strength of it looking plausible, and a mailbox on the NAS this is backing up is the one to avoid: it is unreadable in exactly the failure this exists for."
   },
 
+  recoveryCurrentPassword: {
+    what: "The password this account signs in with today, asked for again because changing where recovery mail goes is as consequential as changing the password itself.",
+    example: "the passphrase you signed in with",
+    effect:
+      "Sent with this one request, checked server-side, and never stored by this page. If it is wrong nothing changes at all — no message is sent and no setting is written — which is what stops somebody who found this browser signed in from pointing account recovery at a mailbox of their own."
+  },
+
   smtpHost: {
     what: "The mail submission server Backupd connects out to. Any provider that accepts authenticated submission works; there is no mail server inside this product.",
     example: "mail.smtp2go.com",

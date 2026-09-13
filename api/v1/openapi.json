@@ -1811,7 +1811,7 @@
       },
       "RecoverySettingsResponse": {
         "type": "object",
-        "description": "GET /auth/recovery and PATCH /auth/recovery: the recovery address, the two proofs about it, the deadline an unverified one lapses at, and the SMTP endpoint without its password. `smtp` is null on a deployment whose administrator was provisioned headlessly (`auth create-admin` leaves recovery optional), which is a state a settings page has to report rather than hide.",
+        "description": "GET /auth/recovery and PATCH /auth/recovery: the recovery address, the two proofs about it, the deadline an unverified one lapses at, and the SMTP endpoint without its password. `smtp` is ABSENT on a deployment whose administrator was provisioned headlessly (`auth create-admin` leaves recovery optional), which is a state a settings page has to report rather than hide - absent rather than null, the same optional-member convention every other response in this contract uses for a fact that does not exist yet.",
         "additionalProperties": false,
         "properties": {
           "recoveryEmail": {
@@ -1827,26 +1827,32 @@
           },
           "verificationDeadline": {
             "type": "string",
-            "description": "RFC3339 instant after which an administrator whose recovery address is still unverified is DELETED and enrollment reopens (#830 s9), or \"\" when this record cannot lapse - a verified address, or an administrator provisioned with no SMTP endpoint at all, which was never mailed a link to open. It is computed once, when the account is created, as max(enrollment-link window end, created_at + 30 minutes), and no later request moves it."
+            "format": "date-time",
+            "description": "RFC3339 instant after which an administrator whose recovery address is still unverified is DELETED and enrollment reopens (#830 s9). ABSENT when this record cannot lapse - a verified address, or an administrator provisioned with no SMTP endpoint at all, which was never mailed a link to open. It is computed once, when the account is created, as max(enrollment-link window end, created_at + 30 minutes), and no later request moves it.",
+            "x-go-omitempty": true
           },
           "smtp": {
             "$ref": "#/components/schemas/SmtpSettingsView",
+            "x-go-omitempty": true,
             "x-go-pointer": true
           }
         },
         "required": [
           "recoveryEmail",
           "recoveryEmailConfirmed",
-          "recoveryEmailVerified",
-          "verificationDeadline",
-          "smtp"
+          "recoveryEmailVerified"
         ]
       },
       "RecoverySettingsUpdate": {
         "type": "object",
-        "description": "PATCH /auth/recovery. Both members are optional and at least one of them is required: a request may change the recovery address, the SMTP endpoint, or both. A changed address is re-verified by sending a confirmation over the endpoint this same request establishes, and the whole update is refused with SMTP_SEND_FAILED if that send fails - so a settings page cannot leave the account with a recovery address nothing has ever been delivered to.",
+        "description": "PATCH /auth/recovery. `currentPassword` is required on every call, and at least one of `recoveryEmail`/`smtp` has to be named: a request may change the recovery address, the SMTP endpoint, or both. A changed address is re-verified by sending a confirmation over the endpoint this same request establishes, and a changed SMTP endpoint is proven the same way, with the whole update refused with SMTP_SEND_FAILED if that send fails - so a settings page cannot leave the account with a recovery address nothing has ever been delivered to, nor claim a confirmed address over an endpoint nothing has ever been delivered through.",
         "additionalProperties": false,
         "properties": {
+          "currentPassword": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "The signed-in administrator's CURRENT password, re-checked before anything is resolved, sent or written, exactly as POST /auth/password re-checks it (and refused the same way: 401 UNAUTHENTICATED). The recovery address and the SMTP endpoint are credential-equivalent - whoever controls them controls where a reset link is delivered - so a live session alone must not be enough to repoint them, or a stolen cookie escalates into a permanent account takeover through forgot-password."
+          },
           "recoveryEmail": {
             "type": "string",
             "x-go-pointer": true
@@ -1856,7 +1862,9 @@
             "x-go-pointer": true
           }
         },
-        "required": []
+        "required": [
+          "currentPassword"
+        ]
       },
       "RotatePasswordRequest": {
         "type": "object",
@@ -6789,7 +6797,7 @@
       },
       "patch": {
         "operationId": "updateRecoverySettings",
-        "summary": "Change the recovery address and/or the SMTP endpoint, re-verifying by sending a confirmation.",
+        "summary": "Change the recovery address and/or the SMTP endpoint, re-authenticated and re-verified by sending a confirmation.",
         "tags": [
           "auth"
         ],
@@ -6822,7 +6830,7 @@
             }
           },
           "400": {
-            "description": "Refused: INVALID_REQUEST, INVALID_EMAIL.",
+            "description": "Refused: INVALID_REQUEST (nothing named to change, a malformed SMTP block, or no SMTP endpoint configured to send over), INVALID_EMAIL.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6836,7 +6844,7 @@
             ]
           },
           "401": {
-            "description": "Refused: UNAUTHENTICATED.",
+            "description": "Refused: UNAUTHENTICATED - no live session, or a `currentPassword` that is not this administrator's. The two are one refusal on purpose: this route is a password-gated route now, and which half failed is not a caller's business.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6876,7 +6884,7 @@
             ]
           },
           "502": {
-            "description": "Refused: SMTP_SEND_FAILED. The message could not be sent, and nothing was changed.",
+            "description": "Refused: SMTP_SEND_FAILED. The verification message could not be sent over the endpoint this request establishes, and nothing was changed. Sent whenever the address OR the endpoint changes, so a stored endpoint nothing has ever delivered through can never be reported beside a confirmed address.",
             "content": {
               "application/json": {
                 "schema": {

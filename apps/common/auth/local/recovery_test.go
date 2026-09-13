@@ -164,7 +164,7 @@ func TestEnroll_TheDefaultSenderIsTheRealSMTPPathAndItsFailureRefusesEnrollment(
 		t.Fatalf("close: %v", err)
 	}
 
-	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json"), Log: io.Discard})
+	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json"), Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -417,14 +417,15 @@ func TestResetPassword_RefusesAnUnknownTokenAndATooShortPassword(t *testing.T) {
 // (bootstrap_test.go makes the same argument for the other token).
 func TestResetPassword_RefusesAnExpiredToken(t *testing.T) {
 	now := time.Now()
-	clock := &now
+	clock := newTestClock(now)
 	mail := &mailRecorder{}
 	svc, err := New(Config{
 		StorePath: filepath.Join(t.TempDir(), "auth.json"),
-		Now:       func() time.Time { return *clock },
+		Now:       clock.now,
 		SendMail:  mail.send,
 		BaseURL:   "https://nas.example.test:8080",
 		Log:       io.Discard,
+		Notice:    io.Discard,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -446,7 +447,7 @@ func TestResetPassword_RefusesAnExpiredToken(t *testing.T) {
 	svc.drainOutboundMail()
 	token := resetTokenFromMail(t, mail)
 
-	*clock = now.Add(resetTokenTTL + time.Second)
+	clock.set(now.Add(resetTokenTTL + time.Second))
 	expired := postJSON(t, client, server.URL+"/api/v1/auth/reset-password",
 		resetPasswordRequest{Token: token, NewPassword: "a-brand-new-passphrase"},
 		map[string]string{CSRFHeaderName: csrf})
@@ -541,7 +542,7 @@ func TestPatchRecovery_ChangingTheAddressReVerifiesItAndRefusesIfTheSendFails(t 
 	// First, a failing send: nothing may change.
 	mail.refuseWith(errors.New("550 5.1.1 no such recipient"))
 	resp := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
-		recoveryUpdateRequest{RecoveryEmail: &[]string{changed}[0]}, map[string]string{CSRFHeaderName: csrf})
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword, RecoveryEmail: &[]string{changed}[0]}, map[string]string{CSRFHeaderName: csrf})
 	body := readAuthError(t, resp)
 	if resp.StatusCode != http.StatusBadGateway || body.Code != "SMTP_SEND_FAILED" {
 		t.Fatalf("status=%d code=%q, want 502 SMTP_SEND_FAILED", resp.StatusCode, body.Code)
@@ -559,7 +560,7 @@ func TestPatchRecovery_ChangingTheAddressReVerifiesItAndRefusesIfTheSendFails(t 
 	mail.refuseWith(nil)
 	before := len(mail.delivered())
 	ok := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
-		recoveryUpdateRequest{RecoveryEmail: &[]string{changed}[0]}, map[string]string{CSRFHeaderName: csrf})
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword, RecoveryEmail: &[]string{changed}[0]}, map[string]string{CSRFHeaderName: csrf})
 	var updated recoveryResponse
 	decodeInto(t, ok, &updated)
 	if ok.StatusCode != http.StatusOK {
@@ -590,7 +591,7 @@ func TestPatchRecovery_AnSMTPBlockWithNoPasswordKeepsTheStoredOne(t *testing.T) 
 	changed.Port = 2525
 	changed.Password = "" // "keep what is stored"
 	resp := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
-		recoveryUpdateRequest{SMTP: &changed}, map[string]string{CSRFHeaderName: csrf})
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword, SMTP: &changed}, map[string]string{CSRFHeaderName: csrf})
 	var updated recoveryResponse
 	decodeInto(t, resp, &updated)
 	if resp.StatusCode != http.StatusOK {
@@ -633,14 +634,14 @@ func TestPatchRecovery_RefusesAnInvalidAddressAndAnEmptyUpdate(t *testing.T) {
 
 	bad := "nope"
 	resp := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
-		recoveryUpdateRequest{RecoveryEmail: &bad}, map[string]string{CSRFHeaderName: csrf})
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword, RecoveryEmail: &bad}, map[string]string{CSRFHeaderName: csrf})
 	body := readAuthError(t, resp)
 	if resp.StatusCode != http.StatusBadRequest || body.Code != "INVALID_EMAIL" {
 		t.Fatalf("status=%d code=%q, want 400 INVALID_EMAIL", resp.StatusCode, body.Code)
 	}
 
 	empty := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
-		recoveryUpdateRequest{}, map[string]string{CSRFHeaderName: csrf})
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword}, map[string]string{CSRFHeaderName: csrf})
 	emptyBody := readAuthError(t, empty)
 	if empty.StatusCode != http.StatusBadRequest || emptyBody.Code != "INVALID_REQUEST" {
 		t.Fatalf("empty update: status=%d code=%q, want 400 INVALID_REQUEST", empty.StatusCode, emptyBody.Code)
@@ -807,4 +808,366 @@ func patchJSON(t *testing.T, client *http.Client, url string, body any, headers 
 		t.Fatalf("client.Do: %v", err)
 	}
 	return resp
+}
+
+// PATCH /recovery as a password-gated route (#830 security review, the
+// first finding), and the SMTP endpoint as something that has to be
+// PROVEN rather than merely stored (the fifth).
+
+// The escalation the re-authentication closes, spelled out as the attack
+// it is: a live session that does not know the password repoints the
+// recovery address at a mailbox the caller owns, asks for a reset link,
+// and takes the account over permanently. Every half of this test is a
+// step on that path, and the first one has to fail.
+func TestPatchRecovery_RefusesWithoutTheCurrentPasswordAndChangesNothing(t *testing.T) {
+	svc, server, client, mail, csrf := enrolledServer(t)
+	attacker := "attacker@example.invalid"
+	hostile := testSMTP()
+	hostile.Host = "smtp.attacker.invalid"
+
+	for _, tc := range []struct {
+		name string
+		body recoveryUpdateRequest
+	}{
+		{"no password at all", recoveryUpdateRequest{RecoveryEmail: &attacker}},
+		{"the wrong password", recoveryUpdateRequest{CurrentPassword: "not-the-password", RecoveryEmail: &attacker}},
+		{"an SMTP repoint", recoveryUpdateRequest{CurrentPassword: "not-the-password", SMTP: &hostile}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := mail.attempts()
+			resp := patchJSON(t, client, server.URL+"/api/v1/auth/recovery", tc.body,
+				map[string]string{CSRFHeaderName: csrf})
+			body := readAuthError(t, resp)
+			if resp.StatusCode != http.StatusUnauthorized || body.Code != "UNAUTHENTICATED" {
+				t.Fatalf("status=%d code=%q, want 401 UNAUTHENTICATED - the same refusal POST /auth/password gives", resp.StatusCode, body.Code)
+			}
+			admin, err := svc.store.Admin()
+			if err != nil {
+				t.Fatalf("Admin: %v", err)
+			}
+			if admin.RecoveryEmail != testRecoveryEmail {
+				t.Fatalf("the recovery address is now %q; a session alone was enough to repoint it", admin.RecoveryEmail)
+			}
+			smtp, err := svc.store.SMTP()
+			if err != nil {
+				t.Fatalf("SMTP: %v", err)
+			}
+			if smtp.Host != testSMTP().Host {
+				t.Fatalf("the SMTP endpoint is now %q; a session alone was enough to repoint it", smtp.Host)
+			}
+			// Nothing was sent either: a refused request must not have
+			// made this process connect to a host the caller named.
+			if mail.attempts() != before {
+				t.Errorf("a refused update still attempted %d sends", mail.attempts()-before)
+			}
+		})
+	}
+
+	// The session is still perfectly good for everything it was good for
+	// before: this is a re-authentication, not a lockout.
+	ok := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword, RecoveryEmail: &attacker},
+		map[string]string{CSRFHeaderName: csrf})
+	ok.Body.Close()
+	if ok.StatusCode != http.StatusOK {
+		t.Fatalf("the same update with the password: status = %d, want 200", ok.StatusCode)
+	}
+}
+
+// The password is checked BEFORE the SMTP password is resolved or
+// stored. A refused request that had already written a secret file
+// would let a caller who cannot authenticate fill the state directory,
+// and - worse - would mean the check is not actually the first thing
+// that happens on this route.
+func TestPatchRecovery_AWrongPasswordNeverReachesTheSecretVault(t *testing.T) {
+	svc, server, client, _, csrf := enrolledServer(t)
+	before, err := os.ReadDir(svc.secrets.dir)
+	if err != nil {
+		t.Fatalf("read the secrets directory: %v", err)
+	}
+
+	withNewPassword := testSMTP()
+	withNewPassword.Password = "a-brand-new-api-key"
+	resp := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
+		recoveryUpdateRequest{CurrentPassword: "not-the-password", SMTP: &withNewPassword},
+		map[string]string{CSRFHeaderName: csrf})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+
+	after, err := os.ReadDir(svc.secrets.dir)
+	if err != nil {
+		t.Fatalf("read the secrets directory: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("a refused update wrote %d new secret files", len(after)-len(before))
+	}
+	raw, err := os.ReadFile(svc.store.path)
+	if err != nil {
+		t.Fatalf("read the store: %v", err)
+	}
+	if strings.Contains(string(raw), "a-brand-new-api-key") {
+		t.Fatal("the refused update's SMTP password reached the store file")
+	}
+}
+
+// #830 review, HIGH: an SMTP-only change on a VERIFIED administrator
+// used to skip the send entirely, so a new endpoint was stored while
+// recoveryEmailConfirmed stayed true - a deployment reporting a working
+// recovery path over an endpoint nothing has ever delivered through.
+// The next forgot-password then fails silently, which is the exact
+// lockout this feature exists to prevent.
+func TestPatchRecovery_AChangedSMTPEndpointIsProvenBeforeItIsStored(t *testing.T) {
+	svc, server, client, mail, csrf := enrolledServer(t)
+	verifyTheRecoveryAddress(t, svc, server, client, mail, csrf)
+
+	dead := testSMTP()
+	dead.Host = "smtp.somewhere-else.test"
+	mail.refuseWith(errors.New("dial tcp 10.0.0.9:587: connect: connection refused"))
+
+	resp := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword, SMTP: &dead},
+		map[string]string{CSRFHeaderName: csrf})
+	body := readAuthError(t, resp)
+	if resp.StatusCode != http.StatusBadGateway || body.Code != "SMTP_SEND_FAILED" {
+		t.Fatalf("status=%d code=%q, want 502 SMTP_SEND_FAILED for an endpoint nothing could be delivered through", resp.StatusCode, body.Code)
+	}
+	stored, err := svc.store.SMTP()
+	if err != nil {
+		t.Fatalf("SMTP: %v", err)
+	}
+	if stored.Host != testSMTP().Host {
+		t.Fatalf("the unproven endpoint %q was stored anyway", stored.Host)
+	}
+	view := readRecovery(t, client, server)
+	if !view.RecoveryEmailConfirmed || !view.RecoveryEmailVerified {
+		t.Fatalf("the refused update disturbed the proofs about the address: %+v", view)
+	}
+
+	// And the working case: the message goes out over the NEW endpoint,
+	// which is what makes the answer's confirmed=true true.
+	mail.refuseWith(nil)
+	working := testSMTP()
+	working.Host = "smtp.somewhere-else.test"
+	before := len(mail.delivered())
+	ok := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword, SMTP: &working},
+		map[string]string{CSRFHeaderName: csrf})
+	var updated recoveryResponse
+	decodeInto(t, ok, &updated)
+	if ok.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", ok.StatusCode)
+	}
+	sent := mail.delivered()
+	if len(sent) != before+1 {
+		t.Fatalf("%d messages sent for an endpoint change, want exactly 1", len(sent)-before)
+	}
+	last := sent[len(sent)-1]
+	if last.cfg.Host != "smtp.somewhere-else.test" {
+		t.Errorf("the proof went out over %q, want the endpoint this request establishes", last.cfg.Host)
+	}
+	if last.msg.To != testRecoveryEmail {
+		t.Errorf("the proof went to %q, want the stored recovery address", last.msg.To)
+	}
+	// An already-verified mailbox is not un-verified by a change of
+	// endpoint: what was in doubt was the endpoint, and it has just been
+	// exercised.
+	if !updated.RecoveryEmailVerified || !updated.RecoveryEmailConfirmed {
+		t.Errorf("answer = %+v, want the address still verified and now confirmed over the new endpoint", updated)
+	}
+}
+
+// The superseded secret file is REMOVED once the store no longer points
+// at it, and only then. A credential belonging to nobody, left in the
+// state directory by every endpoint edit, is the leak this ordering
+// prevents.
+func TestPatchRecovery_RemovesTheSupersededSMTPPasswordFile(t *testing.T) {
+	svc, server, client, _, csrf := enrolledServer(t)
+	before, err := svc.store.SMTP()
+	if err != nil || before == nil || before.PasswordRef == "" {
+		t.Fatalf("SMTP after enrollment = %v (%v), want a stored password reference", before, err)
+	}
+
+	rotated := testSMTP()
+	rotated.Password = "the-replacement-api-key"
+	resp := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword, SMTP: &rotated},
+		map[string]string{CSRFHeaderName: csrf})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	after, err := svc.store.SMTP()
+	if err != nil {
+		t.Fatalf("SMTP: %v", err)
+	}
+	if after.PasswordRef == before.PasswordRef {
+		t.Fatal("a replaced password reused the previous reference; a partially written file would then read as the old password")
+	}
+	if _, err := svc.secrets.get(before.PasswordRef); err == nil {
+		t.Error("the superseded SMTP password file is still readable")
+	}
+	resolved, err := svc.secrets.get(after.PasswordRef)
+	if err != nil {
+		t.Fatalf("resolve the new reference: %v", err)
+	}
+	if resolved != "the-replacement-api-key" {
+		t.Errorf("the new reference resolves to %q, want the password the update carried", resolved)
+	}
+	if err := ensureNoPasswordOnDisk(svc, "the-replacement-api-key"); err != nil {
+		t.Error(err)
+	}
+}
+
+// A deployment provisioned headlessly has no SMTP endpoint at all, and
+// PATCH /recovery cannot prove an address over an endpoint that does not
+// exist. The contract declares that refusal a 400 INVALID_REQUEST - the
+// same answer POST /recovery/test and /verify-email/resend give - and it
+// was a 500 until this fix, which told an operator their own
+// configuration gap was a fault in the runtime.
+func TestPatchRecovery_WithNoSMTPConfiguredIsABadRequestRatherThanAnInternalError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	if _, err := CreateAdmin(CreateAdminConfig{
+		StorePath: path,
+		Username:  "bm-admin",
+		Password:  testAdminPassword,
+	}); err != nil {
+		t.Fatalf("CreateAdmin: %v", err)
+	}
+	svc, err := New(Config{StorePath: path, SendMail: (&mailRecorder{}).send, Log: io.Discard, Notice: io.Discard})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(svc.stopReaping)
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/auth/", http.StripPrefix("/api/v1/auth", svc.Handler()))
+	server := httptest.NewServer(EnsureCSRFCookie(false)(mux))
+	t.Cleanup(server.Close)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	seedCSRFCookie(t, client, server)
+	csrf := csrfTokenFromJar(t, client, server)
+	login := postJSON(t, client, server.URL+"/api/v1/auth/login",
+		credentialsRequest{Username: "bm-admin", Password: testAdminPassword},
+		map[string]string{CSRFHeaderName: csrf})
+	login.Body.Close()
+	if login.StatusCode != http.StatusNoContent {
+		t.Fatalf("login status = %d, want 204", login.StatusCode)
+	}
+
+	address := "ops@example.test"
+	resp := patchJSON(t, client, server.URL+"/api/v1/auth/recovery",
+		recoveryUpdateRequest{CurrentPassword: testAdminPassword, RecoveryEmail: &address},
+		map[string]string{CSRFHeaderName: csrf})
+	body := readAuthError(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || body.Code != "INVALID_REQUEST" {
+		t.Fatalf("status=%d code=%q, want 400 INVALID_REQUEST", resp.StatusCode, body.Code)
+	}
+}
+
+// verifyTheRecoveryAddress redeems the link enrollment mailed, so a test
+// can start from an ESTABLISHED administrator rather than a provisional
+// one.
+func verifyTheRecoveryAddress(t *testing.T, svc *Service, server *httptest.Server, client *http.Client, mail *mailRecorder, csrf string) {
+	t.Helper()
+	resp := postJSON(t, client, server.URL+"/api/v1/auth/verify-email",
+		verifyEmailRequest{Token: verifyTokenFromMail(t, mail)}, map[string]string{CSRFHeaderName: csrf})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("verify-email status = %d, want 204", resp.StatusCode)
+	}
+	admin, err := svc.store.Admin()
+	if err != nil || admin == nil || admin.RecoveryEmailVerifiedAt == nil {
+		t.Fatalf("the recovery address is still unverified: %v %v", admin, err)
+	}
+}
+
+// The bootstrap token is spent on the way to a successful write, and a
+// write that then FAILS does not hand it back. That is the behaviour
+// this pins, because it is the one an operator meets at the worst
+// moment: the enrollment link is gone, no administrator exists, and the
+// way forward is a restart, which mints a fresh one. A test that did not
+// state it would leave the next reader guessing whether the token
+// survives - and either answer is defensible until one of them is
+// written down.
+func TestEnroll_AStoreFailureAfterTheTokenIsSpentLeavesNoAdministratorAndNoSecret(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	mail := &mailRecorder{}
+	svc, err := New(Config{StorePath: path, SendMail: mail.send, Log: io.Discard, Notice: io.Discard})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(svc.stopReaping)
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/auth/", http.StripPrefix("/api/v1/auth", svc.Handler()))
+	server := httptest.NewServer(EnsureCSRFCookie(false)(mux))
+	t.Cleanup(server.Close)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	seedCSRFCookie(t, client, server)
+	csrf := csrfTokenFromJar(t, client, server)
+	token := currentBootstrapToken(t, svc)
+
+	// The secrets directory stays writable (it has its own mode) while
+	// the store's own directory does not, so the SMTP password lands and
+	// the token is spent before the store write is the thing that fails.
+	if err := os.MkdirAll(svc.secrets.dir, 0o700); err != nil {
+		t.Fatalf("create the secrets directory: %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	resp := postJSON(t, client, server.URL+"/api/v1/auth/enroll",
+		enrollBody("bm-admin", testAdminPassword),
+		map[string]string{CSRFHeaderName: csrf, BootstrapTokenHeader: token})
+	body := readAuthError(t, resp)
+	if resp.StatusCode != http.StatusInternalServerError || body.Code != "INTERNAL_ERROR" {
+		t.Fatalf("status=%d code=%q, want 500 INTERNAL_ERROR", resp.StatusCode, body.Code)
+	}
+
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("chmod back: %v", err)
+	}
+	admin, err := svc.store.Admin()
+	if err != nil {
+		t.Fatalf("Admin: %v", err)
+	}
+	if admin != nil {
+		t.Fatalf("a failed store write still produced administrator %q", admin.Username)
+	}
+	// The secret that write would have referenced is gone rather than
+	// orphaned in the state directory.
+	left, err := os.ReadDir(svc.secrets.dir)
+	if err != nil {
+		t.Fatalf("read the secrets directory: %v", err)
+	}
+	if len(left) != 0 {
+		t.Errorf("%d orphaned SMTP secret files were left behind", len(left))
+	}
+	// And the token really was spent: the operator's way back is a
+	// restart, not a retry.
+	retry := postJSON(t, client, server.URL+"/api/v1/auth/enroll",
+		enrollBody("bm-admin", testAdminPassword),
+		map[string]string{CSRFHeaderName: csrf, BootstrapTokenHeader: token})
+	retryBody := readAuthError(t, retry)
+	if retry.StatusCode != http.StatusUnauthorized || retryBody.Code != "BOOTSTRAP_TOKEN_INVALID" {
+		t.Fatalf("retry with the same token: status=%d code=%q, want 401 BOOTSTRAP_TOKEN_INVALID", retry.StatusCode, retryBody.Code)
+	}
+	svc.stopReaping()
+	if err := svc.lock.release(); err != nil {
+		t.Fatalf("release the store lock: %v", err)
+	}
+	restarted, err := New(Config{StorePath: path, SendMail: mail.send, Log: io.Discard, Notice: io.Discard})
+	if err != nil {
+		t.Fatalf("New after the failure: %v", err)
+	}
+	t.Cleanup(restarted.stopReaping)
+	if fresh := currentBootstrapToken(t, restarted); fresh == "" || fresh == token {
+		t.Fatal("a restart did not mint a fresh enrollment token")
+	}
 }

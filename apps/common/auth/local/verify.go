@@ -153,7 +153,21 @@ func hashVerificationToken(token string) string {
 // a byte-by-byte early return leaks the prefix of a live credential to
 // anybody willing to time a few thousand requests.
 func challengeAccepts(admin *AdminRecord, candidate string, now time.Time) bool {
-	if admin == nil || candidate == "" || admin.VerificationTokenHash == "" {
+	if candidate == "" {
+		return false
+	}
+	return acceptsTokenHash(admin, hashVerificationToken(candidate), now)
+}
+
+// acceptsTokenHash is the same decision over a hash somebody already
+// computed, and it exists because that decision has to be made TWICE
+// against one request: once by the handler, which holds the token, and
+// once inside Store.MarkRecoveryEmailVerified, under the mutex that
+// makes spending it atomic with respect to anything that replaces the
+// challenge in between. One function so the two can never drift into
+// disagreeing about what an acceptable challenge is.
+func acceptsTokenHash(admin *AdminRecord, candidateHash string, now time.Time) bool {
+	if admin == nil || candidateHash == "" || admin.VerificationTokenHash == "" {
 		return false
 	}
 	if admin.VerificationTokenExpiresAt == nil || now.After(*admin.VerificationTokenExpiresAt) {
@@ -161,7 +175,7 @@ func challengeAccepts(admin *AdminRecord, candidate string, now time.Time) bool 
 	}
 	return subtle.ConstantTimeCompare(
 		[]byte(admin.VerificationTokenHash),
-		[]byte(hashVerificationToken(candidate)),
+		[]byte(candidateHash),
 	) == 1
 }
 
@@ -276,13 +290,29 @@ func (s *Service) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
 	// enroll again), and distinguishing them would let an
 	// unauthenticated caller probe the account's state one request at a
 	// time.
-	if !challengeAccepts(admin, req.Token, s.now()) {
+	//
+	// The check here is the cheap, early one: the SAME check decides
+	// again inside MarkRecoveryEmailVerified, under the store's mutex,
+	// against the hash this request actually carried. Anything that
+	// replaces the challenge in between - a PATCH /auth/recovery
+	// pointing the account at another address, a resend minting a new
+	// link - makes that second answer false, and a false answer is the
+	// same refusal as an unknown token, because from the caller's side
+	// it is one: the link they opened is not the outstanding one any
+	// more.
+	tokenHash := hashVerificationToken(req.Token)
+	if req.Token == "" || !acceptsTokenHash(admin, tokenHash, s.now()) {
 		writeAuthError(w, http.StatusUnauthorized, "VERIFY_TOKEN_INVALID", "that verification link has expired or has already been used")
 		return
 	}
 
-	if err := s.store.MarkRecoveryEmailVerified(s.now().UTC()); err != nil {
+	verified, err := s.store.MarkRecoveryEmailVerified(s.now().UTC(), tokenHash)
+	if err != nil {
 		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
+		return
+	}
+	if !verified {
+		writeAuthError(w, http.StatusUnauthorized, "VERIFY_TOKEN_INVALID", "that verification link has expired or has already been used")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -375,6 +405,16 @@ func (s *Service) handleResendVerifyEmail(w http.ResponseWriter, r *http.Request
 // reaches the same decision on its next start that a running timer would
 // have reached at the moment the window closed.
 //
+// It does not make that decision itself. Store.DeleteUnverifiedAdmin
+// re-establishes it under the store's own mutex and deletes in the same
+// critical section, because this function runs on a ticker while
+// requests are being served: a verification that commits after this
+// read and before the delete turns a reapable record into a verified
+// one, and a delete that did not re-check would remove the
+// administrator whose owner had just been answered 204. The read below
+// survives only to name the account in the log line, and is used for
+// nothing the deletion depends on.
+//
 // A nil deadline is never reaped. That is the state of an administrator
 // provisioned with no SMTP endpoint at all (`auth create-admin`, whose
 // recovery configuration is optional) and of every record written before
@@ -383,10 +423,18 @@ func (s *Service) handleResendVerifyEmail(w http.ResponseWriter, r *http.Request
 //
 // The fresh bootstrap token is what "reopens enrollment" means: the
 // deployment is back in the state Service.New finds a never-enrolled
-// store in, and PrintBootstrapNotice will print the new link. When this
-// runs INSIDE New, New mints one again immediately afterwards, which is
-// harmless - nothing has printed either of them yet, and the one that
-// survives is the one the operator is shown.
+// store in. It is PRINTED here, to Config.Notice, and that print is not
+// decoration: a host calls PrintBootstrapNotice once at startup, so a
+// reap that happened an hour into a process's life would otherwise mint
+// a single-use token that expires in 30 minutes with nothing having
+// shown it to anybody - a deployment locked out by the very mechanism
+// that exists to prevent lockouts, and a direct contradiction of
+// docs/install.md and docs/recovery-without-a-terminal.md. When this
+// runs INSIDE New, New mints one again immediately afterwards and the
+// host's own PrintBootstrapNotice prints THAT one; the line printed
+// here is superseded a moment later, which is why the reaper's own
+// print is worth having only for the runtime case and harmless in the
+// startup one.
 func (s *Service) reapUnverifiedAdmin() (bool, error) {
 	admin, err := s.store.Admin()
 	if err != nil {
@@ -399,16 +447,18 @@ func (s *Service) reapUnverifiedAdmin() (bool, error) {
 		return false, nil
 	}
 
-	removed, err := s.store.DeleteAdmin()
+	removed, deleted, err := s.store.DeleteUnverifiedAdmin(s.now().UTC())
 	if err != nil {
 		return false, err
 	}
-	if removed == nil {
-		// Somebody else's DeleteAdmin won the race. Nothing to revoke or
-		// reopen that they have not already done.
+	if !deleted {
+		// The record stopped being reapable between the read above and
+		// the guarded delete - it was verified, its address was
+		// changed, or another reaper got there first. Nothing to
+		// revoke or reopen either way.
 		return false, nil
 	}
-	if removed.PasswordRef != "" {
+	if removed != nil && removed.PasswordRef != "" {
 		// Removed only after the store no longer points at it, the same
 		// order handleUpdateRecovery uses for a superseded secret.
 		s.secrets.remove(removed.PasswordRef)
@@ -419,6 +469,9 @@ func (s *Service) reapUnverifiedAdmin() (bool, error) {
 	}
 	s.logf("local: the administrator %q was removed: its recovery address %q was not verified by %s, and enrollment has reopened with a fresh bootstrap token",
 		admin.Username, admin.RecoveryEmail, admin.VerificationDeadline.Format(time.RFC3339))
+	if err := s.PrintBootstrapNotice(s.notice, s.baseURL); err != nil {
+		s.logf("local: the reopened enrollment token could not be printed: %v", err)
+	}
 	return true, nil
 }
 

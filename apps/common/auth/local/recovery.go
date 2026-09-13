@@ -127,16 +127,20 @@ type resetPasswordRequest struct {
 //
 // RecoveryEmailVerified and VerificationDeadline are what the signed-in
 // UI's "unverified - this account will be removed" banner is built from
-// (#830 §§8-9). The deadline is a string rather than a time so that the
-// contract can declare one type for a field that is frequently absent:
-// "" means there is no deadline, which is the state of a verified
-// address and of an administrator provisioned without SMTP at all.
+// (#830 §§8-9). The deadline is a string rather than a time so that one
+// type can carry an RFC3339 instant this package formats itself, and it
+// is OMITTED rather than emitted empty when there is none - a verified
+// address, or an administrator provisioned without SMTP at all - which
+// is the optional-member convention the rest of the contract uses for a
+// fact that does not exist yet, instead of a sentinel every client
+// would have to know to special-case. SMTP is omitted on the same rule
+// for the same reason: absent, never null.
 type recoveryResponse struct {
 	RecoveryEmail          string            `json:"recoveryEmail"`
 	RecoveryEmailConfirmed bool              `json:"recoveryEmailConfirmed"`
 	RecoveryEmailVerified  bool              `json:"recoveryEmailVerified"`
-	VerificationDeadline   string            `json:"verificationDeadline"`
-	SMTP                   *smtpSettingsView `json:"smtp"`
+	SMTP                   *smtpSettingsView `json:"smtp,omitempty"`
+	VerificationDeadline   string            `json:"verificationDeadline,omitempty"`
 }
 
 // recoveryViewOf renders the administrator half of that answer, so the
@@ -158,14 +162,18 @@ func recoveryViewOf(admin *AdminRecord, smtp *SMTPRecord) recoveryResponse {
 	return out
 }
 
-// recoveryUpdateRequest is PATCH /recovery's body. Both members are
-// pointers because both are genuinely optional: a request may change the
-// recovery address, the SMTP endpoint, or both, and "absent" has to be
-// distinguishable from "set to empty" for either one to be changed on its
-// own.
+// recoveryUpdateRequest is PATCH /recovery's body.
+//
+// CurrentPassword is required on every call and is checked before
+// anything else happens (handleUpdateRecovery has the argument). The
+// other two members are pointers because both are genuinely optional: a
+// request may change the recovery address, the SMTP endpoint, or both,
+// and "absent" has to be distinguishable from "set to empty" for either
+// one to be changed on its own.
 type recoveryUpdateRequest struct {
-	RecoveryEmail *string              `json:"recoveryEmail"`
-	SMTP          *smtpSettingsRequest `json:"smtp"`
+	CurrentPassword string               `json:"currentPassword"`
+	RecoveryEmail   *string              `json:"recoveryEmail"`
+	SMTP            *smtpSettingsRequest `json:"smtp"`
 }
 
 // validate checks an SMTP block the way email.Config.Validate would,
@@ -282,33 +290,6 @@ func (s *Service) send(ctx context.Context, cfg email.Config, msg email.Message)
 	return s.sendMail(ctx, cfg, msg)
 }
 
-// sendInBackground delivers one message off the request path, so that
-// forgot-password's response time does not depend on whether the username
-// matched (this file's opening note explains why that matters more than
-// reporting the failure would help).
-//
-// The failure is logged, not lost: an operator who never receives a reset
-// link needs to be able to find out why, and the runtime's own log is the
-// only place that answer can go without also telling an unauthenticated
-// caller whether the account exists. The message text names the host and
-// the stage; email.Send is what guarantees it never names the credential.
-//
-// The WaitGroup is what lets this package's own tests observe the send
-// deterministically (drainOutboundMail); production never waits on it,
-// and a send still in flight at shutdown is one lost reset link, which is
-// what a restart already means for the token itself.
-func (s *Service) sendInBackground(cfg email.Config, msg email.Message) {
-	s.outbound.Add(1)
-	go func() {
-		defer s.outbound.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), backgroundSendTimeout)
-		defer cancel()
-		if err := s.sendMail(ctx, cfg, msg); err != nil {
-			s.logf("local: sending %q to the administrator's recovery address failed: %v", msg.Subject, err)
-		}
-	}()
-}
-
 // backgroundSendTimeout bounds a send nobody is waiting on. Longer than
 // email's own per-send timeout would be pointless; shorter would cut off
 // a send that was going to succeed.
@@ -329,6 +310,18 @@ func (s *Service) drainOutboundMail() { s.outbound.Wait() }
 // address rather than of the account - an unauthenticated route that
 // sends email must have a ceiling, or it is a mail cannon pointed at the
 // administrator's inbox and at the operator's SMTP quota.
+//
+// The 204 is written AND FLUSHED before any of it, and then every
+// remaining step runs on a goroutine. Writing the header is not enough
+// on its own: net/http buffers a bodyless response until the handler
+// returns, so a handler that read the store, opened the SMTP password's
+// 0600 file and minted a token before returning would answer a matching
+// username measurably later than a non-matching one, over and over,
+// against a fixed remote. That is the same oracle a different status
+// code would be, discovered with a stopwatch instead of a parser. With
+// the flush first and the work behind it, what the caller can time is
+// the rate limiter and a JSON decode, neither of which has ever read
+// the account.
 func (s *Service) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if !s.forgotLimiter.Allow(remoteIP(r, s.trustForwardedHeaders)) {
 		writeAuthError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many password reset requests; wait before trying again")
@@ -343,16 +336,52 @@ func (s *Service) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	// account, and one answer needs no such proof.
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	// Answered BEFORE anything is looked up or sent. Every branch below
-	// this line is invisible to the caller.
-	w.WriteHeader(http.StatusNoContent)
+	// Registered before the response goes out, and only then flushed.
+	// The order is what keeps drainOutboundMail honest: the flush is
+	// what releases the caller, a test's next statement is
+	// s.outbound.Wait(), and a WaitGroup joined AFTER that flush could
+	// be observed empty by a Wait that has already overtaken it.
+	s.outbound.Add(1)
 
+	// Answered, and put on the wire, BEFORE anything is looked up or
+	// sent. Everything the goroutine below does is invisible to the
+	// caller in the body, in the status and in the clock.
+	w.WriteHeader(http.StatusNoContent)
+	// A response that cannot be flushed is one the client has already
+	// stopped reading; the work below is unaffected and there is
+	// nothing left to report the failure to.
+	_ = http.NewResponseController(w).Flush()
+
+	go func() {
+		defer s.outbound.Done()
+		s.deliverReset(req.Username)
+	}()
+}
+
+// deliverReset does the whole of forgot-password's real work off the
+// request path: deciding whether the username is the administrator's,
+// resolving the SMTP endpoint (which reads the password's own file),
+// minting the single-use token and sending the link.
+//
+// All four are here rather than only the send, because all four are
+// observable in the response TIME if they happen before the handler
+// returns, and the whole design of this route is that nothing about the
+// account is observable at all. The failures are logged, not lost: an
+// operator who never receives a reset link needs to be able to find out
+// why, and the runtime's own log is the only place that answer can go
+// without also telling an unauthenticated caller whether the account
+// exists. The message text names the host and the stage; email.Send is
+// what guarantees it never names the credential.
+//
+// A send still in flight at shutdown is one lost reset link, which is
+// what a restart already means for the token itself.
+func (s *Service) deliverReset(username string) {
 	admin, err := s.store.Admin()
 	if err != nil {
 		s.logf("local: forgot-password could not read the administrator record: %v", err)
 		return
 	}
-	if admin == nil || admin.Username != req.Username || admin.RecoveryEmail == "" {
+	if admin == nil || admin.Username != username || admin.RecoveryEmail == "" {
 		return
 	}
 
@@ -367,7 +396,13 @@ func (s *Service) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		s.logf("local: forgot-password could not issue a reset token: %v", err)
 		return
 	}
-	s.sendInBackground(cfg, resetMessage(admin.RecoveryEmail, admin.Username, token, s.baseURL))
+
+	msg := resetMessage(admin.RecoveryEmail, admin.Username, token, s.baseURL)
+	ctx, cancel := context.WithTimeout(context.Background(), backgroundSendTimeout)
+	defer cancel()
+	if err := s.sendMail(ctx, cfg, msg); err != nil {
+		s.logf("local: sending %q to the administrator's recovery address failed: %v", msg.Subject, err)
+	}
 }
 
 // handleResetPassword implements POST /reset-password: the other end of
@@ -441,13 +476,32 @@ func (s *Service) handleGetRecovery(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateRecovery implements PATCH /recovery.
 //
-// The order matters twice. Everything is validated before anything is
-// written, so a refused request changes nothing. And when the recovery
-// address changes, a fresh VERIFICATION message is sent BEFORE the new
-// address is recorded and, on failure, the whole update is refused - an
-// operator must not be able to leave the account with a recovery address
-// that has never received anything, which is exactly the silent-lockout
-// state #830 exists to prevent.
+// It is RE-AUTHENTICATED, exactly like POST /password and for a
+// stronger reason than symmetry. The recovery address and the SMTP
+// endpoint are credential-equivalent: whoever controls either one
+// controls where a password reset link is delivered, so a caller who
+// holds a live session but does NOT know the password could otherwise
+// repoint them at infrastructure of their own, press forgot-password,
+// receive the link, reset the password and sign the real operator out
+// for good. A stolen cookie is a temporary problem; a stolen cookie
+// that can rewrite the recovery path is a permanent one. The password
+// check therefore runs FIRST, before the SMTP password is resolved or
+// stored, before any message is sent and before anything is written -
+// a refused request must not have touched the secret vault, and must
+// not have made this process connect to a caller-named mail server.
+//
+// The order matters twice more. Everything is validated before anything
+// is written, so a refused request changes nothing. And when the
+// recovery address OR the SMTP endpoint changes, a message is sent over
+// the endpoint THIS request establishes before either is recorded and,
+// on failure, the whole update is refused - an operator must not be
+// able to leave the account with a recovery address that has never
+// received anything, nor with an endpoint nothing has ever been
+// delivered through, which are the two shapes of the silent lockout
+// #830 exists to prevent. An SMTP-only change on an already-verified
+// address sends the test message rather than a verification link: the
+// mailbox has already proved somebody reads it, and what is unproven is
+// the new endpoint's ability to reach it.
 //
 // A changed address also drops the VERIFIED flag (#830 §8): the proof
 // that somebody can read a mailbox belongs to the address it was earned
@@ -468,6 +522,17 @@ func (s *Service) handleUpdateRecovery(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed request body")
 		return
 	}
+
+	// Before everything, including the shape checks below: a caller who
+	// cannot prove they are the administrator learns nothing about this
+	// request except that it was refused, and the same refusal
+	// handleRotatePassword gives (one code, one message) is what says
+	// so.
+	if err := verifyPassword(admin.PasswordHash, req.CurrentPassword); err != nil {
+		writeAuthError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "current password is incorrect")
+		return
+	}
+
 	if req.RecoveryEmail == nil && req.SMTP == nil {
 		writeAuthError(w, http.StatusBadRequest, "INVALID_REQUEST", "name at least one of recoveryEmail or smtp to change")
 		return
@@ -495,6 +560,16 @@ func (s *Service) handleUpdateRecovery(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, passwordRef, err := s.pendingSMTP(req.SMTP, stored)
 	if err != nil {
+		if errors.Is(err, ErrSMTPNotConfigured) {
+			// The same refusal POST /recovery/test and
+			// /verify-email/resend give, and the one the contract
+			// declares: an update that names only an address, on a
+			// deployment with no endpoint to prove it over, is a
+			// request that cannot be satisfied rather than a fault in
+			// this process.
+			writeAuthError(w, http.StatusBadRequest, "INVALID_REQUEST", "no SMTP connection is configured yet")
+			return
+		}
 		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
 		return
 	}
@@ -505,12 +580,16 @@ func (s *Service) handleUpdateRecovery(w http.ResponseWriter, r *http.Request) {
 		address = *req.RecoveryEmail
 	}
 
-	// A verification message is sent when the address changed, and also
-	// when only the SMTP endpoint changed while the current address is
-	// still unverified: in both cases the pairing of "this endpoint"
-	// with "this mailbox" is unproven, and #830's requirement is that it
-	// never stays unproven silently.
-	needsVerification := addressChanged || (req.SMTP != nil && admin.RecoveryEmailVerifiedAt == nil)
+	// A message is sent when the address changed, when the ENDPOINT
+	// changed, and when only an unchanged endpoint was re-sent while the
+	// current address is still unverified: in all three the pairing of
+	// "this endpoint" with "this mailbox" is unproven, and #830's
+	// requirement is that it never stays unproven silently. The endpoint
+	// case is the one a settings page reaches most often and the one
+	// that used to slip through - a new host stored beside an untouched
+	// recoveryEmailConfirmed=true is a deployment that reports a working
+	// recovery path and has none.
+	needsProof := addressChanged || smtpChanged(req.SMTP, stored) || (req.SMTP != nil && admin.RecoveryEmailVerifiedAt == nil)
 	state := RecoveryEmailState{
 		Address:        address,
 		ConfirmedAt:    admin.RecoveryEmailConfirmedAt,
@@ -524,24 +603,39 @@ func (s *Service) handleUpdateRecovery(w http.ResponseWriter, r *http.Request) {
 		state.TokenHash = ""
 		state.TokenExpiresAt = nil
 	}
-	if needsVerification && address != "" {
+	if needsProof && address != "" {
 		now := s.now().UTC()
-		challenge, err := mintVerificationChallenge(now)
-		if err != nil {
-			writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
-			return
+		if state.VerifiedAt != nil {
+			// An established, verified mailbox behind a changed
+			// endpoint. A verification link here would ask an operator
+			// to re-prove something they already proved and would
+			// un-verify the account until they did; the test message
+			// proves exactly the one thing in doubt, which is that this
+			// endpoint delivers to this address.
+			if err := s.send(r.Context(), cfg, testMessage(address)); err != nil {
+				writeAuthError(w, http.StatusBadGateway, "SMTP_SEND_FAILED", "could not send a message over that SMTP endpoint: "+err.Error())
+				return
+			}
+			state.ConfirmedAt = &now
+		} else {
+			challenge, err := mintVerificationChallenge(now)
+			if err != nil {
+				writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
+				return
+			}
+			// The record's own deadline, nil included: an established
+			// account editing its address is not given a lapse window,
+			// and a provisional one still inside its original window
+			// keeps it.
+			if err := s.send(r.Context(), cfg, verifyMessage(address, admin.Username, challenge.Token, s.baseURL, admin.VerificationDeadline)); err != nil {
+				writeAuthError(w, http.StatusBadGateway, "SMTP_SEND_FAILED", "could not send the verification email: "+err.Error())
+				return
+			}
+			state.ConfirmedAt = &now
+			state.VerifiedAt = nil
+			state.TokenHash = challenge.Hash
+			state.TokenExpiresAt = &challenge.ExpiresAt
 		}
-		// The record's own deadline, nil included: an established
-		// account editing its address is not given a lapse window, and
-		// a provisional one still inside its original window keeps it.
-		if err := s.send(r.Context(), cfg, verifyMessage(address, admin.Username, challenge.Token, s.baseURL, admin.VerificationDeadline)); err != nil {
-			writeAuthError(w, http.StatusBadGateway, "SMTP_SEND_FAILED", "could not send the verification email: "+err.Error())
-			return
-		}
-		state.ConfirmedAt = &now
-		state.VerifiedAt = nil
-		state.TokenHash = challenge.Hash
-		state.TokenExpiresAt = &challenge.ExpiresAt
 	}
 
 	// Persisted only now that the send (if any) has succeeded. The SMTP
@@ -566,7 +660,7 @@ func (s *Service) handleUpdateRecovery(w http.ResponseWriter, r *http.Request) {
 			s.secrets.remove(stored.PasswordRef)
 		}
 	}
-	if req.RecoveryEmail != nil || needsVerification {
+	if req.RecoveryEmail != nil || needsProof {
 		// One write for the whole recovery block, so the old address's
 		// challenge can never be live against the new address (see
 		// RecoveryEmailState).
@@ -587,6 +681,35 @@ func (s *Service) handleUpdateRecovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, recoveryViewOf(updated, rec))
+}
+
+// smtpChanged reports whether req describes a different endpoint from
+// the one already stored - a different destination, a different
+// identity, or a newly supplied password.
+//
+// A supplied password counts as a change on its own, and that is the
+// case worth stating: "same host, new API key" is the single most
+// common recovery-settings edit there is, it is exactly the edit that
+// silently breaks delivery when the key is wrong, and an endpoint whose
+// credential nobody has exercised is as unproven as one whose host
+// nobody has resolved. An absent password means "keep the stored one"
+// (smtpSettingsRequest.Password), which changes nothing by itself.
+//
+// No stored endpoint at all makes any named one a change, including one
+// that happens to be identical to nothing.
+func smtpChanged(req *smtpSettingsRequest, stored *SMTPRecord) bool {
+	if req == nil {
+		return false
+	}
+	if stored == nil {
+		return true
+	}
+	return req.Password != "" ||
+		req.Host != stored.Host ||
+		req.Port != stored.Port ||
+		req.Security != stored.Security ||
+		req.Username != stored.Username ||
+		req.From != stored.From
 }
 
 // pendingSMTP works out which endpoint and which password reference an

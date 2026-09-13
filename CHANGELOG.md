@@ -87,6 +87,44 @@
   `/verify-email` page that reports what the link did. `auth create-admin` prints
   the same warning to stdout and takes `--public-base-url` for the link it mails.
 
+  **Changing where recovery mail goes now asks for the password** (#830, security
+  review). `PATCH /api/v1/auth/recovery` takes `currentPassword` and re-checks it
+  before it resolves the SMTP credential, sends anything or writes anything,
+  refusing with the same 401 `UNAUTHENTICATED` that `POST /auth/password` gives.
+  The recovery address and the SMTP endpoint decide where a reset link is
+  delivered, so a caller holding a live session but not the password could
+  otherwise repoint them, press **Forgot password?**, receive the link and take
+  the account over for good — a stolen cookie turning into permanent ownership.
+  Settings' **Account recovery** card grows an **Administrator password** field
+  to match; **Send test email** does not ask for one, because it changes nothing.
+
+  Three narrower holes in the same routes are closed with it. A change to the
+  **SMTP endpoint** is now proven like a change of address: the verification (or,
+  on an already-verified mailbox, the test message) goes out over the endpoint
+  the request establishes and the whole update is refused with
+  `SMTP_SEND_FAILED` if it cannot be delivered, so a new host can no longer be
+  stored beside an untouched `recoveryEmailConfirmed: true` and fail silently at
+  the one moment it is needed. Redeeming a verification link now spends the
+  **exact challenge** it matched, re-compared under the store's own lock, so an
+  address change or a resend landing in between can no longer leave the NEW
+  address verified on the OLD address's token. And the reaper's decision and its
+  deletion happen in one critical section (`Store.DeleteUnverifiedAdmin`), so a
+  verification committing at the deadline instant can no longer be answered 204
+  by a process that deletes the account a moment later.
+
+  A reap that reopens enrolment **at runtime** also prints the fresh enrolment
+  notice, to the same stream the startup one goes to. A host prints that notice
+  once, at startup, so a token minted an hour into a process's life used to
+  expire in 30 minutes with nothing having shown it to anybody — a deployment
+  locked out by the mechanism that exists to prevent lockouts.
+
+  Two contract corrections: `PATCH /auth/recovery` answers 400 `INVALID_REQUEST`
+  rather than 500 when no SMTP endpoint is configured to prove an address over
+  (the answer its siblings already gave, and the one the contract already
+  declared), and `RecoverySettingsResponse`'s `smtp` and `verificationDeadline`
+  are optional members that are OMITTED when there is nothing to report, instead
+  of a null against a non-nullable schema and an empty-string sentinel.
+
 - **A backup set can name a subtree discovery must not walk into** (#737).
   `exclude_paths` on a backup set lists directories, relative to
   `remote_path`, that the listing skips: "recurse into `uploads/`, never into

@@ -520,6 +520,18 @@ function describeRecoveryFailure(
       correlationId: api.correlationId
     };
   }
+  if (api?.code === "UNAUTHENTICATED") {
+    // The one refusal on this card that is not about mail. It covers a
+    // wrong password and a session that has since lapsed, because the
+    // service deliberately does not distinguish them, and saying so is
+    // more useful than picking one.
+    return {
+      message: "That password was not accepted, so nothing was changed.",
+      remediation:
+        "Re-type the administrator password. If it is definitely right, the session has expired instead — sign in again and repeat the change.",
+      correlationId: api.correlationId
+    };
+  }
   return describeFailure(e, fallback);
 }
 
@@ -532,6 +544,11 @@ function RecoveryEditor({ loaded, readOnly }: { loaded: RecoverySettings; readOn
   const [current, setCurrent] = useState(loaded);
   const [email, setEmail] = useState(loaded.recoveryEmail);
   const [smtp, setSmtp] = useState<SmtpFieldValues>(() => smtpFieldsOf(loaded.smtp));
+  // The re-authentication this write requires (#830 security review).
+  // Held here rather than in the SMTP block because it is not part of
+  // the configuration at all: it proves who is changing it, and it is
+  // cleared the moment the change lands.
+  const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
@@ -540,7 +557,7 @@ function RecoveryEditor({ loaded, readOnly }: { loaded: RecoverySettings; readOn
 
   const badEmailId = useId();
   const badEmail = email.length > 0 && !looksLikeEmail(email);
-  const valid = looksLikeEmail(email) && smtpFieldsComplete(smtp);
+  const valid = looksLikeEmail(email) && smtpFieldsComplete(smtp) && password.length > 0;
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
@@ -551,7 +568,7 @@ function RecoveryEditor({ loaded, readOnly }: { loaded: RecoverySettings; readOn
     setSaved(null);
     setTested(null);
     api
-      .updateRecoverySettings({ recoveryEmail: email.trim(), smtp: smtpInput(smtp) })
+      .updateRecoverySettings({ currentPassword: password, recoveryEmail: email.trim(), smtp: smtpInput(smtp) })
       .then((next) => {
         // Re-rendered from the answer, including the password field, which
         // goes back to blank: whatever was typed is stored now and there
@@ -559,6 +576,11 @@ function RecoveryEditor({ loaded, readOnly }: { loaded: RecoverySettings; readOn
         setCurrent(next);
         setEmail(next.recoveryEmail);
         setSmtp(smtpFieldsOf(next.smtp));
+        // The administrator's own password is not kept for a second
+        // save: it is a credential, this form has no reason to hold one
+        // after the write it authorised, and re-typing it is the point
+        // of asking.
+        setPassword("");
         // And published, because this answer is also what the unverified
         // banner above every page is drawn from (#830 §§8-9). A changed
         // address comes back UNVERIFIED - a verification link was just
@@ -662,6 +684,27 @@ function RecoveryEditor({ loaded, readOnly }: { loaded: RecoverySettings; readOn
           </span>
         }
       />
+      {/* Last, immediately above the button it authorises, and only on
+          the save path: the test send changes nothing and is not gated
+          by it. Whoever controls this address and this endpoint controls
+          where a password reset link is delivered, so this write asks
+          for the password itself rather than accepting a session cookie
+          - the same re-authentication the password-change card above
+          performs, for a change of the same weight. */}
+      <HelpField label="Administrator password" help={FIELD_HELP.recoveryCurrentPassword}>
+        {(helpId, field) => (
+          <PasswordInput
+            label={field.label}
+            labelledBy={field.id}
+            autoComplete="current-password"
+            describedBy={helpId}
+            value={password}
+            onChange={setPassword}
+            disabled={readOnly}
+            required
+          />
+        )}
+      </HelpField>
       {saved ? (
         <Banner tone="ok" style={{ fontSize: "var(--text-sm)" }}>{saved}</Banner>
       ) : null}

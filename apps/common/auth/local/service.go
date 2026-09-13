@@ -91,6 +91,25 @@ type Config struct {
 	// os.Stderr; io.Discard silences them.
 	Log io.Writer
 
+	// Notice is where an operator-facing enrollment notice is written
+	// when this Service reopens enrollment BY ITSELF - the reaper
+	// deleting a provisional administrator whose recovery address was
+	// never verified (verify.go, #830 §9). nil means os.Stdout, which
+	// is the stream a host's own startup PrintBootstrapNotice call
+	// already writes to (apps/generic/cmd/backupd-web), and the two have
+	// to be the same stream for the notice to be findable at all.
+	//
+	// It is separate from Log because the two are different kinds of
+	// line for different readers. Log carries diagnostics nobody is
+	// required to read; this carries the single-use token that is the
+	// ONLY way back into a deployment whose administrator was just
+	// deleted. §49.1 puts that token in the container log, and a reap
+	// that minted one where nothing printed it would leave an operator
+	// with a reopened enrollment they have 30 minutes to find and no way
+	// to see - which is exactly what docs/recovery-without-a-terminal.md
+	// promises does not happen.
+	Notice io.Writer
+
 	// TrustForwardedHeaders makes this Service trust X-Forwarded-For (for
 	// rate limiting, ratelimit.go's remoteIP) and X-Forwarded-Proto (for
 	// the session/CSRF cookies' Secure flag, forwarded.go's
@@ -175,6 +194,7 @@ type Service struct {
 	sendMail              email.Sender
 	baseURL               string
 	log                   io.Writer
+	notice                io.Writer
 	outbound              sync.WaitGroup
 	now                   func() time.Time
 	trustForwardedHeaders bool
@@ -237,6 +257,10 @@ func New(cfg Config) (*Service, error) {
 	if log == nil {
 		log = os.Stderr
 	}
+	notice := cfg.Notice
+	if notice == nil {
+		notice = os.Stdout
+	}
 
 	// Take this store's exclusive advisory lock BEFORE reading or writing
 	// anything, and hold it for this Service's entire lifetime (there is
@@ -286,6 +310,7 @@ func New(cfg Config) (*Service, error) {
 		sendMail:              sendMail,
 		baseURL:               strings.TrimRight(cfg.BaseURL, "/"),
 		log:                   log,
+		notice:                notice,
 		now:                   now,
 		trustForwardedHeaders: cfg.TrustForwardedHeaders,
 		reapInterval:          reapInterval,

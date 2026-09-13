@@ -141,6 +141,7 @@
         <li><a href="#after">What you get next</a></li>
         <li><a href="#again">Coming back later</a></li>
         <li><a href="#forgot">Forgetting the password</a></li>
+        <li><a href="#verify-email">Verifying the recovery address</a></li>
         <li><a href="#second-vps">Adding the second VPS</a></li>
         <li><a href="#gaps">Screens not pictured here</a></li>
       </ol>
@@ -745,6 +746,19 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
     </ol>
     <p>Nothing arrives? Then the address or the mail path is the problem, not the password, and the browser cannot tell you which. If you are still signed in somewhere, fix it in <strong>Settings</strong>, in the <strong>Account recovery</strong> card: the recovery address and the SMTP details are both editable there, <strong>Send test email</strong> proves the path without changing anything, <strong>Save recovery settings</strong> writes it, and changing the address sends a fresh confirmation to the new one rather than trusting it. If you are not signed in anywhere and no mail arrives, you are down to a factory reset, which archives the administrator record, the catalog and the configuration, reopens enrolment, and leaves every retained backup on disk &mdash; <code>install --mode factory-reset</code>, and it is the last resort rather than the procedure.</p>
     <p>While we are here: the password can also simply be <em>changed</em> from Settings, which asks for the current one. That is the ordinary rotation and it has nothing to do with the mail path.</p>
+  </section>
+
+  <section>
+    <span class="step-eyebrow">Screen 12</span>
+    <h2 id="verify-email">Verifying the recovery address</h2>
+    <p>The message enrolment sends is not a receipt. It is a <strong>verification link</strong>, and the account it belongs to is provisional until somebody opens it: <code>/verify-email?token=&lt;a long random string&gt;</code>, one page, no fields, reached from whatever device holds the mailbox &mdash; a phone that has never signed into this deployment opens it just as well as the browser you enrolled from, because the token in the link is the credential and nothing else is asked for.</p>
+    <p>Three facts about it, in the order they matter:</p>
+    <ol>
+      <li><strong>The link works once, and for 30 minutes.</strong> Opening it a second time says the link has expired or has already been used, which is also what an unknown token, a link for an account that no longer exists and an address that is already verified all say &mdash; one answer, so that nothing about the account can be probed with it. If the window closed, sign in and use <strong>Resend verification email</strong> in the banner or in <strong>Settings</strong>; a resend mints a fresh link and invalidates the previous one.</li>
+      <li><strong>Nobody opening it deletes the administrator.</strong> That is the point of it, rather than a harsh edge: an address that was mistyped is an account that is already lost, and the loss is only discovered months later at the one moment it cannot be fixed. So an unverified account lapses at a deadline fixed when it was created &mdash; at least 30 minutes &mdash; and when it does, the record, its sessions and its SMTP settings go, enrolment reopens, and <strong>a fresh enrolment notice is printed to the engine's log exactly like the one on <a href="#log">screen 0</a></strong>. Re-running a 30-second enrolment with the address spelled right is the whole of the recovery.</li>
+      <li><strong>Verifying is permanent.</strong> The deadline is cleared for good, so an established administrator who later edits the address in <strong>Settings</strong> gets an unverified address and a banner asking them to confirm it &mdash; never a deleted account.</li>
+    </ol>
+    <p>While the address is unverified, every signed-in screen carries an undismissable banner naming the address, the deadline and a <strong>Resend</strong> action. It is deliberately not dismissable: the thing it is warning about is the account disappearing.</p>
   </section>
 
   <section>
