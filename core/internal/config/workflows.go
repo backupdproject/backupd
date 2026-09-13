@@ -90,6 +90,55 @@ type Workflows struct {
 	// limit means a deployment can configure the protection away, usually
 	// while debugging something else, and then keep running that way.
 	MaxScriptSizeBytes int64 `yaml:"max_script_size_bytes,omitempty"`
+
+	// ExecConnections are the remote EXECUTION connections a backup set's
+	// remote_exec_connection_ref may name (#810).
+	//
+	// They exist because an execution connection is not the same thing as
+	// a transfer connection, and a hardened deployment is exactly where
+	// the difference bites: the recommended posture for a backup SOURCE
+	// (docs/ssh-setup.md) is an account forced into internal-sftp, which
+	// authenticates, transfers artifacts, and cannot run a command at
+	// all. Assuming the transfer credential grants shell exec would mean
+	// either refusing that posture or quietly requiring a weaker one.
+	//
+	// Each entry carries a whole Remote rather than a subset of it, so
+	// every control a transfer remote has -- host, port, user, the
+	// File/Env/Command credential reference, known_hosts, the connection
+	// ceiling, sensitive_endpoint -- applies here through the same
+	// validation and the same custody code. There is deliberately no
+	// field for a shell, a sudo user or a command prefix: a hook runs as
+	// the configured SSH user, and this product never escalates.
+	ExecConnections []WorkflowExecConnection `yaml:"exec_connections,omitempty"`
+}
+
+// WorkflowExecConnection is one declared remote execution connection.
+//
+// The id is how a backup set names it, and it may not contain a "/",
+// because that is how a backup set id is spelled: a reference has to
+// resolve to exactly one thing, and "production/db" must mean the backup
+// set's own source connection and never an exec connection that happened
+// to be named the same.
+type WorkflowExecConnection struct {
+	Name   string `yaml:"id"`
+	Remote Remote `yaml:"remote"`
+}
+
+// WorkflowExecConnection returns the declared execution connection with
+// this id.
+//
+// It answers only about DECLARED connections. A reference naming a backup
+// set ("source/set") is the other half of #810's resolution rule and is
+// not this function's business, which is why the miss is a plain false
+// rather than an error: the caller has a second place to look.
+func (c *Config) WorkflowExecConnection(id string) (WorkflowExecConnection, bool) {
+	for _, conn := range c.Workflows.ExecConnections {
+		if conn.Name == id {
+			return conn, true
+		}
+	}
+
+	return WorkflowExecConnection{}, false
 }
 
 // WorkflowStageDirs is one scope's pair of hook directories.
@@ -383,6 +432,58 @@ func (v *validator) validateWorkflows(c *Config) {
 	if w.Root == "" && len(w.Environment) != 0 {
 		v.addf("workflows.root: must be set when workflows.environment is configured; a workflow environment with no hook directories to run in is configuration that does nothing")
 	}
+
+	if w.Root == "" && len(w.ExecConnections) != 0 {
+		v.addf("workflows.root: must be set when workflows.exec_connections is configured; an execution connection with no hook directories to run scripts from is configuration that does nothing")
+	}
+
+	v.validateExecConnections(w.ExecConnections)
+}
+
+// validateExecConnections checks the declared execution connections: that
+// each one is named, named once, named in a way a reference can resolve
+// unambiguously, and reachable over SSH.
+//
+// The remote itself goes through validateRemote, the same function every
+// transfer remote goes through, so an execution connection cannot end up
+// held to a weaker standard than a transfer one -- host-key verification
+// included, which is the control that matters most here: a hook runs
+// somebody's code on the far side, so "which host is this" has to be
+// settled before a byte is sent.
+func (v *validator) validateExecConnections(conns []WorkflowExecConnection) {
+	seen := map[string]int{}
+
+	for i := range conns {
+		conn := &conns[i]
+		path := fmt.Sprintf("workflows.exec_connections[%d]", i)
+
+		switch {
+		case strings.TrimSpace(conn.Name) == "":
+			v.addf("%s: id is required; a connection nothing can name is a connection nothing can use", path)
+		case strings.Contains(conn.Name, "/"):
+			v.addf("%s: id %q must not contain \"/\", because that is how a backup set is named (\"source/set\") and a remote_exec_connection_ref has to resolve to exactly one thing", path, conn.Name)
+		default:
+			if first, already := seen[conn.Name]; already {
+				v.addf("%s: id %q is declared twice (also at workflows.exec_connections[%d]), and there is no rule for choosing between two connections with one name", path, conn.Name, first)
+			}
+			seen[conn.Name] = i
+		}
+
+		// "local" is refused rather than passed to validateRemote's own
+		// local branch, because an execution connection reached over the
+		// local filesystem is this daemon's own host -- which is what a
+		// NAME.local.sh already runs on, through a different executor
+		// entirely. Accepting it would give an operator two spellings of
+		// one thing, one of which quietly ignores the connection they
+		// wrote.
+		if conn.Remote.Type != "sftp" {
+			v.addf("%s.remote: type must be \"sftp\" (got %q); an execution connection is an SSH connection to another host, and a hook that should run on this backup server is a NAME.local.sh instead", path, conn.Remote.Type)
+
+			continue
+		}
+
+		v.validateRemote(path+".remote", &conn.Remote)
+	}
 }
 
 // validateStageDir holds a configured hook directory to the rules that are
@@ -535,6 +636,8 @@ func (v *validator) validateBackupSetWorkflow(path string, c *Config, bs *Backup
 		if !c.WorkflowsConfigured() {
 			v.addf("%s.workflow: workflows.root must be set before a backup set can configure hook directories; the root is the approved tree every hook script must live inside", path)
 		}
+
+		v.validateExecConnectionRef(path, c, bs, w.RemoteExecConnectionRef)
 	}
 
 	// An environment nothing will ever run with is configuration that
@@ -625,4 +728,80 @@ func (c *Config) resolveBackupSetWorkflowEnvironments(v *validator) {
 			bs.WorkflowEnvironment = env
 		}
 	}
+}
+
+// validateExecConnectionRef checks that a set's remote_exec_connection_ref
+// resolves to something that exists.
+//
+// Two kinds of reference resolve, and the difference is #810's whole
+// modelling decision:
+//
+//   - a declared workflows.exec_connections id: an execution connection
+//     with its own credential, which is what a hardened source needs
+//     because its transfer account is SFTP-only or behind a forced
+//     command.
+//   - a backup set id ("source/set"): reuse THAT set's own source SSH
+//     connection, spelled the way every other surface in this product
+//     spells a backup set.
+//
+// Whether the reference resolves is a config question and is answered
+// here. Whether the connection it names can actually run a shell command
+// is not: that is settled by a real capability preflight at run start,
+// against the server, because no config file can assert it truthfully. A
+// reference to a set whose account turns out to be SFTP-only is a valid
+// configuration whose remote hooks fail validation at run start, while
+// ordinary artifact backup over the same account keeps working.
+//
+// A reference that resolves to nothing at all is refused here, though. The
+// alternative is a backup that runs for weeks and a remote hook that has
+// never executed once, which is the failure mode every dead-configuration
+// refusal in this package exists to prevent.
+func (v *validator) validateExecConnectionRef(path string, c *Config, bs *BackupSet, ref string) {
+	if ref == "" {
+		return
+	}
+
+	if _, ok := c.WorkflowExecConnection(ref); ok {
+		return
+	}
+
+	if ref == bs.ID.String() || c.hasBackupSetNamed(ref) {
+		return
+	}
+
+	declared := make([]string, 0, len(c.Workflows.ExecConnections))
+	for _, conn := range c.Workflows.ExecConnections {
+		declared = append(declared, conn.Name)
+	}
+	available := "none are declared"
+	if len(declared) != 0 {
+		available = "declared: " + strings.Join(declared, ", ")
+	}
+
+	v.addf("%s.workflow.remote_exec_connection_ref: %q names no execution connection and no backup set; it must be a workflows.exec_connections id (%s), or a backup set spelled \"source/set\" whose own source connection the hooks should run over",
+		path, ref, available)
+}
+
+// hasBackupSetNamed reports whether "source/set" names a configured backup
+// set. It reads the Names rather than the resolved ID, because this runs
+// during validation and a set whose own identity was refused earlier in the
+// same pass has none.
+func (c *Config) hasBackupSetNamed(ref string) bool {
+	source, set, found := strings.Cut(ref, "/")
+	if !found {
+		return false
+	}
+
+	for _, src := range c.Sources {
+		if src.Name != source {
+			continue
+		}
+		for _, bs := range src.BackupSets {
+			if bs.Name == set {
+				return true
+			}
+		}
+	}
+
+	return false
 }

@@ -26,13 +26,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/lib/env"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
 	"github.com/backupdproject/backupd/core/internal/transport"
 )
 
@@ -105,172 +103,27 @@ func sftpConfig(src transport.Source) (configmap.Simple, error) {
 		return nil, fmt.Errorf("source %q: user is required for sftp", src.ID)
 	}
 
-	// FR-6 + #74: SSH key authentication by default, mandatory rather than
-	// optional, exactly as before. rclone's sftp backend, given no
-	// key_file, no key_pem, no pass and no ask_password, does not refuse to
-	// connect: it falls back to asking a running ssh-agent for a key. That
-	// is a real, working authentication path, just not the one this adapter
-	// is meant to offer, and an operator who forgot to configure a key would
-	// otherwise authenticate against whatever key their agent happens to
-	// hold, silently and non-reproducibly. Requiring exactly one of the
-	// three sources below closes that path by construction, the same as
-	// requiring key_file alone used to, before #74 gave it siblings.
+	// FR-6 + #74: SSH key authentication, mandatory rather than optional.
+	// rclone's sftp backend, given no key_file, no key_pem, no pass and no
+	// ask_password, does not refuse to connect: it falls back to asking a
+	// running ssh-agent for a key. That is a real authentication path, just
+	// not the one this adapter offers, and an operator who forgot to
+	// configure a key would otherwise authenticate with whatever key their
+	// agent happens to hold, silently and non-reproducibly.
 	//
-	// "Exactly one", not "at least one": two configured sources is a config
-	// mistake, not a precedence order for this adapter to silently pick
-	// through, so both are refused rather than one being guessed as
-	// intended. internal/config/validate.go enforces this same rule
-	// independently, so a config built through that package never reaches
-	// here with more than one set; this is the backstop for anything that
-	// builds a transport.Source directly, tests included.
-	sourceCount := 0
-	if src.KeyFile != "" {
-		sourceCount++
-	}
-	if src.KeyEnv != "" {
-		sourceCount++
-	}
-	if len(src.KeyCommand) > 0 {
-		sourceCount++
-	}
-	switch {
-	case sourceCount == 0:
-		return nil, fmt.Errorf("source %q: exactly one of key_file, key_env or key_command is required for sftp (key-based authentication is mandatory, ssh-agent fallback and password login are not offered)", src.ID)
-	case sourceCount > 1:
-		return nil, fmt.Errorf("source %q: exactly one of key_file, key_env or key_command may be set for sftp, not more than one", src.ID)
-	}
-
-	// #269: the passphrase's own three sources get the identical "exactly
-	// one, never more" backstop the key's three sources just got, for the
-	// identical reason -- internal/config/validate.go enforces this same
-	// rule independently for a config built through that package, so this
-	// is the backstop for anything that builds a transport.Source
-	// directly, tests included. Zero is fine here, unlike for the key
-	// itself: most keys are not passphrase-protected at all, and that is
-	// still the default this function assumes when none of the three is
-	// set.
-	passphraseSourceCount := 0
-	if src.PassphraseFile != "" {
-		passphraseSourceCount++
-	}
-	if src.PassphraseEnv != "" {
-		passphraseSourceCount++
-	}
-	if len(src.PassphraseCommand) > 0 {
-		passphraseSourceCount++
-	}
-	if passphraseSourceCount > 1 {
-		return nil, fmt.Errorf("source %q: exactly one of key_passphrase_file, key_passphrase_env or key_passphrase_command may be set for sftp, not more than one", src.ID)
-	}
-
-	// Resolved before the key material itself, and before known_hosts is
-	// even checked: src.KeyEnv/src.KeyCommand's own resolvers (below) need
-	// the passphrase to validate the key they resolve actually decrypts
-	// with it, and a bad passphrase resolver should be reported as a
-	// passphrase problem, not buried behind an unrelated known_hosts
-	// error.
-	passphraseSecret, hasPassphrase, err := resolvePassphrase(src)
+	// Which key, which passphrase, and every refusal around them is
+	// resolveSourceCredential's (execidentity.go), so that #810's exec
+	// client reaches the identical decisions rather than re-deriving them.
+	cred, err := resolveSourceCredential(src)
 	if err != nil {
-		return nil, fmt.Errorf("source %q: resolving the SSH key passphrase: %w", src.ID, err)
-	}
-	passphrase := ""
-	if hasPassphrase {
-		passphrase = passphraseSecret.Reveal()
-	}
-
-	// keyFileValue and keyPEM are mutually exclusive: exactly one of them
-	// ends up populated by the switch below, and which one decides whether
-	// the cfg built further down sets key_file or key_pem. Resolution
-	// happens here, before known_hosts is even checked, so that a bad
-	// resolver (a secrets manager returning junk, an encrypted key, ...)
-	// is reported as a key problem, not buried after an unrelated
-	// known_hosts error.
-	var keyFileValue string
-	var keyPEM obs.Secret
-	usingKeyPEM := false
-
-	switch {
-	case src.KeyFile != "":
-		// #293/#311: the file's own mode and its whole containing
-		// directory chain are checked first, before anything reads or
-		// resolves the file's content, and regardless of whether
-		// key_encryption ends up applying below. A world-writable
-		// directory lets any local actor unlink/replace/rename the key
-		// file regardless of the file's own mode bits, and that risk is
-		// identical whether the file holds a plaintext PEM or #298's
-		// at-rest ciphertext -- the ciphertext's own AES-GCM
-		// authentication defeats a silent CONTENT forgery, but not a
-		// wholesale swap or deletion, so this check applies to the
-		// physical file unconditionally rather than only on the
-		// plaintext path.
-		keyFilePath := env.ShellExpand(src.KeyFile)
-		info, err := os.Stat(keyFilePath)
-		if err != nil {
-			return nil, fmt.Errorf("source %q: key_file %q is not accessible: %w", src.ID, src.KeyFile, err)
-		}
-		if err := checkKeyFileMode(src.ID, src.KeyFile, info); err != nil {
-			return nil, err
-		}
-		if err := checkKeyDirChainMode(src.ID, src.KeyFile, keyFilePath); err != nil {
-			return nil, err
-		}
-
-		// #298: resolveKeyFileForSFTP handles both the default case (no
-		// key_encryption source configured, ok == false) and the at-rest
-		// encryption case (decrypt, or migrate-then-decrypt, into
-		// memory). See its own doc for the full contract.
-		secret, usingPEM, err := resolveKeyFileForSFTP(src)
-		if err != nil {
-			return nil, fmt.Errorf("source %q: %w", src.ID, err)
-		}
-		if usingPEM {
-			keyPEM = secret
-			usingKeyPEM = true
-			break
-		}
-		// The default and documented preference (docs/ssh-setup.md), and
-		// still exactly what happens when no key_encryption source is
-		// configured at all: beyond the mode/directory checks just
-		// above, this adapter never opens the file itself, so the key
-		// never enters this process's memory at all; rclone's own sftp
-		// backend reads key_file directly. A passphrase, if one resolved
-		// above, is NOT verified against this file's content here, for
-		// the same reason: verifying it would mean reading and
-		// decrypting the file in this process, exactly what key_file
-		// exists to avoid. rclone itself checks it, with the
-		// key_file_pass option set below, the moment this cfg is
-		// actually used to connect.
-		keyFileValue = src.KeyFile
-	case src.KeyEnv != "":
-		secret, err := resolveKeyFromEnv(src.KeyEnv, passphrase)
-		if err != nil {
-			return nil, fmt.Errorf("source %q: resolving the SSH key from environment variable %q: %w", src.ID, src.KeyEnv, err)
-		}
-		keyPEM = secret
-		usingKeyPEM = true
-	case len(src.KeyCommand) > 0:
-		secret, err := resolveKeyFromCommand(src.KeyCommand, passphrase)
-		if err != nil {
-			return nil, fmt.Errorf("source %q: resolving the SSH key from the configured command: %w", src.ID, err)
-		}
-		keyPEM = secret
-		usingKeyPEM = true
+		return nil, err
 	}
 
 	// FR-6: host-key verification is mandatory, with no opt-out reachable
 	// through this adapter. See the package comment above for exactly what
 	// rclone does by default when this is left unset.
-	if src.KnownHosts == "" {
-		return nil, fmt.Errorf("source %q: known_hosts is required for sftp", src.ID)
-	}
-	if strings.EqualFold(strings.TrimSpace(src.KnownHosts), "none") {
-		return nil, fmt.Errorf("source %q: known_hosts value %q disables rclone's host-key verification, which this adapter refuses to allow", src.ID, src.KnownHosts)
-	}
-	knownHostsPath := env.ShellExpand(src.KnownHosts)
-	if info, err := os.Stat(knownHostsPath); err != nil {
-		return nil, fmt.Errorf("source %q: known_hosts %q is not accessible: %w", src.ID, src.KnownHosts, err)
-	} else if info.IsDir() {
-		return nil, fmt.Errorf("source %q: known_hosts %q is a directory, not a file", src.ID, src.KnownHosts)
+	if _, err := SourceKnownHostsFile(src); err != nil {
+		return nil, err
 	}
 
 	cfg := configmap.Simple{}
@@ -279,7 +132,7 @@ func sftpConfig(src transport.Source) (configmap.Simple, error) {
 		cfg.Set("port", strconv.Itoa(src.Port))
 	}
 	cfg.Set("user", src.User)
-	if usingKeyPEM {
+	if cred.usingPEM {
 		// rclone's sftp backend reconstructs the original PEM text with
 		// strconv.Unquote("\"" + opt.KeyPem + "\"") (backend/sftp/sftp.go),
 		// so the value has to be exactly what strconv.Quote would produce
@@ -288,11 +141,11 @@ func sftpConfig(src transport.Source) (configmap.Simple, error) {
 		// a literal multi-line PEM string instead (real newline bytes, no
 		// escaping) fails that Unquote call outright, since a Go
 		// interpreted string literal cannot contain a raw newline.
-		cfg.Set("key_pem", quoteForRclonePem(keyPEM.Reveal()))
+		cfg.Set("key_pem", quoteForRclonePem(cred.pem.Reveal()))
 	} else {
-		cfg.Set("key_file", keyFileValue)
+		cfg.Set("key_file", cred.keyFile)
 	}
-	if hasPassphrase {
+	if cred.hasPassphrase {
 		// rclone's sftp backend reveals key_file_pass with its own
 		// obscure.Reveal (backend/sftp/sftp.go), which requires the
 		// obscured form, not the plaintext passphrase: Obscure here is the
@@ -301,7 +154,7 @@ func sftpConfig(src transport.Source) (configmap.Simple, error) {
 		// key_pem's own required transformation. This is honoured
 		// regardless of whether the key came from key_file or key_pem
 		// above; rclone applies key_file_pass to either.
-		obscured, err := obscure.Obscure(passphrase)
+		obscured, err := obscure.Obscure(cred.passphrase.Reveal())
 		if err != nil {
 			return nil, fmt.Errorf("source %q: obscuring the resolved passphrase for rclone: %w", src.ID, err)
 		}

@@ -671,10 +671,19 @@ func repoRoot(t *testing.T) string {
 // skip. A fixture that cannot stand up refuses.
 func (f *Source) ensureImage(t *testing.T, ref string) {
 	t.Helper()
+	ensureImageStaged(t, f.setStage, ref)
+}
 
-	f.setStage("docker image inspect " + ref)
+// ensureImageStaged is ensureImage's body, with the stage reporting passed
+// in so a second machine kind (exechost.go) reaches the SAME image-fetch
+// policy rather than growing its own. One rule, so a second copy cannot
+// drift into being more obliging than the first.
+func ensureImageStaged(t *testing.T, setStage func(string), ref string) {
+	t.Helper()
+
+	setStage("docker image inspect " + ref)
 	if _, _, err := dockerRun(imageInspectTimeout, "image", "inspect", ref); err == nil {
-		f.setStage(ref + " is already on this daemon, so nothing is pulled")
+		setStage(ref + " is already on this daemon, so nothing is pulled")
 		return
 	}
 
@@ -694,7 +703,7 @@ func (f *Source) ensureImage(t *testing.T, ref string) {
 			timeout = remaining
 		}
 
-		f.setStage(fmt.Sprintf("docker pull %s (attempt %d of %d)", ref, attempt, pullAttempts))
+		setStage(fmt.Sprintf("docker pull %s (attempt %d of %d)", ref, attempt, pullAttempts))
 		made++
 		_, stderr, err := dockerRun(timeout, "pull", ref)
 		if err == nil {

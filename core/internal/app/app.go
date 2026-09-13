@@ -404,11 +404,24 @@ func New(cfg *config.Config, journal Journal, tr transport.Transport, logger *ob
 
 // sensitiveEndpoints collects the obs.Endpoint for every configured Remote
 // that opted into issue #295's redaction (config.Remote.Sensitive), across
-// every Source and BackupSet cfg carries. This is the one place that
-// translation happens, mirroring sourceFor just below: internal/obs must
-// not import internal/config (see redact.go's own containment argument),
-// so this package, which already imports both, is where the two
-// vocabularies meet.
+// every Source and BackupSet cfg carries and across every declared
+// workflow EXECUTION connection. This is the one place that translation
+// happens, mirroring sourceFor just below: internal/obs must not import
+// internal/config (see redact.go's own containment argument), so this
+// package, which already imports both, is where the two vocabularies meet.
+//
+// The execution connections are here for the reason #295 gave for the
+// transfer ones, and it applies with nothing changed: an exec connection
+// carries a whole Remote, including sensitive_endpoint, and the failures it
+// produces name the endpoint -- internal/remoteexec's dial and channel
+// errors say "user@host:port", and its audit line says so on every step. A
+// deployment that marked an endpoint sensitive and then ran a hook over it
+// would have redacted the transfers and published the same host:port
+// through the hook, which is the leak moved rather than closed.
+//
+// An exec connection resolved from a backup set ("source/set") needs no
+// entry of its own: it IS that set's remote, and the loop below has
+// already collected it.
 func sensitiveEndpoints(cfg *config.Config) []obs.Endpoint {
 	if cfg == nil {
 		return nil
@@ -422,6 +435,13 @@ func sensitiveEndpoints(cfg *config.Config) []obs.Endpoint {
 			}
 			out = append(out, obs.Endpoint{Host: r.Host, Port: r.Port, User: r.User})
 		}
+	}
+	for _, conn := range cfg.Workflows.ExecConnections {
+		r := conn.Remote
+		if !r.Sensitive {
+			continue
+		}
+		out = append(out, obs.Endpoint{Host: r.Host, Port: r.Port, User: r.User})
 	}
 	return out
 }

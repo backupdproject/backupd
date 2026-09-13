@@ -103,6 +103,11 @@ type Machines struct {
 	pending *Source
 	source  *Source
 	medium  *Medium
+	// execHost is the exec-capable machine hook scripts run ON (#810). It
+	// is a different machine from source deliberately: source is
+	// internal-sftp-forced and cannot run a command at all, which is the
+	// posture #810 has to prove is refused rather than assumed away.
+	execHost *ExecHost
 }
 
 // infraMarker is the fixed, greppable string every infrastructure refusal
