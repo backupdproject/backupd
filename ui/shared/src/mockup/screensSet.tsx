@@ -445,9 +445,11 @@ export function SetDetailIncrementalScreen() {
       <MockCard title="Connection" actions={<button className="btn btn--sm">Test connection</button>}>
         <CheckList checks={CONNECTION_CHECKS_WRITABLE} />
         <Note>
-          The write line is what arms &ldquo;{SOURCE_DELETE_COPY.label}&rdquo; on this set&rsquo;s
-          configuration page. A source Backupd cannot write to is never offered a control that deletes
-          from it.
+          The write line is the <WireName name="write_probe" /> step, and its{" "}
+          <WireName name="writable" /> answer is what arms
+          &ldquo;{SOURCE_DELETE_COPY.label}&rdquo; on this set&rsquo;s configuration page. A source
+          Backupd cannot write to is never offered a control that deletes from it, and asking for one
+          anyway is refused by the service rather than quietly ignored.
         </Note>
       </MockCard>
     </>

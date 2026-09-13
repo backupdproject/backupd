@@ -164,9 +164,24 @@ so a reviewer can see each without a second build. The safety rule stated
 plainly: **never offer to delete from a source we cannot prove we can
 write to.**
 
-The api/v1 delta this implies — a writable step on the connection-test
-result, and refusing `read_only = false` for a source that failed the
-probe — belongs to whoever owns #852, not to #788's API work.
+The api/v1 half of this is **already implemented** on the branch this
+mock-up is a gate for (#852, merged into `feat/788-api`), so the UI wave
+consumes it rather than designing around a gap:
+
+- `ConnectionCheck` carries a seventh step, `write_probe`, and `writable`
+  is a **required** boolean on `TestConnectionResponse`. Absent is read as
+  **false** — the control at the other end deletes a producer's files, so
+  the missing answer is the refusing one.
+- Setting `read_only = false` against a source the probe proved
+  non-writable is **refused, never coerced**: `409
+  BACKUP_SET_SOURCE_NOT_WRITABLE` (`service.ErrSourceNotWritable`), on
+  create, on first-run create, on a connection-changing edit, and on the
+  CLI's own read-only verb, all through one shared write path.
+
+The UI therefore reads `ConnectionTestOutcome.writable` to arm or refuse
+the control, and has to render that 409 as a refusal an operator can act
+on rather than as an unexpected failure — the two states this mock-up
+draws are exactly the two the service already enforces.
 
 ## Vocabulary
 

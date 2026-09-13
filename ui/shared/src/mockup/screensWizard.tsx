@@ -176,7 +176,10 @@ export function WizardScreen() {
 
               <Note>
                 Read-only is a perfectly good posture for a backup account, and the recommended one
-                unless you want Backupd to free space on the server for you.
+                unless you want Backupd to free space on the server for you. The write line is the{" "}
+                <WireName name="write_probe" /> step, and its answer is{" "}
+                <WireName name="writable" /> on the connection-test result: absent is read as false,
+                because the control it arms deletes files on somebody&rsquo;s server.
               </Note>
             </StepBody>
           ) : null}
