@@ -65,6 +65,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/backupdproject/backupd/apps/common/email/emailtest"
 )
 
 // The workload constants below ARE the workload definition. Changing any
@@ -433,7 +435,18 @@ func enroll(t *testing.T, c *http.Client, base, bootstrapToken string) {
 	}
 	password := base64.RawURLEncoding.EncodeToString(raw)
 
-	body := fmt.Sprintf(`{"username":"perf","password":%q}`, password)
+	// Enrollment sends a confirmation message over the SMTP endpoint the
+	// request names and refuses if that send fails (#830), so this
+	// harness starts an in-process SMTP sink on 127.0.0.1 for it
+	// (apps/common/email/emailtest) and points enrollment at that. It is
+	// created and torn down inside this test process: no mail service, no
+	// container, and nothing here writes a credential to disk - the
+	// property this package's own doc comment claims.
+	sink := emailtest.Start(t)
+
+	body := fmt.Sprintf(
+		`{"username":"perf","password":%q,"recoveryEmail":"perf@example.test","smtp":{"host":%q,"port":%d,"security":"none","username":"","from":"backupd@example.test"}}`,
+		password, sink.Host(), sink.Port())
 	req, err := http.NewRequest(http.MethodPost, base+"/api/v1/auth/enroll", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
@@ -451,6 +464,7 @@ func enroll(t *testing.T, c *http.Client, base, bootstrapToken string) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("enroll: status %d: %s", resp.StatusCode, payload)
 	}
+	sink.WaitForMessage(t, "backupd: recovery email confirmed", 10*time.Second)
 }
 
 var bootstrapTokenRE = regexp.MustCompile(`Enrollment bootstrap token: (\S+)`)

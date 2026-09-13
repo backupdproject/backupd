@@ -3,8 +3,12 @@ package local
 import (
 	"fmt"
 	"io"
+	"os"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/backupdproject/backupd/apps/common/email"
 	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
 
 	"github.com/backupdproject/backupd/core/cliecho"
@@ -52,6 +56,41 @@ type Config struct {
 	// (issue #128). Zero means DefaultPasswordRateLimit.
 	PasswordRateLimit int
 
+	// RecoveryRateLimit bounds POST /forgot-password and POST
+	// /reset-password attempts per remote IP per minute. Zero means
+	// DefaultRecoveryRateLimit.
+	//
+	// It is tighter than the others on purpose (#830): forgot-password
+	// makes this process SEND something, to an address the caller does
+	// not get to choose, so an unbounded one is a way to flood the
+	// administrator's mailbox and burn the operator's SMTP quota using
+	// nothing but an open port.
+	RecoveryRateLimit int
+
+	// BaseURL is this deployment's own externally reachable address
+	// ("https://nas.example.com:8080"), used to build the reset link the
+	// forgotten-password email carries.
+	//
+	// Empty is a supported state rather than a misconfiguration: this
+	// process genuinely cannot know its own public address (see
+	// PrintBootstrapNotice, which has the same problem with the
+	// enrollment link), and a link built from a guess would be
+	// confidently wrong. With it empty the reset email carries the bare
+	// token and tells the operator where to paste it.
+	BaseURL string
+
+	// SendMail is the seam every message this package sends goes
+	// through; nil means apps/common/email.Send, which is what production
+	// wires. A test supplies its own to prove what a handler does with a
+	// send that fails, without standing up a mail server for it.
+	SendMail email.Sender
+
+	// Log is where the diagnostics for failures that must NOT reach the
+	// caller are written - the forgot-password branches, which all answer
+	// 204 whatever happened (recovery.go explains why). nil means
+	// os.Stderr; io.Discard silences them.
+	Log io.Writer
+
 	// TrustForwardedHeaders makes this Service trust X-Forwarded-For (for
 	// rate limiting, ratelimit.go's remoteIP) and X-Forwarded-Proto (for
 	// the session/CSRF cookies' Secure flag, forwarded.go's
@@ -98,21 +137,33 @@ const (
 	DefaultLoginRateLimit    = 10
 	DefaultEnrollRateLimit   = 5
 	DefaultPasswordRateLimit = 10
+	// DefaultRecoveryRateLimit bounds forgot-password and reset-password.
+	// Lower than the rest because the first of the two makes this process
+	// send mail on an unauthenticated request (Config.RecoveryRateLimit).
+	DefaultRecoveryRateLimit = 3
 	rateLimitWindow          = time.Minute
 )
 
 // Service composes everything this package's doc comment describes into
 // the one thing a provider host actually wires up: an Authenticator for
 // apps/common/webhost's authMiddleware, and an http.Handler for the
-// login/enroll/logout/session routes themselves.
+// login/enroll/logout/session and account-recovery routes themselves.
 type Service struct {
 	store                 *Store
 	lock                  *storeLock
+	secrets               *secretVault
 	sessions              *sessionManager
-	bootstrap             *bootstrapIssuer
+	bootstrap             *singleUseIssuer
+	resetTokens           *singleUseIssuer
 	loginLimiter          *RateLimiter
 	enrollLimiter         *RateLimiter
 	rotateLimiter         *RateLimiter
+	forgotLimiter         *RateLimiter
+	resetLimiter          *RateLimiter
+	sendMail              email.Sender
+	baseURL               string
+	log                   io.Writer
+	outbound              sync.WaitGroup
 	now                   func() time.Time
 	trustForwardedHeaders bool
 }
@@ -142,6 +193,18 @@ func New(cfg Config) (*Service, error) {
 	passwordLimit := cfg.PasswordRateLimit
 	if passwordLimit == 0 {
 		passwordLimit = DefaultPasswordRateLimit
+	}
+	recoveryLimit := cfg.RecoveryRateLimit
+	if recoveryLimit == 0 {
+		recoveryLimit = DefaultRecoveryRateLimit
+	}
+	sendMail := cfg.SendMail
+	if sendMail == nil {
+		sendMail = email.Send
+	}
+	log := cfg.Log
+	if log == nil {
+		log = os.Stderr
 	}
 
 	// Take this store's exclusive advisory lock BEFORE reading or writing
@@ -182,15 +245,26 @@ func New(cfg Config) (*Service, error) {
 	enrollLimiter.now = now
 	rotateLimiter := NewRateLimiter(passwordLimit, rateLimitWindow)
 	rotateLimiter.now = now
+	forgotLimiter := NewRateLimiter(recoveryLimit, rateLimitWindow)
+	forgotLimiter.now = now
+	resetLimiter := NewRateLimiter(recoveryLimit, rateLimitWindow)
+	resetLimiter.now = now
 
 	return &Service{
 		store:                 store,
 		lock:                  lock,
+		secrets:               newSecretVault(cfg.StorePath),
 		sessions:              newSessionManager(now),
 		bootstrap:             bootstrap,
+		resetTokens:           newResetTokenIssuer(now),
 		loginLimiter:          loginLimiter,
 		enrollLimiter:         enrollLimiter,
 		rotateLimiter:         rotateLimiter,
+		forgotLimiter:         forgotLimiter,
+		resetLimiter:          resetLimiter,
+		sendMail:              sendMail,
+		baseURL:               strings.TrimRight(cfg.BaseURL, "/"),
+		log:                   log,
 		now:                   now,
 		trustForwardedHeaders: cfg.TrustForwardedHeaders,
 	}, nil

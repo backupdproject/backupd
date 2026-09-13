@@ -31,19 +31,74 @@ import (
 
 // AdminRecord is the one persisted local-auth identity this package
 // supports today (docs/EPIC-B-multi-nas.md §13.4's admin-only initial
-// release): a username and an Argon2id password hash (password.go).
-// PasswordHash is never a plaintext password.
+// release): a username, an Argon2id password hash (password.go) and the
+// address account recovery mails to. PasswordHash is never a plaintext
+// password.
+//
+// RecoveryEmail is an ADDITIONAL field, not a replacement for Username
+// (issue #830 is explicit about that): Username remains the login
+// identity, and this address is used for recovery and notification only.
+// It is validated as an address before it is ever persisted
+// (apps/common/email.ValidateAddress) by every writer - handleEnroll,
+// handleUpdateRecovery and CreateAdmin alike - so a record on disk always
+// either carries a parseable address or carries none at all.
 type AdminRecord struct {
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"password_hash"`
-	CreatedAt    time.Time `json:"created_at"`
+	Username     string `json:"username"`
+	PasswordHash string `json:"password_hash"`
+
+	// RecoveryEmail is where a forgotten-password reset link is sent. It
+	// is empty only for a record provisioned before #830 existed; every
+	// path that writes one now requires it.
+	RecoveryEmail string `json:"recovery_email,omitempty"`
+
+	// RecoveryEmailConfirmedAt records when a confirmation message to
+	// RecoveryEmail was last accepted by the operator's own SMTP server.
+	// It is what lets Settings show "confirmed" rather than claiming an
+	// address works because somebody typed it: a changed address is
+	// unconfirmed until its own confirmation send succeeds.
+	RecoveryEmailConfirmedAt *time.Time `json:"recovery_email_confirmed_at,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SMTPRecord is the persisted half of one SMTP submission endpoint: every
+// field email.Config has EXCEPT the password, which is held as an opaque
+// reference to a 0600 file this package wrote (secrets.go).
+//
+// That split is the whole point of this type existing separately from
+// email.Config. The config struct is what a send needs in memory for as
+// long as one message takes; this is what is allowed to survive on disk,
+// and a plaintext password is not on the list. It is the same custody
+// shape core/service's MediumCredentialRef already uses for S3 keys:
+// material arrives once, lands in a mode-0600 file of its own, and
+// everything afterwards carries the reference.
+type SMTPRecord struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Security string `json:"security"`
+	Username string `json:"username"`
+
+	// PasswordRef names the file holding the SMTP password, relative to
+	// the store's own secrets directory. It is empty when the endpoint
+	// needs no authentication at all (a relay on the same host), which is
+	// a legitimate configuration rather than a missing password.
+	PasswordRef string `json:"password_ref,omitempty"`
+
+	From string `json:"from"`
 }
 
 // storeFile is the on-disk shape Store persists. Enrollment is
 // permanently closed the moment Admin is non-nil (§49.1: "single-shot and
 // irreversible"); nothing in this package ever sets it back to nil.
+//
+// SMTP sits BESIDE Admin rather than inside it because it is a property
+// of the deployment rather than of the identity: it is what the runtime
+// uses to reach a mail server, it is editable after enrollment (Settings,
+// #830), and keeping it out of AdminRecord means SetSMTP can never
+// accidentally be the call that creates a partial administrator.
 type storeFile struct {
 	Admin *AdminRecord `json:"admin"`
+	SMTP  *SMTPRecord  `json:"smtp,omitempty"`
 }
 
 // ErrAlreadyEnrolled is returned by Store.Enroll when an administrator
@@ -163,12 +218,21 @@ func (s *Store) SetPassword(newHash string) error {
 	return s.save(f)
 }
 
-// Enroll persists admin as this store's one administrator record. It
-// fails with ErrAlreadyEnrolled if a record already exists: enrollment is
-// single-shot and irreversible (§49.1), and this is the one method in
-// this package that could otherwise silently overwrite an existing
-// administrator.
-func (s *Store) Enroll(admin AdminRecord) error {
+// Enroll persists admin as this store's one administrator record, and
+// smtp (when non-nil) as the deployment's SMTP configuration, in ONE
+// write. It fails with ErrAlreadyEnrolled if a record already exists:
+// enrollment is single-shot and irreversible (§49.1), and this is the one
+// method in this package that could otherwise silently overwrite an
+// existing administrator.
+//
+// The two travel together rather than through two calls because #830
+// makes a working SMTP endpoint part of what enrollment IS: an
+// administrator persisted without the SMTP configuration that was just
+// proved to work would be an account that cannot be recovered, and an
+// SMTP configuration persisted without the administrator would leave a
+// store that still looks unenrolled while holding a secret reference.
+// One save, one rename, no intermediate state for either.
+func (s *Store) Enroll(admin AdminRecord, smtp *SMTPRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
@@ -179,5 +243,66 @@ func (s *Store) Enroll(admin AdminRecord) error {
 		return ErrAlreadyEnrolled
 	}
 	f.Admin = &admin
+	if smtp != nil {
+		f.SMTP = smtp
+	}
+	return s.save(f)
+}
+
+// SMTP returns the persisted SMTP configuration, or nil when this
+// deployment has never had one. The record it returns carries
+// SMTPRecord.PasswordRef, never a password: resolving that reference is
+// secrets.go's job and happens once per send.
+func (s *Store) SMTP() (*SMTPRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	return f.SMTP, nil
+}
+
+// SetSMTP replaces the persisted SMTP configuration. It fails with
+// ErrNotEnrolled before enrollment for SetPassword's reason: an SMTP
+// endpoint on a store with no administrator belongs to nobody, and
+// accepting one would make this the second method able to write a store
+// that never went through Enroll.
+func (s *Store) SetSMTP(rec SMTPRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return err
+	}
+	if f.Admin == nil {
+		return ErrNotEnrolled
+	}
+	f.SMTP = &rec
+	return s.save(f)
+}
+
+// SetRecoveryEmail replaces the persisted administrator's recovery
+// address and its confirmation timestamp together, leaving every other
+// field untouched.
+//
+// The two are one call because they are one fact. A changed address that
+// kept the old confirmation time would claim, on the Settings page and to
+// anyone reading the file, that a message had been delivered to an
+// address nothing was ever sent to; passing confirmedAt = nil is how a
+// caller says "changed, not yet proved", and passing a time is what a
+// successful confirmation send earns.
+func (s *Store) SetRecoveryEmail(address string, confirmedAt *time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return err
+	}
+	if f.Admin == nil {
+		return ErrNotEnrolled
+	}
+	f.Admin.RecoveryEmail = address
+	f.Admin.RecoveryEmailConfirmedAt = confirmedAt
 	return s.save(f)
 }

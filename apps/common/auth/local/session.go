@@ -140,6 +140,23 @@ func (m *sessionManager) revoke(token string) {
 	m.mu.Unlock()
 }
 
+// revokeAll invalidates every live session, leaving none behind.
+//
+// It is rotateSession's other half, for the one case where nobody should
+// be left signed in: a password reset performed from an emailed link
+// (#830). rotateSession keeps ONE session alive because the operator
+// performing a rotation is already authenticated and must not be logged
+// out by their own action; a reset is the opposite situation, because the
+// caller has proved only that they can read the recovery mailbox, and the
+// whole reason a reset is being performed is that control of the account
+// may have been lost. So every session goes, including the one that made
+// the request, and the new password is what gets somebody back in.
+func (m *sessionManager) revokeAll() {
+	m.mu.Lock()
+	m.byTok = map[string]sessionRecord{}
+	m.mu.Unlock()
+}
+
 // rotateSession atomically revokes every live session and installs a
 // single new one for username, all under one m.mu acquisition - password
 // rotation's session-invalidation guarantee (handler.go's

@@ -37,7 +37,7 @@ func TestStore_AdminIsNilBeforeAnyEnrollment(t *testing.T) {
 func TestStore_EnrollPersistsAndAdminReturnsIt(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "nested", "auth.json"))
 	record := AdminRecord{Username: "bm-admin", PasswordHash: "$argon2id$fake", CreatedAt: time.Now().UTC()}
-	if err := store.Enroll(record); err != nil {
+	if err := store.Enroll(record, nil); err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
 
@@ -56,12 +56,12 @@ func TestStore_EnrollPersistsAndAdminReturnsIt(t *testing.T) {
 func TestStore_EnrollTwiceFailsWithErrAlreadyEnrolled(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	first := AdminRecord{Username: "bm-admin", PasswordHash: "$argon2id$fake1"}
-	if err := store.Enroll(first); err != nil {
+	if err := store.Enroll(first, nil); err != nil {
 		t.Fatalf("first Enroll: %v", err)
 	}
 
 	second := AdminRecord{Username: "someone-else", PasswordHash: "$argon2id$fake2"}
-	err := store.Enroll(second)
+	err := store.Enroll(second, nil)
 	if !errors.Is(err, ErrAlreadyEnrolled) {
 		t.Fatalf("second Enroll error = %v, want errors.Is(err, ErrAlreadyEnrolled)", err)
 	}
@@ -80,7 +80,7 @@ func TestStore_EnrollTwiceFailsWithErrAlreadyEnrolled(t *testing.T) {
 func TestStore_PersistsAcrossANewStoreInstance(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth.json")
 	first := NewStore(path)
-	if err := first.Enroll(AdminRecord{Username: "bm-admin", PasswordHash: "$argon2id$fake"}); err != nil {
+	if err := first.Enroll(AdminRecord{Username: "bm-admin", PasswordHash: "$argon2id$fake"}, nil); err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
 
@@ -100,7 +100,7 @@ func TestStore_PersistsAcrossANewStoreInstance(t *testing.T) {
 func TestStore_SetPasswordUpdatesHashAndPreservesUsernameAndCreatedAt(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	created := time.Now().UTC().Truncate(time.Second)
-	if err := store.Enroll(AdminRecord{Username: "bm-admin", PasswordHash: "$argon2id$old", CreatedAt: created}); err != nil {
+	if err := store.Enroll(AdminRecord{Username: "bm-admin", PasswordHash: "$argon2id$old", CreatedAt: created}, nil); err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
 
@@ -137,7 +137,7 @@ func TestStore_SetPasswordFailsBeforeEnrollment(t *testing.T) {
 func TestStore_SetPasswordPersistsAcrossANewStoreInstance(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth.json")
 	first := NewStore(path)
-	if err := first.Enroll(AdminRecord{Username: "bm-admin", PasswordHash: "$argon2id$old"}); err != nil {
+	if err := first.Enroll(AdminRecord{Username: "bm-admin", PasswordHash: "$argon2id$old"}, nil); err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
 	if err := first.SetPassword("$argon2id$new"); err != nil {
@@ -163,7 +163,7 @@ func TestStore_NeverWritesAPlaintextPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hashPassword: %v", err)
 	}
-	if err := store.Enroll(AdminRecord{Username: "bm-admin", PasswordHash: encoded}); err != nil {
+	if err := store.Enroll(AdminRecord{Username: "bm-admin", PasswordHash: encoded}, nil); err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
 

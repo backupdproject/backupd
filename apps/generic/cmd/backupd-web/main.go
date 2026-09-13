@@ -63,6 +63,7 @@ import (
 	"time"
 
 	"github.com/backupdproject/backupd/apps/common/auth/local"
+	"github.com/backupdproject/backupd/apps/common/email"
 	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
 	"github.com/backupdproject/backupd/apps/common/platform/notify"
 	"github.com/backupdproject/backupd/apps/common/platform/profile"
@@ -497,6 +498,14 @@ func cmdServe(args []string) int {
 		authSvc, err = local.New(local.Config{
 			StorePath:             *authStorePath,
 			TrustForwardedHeaders: *trustForwardedHeaders,
+			// The same address the enrollment notice below is printed
+			// with, and empty for the same reason: it is whatever the
+			// operator told us this deployment is reachable at, and this
+			// process has no way to find that out for itself. With it
+			// empty, a forgotten-password email carries the reset token
+			// and says where to paste it rather than a link that would
+			// be confidently wrong (#830).
+			BaseURL: *publicBaseURL,
 		})
 		if err != nil {
 			return fail(fmt.Errorf("open local-auth store: %w", err))
@@ -859,6 +868,13 @@ func cmdAuthCreateAdmin(args []string) int {
 	authStorePath := fset.String("auth-store", defaultAuthStorePath, "path to the local-auth administrator record")
 	username := fset.String("username", "", "administrator username to create (required)")
 	passwordStdin := fset.Bool("password-stdin", false, "read the administrator password from stdin (required)")
+	recoveryEmail := fset.String("recovery-email", "", "address account recovery mails to (optional here; required by the browser enrollment flow)")
+	smtpHost := fset.String("smtp-host", "", "SMTP submission host for account recovery")
+	smtpPort := fset.Int("smtp-port", 587, "SMTP submission port")
+	smtpSecurity := fset.String("smtp-security", string(email.SecurityStartTLS), "SMTP connection security: starttls, tls or none")
+	smtpUsername := fset.String("smtp-username", "", "SMTP username; empty for a relay that needs no authentication")
+	smtpPasswordStdin := fset.Bool("smtp-password-stdin", false, "read the SMTP password from stdin, as a SECOND line after the administrator password")
+	smtpFrom := fset.String("smtp-from", "", "address recovery mail is sent from")
 	if err := fset.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -870,16 +886,46 @@ func cmdAuthCreateAdmin(args []string) int {
 		fmt.Fprintln(os.Stderr, cliecho.WebBinary+": auth create-admin: --password-stdin is required (this command never accepts a password as a flag); pipe it in, e.g. echo -n \"$PASS\" | "+cliecho.WebBinary+" auth create-admin --username U --password-stdin")
 		return exitUsage
 	}
+	if *smtpHost != "" && *recoveryEmail == "" {
+		fmt.Fprintln(os.Stderr, cliecho.WebBinary+": auth create-admin: --smtp-host needs --recovery-email; an SMTP connection with nothing to send to cannot recover the account")
+		return exitUsage
+	}
+	if *smtpPasswordStdin && *smtpHost == "" {
+		fmt.Fprintln(os.Stderr, cliecho.WebBinary+": auth create-admin: --smtp-password-stdin needs --smtp-host")
+		return exitUsage
+	}
 
-	password, err := readPasswordFromStdin(os.Stdin)
+	password, smtpPassword, err := readSecretsFromStdin(os.Stdin, *smtpPasswordStdin)
 	if err != nil {
 		return fail(fmt.Errorf("auth create-admin: %w", err))
 	}
 
+	// The SMTP endpoint is optional here and required by the browser's
+	// /enroll route, and CreateAdmin's own doc carries the argument for
+	// why that asymmetry is right: this command runs unattended, possibly
+	// before the host has any route to a mail server, and refusing to
+	// provision an administrator until one exists would break exactly the
+	// automated deployment this command was added for (#322). Recovery is
+	// then finished from the Settings page, and the UI reports it as
+	// unconfigured until it is.
+	var smtp *email.Config
+	if *smtpHost != "" {
+		smtp = &email.Config{
+			Host:     *smtpHost,
+			Port:     *smtpPort,
+			Security: email.Security(*smtpSecurity),
+			Username: *smtpUsername,
+			Password: smtpPassword,
+			From:     *smtpFrom,
+		}
+	}
+
 	admin, err := local.CreateAdmin(local.CreateAdminConfig{
-		StorePath: *authStorePath,
-		Username:  *username,
-		Password:  password,
+		StorePath:     *authStorePath,
+		Username:      *username,
+		Password:      password,
+		RecoveryEmail: *recoveryEmail,
+		SMTP:          smtp,
 	})
 	if err != nil {
 		if errors.Is(err, local.ErrStoreLocked) {
@@ -888,39 +934,84 @@ func cmdAuthCreateAdmin(args []string) int {
 		return fail(fmt.Errorf("auth create-admin: %w", err))
 	}
 
+	recovery := "no recovery email is configured yet - set one, with an SMTP connection, on the Settings page"
+	if admin.RecoveryEmail != "" {
+		recovery = "account recovery mails to " + admin.RecoveryEmail
+		if admin.RecoveryEmailConfirmedAt == nil {
+			recovery += " (unconfirmed: no SMTP connection was given, so nothing has been delivered to it yet)"
+		} else {
+			recovery += " (confirmed: a message was delivered to it)"
+		}
+	}
+
 	// errcheck's default exclusions cover a diagnostic write to
 	// os.Stderr (every other message in this file), not a write to
 	// os.Stdout like this one, which is this command's actual
 	// machine/operator-facing output rather than a log line - so its
 	// error is checked explicitly rather than silently ignored.
-	if _, err := fmt.Fprintf(os.Stdout, cliecho.WebBinary+": administrator %q created in %s. Start the server normally - it will see this account already exists and will not print or accept an enrollment bootstrap token.\n",
-		admin.Username, *authStorePath); err != nil {
+	if _, err := fmt.Fprintf(os.Stdout, cliecho.WebBinary+": administrator %q created in %s; %s. Start the server normally - it will see this account already exists and will not print or accept an enrollment bootstrap token.\n",
+		admin.Username, *authStorePath, recovery); err != nil {
 		return fail(fmt.Errorf("auth create-admin: writing confirmation: %w", err))
 	}
 	return exitOK
 }
 
-// readPasswordFromStdin reads all of r and returns it as a password,
-// stripping exactly one trailing newline (and a preceding carriage
-// return, for a CRLF source) the way `docker login --password-stdin`
-// does, so `printf '%s' "$PASS" | ...` and `echo "$PASS" | ...` both
-// hand this the password an operator actually meant, not that password
-// plus a stray newline character. An empty result (a closed stdin, or a
-// terminal an operator forgot to pipe into) is refused rather than
-// silently treated as an empty password local.CreateAdmin would then
-// refuse anyway for being too short - refusing here names the actual
-// mistake instead of a symptom of it.
-func readPasswordFromStdin(r io.Reader) (string, error) {
+// readSecretsFromStdin reads the administrator password, and - when
+// wantSMTPPassword is set - the SMTP password after it, from the same
+// stdin.
+//
+// Two secrets on one pipe, as two lines, in the order the flags name
+// them. That is a convention worth stating out loud because the
+// alternatives are worse: a second flag would put the SMTP password in
+// this process's argument list (visible to anyone who can run `ps`, and
+// usually in a shell history file too), which is exactly what
+// --password-stdin exists to avoid, and a second file descriptor would
+// work but cannot be expressed in the one-line `docker run` invocation
+// these deployments are driven by. So:
+//
+//	printf '%s\n%s\n' "$ADMIN_PASS" "$SMTP_PASS" |
+//	  backupd-web auth create-admin --username admin --password-stdin \
+//	    --recovery-email you@example.com --smtp-host smtp.example.com \
+//	    --smtp-username you --smtp-password-stdin --smtp-from you@example.com
+//
+// With wantSMTPPassword unset the whole of stdin is the administrator
+// password, exactly as before #830, including a password that happens to
+// contain a newline.
+func readSecretsFromStdin(r io.Reader, wantSMTPPassword bool) (password, smtpPassword string, err error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
-		return "", fmt.Errorf("reading password from stdin: %w", err)
+		return "", "", fmt.Errorf("reading password from stdin: %w", err)
 	}
-	s := strings.TrimSuffix(string(b), "\n")
-	s = strings.TrimSuffix(s, "\r")
-	if s == "" {
-		return "", fmt.Errorf("stdin was empty; pipe the administrator password in rather than a terminal (--password-stdin)")
+	if !wantSMTPPassword {
+		password = trimOneNewline(string(b))
+		if password == "" {
+			return "", "", fmt.Errorf("stdin was empty; pipe the administrator password in rather than a terminal (--password-stdin)")
+		}
+		return password, "", nil
 	}
-	return s, nil
+
+	first, rest, found := strings.Cut(string(b), "\n")
+	password = strings.TrimSuffix(first, "\r")
+	if password == "" {
+		return "", "", fmt.Errorf("stdin was empty; pipe the administrator password in rather than a terminal (--password-stdin)")
+	}
+	if !found {
+		return "", "", fmt.Errorf("--smtp-password-stdin was given but stdin carried only one line; pipe the administrator password and the SMTP password as two lines, in that order")
+	}
+	smtpPassword = trimOneNewline(rest)
+	if smtpPassword == "" {
+		return "", "", fmt.Errorf("--smtp-password-stdin was given but the second line of stdin was empty; omit the flag if the SMTP connection needs no password")
+	}
+	return password, smtpPassword, nil
+}
+
+// trimOneNewline strips exactly one trailing newline (and a preceding
+// carriage return, for a CRLF source) the way `docker login
+// --password-stdin` does, so `printf '%s' "$PASS" | ...` and
+// `echo "$PASS" | ...` both hand this the secret an operator actually
+// meant rather than that secret plus a stray newline character.
+func trimOneNewline(s string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(s, "\n"), "\r")
 }
 
 // cmdHealthcheck is serve-ui's own HEALTHCHECK: since that container has

@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "8931517bab2ce08b25b70346fee7f150f58f5d7c91cf0d05de437fbe80646bbd"
+const ContractSHA256 = "857a5a00227d1e8a8e2bccd9744f868a31e296f202fce63e39086244aff57fd4"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -60,9 +60,12 @@ const (
 	ErrorCodeUnauthenticated                        ErrorCode = "UNAUTHENTICATED"
 	ErrorCodeRateLimited                            ErrorCode = "RATE_LIMITED"
 	ErrorCodeInvalidRequest                         ErrorCode = "INVALID_REQUEST"
+	ErrorCodeInvalidEmail                           ErrorCode = "INVALID_EMAIL"
 	ErrorCodeEnrollmentClosed                       ErrorCode = "ENROLLMENT_CLOSED"
 	ErrorCodeBootstrapTokenInvalid                  ErrorCode = "BOOTSTRAP_TOKEN_INVALID"
+	ErrorCodeResetTokenInvalid                      ErrorCode = "RESET_TOKEN_INVALID"
 	ErrorCodeInternalError                          ErrorCode = "INTERNAL_ERROR"
+	ErrorCodeSmtpSendFailed                         ErrorCode = "SMTP_SEND_FAILED"
 	ErrorCodeCSRFTokenMissing                       ErrorCode = "CSRF_TOKEN_MISSING"
 	ErrorCodeCSRFTokenMismatch                      ErrorCode = "CSRF_TOKEN_MISMATCH"
 	ErrorCodeRetentionPlanStale                     ErrorCode = "RETENTION_PLAN_STALE"
@@ -107,9 +110,12 @@ var WireErrorCodes = []ErrorCode{
 	ErrorCodeUnauthenticated,
 	ErrorCodeRateLimited,
 	ErrorCodeInvalidRequest,
+	ErrorCodeInvalidEmail,
 	ErrorCodeEnrollmentClosed,
 	ErrorCodeBootstrapTokenInvalid,
+	ErrorCodeResetTokenInvalid,
 	ErrorCodeInternalError,
+	ErrorCodeSmtpSendFailed,
 	ErrorCodeCSRFTokenMissing,
 	ErrorCodeCSRFTokenMismatch,
 	ErrorCodeRetentionPlanStale,
@@ -178,9 +184,12 @@ var ErrorCodes = []ErrorCode{
 	ErrorCodeUnauthenticated,
 	ErrorCodeRateLimited,
 	ErrorCodeInvalidRequest,
+	ErrorCodeInvalidEmail,
 	ErrorCodeEnrollmentClosed,
 	ErrorCodeBootstrapTokenInvalid,
+	ErrorCodeResetTokenInvalid,
 	ErrorCodeInternalError,
+	ErrorCodeSmtpSendFailed,
 	ErrorCodeCSRFTokenMissing,
 	ErrorCodeCSRFTokenMismatch,
 	ErrorCodeRetentionPlanStale,
@@ -223,14 +232,14 @@ var ErrorCodes = []ErrorCode{
 // ErrorClasses groups codes by the refusal they represent, so a caller (or
 // a red team) can assert the RIGHT refusal rather than any refusal.
 var ErrorClasses = map[string][]ErrorCode{
-	"authentication": {ErrorCodeUnauthenticated, ErrorCodeBootstrapTokenInvalid},
+	"authentication": {ErrorCodeUnauthenticated, ErrorCodeBootstrapTokenInvalid, ErrorCodeResetTokenInvalid},
 	"authorization":  {ErrorCodeEnrollmentClosed, ErrorCodeDestructiveOperationsDisabled, ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
 	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven},
 	"internal":       {ErrorCodeInternal, ErrorCodeInternalError},
 	"not-found":      {ErrorCodeBackupSetNotFound, ErrorCodeOperationNotFound, ErrorCodeRetentionPlanNotFound, ErrorCodeArtifactNotFound, ErrorCodeMediumNotFound},
 	"throttling":     {ErrorCodeRateLimited},
-	"unavailable":    {ErrorCodeNotConfigured},
-	"validation":     {ErrorCodeInvalidRequest, ErrorCodeSSHKeyNotFound, ErrorCodeHostKeyProbeFailed, ErrorCodeMediumDisclosureRequired},
+	"unavailable":    {ErrorCodeNotConfigured, ErrorCodeSmtpSendFailed},
+	"validation":     {ErrorCodeInvalidRequest, ErrorCodeInvalidEmail, ErrorCodeSSHKeyNotFound, ErrorCodeHostKeyProbeFailed, ErrorCodeMediumDisclosureRequired},
 }
 
 // Endpoint is one operation of the contract, with the requirements a
@@ -279,13 +288,23 @@ var Endpoints = []Endpoint{
 	{
 		ID: "enrollAdministrator", Method: "POST", Path: "/auth/enroll",
 		Authenticated: false, CSRFRequired: true, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
-		RequestSchema: "CredentialsRequest", ResponseSchema: "", SuccessStatus: 204,
+		RequestSchema: "EnrollRequest", ResponseSchema: "", SuccessStatus: 204,
 		ErrorCodes: map[int][]ErrorCode{
-			400: {ErrorCodeInvalidRequest},
+			400: {ErrorCodeInvalidRequest, ErrorCodeInvalidEmail},
 			401: {ErrorCodeBootstrapTokenInvalid},
 			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch, ErrorCodeEnrollmentClosed},
 			429: {ErrorCodeRateLimited},
 			500: {ErrorCodeInternalError},
+			502: {ErrorCodeSmtpSendFailed},
+		},
+	},
+	{
+		ID: "requestPasswordReset", Method: "POST", Path: "/auth/forgot-password",
+		Authenticated: false, CSRFRequired: true, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "ForgotPasswordRequest", ResponseSchema: "", SuccessStatus: 204,
+		ErrorCodes: map[int][]ErrorCode{
+			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
+			429: {ErrorCodeRateLimited},
 		},
 	},
 	{
@@ -315,6 +334,51 @@ var Endpoints = []Endpoint{
 		ErrorCodes: map[int][]ErrorCode{
 			400: {ErrorCodeInvalidRequest},
 			401: {ErrorCodeUnauthenticated},
+			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
+			429: {ErrorCodeRateLimited},
+			500: {ErrorCodeInternalError},
+		},
+	},
+	{
+		ID: "getRecoverySettings", Method: "GET", Path: "/auth/recovery",
+		Authenticated: true, CSRFRequired: false, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "", ResponseSchema: "RecoverySettingsResponse", SuccessStatus: 200,
+		ErrorCodes: map[int][]ErrorCode{
+			401: {ErrorCodeUnauthenticated},
+			500: {ErrorCodeInternalError},
+		},
+	},
+	{
+		ID: "updateRecoverySettings", Method: "PATCH", Path: "/auth/recovery",
+		Authenticated: true, CSRFRequired: true, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "RecoverySettingsUpdate", ResponseSchema: "RecoverySettingsResponse", SuccessStatus: 200,
+		ErrorCodes: map[int][]ErrorCode{
+			400: {ErrorCodeInvalidRequest, ErrorCodeInvalidEmail},
+			401: {ErrorCodeUnauthenticated},
+			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
+			500: {ErrorCodeInternalError},
+			502: {ErrorCodeSmtpSendFailed},
+		},
+	},
+	{
+		ID: "sendRecoveryTestEmail", Method: "POST", Path: "/auth/recovery/test",
+		Authenticated: true, CSRFRequired: true, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "", ResponseSchema: "", SuccessStatus: 204,
+		ErrorCodes: map[int][]ErrorCode{
+			400: {ErrorCodeInvalidRequest, ErrorCodeInvalidEmail},
+			401: {ErrorCodeUnauthenticated},
+			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
+			500: {ErrorCodeInternalError},
+			502: {ErrorCodeSmtpSendFailed},
+		},
+	},
+	{
+		ID: "resetPassword", Method: "POST", Path: "/auth/reset-password",
+		Authenticated: false, CSRFRequired: true, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "ResetPasswordRequest", ResponseSchema: "", SuccessStatus: 204,
+		ErrorCodes: map[int][]ErrorCode{
+			400: {ErrorCodeInvalidRequest},
+			401: {ErrorCodeResetTokenInvalid},
 			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
 			429: {ErrorCodeRateLimited},
 			500: {ErrorCodeInternalError},
@@ -1371,6 +1435,25 @@ type CycleOutcome struct {
 	Moves               *CycleMoveOutcome `json:"moves,omitempty"`
 }
 
+// EnrollRequest is POST /auth/enroll. The credentials, plus the two things issue #830
+// makes part of creating the administrator: the address account
+// recovery mails to, and the SMTP endpoint it goes out over. Both
+// are required, because an administrator with no proven way to reach
+// its owner is an account that is permanently lost the first time a
+// password is forgotten, and enrollment is the last moment at which
+// somebody who can still sign in is present to fix the mail
+// configuration. The runtime SENDS a confirmation message to
+// `recoveryEmail` over `smtp` before it writes anything, and refuses
+// the whole enrollment with SMTP_SEND_FAILED if that send does not
+// succeed - leaving the single-use enrollment token unspent, so the
+// same link can be used again once the configuration is fixed.
+type EnrollRequest struct {
+	Password      string       `json:"password"`
+	RecoveryEmail string       `json:"recoveryEmail"`
+	Smtp          SmtpSettings `json:"smtp"`
+	Username      string       `json:"username"`
+}
+
 // ErrorBody is the nested error body every operation outside /auth returns. code
 // is stable and machine-readable; message is human-readable and MAY
 // change without notice.
@@ -1391,6 +1474,16 @@ type ErrorResponse struct {
 // NOT_CONFIGURED needs to know which screen to show, not why.
 type FirstRunStatusResponse struct {
 	Configured bool `json:"configured"`
+}
+
+// ForgotPasswordRequest is POST /auth/forgot-password. One field, and the answer never varies
+// with it: that operation answers 204 for an unenrolled deployment,
+// for a username that is not the administrator's, for an
+// administrator with no recovery address, and for an SMTP endpoint
+// that refused the message alike. It answers BEFORE any mail is
+// attempted, so the response time does not vary either.
+type ForgotPasswordRequest struct {
+	Username string `json:"username"`
 }
 
 // HealthResponse is GET /system/health. Every configured backup set's freshness
@@ -1862,6 +1955,40 @@ type Placement struct {
 	VerifiedAt        string `json:"verified_at,omitempty"`
 }
 
+// RecoverySettingsResponse is GET /auth/recovery and PATCH /auth/recovery: the recovery address,
+// whether a confirmation message has actually reached it, and the
+// SMTP endpoint without its password. `smtp` is null on a deployment
+// whose administrator was provisioned headlessly (`auth
+// create-admin` leaves recovery optional), which is a state a
+// settings page has to report rather than hide.
+type RecoverySettingsResponse struct {
+	RecoveryEmail          string            `json:"recoveryEmail"`
+	RecoveryEmailConfirmed bool              `json:"recoveryEmailConfirmed"`
+	Smtp                   *SmtpSettingsView `json:"smtp"`
+}
+
+// RecoverySettingsUpdate is PATCH /auth/recovery. Both members are optional and at least one
+// of them is required: a request may change the recovery address,
+// the SMTP endpoint, or both. A changed address is re-verified by
+// sending a confirmation over the endpoint this same request
+// establishes, and the whole update is refused with SMTP_SEND_FAILED
+// if that send fails - so a settings page cannot leave the account
+// with a recovery address nothing has ever been delivered to.
+type RecoverySettingsUpdate struct {
+	RecoveryEmail *string       `json:"recoveryEmail"`
+	Smtp          *SmtpSettings `json:"smtp"`
+}
+
+// ResetPasswordRequest is POST /auth/reset-password: the token out of the emailed link, and
+// the password to set. The token is single-use and expires;
+// redeeming it revokes every live session and issues no new one, so
+// whoever set the password proves they know it by signing in with
+// it.
+type ResetPasswordRequest struct {
+	NewPassword string `json:"newPassword"`
+	Token       string `json:"token"`
+}
+
 // RestoreOperationRequest is the restore_placement action's own parameters. Present only when
 // action is restore_placement, and refused when it is not: a body
 // carrying restore parameters for a run_cycle is a request that has
@@ -2102,6 +2229,38 @@ type SettingsResponse struct {
 type SettingsSchema struct {
 	Retention RetentionSchema `json:"retention"`
 	Storage   StorageSchema   `json:"storage"`
+}
+
+// SmtpSettings is one SMTP submission endpoint an operator typed in: where to
+// connect, how the connection is protected, who to authenticate as,
+// and what address the mail is from. camelCase like the rest of
+// /auth. `password` is writeOnly and appears in NO response schema
+// anywhere in this contract: the runtime stores it as an opaque
+// reference to a mode-0600 file of its own and reports only whether
+// one is set (SmtpSettingsView.passwordSet). On an update, an absent
+// or empty `password` means "keep the stored one", which is what
+// lets a port or a from-address be corrected by somebody who does
+// not have the provider's API key in front of them.
+type SmtpSettings struct {
+	From     string `json:"from"`
+	Host     string `json:"host"`
+	Password string `json:"password"`
+	Port     int    `json:"port"`
+	Security string `json:"security"`
+	Username string `json:"username"`
+}
+
+// SmtpSettingsView is smtpSettings as a READ answers it: every field except the
+// password, plus `passwordSet`. The password is absent structurally
+// rather than blanked, so this shape has no field for a buggy
+// handler to serialise material into.
+type SmtpSettingsView struct {
+	From        string `json:"from"`
+	Host        string `json:"host"`
+	PasswordSet bool   `json:"passwordSet"`
+	Port        int    `json:"port"`
+	Security    string `json:"security"`
+	Username    string `json:"username"`
 }
 
 // StorageMediumCredentialsReference is where one storage medium's credentials come from. Exactly one of
@@ -2403,9 +2562,11 @@ var SchemaTypes = map[string]any{
 	"CredentialsRequest":                CredentialsRequest{},
 	"CycleMoveOutcome":                  CycleMoveOutcome{},
 	"CycleOutcome":                      CycleOutcome{},
+	"EnrollRequest":                     EnrollRequest{},
 	"ErrorBody":                         ErrorBody{},
 	"ErrorResponse":                     ErrorResponse{},
 	"FirstRunStatusResponse":            FirstRunStatusResponse{},
+	"ForgotPasswordRequest":             ForgotPasswordRequest{},
 	"HealthResponse":                    HealthResponse{},
 	"HostKeyProbeRequest":               HostKeyProbeRequest{},
 	"HostKeyProbeResponse":              HostKeyProbeResponse{},
@@ -2440,6 +2601,9 @@ var SchemaTypes = map[string]any{
 	"OperationProgress":                 OperationProgress{},
 	"OperationRestore":                  OperationRestore{},
 	"Placement":                         Placement{},
+	"RecoverySettingsResponse":          RecoverySettingsResponse{},
+	"RecoverySettingsUpdate":            RecoverySettingsUpdate{},
+	"ResetPasswordRequest":              ResetPasswordRequest{},
 	"RestoreOperationRequest":           RestoreOperationRequest{},
 	"RetentionMove":                     RetentionMove{},
 	"RetentionOverride":                 RetentionOverride{},
@@ -2460,6 +2624,8 @@ var SchemaTypes = map[string]any{
 	"SetReadOnlyRequest":                SetReadOnlyRequest{},
 	"SettingsResponse":                  SettingsResponse{},
 	"SettingsSchema":                    SettingsSchema{},
+	"SmtpSettings":                      SmtpSettings{},
+	"SmtpSettingsView":                  SmtpSettingsView{},
 	"StorageMediumCredentialsReference": StorageMediumCredentialsReference{},
 	"StorageMediumRequest":              StorageMediumRequest{},
 	"StorageMediumSummary":              StorageMediumSummary{},

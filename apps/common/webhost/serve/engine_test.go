@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/backupdproject/backupd/apps/common/auth/local"
+	"github.com/backupdproject/backupd/apps/common/email/emailtest"
 	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
 	"github.com/backupdproject/backupd/apps/common/platform/profile"
 	"github.com/backupdproject/backupd/apps/common/webhost/serve"
@@ -201,12 +202,32 @@ func csrfToken(t *testing.T, client *http.Client, base string) string {
 // (either the engine directly or the UI host's proxy - both must behave
 // identically), leaving client holding a real, live session cookie
 // afterward.
+//
+// The SMTP block and the recovery address are not decoration: since
+// issue #830 that route sends a confirmation message and refuses the
+// enrollment if the send fails, so a harness that wants a session has to
+// give the engine somewhere to send. That somewhere is an in-process sink
+// on 127.0.0.1 (apps/common/email/emailtest), started and stopped by this
+// test - never a real mail service, and no container needed for an engine
+// that is running in this same process.
 func enrollAndLogIn(t *testing.T, h *engineHarness, client *http.Client, base string) {
 	t.Helper()
 	csrf := csrfToken(t, client, base)
 	token := h.bootstrapToken(t)
+	sink := emailtest.Start(t)
 
-	body, _ := json.Marshal(map[string]string{"username": "bm-admin", "password": "correct-horse-battery"})
+	body, _ := json.Marshal(map[string]any{
+		"username":      "bm-admin",
+		"password":      "correct-horse-battery",
+		"recoveryEmail": "admin@example.test",
+		"smtp": map[string]any{
+			"host":     sink.Host(),
+			"port":     sink.Port(),
+			"security": "none",
+			"username": "",
+			"from":     "backupd@example.test",
+		},
+	})
 	req, err := http.NewRequest(http.MethodPost, base+"/api/v1/auth/enroll", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
@@ -224,6 +245,10 @@ func enrollAndLogIn(t *testing.T, h *engineHarness, client *http.Client, base st
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("enroll status = %d, want %d; body=%s", resp.StatusCode, http.StatusNoContent, b)
 	}
+	// Asserted rather than assumed: a 204 already implies the send
+	// succeeded, and this proves the message that succeeded is the
+	// confirmation and that it reached the sink.
+	sink.WaitForMessage(t, "backupd: recovery email confirmed", 10*time.Second)
 }
 
 // TestEngine_UnauthenticatedDestructiveRequestIsRefused proves the

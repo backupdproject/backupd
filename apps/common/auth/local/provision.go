@@ -1,8 +1,11 @@
 package local
 
 import (
+	"context"
 	"fmt"
 	"time"
+
+	"github.com/backupdproject/backupd/apps/common/email"
 )
 
 // Creating the administrator from the command line, without the browser
@@ -37,6 +40,34 @@ type CreateAdminConfig struct {
 	// only hashPassword's output is (password.go).
 	Username string
 	Password string
+
+	// RecoveryEmail and SMTP are account recovery (#830), and they are
+	// OPTIONAL here while being required on the browser's /enroll route.
+	//
+	// That difference is deliberate and is the same argument this file's
+	// opening note already makes about the bootstrap token. The browser
+	// flow has an operator in front of it who can be told "your mail
+	// server refused this" and can fix it on the spot, so requiring a
+	// proven endpoint costs them one retry and buys a recoverable
+	// account. This command runs unattended, from a provisioning script,
+	// possibly before the host has any route to a mail server at all;
+	// requiring SMTP here would mean an automated deployment could not
+	// create its administrator, which is the entire reason #322 added
+	// this command. So recovery may be left unconfigured and finished
+	// later from the Settings page - which is a state the UI reports
+	// rather than hides (GET /recovery answers with an empty address and
+	// recoveryEmailConfirmed false).
+	//
+	// When SMTP IS supplied, this command behaves exactly like the
+	// browser route: the same confirmation message is sent, and a send
+	// that fails fails the whole command rather than leaving an account
+	// whose recovery address has never received anything.
+	RecoveryEmail string
+	SMTP          *email.Config
+
+	// SendMail is the seam the confirmation send goes through; nil means
+	// apps/common/email.Send, exactly like Config.SendMail.
+	SendMail email.Sender
 
 	// Now is a seam over time.Now for tests; nil means time.Now, exactly
 	// like Config.Now.
@@ -96,9 +127,32 @@ func CreateAdmin(cfg CreateAdminConfig) (*AdminRecord, error) {
 	if len(cfg.Password) < minPasswordLength {
 		return nil, fmt.Errorf("local: password must be at least %d characters", minPasswordLength)
 	}
+	if cfg.RecoveryEmail != "" {
+		if err := email.ValidateAddress(cfg.RecoveryEmail); err != nil {
+			return nil, fmt.Errorf("local: recovery email: %w", err)
+		}
+	}
+	if cfg.SMTP != nil {
+		if err := cfg.SMTP.Validate(); err != nil {
+			return nil, fmt.Errorf("local: SMTP configuration: %w", err)
+		}
+		if cfg.RecoveryEmail == "" {
+			// An endpoint with nothing to send to is half a
+			// configuration, and the half that is missing is the one
+			// recovery actually needs. Refused here rather than stored,
+			// because a store carrying SMTP and no address would make
+			// the Settings page show a working mail server beside an
+			// account that still cannot be recovered.
+			return nil, fmt.Errorf("local: an SMTP configuration needs a recovery email to send to")
+		}
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
+	}
+	sendMail := cfg.SendMail
+	if sendMail == nil {
+		sendMail = email.Send
 	}
 
 	lock, err := acquireStoreLock(cfg.StorePath)
@@ -112,12 +166,45 @@ func CreateAdmin(cfg CreateAdminConfig) (*AdminRecord, error) {
 		return nil, fmt.Errorf("local: hash password: %w", err)
 	}
 
+	createdAt := now().UTC()
 	admin := AdminRecord{
-		Username:     cfg.Username,
-		PasswordHash: hash,
-		CreatedAt:    now().UTC(),
+		Username:      cfg.Username,
+		PasswordHash:  hash,
+		RecoveryEmail: cfg.RecoveryEmail,
+		CreatedAt:     createdAt,
 	}
-	if err := NewStore(cfg.StorePath).Enroll(admin); err != nil {
+
+	var smtp *SMTPRecord
+	if cfg.SMTP != nil {
+		// The same proof the browser route demands, in the same order:
+		// the message goes out BEFORE anything is written, so a command
+		// that could not reach the recovery address creates no account.
+		if err := sendMail(context.Background(), *cfg.SMTP, confirmationMessage(cfg.RecoveryEmail, cfg.Username)); err != nil {
+			return nil, fmt.Errorf("local: sending the confirmation email: %w", err)
+		}
+		admin.RecoveryEmailConfirmedAt = &createdAt
+
+		passwordRef := ""
+		if cfg.SMTP.Password != "" {
+			passwordRef, err = newSecretVault(cfg.StorePath).put(cfg.SMTP.Password)
+			if err != nil {
+				return nil, err
+			}
+		}
+		smtp = &SMTPRecord{
+			Host:        cfg.SMTP.Host,
+			Port:        cfg.SMTP.Port,
+			Security:    string(cfg.SMTP.Security),
+			Username:    cfg.SMTP.Username,
+			PasswordRef: passwordRef,
+			From:        cfg.SMTP.From,
+		}
+	}
+
+	if err := NewStore(cfg.StorePath).Enroll(admin, smtp); err != nil {
+		if smtp != nil {
+			newSecretVault(cfg.StorePath).remove(smtp.PasswordRef)
+		}
 		return nil, err
 	}
 	return &admin, nil

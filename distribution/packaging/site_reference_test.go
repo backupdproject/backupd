@@ -189,6 +189,14 @@ var routeSections = map[string]documentedRoute{
 	"/settings":                   {"reference.html", "web-settings"},
 	"/catalog-recovery":           {"reference.html", "web-catalog"},
 	"/enroll":                     {"first-run.html", "enrol"},
+	// Both halves of the forgotten-password flow (#830) are documented by
+	// one section, because they are one procedure: the page that asks for
+	// a reset link and the page the emailed link opens. first-run.html's
+	// "Forgetting the password" covers the request, the single-use
+	// 30-minute token and the session revocation together, and splitting
+	// it would put half a recovery procedure under each anchor.
+	"/forgot-password":            {"first-run.html", "forgot"},
+	"/reset-password":             {"first-run.html", "forgot"},
 }
 
 // routeExemptions are routes deliberately left out of routeSections,
