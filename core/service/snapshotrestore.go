@@ -12,6 +12,7 @@ import (
 	"github.com/backupdproject/backupd/core/apicontract"
 	"github.com/backupdproject/backupd/core/internal/app"
 	"github.com/backupdproject/backupd/core/internal/backupengine"
+	"github.com/backupdproject/backupd/core/internal/model"
 	"github.com/backupdproject/backupd/core/internal/state"
 )
 
@@ -49,15 +50,6 @@ import (
 // restore: one restore point, or one directory or file inside it, written
 // to a directory on this machine.
 const ActionRestoreSnapshot = apicontract.ActionRestoreSnapshot
-
-// ErrBackupSetHasNoRestorePoint is returned when a restore names a set
-// that has no snapshot to restore from, and did not name one itself.
-//
-// Its own sentinel because it is not a failure of the request or of the
-// repository: the set has never produced a restore point, or none of its
-// runs has ever been known good, and the remedy is to run a backup rather
-// than to fix the request.
-var ErrBackupSetHasNoRestorePoint = errors.New("service: this backup set has no restore point to restore from")
 
 // ErrSnapshotRestoreUnsupported is returned when the set named does not
 // store snapshots at all.
@@ -159,8 +151,20 @@ func (b *BackupService) SubmitSnapshotRestore(ctx context.Context, req SnapshotR
 		return Operation{}, fmt.Errorf("%w: request carries %q, current is %q", ErrConfigRevisionStale, req.ConfigRevision, st.revision)
 	}
 
-	if !configuresBackupSet(st.inner, sourceName, setName) {
+	set, ok := configuredBackupSet(st.inner, sourceName, setName)
+	if !ok {
 		return Operation{}, fmt.Errorf("%w: %s", ErrBackupSetNotFound, req.BackupSetID)
+	}
+
+	// Refused HERE rather than by the engine, because this is the last
+	// point at which the answer costs nothing. An artifact set has no
+	// snapshot to restore -- its restore is restore_placement against a
+	// storage medium -- and letting the request through would write a
+	// durable row for work that is going to fail as soon as it starts,
+	// which an operator then has to poll to be told what this call
+	// already knew.
+	if set.Engine != model.EngineKopia {
+		return Operation{}, fmt.Errorf("%w: %s", ErrSnapshotRestoreUnsupported, req.BackupSetID)
 	}
 
 	parameters, err := json.Marshal(snapshotRestoreParameters{

@@ -19,12 +19,86 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/backupdproject/backupd/core/internal/app"
 	"github.com/backupdproject/backupd/core/internal/backupengine"
 )
+
+// snapshotSetID is the set every test here restores from: an incremental
+// one, because only an incremental set has a snapshot to restore.
+const snapshotSetID = "production/uploads-tree"
+
+// openRestoreTestService is openTestService against a configuration that
+// holds BOTH engines: the artifact set every other test in this package
+// uses, and one incremental set beside it.
+//
+// Both, rather than a second fixture with only the incremental set,
+// because the refusal this file asserts most sharply is the one told
+// apart by the engine: a restore of production/postgres-primary and a
+// restore of production/uploads-tree differ in nothing a request carries
+// except which set they name.
+func openRestoreTestService(t *testing.T) *BackupService {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	passphrase := filepath.Join(dir, "repo.passphrase")
+	if err := os.WriteFile(passphrase, []byte("a-passphrase-long-enough-to-be-a-passphrase"), 0o600); err != nil {
+		t.Fatalf("writing the repository passphrase file: %v", err)
+	}
+
+	configPath := writeTestConfigFileWithRetention(t,
+		"retention:\n  timezone: UTC\n  week_starts_on: monday\n"+
+			"repository_domains:\n"+
+			"  - id: production\n"+
+			"    description: Snapshots for this deployment\n"+
+			"    isolation: shared\n"+
+			"    passphrase:\n"+
+			"      file: "+passphrase+"\n")
+
+	// The incremental set is appended to the file the shared helper
+	// wrote, under the source it already declares, so the artifact set
+	// stays exactly as every other test in this package expects it.
+	existing, err := os.ReadFile(configPath) //nolint:gosec // a path this test just created.
+	if err != nil {
+		t.Fatalf("reading the fixture configuration: %v", err)
+	}
+
+	source := "sources:\n  - id: production\n    backup_sets:\n"
+
+	incremental := "      - id: uploads-tree\n" +
+		"        uuid: 6f1d2b7a-1c4e-4f8b-9a2d-3e5c7b9d1f00\n" +
+		"        engine: kopia\n" +
+		"        repository_domain: production\n" +
+		"        source_consistency: live_best_effort\n" +
+		"        verification_level: structural\n" +
+		"        remote:\n" +
+		"          type: local\n" +
+		"        remote_path: " + filepath.Join(dir, "tree") + "\n" +
+		"        stale_after: 24h\n"
+
+	if !strings.Contains(string(existing), source) {
+		t.Fatalf("the fixture configuration no longer declares %q, so this helper cannot append a set to it", source)
+	}
+
+	updated := strings.Replace(string(existing), source, source+incremental, 1)
+	if err := os.WriteFile(configPath, []byte(updated), 0o600); err != nil {
+		t.Fatalf("writing the fixture configuration: %v", err)
+	}
+
+	svc, cleanup, err := Open(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	t.Cleanup(func() { _ = cleanup() })
+
+	return svc
+}
 
 // withRestoreStub substitutes the restore seam for one test and puts the
 // real one back afterwards.
@@ -45,7 +119,7 @@ func submitFixtureRestore(t *testing.T, svc *BackupService, req SnapshotRestoreR
 	}
 
 	if req.BackupSetID == "" {
-		req.BackupSetID = fixtureSetID
+		req.BackupSetID = snapshotSetID
 	}
 
 	if req.TargetPath == "" {
@@ -59,7 +133,7 @@ func submitFixtureRestore(t *testing.T, svc *BackupService, req SnapshotRestoreR
 // acceptance criterion that a restore appears in the operation surfaces
 // the same way every other durable action does.
 func TestSubmitSnapshotRestore_RecordsWhatLandedAndWhichRestorePoint(t *testing.T) {
-	svc, _ := openTestService(t)
+	svc := openRestoreTestService(t)
 
 	withRestoreStub(t, func(_ *app.Service, _ context.Context, req app.SnapshotRestoreRequest) (app.SnapshotRestoreResult, error) {
 		return app.SnapshotRestoreResult{
@@ -90,8 +164,8 @@ func TestSubmitSnapshotRestore_RecordsWhatLandedAndWhichRestorePoint(t *testing.
 		t.Errorf("Action = %q, want %q", op.Action, ActionRestoreSnapshot)
 	}
 
-	if op.BackupSetID != fixtureSetID {
-		t.Errorf("BackupSetID = %q, want %q", op.BackupSetID, fixtureSetID)
+	if op.BackupSetID != snapshotSetID {
+		t.Errorf("BackupSetID = %q, want %q", op.BackupSetID, snapshotSetID)
 	}
 
 	done := waitForTerminalStatus(t, svc, op.ID)
@@ -150,7 +224,7 @@ func TestSubmitSnapshotRestore_RecordsWhatLandedAndWhichRestorePoint(t *testing.
 // have -- and it is exactly what a caller that only checks the error
 // would do.
 func TestSubmitSnapshotRestore_AnIncompleteRestoreIsNeverRecordedAsFinished(t *testing.T) {
-	svc, _ := openTestService(t)
+	svc := openRestoreTestService(t)
 
 	withRestoreStub(t, func(*app.Service, context.Context, app.SnapshotRestoreRequest) (app.SnapshotRestoreResult, error) {
 		return app.SnapshotRestoreResult{
@@ -182,7 +256,7 @@ func TestSubmitSnapshotRestore_AnIncompleteRestoreIsNeverRecordedAsFinished(t *t
 // the cancellation story: the row says what happened in words an operator
 // can act on, rather than in whatever sentence came up from below.
 func TestSubmitSnapshotRestore_ACancelledRestoreSaysSo(t *testing.T) {
-	svc, _ := openTestService(t)
+	svc := openRestoreTestService(t)
 
 	withRestoreStub(t, func(*app.Service, context.Context, app.SnapshotRestoreRequest) (app.SnapshotRestoreResult, error) {
 		return app.SnapshotRestoreResult{}, context.Canceled
@@ -207,7 +281,7 @@ func TestSubmitSnapshotRestore_ACancelledRestoreSaysSo(t *testing.T) {
 // runs on a goroutine inside an always-on process, so an unrecovered
 // panic takes the API server with it.
 func TestSubmitSnapshotRestore_RecoversFromAPanicAndRecordsFailure(t *testing.T) {
-	svc, _ := openTestService(t)
+	svc := openRestoreTestService(t)
 
 	withRestoreStub(t, func(*app.Service, context.Context, app.SnapshotRestoreRequest) (app.SnapshotRestoreResult, error) {
 		panic("the restore path blew up")
@@ -228,7 +302,7 @@ func TestSubmitSnapshotRestore_RecoversFromAPanicAndRecordsFailure(t *testing.T)
 // forever, and each refusal has to be its own sentinel because each sends
 // the caller somewhere different.
 func TestSubmitSnapshotRestore_RefusalsHappenBeforeAnyRowExists(t *testing.T) {
-	svc, _ := openTestService(t)
+	svc := openRestoreTestService(t)
 
 	withRestoreStub(t, func(*app.Service, context.Context, app.SnapshotRestoreRequest) (app.SnapshotRestoreResult, error) {
 		t.Error("a refused restore reached the engine")
@@ -243,18 +317,18 @@ func TestSubmitSnapshotRestore_RefusalsHappenBeforeAnyRowExists(t *testing.T) {
 	}{
 		{
 			name: "no idempotency key",
-			req:  SnapshotRestoreRequest{ConfigRevision: svc.ConfigRevision(), BackupSetID: fixtureSetID, TargetPath: t.TempDir()},
+			req:  SnapshotRestoreRequest{ConfigRevision: svc.ConfigRevision(), BackupSetID: snapshotSetID, TargetPath: t.TempDir()},
 			want: ErrInvalidRequest,
 		},
 		{
 			name: "no destination",
-			req:  SnapshotRestoreRequest{IdempotencyKey: "k1", ConfigRevision: svc.ConfigRevision(), BackupSetID: fixtureSetID, TargetPath: "-"},
+			req:  SnapshotRestoreRequest{IdempotencyKey: "k1", ConfigRevision: svc.ConfigRevision(), BackupSetID: snapshotSetID, TargetPath: "-"},
 			want: ErrInvalidRequest,
 		},
 		{
 			name: "a conflict policy that is not one of the three",
 			req: SnapshotRestoreRequest{
-				IdempotencyKey: "k2", ConfigRevision: svc.ConfigRevision(), BackupSetID: fixtureSetID,
+				IdempotencyKey: "k2", ConfigRevision: svc.ConfigRevision(), BackupSetID: snapshotSetID,
 				TargetPath: t.TempDir(), Conflict: "Overwrite",
 			},
 			want: ErrInvalidRequest,
@@ -262,7 +336,7 @@ func TestSubmitSnapshotRestore_RefusalsHappenBeforeAnyRowExists(t *testing.T) {
 		{
 			name: "a stale configuration revision",
 			req: SnapshotRestoreRequest{
-				IdempotencyKey: "k3", ConfigRevision: "stale", BackupSetID: fixtureSetID, TargetPath: t.TempDir(),
+				IdempotencyKey: "k3", ConfigRevision: "stale", BackupSetID: snapshotSetID, TargetPath: t.TempDir(),
 			},
 			want: ErrConfigRevisionStale,
 		},
@@ -273,6 +347,21 @@ func TestSubmitSnapshotRestore_RefusalsHappenBeforeAnyRowExists(t *testing.T) {
 				BackupSetID: "production/not-a-set", TargetPath: t.TempDir(),
 			},
 			want: ErrBackupSetNotFound,
+		},
+		{
+			// The one refusal a caller cannot tell from a servable
+			// request by looking at what they sent. An artifact set is
+			// configured, spelled correctly and named by a live
+			// revision; it simply has no snapshot to restore, and its
+			// restore is restore_placement against a storage medium.
+			// Answering with a durable row would mean an operator
+			// polling a restore that was never going to run.
+			name: "a set that stores artifacts rather than snapshots",
+			req: SnapshotRestoreRequest{
+				IdempotencyKey: "k5", ConfigRevision: svc.ConfigRevision(),
+				BackupSetID: fixtureSetID, TargetPath: t.TempDir(),
+			},
+			want: ErrSnapshotRestoreUnsupported,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -306,7 +395,7 @@ func TestSubmitSnapshotRestore_RefusalsHappenBeforeAnyRowExists(t *testing.T) {
 // a retry of a request whose response was lost must observe the original,
 // not start a second restore into the same directory.
 func TestSubmitSnapshotRestore_ReplayingAnIdempotencyKeyDoesNotRestoreTwice(t *testing.T) {
-	svc, _ := openTestService(t)
+	svc := openRestoreTestService(t)
 
 	started := make(chan struct{}, 8)
 

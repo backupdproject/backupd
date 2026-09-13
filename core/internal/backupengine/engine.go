@@ -682,20 +682,41 @@ type RestoreRequest struct {
 	Conflict RestoreConflict
 
 	// SkipOwners skips restoring uid/gid, which is what an unprivileged
-	// restore has to do.
+	// restore has to do. It covers files, directories and symbolic links
+	// alike: a tree whose files carry their owners and whose directories
+	// carry the restoring process's is not the tree that was backed up.
+	//
+	// Nothing else about metadata is optional. Every implementation
+	// restores each entry's mode and its modification time, because a
+	// restored tree stamped "now" is one no operator, build system or
+	// incremental tool can reason about -- and a directory that was
+	// ALREADY in the destination keeps its own mode, ownership and time,
+	// since re-entering a directory to put a file in it is not
+	// permission to restyle it. The one documented exception is a
+	// symbolic link's own timestamp on a platform with no l-variant of
+	// utimes, which is skipped rather than applied to the link's target.
 	SkipOwners bool
 
 	// VerifyContent re-reads every file after writing it and checks the
 	// bytes on the disk against the bytes the repository handed over.
+	// The check happens before the file is published under its real
+	// name, so a file whose bytes did not survive the write never
+	// appears at all.
 	//
 	// It is a request-level choice because it costs a second read of
-	// everything restored, and because the two callers want different
-	// things: an operator restoring a terabyte to a disk they are about
+	// everything restored, and because the callers want different
+	// things. An operator restoring a terabyte to a disk they are about
 	// to use has already paid for the write and may not want to pay for
-	// the read, while anything that RECORDS a restore as evidence -- a
-	// drill, a durable restore operation -- must, since a restore's own
-	// statistics are exactly what a broken restore path reports
-	// correctly.
+	// the read. The durable restore operation always asks for it, since
+	// it records a completion that is read later as evidence and a
+	// restore's own statistics are exactly what a broken restore path
+	// reports correctly.
+	//
+	// The verification ladder's restore drill does NOT set it, and that
+	// is not an oversight: a drill compares the restored tree against
+	// the repository's own bytes afterwards, which is the same property
+	// established against a stronger reference, and asking for both
+	// would read everything three times to learn one thing twice.
 	//
 	// A file whose disk bytes do not match is a failure of the whole
 	// restore, not a finding on it: the file is there, it is wrong, and
@@ -935,7 +956,8 @@ type Repository interface {
 	// restore_drill means a restore happened.
 	Verify(ctx context.Context, id SnapshotID, req VerifyRequest) (VerifyReport, error)
 
-	// Restore writes a snapshot to a local directory.
+	// Restore writes a snapshot, or one directory or one file inside it,
+	// to a local directory.
 	Restore(ctx context.Context, id SnapshotID, req RestoreRequest) (RestoreReport, error)
 
 	// DeleteSnapshot removes one snapshot's identity. It does not reclaim

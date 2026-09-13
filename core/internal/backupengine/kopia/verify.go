@@ -554,6 +554,15 @@ func (r *repository) restoreDrill(ctx context.Context, id backupengine.SnapshotI
 		// because a drill that could overwrite is a verification that can
 		// destroy data.
 		SkipOwners: true,
+
+		// VerifyContent is deliberately NOT set, and it is the one place
+		// in this repository where leaving it off is the stronger
+		// choice. It would compare the written bytes against the digest
+		// of what the repository handed over during the copy;
+		// compareRestoredTree below compares them against the
+		// repository's bytes READ AGAIN, which subsumes it. Asking for
+		// both would read every byte of the snapshot three times to
+		// learn the same fact twice.
 	}); err != nil {
 		return fmt.Errorf("the restore drill could not restore the snapshot: %w", err)
 	}

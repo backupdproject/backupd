@@ -469,7 +469,7 @@ func TestASetConfiguredForADrillWithNowhereToRunItNeverStartsARun(t *testing.T) 
 // its manifest, starts restoring the snapshot into its drill directory
 // and the machine goes away mid-file. On the way back up the
 // reconciliation pass has to prove that snapshot to the level the row was
-// admitted under -- so it drills again, with Overwrite=false, and the
+// admitted under -- so it drills again, under ConflictRefuse, and the
 // first implementation pointed it at the directory the crash had filled
 // with partial files. The restore failed on the first one, and an INTACT
 // committed snapshot was moved to FAILED: a restore point thrown away
@@ -506,7 +506,7 @@ func TestACrashDuringARestoreDrillIsRecoveredRatherThanFailed(t *testing.T) {
 
 	// What the crash left on the disk: the drill's directory, holding
 	// the beginning of one of the snapshot's own files. The partial
-	// content matters -- a restore with Overwrite=false refuses a file
+	// content matters -- a restore under ConflictRefuse refuses a file
 	// that exists, whatever is in it.
 	drills := filepath.Join(t.TempDir(), "drills")
 	abandoned := filepath.Join(drills, "restore-drill-"+runID)

@@ -627,7 +627,7 @@ func (r *Reconciler) resolveUnverified(
 // The drill directory is a fresh attempt beside the crashed one rather
 // than the crashed one itself, which is drillTarget's whole subject: a
 // run that died mid-restore left partial files, and retrying into them
-// with Overwrite=false failed an intact snapshot.
+// under ConflictRefuse failed an intact snapshot.
 func (r *Reconciler) recoveryVerification(run state.SnapshotRun) verification {
 	level := model.VerificationLevel(run.VerificationLevel)
 

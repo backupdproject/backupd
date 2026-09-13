@@ -212,7 +212,7 @@ var routes = map[string]entry{
 		// answers about a specific act.
 		why:               "there is no verb that submits an operation from a request body",
 		refusals:          []string{gapRunCycle, gapRunBackupSet, gapRestoreSnapshot},
-		namesShippedVerbs: []string{"run", "fetch"},
+		namesShippedVerbs: []string{"run", "fetch", "restore"},
 		examples: []Action{
 			{Body: []byte(`{"action":"` + apicontract.ActionRestorePlacement + `","config_revision":"r1","restore":{"artifact_id":"api-server/var-backups/dump.tar","medium":"offsite_s3","window_days":7,"acknowledged":true}}`)},
 			{Body: []byte(`{"action":"` + apicontract.ActionRunBackupSet + `","config_revision":"r1","backup_set_id":"api-server/var-backups"}`)},

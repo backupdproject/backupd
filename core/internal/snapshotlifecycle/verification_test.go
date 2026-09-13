@@ -454,7 +454,7 @@ func TestReconcile_RecoveryProvesTheLevelTheRowWasAdmittedUnder(t *testing.T) {
 // backups.
 //
 // A drill run that died mid-restore leaves partial files in its target.
-// The recovery pass restores with Overwrite=false -- deliberately, since
+// The recovery pass restores under ConflictRefuse -- deliberately, since
 // a verification that can overwrite is a verification that can destroy
 // data -- so a retry into the SAME directory errors on the first file
 // that is already there, and an intact committed snapshot is moved to
@@ -514,7 +514,7 @@ func TestReconcile_ARecoveryDrillRestoresIntoAFreshDirectory(t *testing.T) {
 
 		target := lastRequest(t, repo).RestoreTarget
 		if target == abandoned {
-			t.Errorf("the recovery restored into %s, the directory the crashed attempt left partial files in; with Overwrite=false that fails an intact snapshot on the first file that is already there", target)
+			t.Errorf("the recovery restored into %s, the directory the crashed attempt left partial files in; under ConflictRefuse that fails an intact snapshot on the first file that is already there", target)
 		}
 
 		if !strings.HasPrefix(target, drills+string(os.PathSeparator)) || !strings.Contains(target, "run-1") {

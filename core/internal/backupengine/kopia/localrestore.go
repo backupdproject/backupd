@@ -1,6 +1,7 @@
 package kopia
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -85,6 +86,13 @@ const restoreCopyChunk = 1 << 20
 // same reason.
 const restoreDirWorkMode os.FileMode = 0o700
 
+// errLinkTimesUnsupported is what lchtimes reports on a platform with no
+// way to set a symbolic link's own times (restoretimes_other.go). It is
+// not a restore failure: the link is restored, its timestamp is the
+// restore's, and the restore says so here rather than pretending it set
+// something it did not.
+var errLinkTimesUnsupported = errors.New("this platform cannot set a symbolic link's own timestamps")
+
 // Restore implements backupengine.Repository.
 //
 // The report and the error carry different halves of the answer and both
@@ -122,6 +130,17 @@ func (r *repository) Restore(ctx context.Context, id backupengine.SnapshotID, re
 		return backupengine.RestoreReport{}, fmt.Errorf("resolving restore target %s: %w", req.TargetPath, err)
 	}
 
+	// Whether the destination already existed is asked BEFORE it is
+	// created, because it decides whether the snapshot root's own mode
+	// and modification time are applied to it. A directory an operator
+	// prepared is theirs; a restore that rewrote its permissions would
+	// be changing something nobody asked about. MkdirAll cannot tell the
+	// two apart, so the question is asked separately.
+	_, statErr := os.Stat(target)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return backupengine.RestoreReport{}, fmt.Errorf("inspecting restore target %s: %w", target, statErr)
+	}
+
 	if err := os.MkdirAll(target, 0o750); err != nil {
 		return backupengine.RestoreReport{}, fmt.Errorf("creating restore target %s: %w", target, err)
 	}
@@ -137,13 +156,7 @@ func (r *repository) Restore(ctx context.Context, id backupengine.SnapshotID, re
 		return backupengine.RestoreReport{}, fmt.Errorf("resolving restore target %s: %w", target, err)
 	}
 
-	x := &extractor{
-		root:       canonical,
-		policy:     policy,
-		skipOwners: req.SkipOwners,
-		verify:     req.VerifyContent,
-		progress:   req.Progress,
-	}
+	x := newExtractor(canonical, policy, req, errors.Is(statErr, os.ErrNotExist))
 
 	if err := x.extract(ctx, selected); err != nil {
 		return x.report(false), err
@@ -163,6 +176,12 @@ func (r *repository) Restore(ctx context.Context, id backupengine.SnapshotID, re
 // sanitiser that refused such a spelling would make a file this product
 // backs up on purpose unnameable in a restore request.
 func selectRestoreEntry(ctx context.Context, root fs.Entry, selection string) (fs.Entry, error) {
+	// A leading or trailing slash is spelling rather than traversal:
+	// "sub/", "/sub" and "sub" all name the same entry, and reporting
+	// the first two as an unsafe path would refuse a request whose only
+	// fault is how a surface joined its own strings together.
+	selection = strings.Trim(selection, "/")
+
 	if selection == "" {
 		return root, nil
 	}
@@ -204,11 +223,25 @@ func selectRestoreEntry(ctx context.Context, root fs.Entry, selection string) (f
 // and the bottleneck of a restore is the disk it is writing to rather
 // than the walk over the tree.
 type extractor struct {
-	root       string
-	policy     backupengine.RestoreConflict
+	root   string
+	policy backupengine.RestoreConflict
+
+	// rootCreated records whether this restore made the destination
+	// directory. It decides whether the snapshot root's own metadata is
+	// applied to it, on the same rule every other directory follows: a
+	// directory that was already there belongs to whoever put it there.
+	rootCreated bool
+
 	skipOwners bool
 	verify     bool
 	progress   func(backupengine.RestoreProgress)
+
+	// buf is the one copy buffer this restore uses -- for every file it
+	// writes and every file it reads back to verify. One per restore
+	// rather than one per file, because the walk is sequential: a
+	// per-file allocation hands the collector a megabyte per file in the
+	// tree for nothing.
+	buf []byte
 
 	files       int64
 	directories int64
@@ -216,6 +249,18 @@ type extractor struct {
 	skipped     int64
 	bytes       int64
 	verified    int64
+}
+
+func newExtractor(root string, policy backupengine.RestoreConflict, req backupengine.RestoreRequest, rootCreated bool) *extractor {
+	return &extractor{
+		root:        root,
+		policy:      policy,
+		rootCreated: rootCreated,
+		skipOwners:  req.SkipOwners,
+		verify:      req.VerifyContent,
+		progress:    req.Progress,
+		buf:         make([]byte, restoreCopyChunk),
+	}
 }
 
 func (x *extractor) report(complete bool) backupengine.RestoreReport {
@@ -257,6 +302,10 @@ func (x *extractor) extract(ctx context.Context, entry fs.Entry) error {
 	if dir, ok := entry.(fs.Directory); ok {
 		if err := x.dir(ctx, dir, x.root, ""); err != nil {
 			return err
+		}
+
+		if x.rootCreated {
+			return x.applyDirMetadata(x.root, entry, ".")
 		}
 
 		return nil
@@ -303,7 +352,8 @@ func (x *extractor) dir(ctx context.Context, dir fs.Directory, dstDir, rel strin
 
 		switch entry := e.(type) {
 		case fs.Directory:
-			if err := x.makeDir(dst, childRel); err != nil {
+			created, err := x.makeDir(dst, childRel)
+			if err != nil {
 				return err
 			}
 
@@ -314,10 +364,16 @@ func (x *extractor) dir(ctx context.Context, dir fs.Directory, dstDir, rel strin
 				return err
 			}
 
-			// The snapshot's own mode goes on last, once nothing else
-			// has to be written inside it.
-			if err := os.Chmod(dst, entry.Mode().Perm()); err != nil {
-				return fmt.Errorf("setting the mode of restored directory %q: %w", childRel, err)
+			// The snapshot's own metadata goes on last, once nothing
+			// else has to be written inside it -- and only on a
+			// directory this restore created, because rewriting the
+			// mode or the timestamp of one that was already there is a
+			// change to the operator's filesystem that restoring a
+			// file INTO it does not authorise.
+			if created {
+				if err := x.applyDirMetadata(dst, entry, childRel); err != nil {
+					return err
+				}
 			}
 
 			return nil
@@ -347,34 +403,38 @@ func (x *extractor) dir(ctx context.Context, dir fs.Directory, dstDir, rel strin
 // no data of its own, so re-entering one is not a replacement of
 // anything. Collisions are decided at the leaves, where the bytes are.
 //
+// Which is why the return value says whether this restore CREATED the
+// directory: accepting one that was already there is not the same as
+// owning it, and its mode, ownership and timestamp stay the operator's.
+//
 // An existing SYMBOLIC LINK is refused under every policy. Following it
 // would place the rest of the subtree wherever it points, which is the
 // escape this whole file exists to prevent, and it is refused rather than
 // replaced because a link an operator put there is a statement about
 // their filesystem that a restore does not get to overrule.
-func (x *extractor) makeDir(dst, rel string) error {
+func (x *extractor) makeDir(dst, rel string) (bool, error) {
 	info, err := os.Lstat(dst)
 
 	switch {
 	case err == nil && info.Mode()&os.ModeSymlink != 0:
-		return fmt.Errorf("%w: %q is a symbolic link in the destination, and restoring %q through it would write wherever it points",
+		return false, fmt.Errorf("%w: %q is a symbolic link in the destination, and restoring %q through it would write wherever it points",
 			backupengine.ErrUnsafeSnapshotPath, dst, rel)
 
 	case err == nil && info.IsDir():
-		return nil
+		return false, nil
 
 	case err == nil:
-		return fmt.Errorf("%w: %q is a directory in the snapshot and something else in the destination", backupengine.ErrRestoreConflict, rel)
+		return false, fmt.Errorf("%w: %q is a directory in the snapshot and something else in the destination", backupengine.ErrRestoreConflict, rel)
 
 	case !errors.Is(err, os.ErrNotExist):
-		return fmt.Errorf("inspecting the restore destination for %q: %w", rel, err)
+		return false, fmt.Errorf("inspecting the restore destination for %q: %w", rel, err)
 	}
 
 	if err := os.Mkdir(dst, restoreDirWorkMode); err != nil {
-		return fmt.Errorf("creating restored directory %q: %w", rel, err)
+		return false, fmt.Errorf("creating restored directory %q: %w", rel, err)
 	}
 
-	return nil
+	return true, nil
 }
 
 // file restores one file, writing it under a working name and renaming it
@@ -418,11 +478,22 @@ func (x *extractor) file(ctx context.Context, f fs.File, dst, rel string) error 
 
 	digest := sha256.New()
 
-	written, err := copyWithCancellation(ctx, io.MultiWriter(tmp, digest), src)
-	x.bytes += written
-
+	written, err := x.copy(ctx, io.MultiWriter(tmp, digest), src)
 	if err != nil {
 		return fmt.Errorf("writing %q: %w", rel, err)
+	}
+
+	// Verified BEFORE the snapshot's mode goes on, and that order is the
+	// whole of it: a stored file whose mode denies its owner a read --
+	// 0200, 0000, both of which a backed-up tree really holds -- would
+	// make this re-read fail with EACCES for every process that is not
+	// root, and the durable restore operation always asks for
+	// verification. The working file keeps CreateTemp's 0600 until the
+	// comparison is done.
+	if x.verify {
+		if err := x.verifyWritten(tmp, digest.Sum(nil), rel); err != nil {
+			return err
+		}
 	}
 
 	if err := x.applyMetadata(tmp, f, rel); err != nil {
@@ -433,12 +504,11 @@ func (x *extractor) file(ctx context.Context, f fs.File, dst, rel string) error 
 		return fmt.Errorf("closing the working file for %q: %w", rel, err)
 	}
 
-	if x.verify {
-		if err := verifyWrittenFile(tmpName, digest.Sum(nil), rel); err != nil {
-			return err
-		}
-
-		x.verified++
+	// After the last write to the file and before the rename: a
+	// modification time set while the descriptor was still open would be
+	// the time of the close.
+	if err := applyModTime(tmpName, rel, f); err != nil {
+		return err
 	}
 
 	if err := os.Rename(tmpName, dst); err != nil {
@@ -446,7 +516,18 @@ func (x *extractor) file(ctx context.Context, f fs.File, dst, rel string) error 
 	}
 
 	published = true
+
+	// Counted only now. A file that was cancelled, or whose bytes did
+	// not survive the write, was removed rather than restored, and a
+	// report whose Bytes included it would be describing a tree that
+	// does not exist.
 	x.files++
+	x.bytes += written
+
+	if x.verify {
+		x.verified++
+	}
+
 	x.note(rel)
 
 	return nil
@@ -477,6 +558,27 @@ func (x *extractor) symlink(ctx context.Context, l fs.Symlink, dst, rel string) 
 
 	if err := os.Symlink(target, dst); err != nil {
 		return fmt.Errorf("restoring symbolic link %q: %w", rel, err)
+	}
+
+	// A link's own metadata is set through the link rather than through
+	// it: os.Chmod, os.Chown and os.Chtimes all follow one, so applying
+	// a link's mode or time with them would rewrite the metadata of
+	// whatever it points at -- which is exactly the write this file
+	// refuses everywhere else. A link has no mode of its own to restore
+	// on the platforms this runs on; ownership and times go through the
+	// l-variants, and where the platform has no l-variant for times the
+	// time is skipped rather than applied to the target.
+	if !x.skipOwners {
+		owner := l.Owner()
+		if err := os.Lchown(dst, int(owner.UserID), int(owner.GroupID)); err != nil {
+			return fmt.Errorf("setting the ownership of restored symbolic link %q: %w", rel, err)
+		}
+	}
+
+	if mod := l.ModTime(); !mod.IsZero() {
+		if err := lchtimes(dst, mod); err != nil && !errors.Is(err, errLinkTimesUnsupported) {
+			return fmt.Errorf("setting the modification time of restored symbolic link %q: %w", rel, err)
+		}
 	}
 
 	x.symlinks++
@@ -551,6 +653,59 @@ func (x *extractor) applyMetadata(tmp *os.File, e fs.Entry, rel string) error {
 	return nil
 }
 
+// applyDirMetadata puts a restored directory's own mode, ownership and
+// modification time on it, once its whole subtree is written.
+//
+// The order is the order that survives the modes a snapshot really
+// holds. The time is set first, while this process still certainly owns a
+// directory it can write; ownership second, because handing a directory
+// to another uid is the step that can take away the right to do either of
+// the others; the mode last, because a directory whose stored mode denies
+// its owner a write would otherwise make everything after it fail.
+func (x *extractor) applyDirMetadata(dst string, e fs.Entry, rel string) error {
+	if err := applyModTime(dst, rel, e); err != nil {
+		return err
+	}
+
+	if !x.skipOwners {
+		owner := e.Owner()
+		if err := os.Chown(dst, int(owner.UserID), int(owner.GroupID)); err != nil {
+			return fmt.Errorf("setting the ownership of restored directory %q: %w", rel, err)
+		}
+	}
+
+	if err := os.Chmod(dst, e.Mode().Perm()); err != nil {
+		return fmt.Errorf("setting the mode of restored directory %q: %w", rel, err)
+	}
+
+	return nil
+}
+
+// applyModTime puts a snapshot entry's modification time on what was
+// restored from it.
+//
+// Restoring content without times is a silent loss of fidelity, and the
+// kind nobody notices until they compare: a restored tree in which every
+// entry was modified "now" tells an operator nothing about when their
+// data was written, and makes every incremental tool pointed at it copy
+// the whole thing again.
+//
+// A zero time is left alone. It is what a snapshot holds for an entry
+// that never had one, and inventing 1970 for it would be worse than
+// leaving the filesystem's own answer.
+func applyModTime(path, rel string, e fs.Entry) error {
+	mod := e.ModTime()
+	if mod.IsZero() {
+		return nil
+	}
+
+	if err := os.Chtimes(path, mod, mod); err != nil {
+		return fmt.Errorf("setting the modification time of restored %q: %w", rel, err)
+	}
+
+	return nil
+}
+
 // join builds one destination path and proves it is still under the
 // restore root.
 //
@@ -602,15 +757,12 @@ func unsupportedEntry(rel string, e fs.Entry) error {
 	return fmt.Errorf("the snapshot holds %q with mode %s, which this restore cannot write", rel, e.Mode())
 }
 
-// copyWithCancellation moves bytes while staying answerable to the
-// context.
+// copy moves bytes while staying answerable to the context.
 //
 // io.Copy would be shorter and would finish the file it is in the middle
 // of whatever the caller asked for, which for a restore of a large file
 // means a cancellation that is observed minutes after it was requested.
-func copyWithCancellation(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
-	buf := make([]byte, restoreCopyChunk)
-
+func (x *extractor) copy(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
 	var total int64
 
 	for {
@@ -618,10 +770,10 @@ func copyWithCancellation(ctx context.Context, dst io.Writer, src io.Reader) (in
 			return total, err
 		}
 
-		n, readErr := src.Read(buf)
+		n, readErr := src.Read(x.buf)
 
 		if n > 0 {
-			written, writeErr := dst.Write(buf[:n])
+			written, writeErr := dst.Write(x.buf[:n])
 			total += int64(written)
 
 			if writeErr != nil {
@@ -639,33 +791,35 @@ func copyWithCancellation(ctx context.Context, dst io.Writer, src io.Reader) (in
 	}
 }
 
-// verifyWrittenFile reads back what was just written and checks it
-// against the digest of what the repository handed over.
+// verifyWritten reads back what was just written and checks it against
+// the digest of what the repository handed over.
 //
-// It reads the WORKING file, before the rename, so a file whose bytes did
-// not survive the write is never published under its real name at all.
+// It reads the WORKING file, through the descriptor that wrote it and
+// before the rename, so a file whose bytes did not survive the write is
+// never published under its real name at all. Through the descriptor
+// rather than by re-opening the path, because the path may be about to
+// carry a mode that denies this process a read, and a verification that
+// only works on readable modes is a verification that refuses legitimate
+// snapshots.
 //
 // A mismatch is a failure of the restore rather than a finding on it. The
 // file is present, it is wrong, and nothing downstream is ever going to
 // look at it again: the next reader is a person or a program that
 // believes a completed restore.
-func verifyWrittenFile(path string, want []byte, rel string) error {
-	f, err := os.Open(path) //nolint:gosec // the path is this package's own working file, built from a validated name.
-	if err != nil {
+func (x *extractor) verifyWritten(f *os.File, want []byte, rel string) error {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("re-reading restored file %q to verify it: %w", rel, err)
 	}
 
-	defer f.Close() //nolint:errcheck // a read handle's close error says nothing about the comparison.
-
 	digest := sha256.New()
 
-	if _, err := io.Copy(digest, f); err != nil {
+	if _, err := io.CopyBuffer(digest, f, x.buf); err != nil {
 		return fmt.Errorf("re-reading restored file %q to verify it: %w", rel, err)
 	}
 
 	got := digest.Sum(nil)
 
-	if !strings.EqualFold(hex.EncodeToString(got), hex.EncodeToString(want)) {
+	if !bytes.Equal(got, want) {
 		return fmt.Errorf("restored file %q holds %s and the repository holds %s",
 			rel, hex.EncodeToString(got), hex.EncodeToString(want))
 	}

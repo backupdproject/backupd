@@ -129,15 +129,54 @@ only when the walk reached the end of what was asked for, and the durable
 operation refuses to record a restore as completed without it — the guard
 lives where the claim is written, not only where it is made.
 
+### What a restored entry carries besides its bytes
+
+A restore reproduces each entry's **mode** and its **modification time**,
+and its ownership only when asked (`SkipOwners=false`), on files,
+directories and symbolic links alike.
+
+The modification time is stated here because it is the half of fidelity
+that fails silently. A tree whose every entry was modified "now" still
+hashes correctly file by file, so nothing errors and no test of content
+notices — and yet nothing in it says when the data was written, a diff
+against the original reports differences on identical files, and every
+incremental tool pointed at it copies the whole thing again. Times go on
+after the last write and before the rename for a file, and after the whole
+subtree for a directory, because writing into either updates it.
+
+Two deliberate limits. A directory that was **already** in the destination
+keeps its own mode, ownership and time: a restore walks into one under
+every conflict policy, because a directory holds no data of its own, and
+re-entering one to put a file in it is not permission to restyle what its
+owner arranged. And a **symbolic link's own** timestamp is set through
+`utimensat(AT_SYMLINK_NOFOLLOW)`, which every platform this product
+targets has; on one that does not, it is skipped rather than applied,
+because the only alternative — `os.Chtimes`, which follows the link —
+would write to whatever the link points at, which is exactly the escape
+this design exists to prevent.
+
 ### Integrity is checked by reading the disk back
 
 With `VerifyContent`, each file is hashed as it is written and the working
 file is read back and hashed again before the rename, so a file whose bytes
 did not survive the write is never published at all. A mismatch fails the
 restore rather than being reported as a finding: the file would be present,
-wrong, and never looked at again. The paths that record a restore as
-evidence — the verification ladder's restore drill, and the durable
-operation — always ask for it.
+wrong, and never looked at again.
+
+The read-back goes through the descriptor that wrote the file rather than
+re-opening its path, and the comparison happens before the snapshot's mode
+is applied. Both follow from the same fact: a snapshot legitimately holds
+files whose mode denies their owner a read (`0200`, `0000`), and a
+verification that re-opened the path after chmod would fail with EACCES for
+every process that is not root — turning an intact snapshot into an
+unrestorable one on the path that always verifies.
+
+The durable restore operation always asks for verification, because it
+records a completion that is read later as evidence. The verification
+ladder's restore drill does **not**, and that is not an omission: the drill
+compares the restored tree against the repository's bytes read again
+(`compareRestoredTree`), which subsumes the in-flight digest comparison.
+Asking for both would read every byte three times to learn one fact twice.
 
 ### A restore is a durable operation, and not the archived-copy one
 
@@ -153,6 +192,21 @@ It takes no single-flight lock. A cycle and a restore contend for nothing —
 the restore reads a repository and writes outside the backup pipeline — and
 the moment an operator most wants one is during an incident, which is
 exactly when a scheduled cycle is also running.
+
+Everything refusable is refused **before** the row is written: a stale
+configuration revision, an unknown backup set, a missing destination, a
+conflict policy that is not one of the three — and a set whose engine
+stores artifacts rather than snapshots. That last one is the refusal a
+caller cannot tell from a servable request by looking at what they sent,
+and it is the reason the check is resolved from the set's engine rather
+than from its name: an artifact set's restore is `restore_placement`
+against a storage medium, and answering with a durable row would leave
+somebody polling work that was never going to run.
+
+Live progress is NOT yet surfaced from the row. The engine reports it per
+entry (`RestoreRequest.Progress`), and the operation's own progress
+channel is #788's scope, so today an operator sees a submitted restore
+and its finished summary rather than a running count.
 
 ## Consequences
 
@@ -171,3 +225,10 @@ exactly when a scheduled cycle is also running.
 - Ownership is not restored unless asked for. An unprivileged process
   cannot set it, and a restore refused over metadata nobody asked about is
   a restore that did not happen.
+- Modification times and modes come back, so a restored tree is
+  comparable with the original. A directory the operator had already
+  created keeps its own metadata.
+- A snapshot holding a file whose mode denies reading it restores, and
+  verifies, as an unprivileged process. This is a property of the order
+  the extraction does things in, and it has a test that fails against the
+  obvious ordering.

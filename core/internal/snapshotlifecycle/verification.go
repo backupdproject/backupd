@@ -228,8 +228,8 @@ const (
 // earlier attempts left behind.
 //
 // A fresh directory per attempt, rather than the run's one directory, is
-// what makes crash recovery survivable. A drill restores with
-// Overwrite=false -- a verification that can overwrite is a verification
+// what makes crash recovery survivable. A drill restores under
+// ConflictRefuse -- a verification that can overwrite is a verification
 // that can destroy data -- so a run that died with a restore in flight
 // left partial files, and a recovery pass restoring into the same place
 // failed on the first file that was already there. The snapshot was
