@@ -133,12 +133,12 @@ func TestWorkflowRunner_ServeThenStatusOverARealSocket(t *testing.T) {
 
 	serving := make(chan int, 1)
 	go func() {
-		serving <- workflowRunnerServe([]string{
+		serving <- workflowRunnerServe(append([]string{
 			"--runtime-dir", runtimeDir,
 			"--workspace-dir", workspaceDir,
 			"--secrets-dir", secretsDir,
 			"--config", filepath.Join(root, "no-such-config.yaml"),
-		})
+		}, standInContainerFlags(t, root)...))
 	}()
 	t.Cleanup(func() {
 		// The serve loop ends when the process is signalled, which a
@@ -194,8 +194,17 @@ func TestWorkflowRunner_ServeThenStatusOverARealSocket(t *testing.T) {
 	if !strings.Contains(out, "socket "+socket+"\n") {
 		t.Errorf("status reports a socket other than the one serve created (%s):\n%s", socket, out)
 	}
-	if !strings.Contains(out, "bash /") {
-		t.Errorf("status does not name the absolute bash the runner fixed on:\n%s", out)
+	if !strings.Contains(out, "hook bash /") {
+		t.Errorf("status does not name the absolute bash inside the hook image, which is the interpreter a hook actually gets:\n%s", out)
+	}
+	// The container facts #865 added. An operator whose hook cannot see
+	// a directory, or who needs to know which image it ran in, has
+	// nowhere else to read them.
+	if !strings.Contains(out, "hook image ") || !strings.Contains(out, "docker ") {
+		t.Errorf("status does not report the container this deployment runs hooks in:\n%s", out)
+	}
+	if !strings.Contains(out, "hook network none") {
+		t.Errorf("status does not report the hook network, so an operator cannot tell whether their hook has one:\n%s", out)
 	}
 	if strings.Contains(out, "uid 0)") {
 		t.Errorf("the runner reports that it executes hooks as root:\n%s", out)
@@ -244,6 +253,7 @@ const (
 	runnerChildRuntime   = "BACKUPD_TEST_RUNNER_RUNTIME"
 	runnerChildWorkspace = "BACKUPD_TEST_RUNNER_WORKSPACE"
 	runnerChildSecrets   = "BACKUPD_TEST_RUNNER_SECRETS"
+	runnerChildDocker    = "BACKUPD_TEST_RUNNER_DOCKER"
 )
 
 // TestWorkflowRunnerChildProcess is not a test. It is the entry point of
@@ -258,6 +268,9 @@ func TestWorkflowRunnerChildProcess(t *testing.T) {
 		"--workspace-dir", os.Getenv(runnerChildWorkspace),
 		"--secrets-dir", os.Getenv(runnerChildSecrets),
 		"--config", filepath.Join(os.Getenv(runnerChildRuntime), "no-such-config.yaml"),
+		"--docker", os.Getenv(runnerChildDocker),
+		"--hook-image", "stand-in/hook:test",
+		"--hook-bash", "/bin/bash",
 	}))
 }
 
@@ -303,6 +316,7 @@ func TestWorkflowRunnerServe_ListensOnAUnixSocketAndNothingElse(t *testing.T) {
 		runnerChildRuntime+"="+runtimeDir,
 		runnerChildWorkspace+"="+workspaceDir,
 		runnerChildSecrets+"="+secretsDir,
+		runnerChildDocker+"="+standInDocker(t, root),
 	)
 	var output bytes.Buffer
 	child.Stdout = &output
@@ -441,4 +455,54 @@ func lsofNames(t *testing.T, pid int, family string) []string {
 		}
 	}
 	return names
+}
+
+// The stand-in docker client these tests hand `serve`.
+//
+// `workflow-runner serve` proves a container capability before it binds
+// its socket (#865), and a unit-tier package may not need a docker daemon
+// (core/internal/testtier). What these tests are about is the WIRING --
+// the version this build pins, the credential, the layout, the flags
+// reaching the preflight -- so the capability is satisfied by a client
+// that answers the three questions the preflight asks and runs nothing.
+//
+// It is deliberately not core/internal/hostrunner's richer stand-in: that
+// one exists to run hooks, and no hook is executed here. What a real
+// daemon does with these flags is asserted in core/tests/containerhooks.
+func standInDocker(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "stand-in-docker")
+	body := `#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --config|--host|--context) shift 2 ;;
+    *) break ;;
+  esac
+done
+case "${1:-}" in
+  version) printf '27.0.0-stand-in\n' ;;
+  image) printf 'sha256:feedfacefeedface\n' ;;
+  run)
+    printf 'backupd-container-probe-ok\n'
+    printf 'bash_path=/usr/local/bin/bash\n'
+    printf 'bash_version=5.2.37(1)-release\n'
+    printf 'uid=1000\n'
+    printf 'tty=no\n' ;;
+  *) exit 125 ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		t.Fatalf("writing the stand-in docker client: %v", err)
+	}
+	return path
+}
+
+// standInContainerFlags is standInDocker plus the flags that name it.
+func standInContainerFlags(t *testing.T, dir string) []string {
+	t.Helper()
+	return []string{
+		"--docker", standInDocker(t, dir),
+		"--hook-image", "stand-in/hook:test",
+		"--hook-bash", "/usr/local/bin/bash",
+	}
 }

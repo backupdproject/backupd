@@ -46,6 +46,19 @@
  * screen renders that sentence rather than deriving a second opinion about
  * the gate from a read: two places deciding whether the engine is on is
  * how they come to disagree.
+ *
+ * # Where the hover help comes from (issue #873)
+ *
+ * Every control here, and every element that STATES something, names a
+ * `repositories.new.*` id in ui/shared/src/tooltips/tooltips.json and
+ * carries no copy of its own. The screen already argues its decisions in
+ * prose beside the fields, and the tooltips deliberately do not repeat
+ * that prose: each one says what the control SENDS and what the
+ * deployment does with it — the wire field, the refusal code, the thing
+ * that is written and the thing that is not. That is the half an operator
+ * reading a contract or a CLI transcript is looking for, and keeping it
+ * in the registry is what lets it be reviewed for one voice with the
+ * other few hundred sentences in this interface (#834).
  */
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -57,6 +70,7 @@ import { Choice } from "@shared/components/Choice";
 import { Note, WireField } from "@shared/components/Definitions";
 import { DOMAIN_BOUNDARIES } from "@shared/components/EngineBadge";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 type Isolation = "shared" | "isolated";
 type Ownership = "this" | "another-instance";
@@ -132,6 +146,7 @@ export function RepositoryDomainNewPage() {
           tone="warn"
           eyebrow="This deployment does not run the incremental engine"
           title="Nothing here can be declared until the incremental engine is enabled"
+          tip="repositories.new.engine-gate"
           dismissible={false}
         >
           {refusal.message} Repository domains only exist for that engine, so this deployment has
@@ -144,6 +159,7 @@ export function RepositoryDomainNewPage() {
         tone="info"
         eyebrow="Declaring is not creating"
         title="Create writes the declaration; the store is written by the first backup run into it"
+        tip="repositories.new.declaration"
         dismissible={false}
       >
         This saves the domain into this deployment&rsquo;s configuration —{" "}
@@ -157,7 +173,9 @@ export function RepositoryDomainNewPage() {
 
       <section className="card">
         <div className="card__header">
-          <h2 className="eyebrow">Identity</h2>
+          <InfoTooltip id="repositories.new.identity">
+            <h2 className="eyebrow">Identity</h2>
+          </InfoTooltip>
         </div>
         <div className="card__body">
           <div
@@ -170,6 +188,7 @@ export function RepositoryDomainNewPage() {
             <Field
               label="Domain id"
               wire="id"
+              tip="repositories.new.id"
               placeholder="offsite-b2"
               mono
               value={domain}
@@ -178,6 +197,7 @@ export function RepositoryDomainNewPage() {
             <Field
               label="Description"
               wire="description"
+              tip="repositories.new.description"
               placeholder="Second copy, off site"
               value={description}
               onChange={setDescription}
@@ -185,6 +205,7 @@ export function RepositoryDomainNewPage() {
             <Field
               label="Storage location"
               wire="location"
+              tip="repositories.new.location"
               placeholder="this deployment's own storage location"
               mono
               value={location}
@@ -197,32 +218,50 @@ export function RepositoryDomainNewPage() {
                     ? "Passphrase file on this NAS"
                     : "Passphrase environment variable"}
                 </span>
-                <input
-                  className="input input--mono"
-                  type="text"
-                  value={passphraseRef}
-                  placeholder={
-                    passphraseSource === "file"
-                      ? "/etc/backupd/offsite-b2.passphrase"
-                      : "BACKUPD_OFFSITE_B2_PASSPHRASE"
-                  }
-                  onChange={(e) => setPassphraseRef(e.target.value)}
-                />
+                {/* The host wraps the input rather than sitting beside the
+                    label, for the reason InfoTooltip's own doc gives: a
+                    host inside a <label> would be read into the field's
+                    accessible name. Wrapping puts the copy on the control
+                    as a description and leaves the name alone — and a
+                    one-cell grid that stretches hands the field's width
+                    through to the input, which `.tooltip`'s own
+                    `align-items: center` would otherwise shrink to a
+                    default-width box. */}
+                <InfoTooltip
+                  id="repositories.new.passphrase-ref"
+                  style={{ display: "grid", alignItems: "stretch" }}
+                >
+                  <input
+                    className="input input--mono"
+                    type="text"
+                    value={passphraseRef}
+                    placeholder={
+                      passphraseSource === "file"
+                        ? "/etc/backupd/offsite-b2.passphrase"
+                        : "BACKUPD_OFFSITE_B2_PASSPHRASE"
+                    }
+                    onChange={(e) => setPassphraseRef(e.target.value)}
+                  />
+                </InfoTooltip>
               </label>
               <WireField name={"passphrase." + passphraseSource} />
               <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  className={"btn" + (passphraseSource === "file" ? " btn--primary" : "")}
-                  onClick={() => setPassphraseSource("file")}
-                >
-                  A file
-                </button>
-                <button
-                  className={"btn" + (passphraseSource === "env" ? " btn--primary" : "")}
-                  onClick={() => setPassphraseSource("env")}
-                >
-                  An environment variable
-                </button>
+                <InfoTooltip id="repositories.new.passphrase-file">
+                  <button
+                    className={"btn" + (passphraseSource === "file" ? " btn--primary" : "")}
+                    onClick={() => setPassphraseSource("file")}
+                  >
+                    A file
+                  </button>
+                </InfoTooltip>
+                <InfoTooltip id="repositories.new.passphrase-env">
+                  <button
+                    className={"btn" + (passphraseSource === "env" ? " btn--primary" : "")}
+                    onClick={() => setPassphraseSource("env")}
+                  >
+                    An environment variable
+                  </button>
+                </InfoTooltip>
               </div>
             </div>
           </div>
@@ -260,6 +299,7 @@ export function RepositoryDomainNewPage() {
               name="domain-isolation"
               title="Shared"
               wire="may_share=true"
+              tip="repositories.new.shared"
               detail="Several backup sets may store snapshots here and deduplicate against each other."
               checked={isolation === "shared"}
               onChange={() => setIsolation("shared")}
@@ -268,6 +308,7 @@ export function RepositoryDomainNewPage() {
               name="domain-isolation"
               title="Isolated"
               wire="may_share=false"
+              tip="repositories.new.isolated"
               detail="Exactly one backup set. A second set pointed here is refused rather than quietly admitted."
               checked={isolation === "isolated"}
               onChange={() => setIsolation("isolated")}
@@ -283,6 +324,7 @@ export function RepositoryDomainNewPage() {
                   ? "Sets in this domain share all six of these"
                   : "An isolated domain shares none of these with any other set"
               }
+              tip="repositories.new.boundaries"
               dismissible={false}
             >
               <ul
@@ -324,6 +366,7 @@ export function RepositoryDomainNewPage() {
             <Choice
               name="domain-ownership"
               title="This instance maintains it"
+              tip="repositories.new.maintain-here"
               detail="This deployment compacts the store and reclaims its space, if nothing else already maintains it: declaring is refused when a maintenance record names somebody else."
               checked={ownership === "this"}
               onChange={() => setOwnership("this")}
@@ -332,6 +375,7 @@ export function RepositoryDomainNewPage() {
               name="domain-ownership"
               title="Another instance maintains it"
               wire="maintenance_owner=another-instance"
+              tip="repositories.new.maintain-elsewhere"
               detail="This deployment reads and writes snapshots here. It is the answer that lets the declaration through when the store is already maintained elsewhere; nothing about maintenance is recorded by it."
               checked={ownership === "another-instance"}
               onChange={() => setOwnership("another-instance")}
@@ -360,6 +404,7 @@ export function RepositoryDomainNewPage() {
           tone="danger"
           eyebrow="Not declared"
           title="This deployment refused the declaration"
+          tip="repositories.new.refused"
           dismissible={false}
         >
           {refusal.message} Nothing was written, and this form keeps what you typed.
@@ -367,21 +412,25 @@ export function RepositoryDomainNewPage() {
       ) : null}
 
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-        <button className="btn" onClick={() => navigate("/repositories")}>
-          Back to repository domains
-        </button>
-        <button
-          className="btn btn--primary"
-          disabled={!ready || saving}
-          title={
-            ready
-              ? "Declare this repository domain"
-              : "A domain needs an id and somewhere to read its passphrase from"
-          }
-          onClick={() => void create()}
-        >
-          {saving ? "Declaring\u2026" : "Create domain"}
-        </button>
+        <InfoTooltip id="repositories.new.back">
+          <button className="btn" onClick={() => navigate("/repositories")}>
+            Back to repository domains
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="repositories.new.create" alignEnd>
+          <button
+            className="btn btn--primary"
+            disabled={!ready || saving}
+            title={
+              ready
+                ? "Declare this repository domain"
+                : "A domain needs an id and somewhere to read its passphrase from"
+            }
+            onClick={() => void create()}
+          >
+            {saving ? "Declaring\u2026" : "Create domain"}
+          </button>
+        </InfoTooltip>
       </div>
     </>
   );
@@ -389,10 +438,20 @@ export function RepositoryDomainNewPage() {
 
 /** One field of the declaration, carrying the wire field it maps to,
  *  because the operator most likely to be on this screen is the one who
- *  would otherwise be writing this into config.yaml by hand. */
+ *  would otherwise be writing this into config.yaml by hand.
+ *
+ *  `tip` is what the field MEANS, from the registry (#834), and the host
+ *  wraps the input rather than standing beside the label: an icon host
+ *  inside a <label> is read into the field's accessible name, and every
+ *  test and every screen reader finds this input by that name. Wrapping
+ *  lands the copy on the control as a description and leaves the name
+ *  exactly as it was. The host is a one-cell stretching grid so the input
+ *  keeps the field's full width: `.tooltip` centres its content, which on
+ *  a text input means a default-width box in the middle of the column. */
 function Field({
   label,
   wire,
+  tip,
   placeholder,
   mono,
   value,
@@ -400,6 +459,7 @@ function Field({
 }: {
   label: string;
   wire: string;
+  tip: TooltipId;
   placeholder: string;
   mono?: boolean;
   value: string;
@@ -409,13 +469,15 @@ function Field({
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
       <label className="field">
         <span className="field__label">{label}</span>
-        <input
-          className={"input" + (mono ? " input--mono" : "")}
-          type="text"
-          value={value}
-          placeholder={placeholder}
-          onChange={(e) => onChange(e.target.value)}
-        />
+        <InfoTooltip id={tip} style={{ display: "grid", alignItems: "stretch" }}>
+          <input
+            className={"input" + (mono ? " input--mono" : "")}
+            type="text"
+            value={value}
+            placeholder={placeholder}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        </InfoTooltip>
       </label>
       <WireField name={wire} />
     </div>

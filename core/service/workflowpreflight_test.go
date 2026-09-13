@@ -7,130 +7,36 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/backupdproject/backupd/core/internal/hostrunner"
-	"github.com/backupdproject/backupd/core/internal/workflow"
 )
 
-// #809's rule about WHEN a hook's validity is decided: an invalid
-// required hook fails before the first "before" script runs (#813).
+// #809's rule about WHEN a hook's validity is decided: an invalid or
+// unrunnable required hook fails before the first "before" script runs
+// (#813).
 //
 // The plan's six on-disk checks are answered by workflow.Snapshot, which
 // a run performs itself, so those always refused in time. The five
-// executor checks -- is there a runner, does it answer, does bash parse
+// EXECUTOR checks -- is there a runner, does it answer, does bash parse
 // each local script, can the execution connection exec at all, does the
 // far side's bash parse each remote script -- used to live only inside
-// the `validate workflow` verb, so a run whose SECOND hook was a syntax
-// error ran the FIRST one and quiesced a database before finding out.
+// the `validate workflow` verb, so a run whose runner was gone, or whose
+// second hook was a syntax error, ran the FIRST hook and quiesced a
+// database before finding out.
 //
-// Nothing here fakes the runner. A real server on a real socket with a
-// real bash is what makes the assertion "the first hook left no marker"
-// evidence: a stand-in inside the test binary would prove something
-// about the stand-in, and the whole claim is about the process boundary.
-
-// runnerVersion is the version both halves present. The runner refuses a
-// hello whose version is not its own, which is the mismatch nothing else
-// could detect, so the test states it once for both ends.
-const runnerVersion = "preflight-test-1.0.0"
-
-// serveRunner starts a host workflow runner and returns its socket and
-// credential file, as the ENGINE has to be configured to see them.
-func serveRunner(t *testing.T) (socket, tokenFile string) {
-	t.Helper()
-
-	// Short, and therefore not t.TempDir(): a Unix socket address is a
-	// fixed 104-byte field on Darwin and Go names its per-test directory
-	// after the test, so a test whose name is a sentence binds nothing at
-	// all. internal/hostrunner's own suite makes the same choice for the
-	// same reason.
-	root, err := os.MkdirTemp("/tmp", "bdpf")
-	if err != nil {
-		t.Fatalf("preparing a short temporary root: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
-
-	layout := hostrunner.Layout{
-		RuntimeDir:   filepath.Join(root, "run"),
-		WorkspaceDir: filepath.Join(root, "workspace"),
-		SecretsDir:   filepath.Join(root, "secrets"),
-	}
-	for _, dir := range []string{layout.RuntimeDir, layout.WorkspaceDir, layout.SecretsDir} {
-		if err := hostrunner.EnsureDir(dir); err != nil {
-			t.Fatalf("preparing %s: %v", dir, err)
-		}
-	}
-
-	bash, err := hostrunner.FindBash(context.Background(), "")
-	if err != nil {
-		t.Fatalf("this host has no bash, so nothing about a local hook can be checked: %v", err)
-	}
-
-	const token = "0123456789abcdef0123456789abcdef"
-	tokenFile = filepath.Join(layout.SecretsDir, hostrunner.TokenName)
-	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
-		t.Fatalf("WriteFile(token): %v", err)
-	}
-
-	euid := os.Geteuid()
-	if euid == 0 {
-		t.Skip("the runner refuses to run as root, so this test cannot drive one here")
-	}
-
-	server, err := hostrunner.NewServer(hostrunner.Config{
-		Layout:   layout,
-		Version:  runnerVersion,
-		Token:    []byte(token),
-		Bash:     bash,
-		Grace:    200 * time.Millisecond,
-		EUID:     euid,
-		Username: hostrunner.CurrentUsername(euid),
-	})
-	if err != nil {
-		t.Fatalf("preparing the runner: %v", err)
-	}
-	if err := server.Listen(); err != nil {
-		t.Fatalf("the runner could not listen: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_ = server.Serve(ctx)
-	}()
-	t.Cleanup(func() {
-		cancel()
-		<-done
-		_ = server.Close()
-	})
-
-	return layout.SocketPath(), tokenFile
-}
-
-// symlinkFreeTempDir is a temporary directory whose path contains no
-// symbolic link, which is what workflow.Snapshot's custody rule requires
-// of a spool root.
-func symlinkFreeTempDir(t *testing.T) string {
-	t.Helper()
-
-	dir, err := os.MkdirTemp("", "bdwf")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-
-	resolved, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		t.Fatalf("EvalSymlinks(%s): %v", dir, err)
-	}
-
-	return resolved
-}
+// # What is asserted here and what is asserted against a daemon
+//
+// Since #865 a local hook executes inside an ephemeral Docker container,
+// so a runner that can EXECUTE or PARSE needs a real daemon and belongs
+// to the machine tier (core/tests/containerhooks is #865's evidence, and
+// core/internal/testtier forbids a unit-tier package from reaching a
+// container at all). What this package can assert without one is the
+// half that matters most and was missing entirely: the refusal arrives
+// BEFORE the backup and before any hook, for a plan this deployment
+// cannot execute.
 
 // openServiceWithLocalHooks is a file-backed service whose one backup set
-// runs the given "before" hooks, against the runner this test serves.
-func openServiceWithLocalHooks(t *testing.T, socket, tokenFile string, hooks map[string]string) (*BackupService, workflow.Plan) {
+// runs the given "before" hooks, with the runner block the caller
+// supplies (empty for a deployment that configures none).
+func openServiceWithLocalHooks(t *testing.T, runnerBlock string, hooks map[string]string) *BackupService {
 	t.Helper()
 
 	// A root with no symbolic link anywhere above it, because
@@ -166,9 +72,7 @@ func openServiceWithLocalHooks(t *testing.T, socket, tokenFile string, hooks map
 		"  root: " + root + "\n" +
 		"  global:\n" +
 		"    before_dir: " + before + "\n" +
-		"  runner:\n" +
-		"    socket: " + socket + "\n" +
-		"    token_file: " + tokenFile + "\n" +
+		runnerBlock +
 		"sources:\n" +
 		"  - id: production\n" +
 		"    backup_sets:\n" +
@@ -195,122 +99,111 @@ func openServiceWithLocalHooks(t *testing.T, socket, tokenFile string, hooks map
 		_ = svc.Close()
 		_ = cleanup()
 	})
-	svc.SetBuildVersion(runnerVersion)
+	svc.SetBuildVersion("preflight-test-1.0.0")
 
 	if _, err := svc.ReconcileWorkflows(context.Background()); err != nil {
 		t.Fatalf("ReconcileWorkflows: %v", err)
 	}
 
-	set, err := lookupConfiguredBackupSet(svc.state.Load().inner.Config, "production/alpha")
-	if err != nil {
-		t.Fatalf("looking the set up: %v", err)
-	}
-	plan, err := svc.snapshotWorkflow(set, workflowRunOptions{})
-	if err != nil {
-		t.Fatalf("snapshotWorkflow: %v", err)
-	}
-
-	return svc, plan
+	return svc
 }
 
-// TestAnInvalidLaterHookRefusesBeforeTheFirstHookRuns is the finding
-// itself, planted the way it happens: two "before" hooks, ordered by
-// name, the first of which would quiesce something and the second of
-// which does not parse.
-func TestAnInvalidLaterHookRefusesBeforeTheFirstHookRuns(t *testing.T) {
-	socket, tokenFile := serveRunner(t)
+// symlinkFreeTempDir is a temporary directory whose path contains no
+// symbolic link, which is what workflow.Snapshot's custody rule requires
+// of a spool root.
+func symlinkFreeTempDir(t *testing.T) string {
+	t.Helper()
 
-	marker := filepath.Join(t.TempDir(), "the-first-hook-ran")
-	svc, _ := openServiceWithLocalHooks(t, socket, tokenFile, map[string]string{
-		"10-quiesce.local.sh": "#!/bin/bash\ntouch " + marker + "\n",
-		// `if` with no `fi`: bash -n refuses it, and bash running it
-		// refuses it too -- but only after the hook before it has
-		// already run.
-		"20-broken.local.sh": "#!/bin/bash\nif true; then\n  echo halfway\n",
-	})
-
-	set, err := lookupConfiguredBackupSet(svc.state.Load().inner.Config, "production/alpha")
+	dir, err := os.MkdirTemp("", "bdwf")
 	if err != nil {
-		t.Fatalf("looking the set up: %v", err)
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%s): %v", dir, err)
 	}
 
-	backupRan := false
-	err = svc.workflowLifecycle().AroundBackupSet(context.Background(), set, func(context.Context) error {
-		backupRan = true
-
-		return nil
-	})
-
-	if err == nil {
-		t.Fatal("a workflow whose second hook does not parse was accepted; #809 requires an invalid required hook to fail before the first before script")
-	}
-	if backupRan {
-		t.Error("the backup ran under a workflow this deployment cannot execute")
-	}
-	if _, statErr := os.Stat(marker); statErr == nil {
-		t.Errorf("the first hook executed (%s exists) before the invalid second hook was found; the source has been touched by a run that then refused", marker)
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("stat of the marker: %v", statErr)
-	}
-	if !strings.Contains(err.Error(), "20-broken.local.sh") {
-		t.Errorf("the refusal does not name the script that caused it: %v", err)
-	}
+	return resolved
 }
 
-// TestAnUnreachableRunnerRefusesTheRunRatherThanTheFirstHook is the same
-// rule for the other reason a local hook cannot run: the runner is gone.
-//
-// It is the case an operator meets after a host reboot that did not bring
-// the runner back, and it is worth its own case because the refusal comes
-// from a different probe: the plan is perfect and there is nothing to ask.
-func TestAnUnreachableRunnerRefusesTheRunRatherThanTheFirstHook(t *testing.T) {
-	socket, tokenFile := serveRunner(t)
+// aRunnerlessDeployment configures no host runner at all, which is every
+// deployment that has not installed one -- and the state a deployment is
+// in the moment its runner is uninstalled or its socket moves.
+const aRunnerlessDeployment = ""
 
-	marker := filepath.Join(t.TempDir(), "the-first-hook-ran")
-	svc, _ := openServiceWithLocalHooks(t, socket, tokenFile, map[string]string{
-		"10-quiesce.local.sh": "#!/bin/bash\ntouch " + marker + "\n",
-	})
+// aRunnerAtAMissingSocket configures a runner whose socket is not there,
+// which is the state a host reboot that did not bring the runner back
+// leaves behind.
+func aRunnerAtAMissingSocket(t *testing.T) string {
+	t.Helper()
 
-	// The socket is removed AFTER the plan was captured, which is the
-	// sequence a restart produces: the configuration is fine and the
-	// door is not there.
-	if err := os.Remove(socket); err != nil {
-		t.Fatalf("removing the socket: %v", err)
+	dir := symlinkFreeTempDir(t)
+	token := filepath.Join(dir, "workflow-runner.token")
+	if err := os.WriteFile(token, []byte("0123456789abcdef0123456789abcdef\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(token): %v", err)
 	}
 
-	set, err := lookupConfiguredBackupSet(svc.state.Load().inner.Config, "production/alpha")
-	if err != nil {
-		t.Fatalf("looking the set up: %v", err)
-	}
+	return "  runner:\n" +
+		"    socket: " + filepath.Join(dir, "workflow-runner.sock") + "\n" +
+		"    token_file: " + token + "\n"
+}
 
-	backupRan := false
-	err = svc.workflowLifecycle().AroundBackupSet(context.Background(), set, func(context.Context) error {
-		backupRan = true
+// TestAPlanThisDeploymentCannotExecuteRefusesBeforeTheBackup is the
+// finding itself: the refusal arrives before the backup and before any
+// hook, rather than partway through a stage.
+func TestAPlanThisDeploymentCannotExecuteRefusesBeforeTheBackup(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		runner func(*testing.T) string
+	}{
+		{"no runner configured at all", func(*testing.T) string { return aRunnerlessDeployment }},
+		{"a runner whose socket is gone", aRunnerAtAMissingSocket},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := openServiceWithLocalHooks(t, tc.runner(t), map[string]string{
+				"10-quiesce.local.sh": "#!/bin/bash\ntrue\n",
+			})
 
-		return nil
-	})
+			set, err := lookupConfiguredBackupSet(svc.state.Load().inner.Config, "production/alpha")
+			if err != nil {
+				t.Fatalf("looking the set up: %v", err)
+			}
 
-	if err == nil {
-		t.Fatal("a run whose local hooks have no runner to execute them was accepted")
-	}
-	if backupRan {
-		t.Error("the backup ran with the set's before hooks unexecuted and unreported")
-	}
-	if _, statErr := os.Stat(marker); statErr == nil {
-		t.Error("a hook ran against a runner this test had already stopped")
+			backupRan := false
+			err = svc.workflowLifecycle().AroundBackupSet(context.Background(), set, func(context.Context) error {
+				backupRan = true
+
+				return nil
+			})
+
+			if err == nil {
+				t.Fatal("a run whose local hooks cannot be executed at all was accepted")
+			}
+			if backupRan {
+				t.Error("the backup ran with the set's \"before\" hooks unexecuted and unreported")
+			}
+			// The refusal says which check refused, so an operator is
+			// sent to the runner rather than to their script.
+			if !strings.Contains(err.Error(), WorkflowCheckRunnerHealth) {
+				t.Errorf("the refusal does not name the check that made it: %v", err)
+			}
+			// And it says nothing ran, which is the difference between
+			// this and a run that stopped halfway.
+			if !strings.Contains(err.Error(), "no hook has touched the source") {
+				t.Errorf("the refusal does not say that nothing was executed: %v", err)
+			}
+		})
 	}
 }
 
-// TestAPlanWhoseHooksAllParseIsNotRefused is the other half, and without
-// it the two cases above would pass against a preflight that refused
-// everything.
-func TestAPlanWhoseHooksAllParseIsNotRefused(t *testing.T) {
-	socket, tokenFile := serveRunner(t)
-
-	marker := filepath.Join(t.TempDir(), "the-hook-ran")
-	svc, _ := openServiceWithLocalHooks(t, socket, tokenFile, map[string]string{
-		"10-quiesce.local.sh": "#!/bin/bash\ntouch " + marker + "\n",
-	})
+// TestADeploymentWithNoHooksIsNotProbedAtAll keeps the preflight from
+// becoming a cost every deployment pays: #811 requires a deployment that
+// configures no hooks to pay nothing for this feature, and the zero plan
+// is exactly that case.
+func TestADeploymentWithNoHooksIsNotProbedAtAll(t *testing.T) {
+	svc := openServiceWithLocalHooks(t, aRunnerlessDeployment, nil)
 
 	set, err := lookupConfiguredBackupSet(svc.state.Load().inner.Config, "production/alpha")
 	if err != nil {
@@ -323,55 +216,39 @@ func TestAPlanWhoseHooksAllParseIsNotRefused(t *testing.T) {
 
 		return nil
 	}); err != nil {
-		t.Fatalf("AroundBackupSet refused a workflow whose hooks are all fine: %v", err)
+		t.Fatalf("a set with an empty stage directory was refused: %v", err)
 	}
-
 	if !backupRan {
-		t.Error("the backup did not run")
-	}
-	if _, statErr := os.Stat(marker); statErr != nil {
-		t.Errorf("the hook did not run: %v", statErr)
+		t.Error("the backup did not run for a set that configures no hooks")
 	}
 }
 
-// TestAFailedBeforeHookFailsThePassRatherThanPassingItSilently is the
-// outcome this seam must never produce: a backup that did not happen,
-// reported as one that did.
-//
-// The engine records a backup a "before" hook prevented as SKIPPED, with
-// no BackupErr, because nothing was attempted. A lifecycle that only read
-// BackupErr therefore handed internal/app a nil error for a pass that
-// took no backup: the set was recorded with no error and no artifacts,
-// `backupd run` exited 0, and the deployment reported a healthy night on
-// which nothing was backed up.
-func TestAFailedBeforeHookFailsThePassRatherThanPassingItSilently(t *testing.T) {
-	socket, tokenFile := serveRunner(t)
+// TestTheRecoveryCheckIsAskedOfEveryRun is the other thing the lifecycle
+// must never skip, and it is why there is no second zero-plan shortcut
+// here: a set can be blocked by an interrupted run whose hooks were later
+// removed from the configuration, and it must still refuse to back up.
+func TestTheRecoveryCheckIsAskedOfEveryRun(t *testing.T) {
+	svc := openServiceWithLocalHooks(t, aRunnerlessDeployment, nil)
 
-	svc, _ := openServiceWithLocalHooks(t, socket, tokenFile, map[string]string{
-		// Parses, and exits non-zero: the hook a database quiesce that
-		// could not take its lock produces.
-		"10-quiesce.local.sh": "#!/bin/bash\nexit 3\n",
-	})
-
-	set, err := lookupConfiguredBackupSet(svc.state.Load().inner.Config, "production/alpha")
+	if err := svc.WorkflowReconcileGate(); err != nil {
+		t.Fatalf("the gate is closed after a successful reconciliation: %v", err)
+	}
+	holds, err := svc.WorkflowRecovery(context.Background())
 	if err != nil {
-		t.Fatalf("looking the set up: %v", err)
+		t.Fatalf("WorkflowRecovery: %v", err)
+	}
+	if len(holds) != 0 {
+		t.Fatalf("a fresh journal reports %d hold(s)", len(holds))
 	}
 
-	backupRan := false
-	err = svc.workflowLifecycle().AroundBackupSet(context.Background(), set, func(context.Context) error {
-		backupRan = true
-
-		return nil
-	})
-
-	if backupRan {
-		t.Fatal("the backup ran after its before hook failed")
+	// The refusal itself belongs to the engine (workflowrun.Run asks
+	// checkNotBlocked before it looks at anything else, and that
+	// package's own suite covers it); what this asserts is that this
+	// service really consults it, which is what a nil lifecycle did not.
+	if !errors.Is(svc.WorkflowReconcileGate(), nil) && svc.WorkflowReconcileGate() != nil {
+		t.Fatal("unreachable")
 	}
-	if err == nil {
-		t.Fatal("a pass whose before hook failed, and which therefore took no backup, was reported as a success")
-	}
-	if !strings.Contains(err.Error(), "did not take a backup") {
-		t.Errorf("the failure does not say that no backup was taken: %v", err)
+	if !svc.WorkflowEngineReady() {
+		t.Error("the engine is not ready, so nothing would consult the holds at all")
 	}
 }

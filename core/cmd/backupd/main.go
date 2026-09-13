@@ -449,24 +449,34 @@ commands:
                                                   --acknowledge-medium-disclosure is needed when the policy sends one of
                                                   this set's tiers somewhere new, and without it the refusal carries the
                                                   disclosure. The show form prints each tier's destination
-  workflow-runner serve --runtime-dir DIR --workspace-dir DIR --secrets-dir DIR [--bash PATH]
+  workflow-runner serve --runtime-dir DIR --workspace-dir DIR --secrets-dir DIR
+                       [--docker PATH] [--hook-image REF] [--hook-bash PATH]
+                       [--hook-network NAME] [--hook-user UID:GID] [--hook-mount PATH[:ro|:rw]]
                                                   run the host workflow runner: the out-of-container helper that
                                                   executes a backup set's .local.sh hooks on THIS machine. The engine
                                                   container is distroless, read-only and has no shell, so "local"
-                                                  means the host and the host needs a process of its own. It listens
-                                                  on a Unix socket inside --runtime-dir and on nothing else: there is
-                                                  no TCP listener and no address to set. --runtime-dir holds that
-                                                  socket and nothing else, because it is the one directory the engine
-                                                  container mounts; the per-step working directories go in
-                                                  --workspace-dir, which nothing mounts. It refuses to run as root,
-                                                  refuses an engine from a different release, and refuses a client
-                                                  that does not hold the credential in --secrets-dir. The installer
-                                                  provisions all of them and supervises this command (#809)
+                                                  means the host and the host needs a process of its own. Each hook
+                                                  runs in an EPHEMERAL DOCKER CONTAINER (#865) -- hardened, with no
+                                                  network by default, as a non-root user, with only its own working
+                                                  directory and whatever --hook-mount allows mounted, and never the
+                                                  docker socket -- so this command needs a docker client and a
+                                                  daemon it can reach, proved at startup or it refuses to serve.
+                                                  It listens on a Unix socket inside --runtime-dir and on nothing
+                                                  else: there is no TCP listener and no address to set.
+                                                  --runtime-dir holds that socket and nothing else, because it is
+                                                  the one directory the engine container mounts; the per-step
+                                                  working directories go in --workspace-dir, which nothing mounts.
+                                                  It refuses to run as root, refuses an engine from a different
+                                                  release, and refuses a client that does not hold the credential
+                                                  in --secrets-dir. The installer provisions all of them and
+                                                  supervises this command (#809)
   workflow-runner status --runtime-dir DIR --workspace-dir DIR --secrets-dir DIR
-                                                  ask that runner what it is: version, socket, the bash it fixed on
-                                                  at startup, the account hooks run as, and what it is running now.
-                                                  The same question the engine asks before it will validate a
-                                                  .local.sh hook, so an answer here is the answer a backup would get
+                                                  ask that runner what it is: version, socket, the docker client and
+                                                  hook image it proved at startup, the bash inside that image, the
+                                                  host paths a hook can see, the account hooks run as, and what it
+                                                  is running now. The same question the engine asks before it will
+                                                  validate a .local.sh hook, so an answer here is the answer a
+                                                  backup would get
   workflow run list [--backup-set S] [--limit N] [--json]
                                                   every hook run this deployment has on record, newest first: each run's
                                                   three statuses side by side (the backup's, the cleanup's and the
@@ -487,22 +497,29 @@ commands:
                                                   --cursor resumes an interrupted one with nothing printed twice and
                                                   nothing skipped; --follow waits for more until the step ends
   workflow recovery show [--json]                every run still waiting for a cleanup or for a person, oldest first,
-                                                  because the question is how long a machine has been left like that. It
-                                                  reads the journal's own rows rather than a serving engine's in-memory
-                                                  hold set: this process has no reconciled engine, and a reconciliation
-                                                  pass from a terminal would mark a serving engine's in-flight run
-                                                  interrupted
+                                                  because the question is how long a machine has been left like that.
+                                                  Beside a serving engine it asks THAT process, which holds the refusals
+                                                  a run will really be met with, when $BACKUP_MANAGER_API_URL says where
+                                                  it is; otherwise it reads the journal's own rows, because this process
+                                                  has no reconciled engine and a reconciliation pass from a terminal
+                                                  would mark a serving engine's in-flight run interrupted
   workflow recovery resume-cleanup <run-id> [--json]
                                                   run the "after" hooks an interrupted run still owes, out of that run's
                                                   own captured bytes, re-verified against the hashes recorded when the plan
                                                   was taken, so an edit to the hook directory since the interruption
                                                   changes nothing about what runs. Exits non-zero when the run is still not
-                                                  settled afterwards, because the backup set stays blocked
+                                                  settled afterwards, because the backup set stays blocked. Beside a
+                                                  serving engine it is handed to that process, or refused when nothing
+                                                  says how to reach one: recovery state lives in that process's memory as
+                                                  well as in the journal, so a resume performed here would unblock a set
+                                                  it would go on refusing
   workflow recovery acknowledge <run-id> --reason "..."
                                                   record that a person dealt with an interrupted run by hand, and unblock
                                                   the backup set. --reason is required and a blank one is refused: the
                                                   whole value of the record is answering, six months later, why a set was
-                                                  unblocked without its cleanup ever running. Nothing is executed
+                                                  unblocked without its cleanup ever running. Nothing is executed. Routed
+                                                  to a serving engine, or refused beside one this command cannot reach,
+                                                  for resume-cleanup's reason
   settings workflow [--json]                     report the resolved deployment-wide hook configuration: the approved
                                                   root, the two global stages, the timeout a hook gets and whether that
                                                   came from the file or from the built-in default, the declared execution
@@ -554,13 +571,13 @@ commands:
                                                   nobody ran is not a check that passed. Exits 1 when the hooks are
                                                   unsound, and says so in a line of its own when the SET is sound and its
                                                   hooks are not. No hook body is ever executed
-  fetch --skip-workflow-scripts                  refused, deliberately, rather than ignored. fetch runs a cycle in the
-                                                  operator's own shell and that process installs no workflow lifecycle at
-                                                  all, so it runs none of a set's hooks and there is nothing for the flag
-                                                  to skip; accepting it would teach an operator that this command normally
-                                                  runs them. A real bypass is an administrator action against the process
-                                                  serving this deployment, recorded on the run row and in a warn-level
-                                                  event naming who asked
+  fetch --skip-workflow-scripts                  refused, deliberately, rather than ignored. This pass DOES run the set's
+                                                  hooks -- it goes through the same reconciled five-stage lifecycle the
+                                                  serving engine uses -- and a bypass is an administrator action recorded
+                                                  against a session the engine minted, which this command cannot
+                                                  establish. A bypass recorded against nobody is the audit trail #813
+                                                  exists to prevent, so it is refused with the alternative named rather
+                                                  than accepted and ignored
   version                                        report version information
 
 every command except version accepts --config (default /etc/backupd/config/config.yaml;

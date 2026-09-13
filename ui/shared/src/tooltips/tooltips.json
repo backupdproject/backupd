@@ -109,7 +109,7 @@
   },
   "repositories.define": {
     "label": "Define a repository domain",
-    "html": "What creating a store asks: where it lives, what key opens it, whether other backup sets may join it, and who maintains it. This build's API has no route that writes any of it, so the screen states the decision and refuses the controls rather than collecting a passphrase it cannot store."
+    "html": "What declaring a store asks: the id a backup set will name it by, where the key that opens it is read from, whether other backup sets may join it, and whether this deployment is allowed to maintain it. Create writes that <strong>declaration</strong> into this deployment's configuration and opens no storage: the store itself is written by the first backup run that puts a snapshot in the domain."
   },
   "repositories.may-share": {
     "label": "Shared or isolated",
@@ -130,6 +130,74 @@
   "repositories.maintenance-transfer": {
     "label": "Transfer maintenance ownership",
     "html": "Exactly one instance may maintain a repository domain, and ownership moves by <strong>transfer</strong>, never by claim — an instance that simply decided it was the owner is how two of them compact one store at once. No route on this API performs the transfer yet, so the control is drawn and refused rather than hidden."
+  },
+  "repositories.new.identity": {
+    "label": "Identity",
+    "html": "What the declaration says about the domain itself: the id a backup set will name it by, a sentence for whoever reads the configuration next, and where the key that opens it is read from. The passphrase is never one of them — only a <strong>reference</strong> to it."
+  },
+  "repositories.new.id": {
+    "label": "Domain id",
+    "html": "How a backup set will name this domain, and the only part of it that has to be unique. An id this deployment already declares is refused with <code>REPOSITORY_DOMAIN_EXISTS</code> rather than merged into the domain that holds it, so the remedy is another id or the existing domain. It is a <strong>name and not a path</strong>: a path separator, leading or trailing space, and the relative names <code>.</code> and <code>..</code> are all refused."
+  },
+  "repositories.new.description": {
+    "label": "Description",
+    "html": "The operator's own sentence about what this domain holds. Stored as written, never interpreted and never matched against anything, and it may be left empty — it is for whoever reads this list, or config.yaml, months from now."
+  },
+  "repositories.new.location": {
+    "label": "Storage location",
+    "html": "Where the repository is stored, and in this build a <strong>confirmation rather than a choice</strong>: every domain this deployment declares lives under the deployment's own storage location, and the configuration has no per-domain location key. Leave it empty for that location, or name exactly it. Anywhere else is refused with <code>INVALID_REQUEST</code> rather than accepted and dropped, because a field that quietly did nothing is how an operator comes to believe a second copy is off site."
+  },
+  "repositories.new.passphrase-ref": {
+    "label": "Passphrase reference",
+    "html": "Where the key that opens this store is read from — a <strong>reference</strong>, and never the passphrase itself. What is saved is the path or the variable name; the secret is resolved by the service when a run opens the store, and nothing here reads it or displays it. Losing it loses every snapshot in the domain, because nothing else can decrypt the store."
+  },
+  "repositories.new.passphrase-file": {
+    "label": "A file",
+    "html": "Declares the passphrase as a file this deployment can read, saved as <code>passphrase.file</code>. The path is what travels over the API and what lands in the configuration; the file's contents are read by the service at the moment it opens the store, not by this form."
+  },
+  "repositories.new.passphrase-env": {
+    "label": "An environment variable",
+    "html": "Declares the passphrase as an environment variable, saved as <code>passphrase.env</code>. The variable's <strong>name</strong> is saved and its value is resolved in the service's own environment, so a variable exported only in an interactive shell is not one the service can read. A passphrase produced by a command is the third spelling, and it is declared from a terminal because it is a program and its arguments."
+  },
+  "repositories.new.shared": {
+    "label": "Shared",
+    "html": "Commits every backup set in this domain to one encryption key, one credential, one maintenance owner, one deduplication pool, one corruption blast radius and one disk — <code>may_share=true</code>. It is the answer that buys the deduplication an incremental engine exists for, and the answer whose consequences land on the <strong>other</strong> sets already inside."
+  },
+  "repositories.new.isolated": {
+    "label": "Isolated",
+    "html": "Holds exactly one backup set — <code>may_share=false</code>. A second set pointed at this domain is refused rather than quietly admitted, so nothing deduplicates against its snapshots and nothing else sits in its blast radius. The cost is storage: content an isolated domain has in common with another is stored in both."
+  },
+  "repositories.new.boundaries": {
+    "label": "What sharing means",
+    "html": "The six things co-tenants of one domain share, stated where the choice is made rather than in a help page: joining a shared domain is the one configuration decision in this product whose consequences land on other backup sets. The six do not change with the answer above — what changes is whether anything else is inside them."
+  },
+  "repositories.new.maintain-here": {
+    "label": "This instance maintains it",
+    "html": "Sends <code>maintenance_owner=this</code>, and writes no ownership anywhere. Ownership is a durable record taken by whichever instance first maintains an unclaimed repository, and afterwards it moves only by <strong>transfer</strong> (ADR 0017), so no declaration can make a deployment the maintainer of anything. What this answer decides is whether the declaration is allowed to look like a claim: a domain whose record already names another instance is refused with <code>REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE</code>, and the refusal names the holder."
+  },
+  "repositories.new.maintain-elsewhere": {
+    "label": "Another instance maintains it",
+    "html": "Sends <code>maintenance_owner=another-instance</code>: the answer that lets the declaration through when the store is already maintained somewhere else. This deployment still reads and writes snapshots here, and no maintenance field of either answer reaches config.yaml — compaction and reclamation stay with whichever instance holds the record."
+  },
+  "repositories.new.declaration": {
+    "label": "Declaring is not creating",
+    "html": "What Create writes, and what it leaves for later. The declaration goes into this deployment's configuration; no storage is opened, no passphrase reference is resolved and no repository exists yet. So the domain arrives on the fleet list answering but <strong>not yet readable</strong>, holding no repository until a backup set stores its first snapshot in it — the same lifecycle a domain named on the Add backup set wizard already has."
+  },
+  "repositories.new.engine-gate": {
+    "label": "The incremental engine is disabled",
+    "html": "This deployment refused the declaration with <code>INCREMENTAL_ENGINE_DISABLED</code>. Repository domains exist only for the incremental engine, so a deployment that does not run it has nowhere to put one; the sentence in the notice is the deployment's own and names the configuration key and the environment variable that turn the engine on. Nothing was written, and the artifact backup sets this deployment already runs are unaffected."
+  },
+  "repositories.new.refused": {
+    "label": "Not declared",
+    "html": "The deployment read the request and would not write it — an id already taken, a storage location it cannot honour, a shape its configuration validator rejects, or a maintenance record naming another instance. The message is the refusal's own, so it names the field or the holder rather than restating the form. Nothing was written and nothing here was cleared: edit what it names and send it again."
+  },
+  "repositories.new.create": {
+    "label": "Create domain",
+    "html": "Sends the declaration — <code>POST /repositories</code> — and on success leaves for the fleet list, where the new domain is waiting with no repository in it yet. It needs an id and a passphrase reference first, because a domain with no key is one no backup set may be pointed at. One entry written into this deployment's configuration; no storage touched, no passphrase read."
+  },
+  "repositories.new.back": {
+    "label": "Back to repository domains",
+    "html": "Leaves without declaring anything. Nothing on this screen is written until Create is pressed, so there is nothing to undo — and nothing typed here is kept for a return visit either."
   },
   "settings.platform": {
     "label": "Platform",

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -129,11 +130,74 @@ func (d runnerDirs) layout() (hostrunner.Layout, error) {
 	return layout, nil
 }
 
+// containerFlags are the hook-container knobs, declared in one place
+// because `serve` and any future verb that has to describe the runtime
+// must describe the same one.
+type containerFlags struct {
+	docker  *string
+	image   *string
+	bash    *string
+	network *string
+	user    *string
+	mounts  *hookMountList
+}
+
+// hookMountList collects a repeatable --hook-mount.
+//
+// Repeatable rather than comma-separated, because these are PATHS: a
+// comma is a legal character in a directory name on every filesystem
+// this product runs on, and a flag that split on one would be a flag
+// that mounts two wrong directories for somebody's "photos,raw" folder.
+type hookMountList struct {
+	mounts []hostrunner.Mount
+}
+
+func (l *hookMountList) String() string {
+	rendered := make([]string, 0, len(l.mounts))
+	for _, m := range l.mounts {
+		rendered = append(rendered, m.String())
+	}
+	return strings.Join(rendered, ", ")
+}
+
+func (l *hookMountList) Set(value string) error {
+	mount, err := hostrunner.ParseMount(value)
+	if err != nil {
+		return err
+	}
+	l.mounts = append(l.mounts, mount)
+	return nil
+}
+
+func containerFlagSet(fs *flag.FlagSet) containerFlags {
+	mounts := &hookMountList{}
+	fs.Var(mounts, "hook-mount", "a host path a hook may see inside its container, as PATH or PATH:ro or PATH:rw (read-only by default). Repeat for more than one. The per-step working directory and the captured script are mounted for you; nothing else is")
+	return containerFlags{
+		docker:  fs.String("docker", "", "absolute path to the docker client; empty searches the documented candidates"),
+		image:   fs.String("hook-image", hostrunner.DefaultHookImage, "the image every local hook runs in. It must already be present: this runner refuses rather than pulling"),
+		bash:    fs.String("hook-bash", hostrunner.DefaultHookBash, "the absolute path of bash INSIDE the hook image"),
+		network: fs.String("hook-network", hostrunner.DefaultHookNetwork, "the docker network a hook container joins; `none` gives a hook no network at all"),
+		user:    fs.String("hook-user", "", "uid:gid a hook runs as inside its container; empty takes this process's own, which is what makes the files a hook writes removable afterwards"),
+		mounts:  mounts,
+	}
+}
+
+func (c containerFlags) config() hostrunner.ContainerConfig {
+	return hostrunner.ContainerConfig{
+		Docker:  *c.docker,
+		Image:   *c.image,
+		Bash:    *c.bash,
+		Network: *c.network,
+		User:    *c.user,
+		Mounts:  c.mounts.mounts,
+	}
+}
+
 // workflowRunnerServe is the long-running host helper.
 func workflowRunnerServe(args []string) int {
 	fs, cfgPath := newFlagSet("workflow-runner serve")
 	dirs := runnerDirFlags(fs)
-	bashPath := fs.String("bash", "", "absolute path to the bash that runs hooks; empty searches the documented candidates")
+	container := containerFlagSet(fs)
 
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
@@ -164,7 +228,14 @@ func workflowRunnerServe(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	bash, err := hostrunner.FindBash(ctx, *bashPath)
+	// The container capability, proved before the socket exists (#865).
+	// A host with no docker, no reachable daemon or no hook image does
+	// not serve: local hooks run in ephemeral containers and there is no
+	// fallback to a shell on this machine. The refusal names which of
+	// those four it was, because the remedies are completely different
+	// and "containers do not work here" sends an operator to reinstall
+	// Docker over a group membership.
+	hookContainer, err := hostrunner.ProveContainerCapability(ctx, container.config())
 	if err != nil {
 		return fail(err)
 	}
@@ -173,7 +244,7 @@ func workflowRunnerServe(args []string) int {
 		Layout:        layout,
 		Version:       version,
 		Token:         token,
-		Bash:          bash,
+		Container:     hookContainer,
 		MaxScriptSize: configuredScriptBound(*cfgPath),
 		EUID:          os.Geteuid(),
 		Username:      hostrunner.CurrentUsername(os.Geteuid()),
@@ -188,13 +259,19 @@ func workflowRunnerServe(args []string) int {
 
 	// Printed before serving, and to stdout, because a supervisor's log
 	// is where an operator looks first when a hook did not run: the
-	// socket it would have to reach, the interpreter their script will
-	// be given, and the account it will run as are the three facts that
-	// answer most of those questions without anybody attaching to
-	// anything.
+	// socket it would have to reach, the image and interpreter their
+	// script will be given, the account it will run as, and every host
+	// path it can see are the facts that answer most of those questions
+	// without anybody attaching to anything.
 	fmt.Printf("%s workflow runner %s\n", cliecho.Binary, version)
 	fmt.Printf("socket %s\n", server.SocketPath())
-	fmt.Printf("bash %s (%s)\n", bash.Path, bash.Version)
+	fmt.Printf("docker %s (server %s)\n", hookContainer.Docker, hookContainer.ServerVersion)
+	fmt.Printf("hook image %s (%s)\n", hookContainer.Image, hookContainer.ImageID)
+	fmt.Printf("hook bash %s (%s)\n", hookContainer.Bash.Path, hookContainer.Bash.Version)
+	fmt.Printf("hook network %s, hook user %s\n", hookContainer.Network, hookContainer.User)
+	for _, mount := range hookContainer.Mounts {
+		fmt.Printf("hook mount %s\n", mount)
+	}
 	fmt.Printf("user %s (uid %d)\n", hostrunner.CurrentUsername(os.Geteuid()), os.Geteuid())
 
 	if err := server.Serve(ctx); err != nil {
@@ -237,7 +314,13 @@ func workflowRunnerStatus(args []string) int {
 
 	fmt.Printf("runner %s\n", status.Version)
 	fmt.Printf("socket %s\n", status.SocketPath)
-	fmt.Printf("bash %s (%s)\n", status.BashPath, status.BashVersion)
+	fmt.Printf("docker %s (server %s)\n", status.DockerPath, status.DockerServerVersion)
+	fmt.Printf("hook image %s (%s)\n", status.HookImage, status.HookImageID)
+	fmt.Printf("hook bash %s (%s)\n", status.BashPath, status.BashVersion)
+	fmt.Printf("hook network %s, hook user %s\n", status.HookNetwork, status.HookUser)
+	for _, mount := range status.HookMounts {
+		fmt.Printf("hook mount %s\n", mount)
+	}
 	fmt.Printf("user %s (uid %d)\n", status.User, status.UID)
 	fmt.Printf("runtime %s\n", status.RuntimeDir)
 	fmt.Printf("workspace %s\n", status.WorkspaceDir)

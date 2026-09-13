@@ -522,6 +522,11 @@ class Preflight:
         self.check_release()
         self.check_for_a_newer_release()
         self.check_image()
+        # After check_docker, because it is a question about the SAME
+        # daemon asked on behalf of a different account, and last
+        # because it is conditional: it is only a prerequisite for a
+        # deployment that actually has local hooks.
+        self.check_workflow_runner_containers()
 
     # -- the machine ---------------------------------------------------
 
@@ -583,13 +588,14 @@ class Preflight:
         its own hint, and that hint says the installer will not reach for
         sudo, since it has no way to know sudo is allowed here.
         """
-        if shutil.which("docker") is None:
+        connection = docker_connection()
+        if not connection.client:
             raise Refusal(
                 EXIT_PREREQ_DOCKER,
                 "docker is not on PATH.",
                 "Install Docker, then add this account to the docker group and log in again.",
             )
-        proc = run(["docker", "version", "--format", "{{.Server.Version}}"], check=False, timeout=30)
+        proc = run([connection.client, "version", "--format", "{{.Server.Version}}"], check=False, timeout=30)
         if proc.returncode != 0:
             # The single most common shape on a NAS: the CLI is there and
             # the account cannot reach the socket. Saying "docker failed"
@@ -603,7 +609,11 @@ class Preflight:
                     "session. This installer will not use sudo: it has no way to know that is allowed here."
                 )
             raise Refusal(EXIT_PREREQ_DOCKER, f"the Docker daemon is not reachable:\n{detail}", hint)
-        self.note(f"docker server {proc.stdout.strip()} is reachable as uid {os.getuid()}")
+        # The client is named by absolute path, because it is the one the
+        # generated unit will name: the runner does not search PATH, so
+        # "the docker that proved this host" and "the docker that runs
+        # hooks" have to be the same file (see DockerConnection).
+        self.note(f"docker server {proc.stdout.strip()} is reachable as uid {os.getuid()} through {connection.client}")
 
     def check_compose(self) -> None:
         """Is `docker compose` there, and is it v2?
@@ -1252,6 +1262,52 @@ class Preflight:
             )
         self.note(f"pulled {ref}")
 
+    def check_workflow_runner_containers(self) -> None:
+        """Can the account the RUNNER runs as launch a hook container?
+
+        This is the prerequisite #865 added, and it is conditional on
+        purpose: most deployments have no `.local.sh` at all, and failing
+        their install over a container runtime they will never launch
+        would be an installer inventing a prerequisite for a feature
+        nobody switched on. A deployment that HAS hooks, or has asked for
+        the runner explicitly, is held to it -- because the alternative is
+        an install that finishes, a runner that starts, and every local
+        hook refused at backup time for a reason nobody was told.
+
+        The check is about the SERVICE account rather than this one.
+        check_docker already proved the installing account can reach the
+        daemon, and the fault that survives it is the common one: `sudo
+        ./install.py` with a --puid belonging to somebody who is not in
+        the docker group.
+        """
+        mode = workflow_runner_mode(self.args)
+        if mode == "off":
+            self.note("the workflow runner is off, so no container runtime is required for hooks")
+            return
+        if mode == "auto" and not deployment_has_hooks(self.args):
+            self.note("no local hook scripts, so no container runtime is required for them")
+            return
+        if int(getattr(self.args, "puid", 0)) == 0:
+            # A root deployment gets no runner at all
+            # (provision_workflow_runner refuses and says why), so there
+            # is nothing here to be a prerequisite for.
+            return
+
+        uid = int(self.args.puid)
+        socket_path = docker_socket_path()
+        if not account_can_reach_docker(uid):
+            raise Refusal(
+                EXIT_PREREQ_DOCKER,
+                f"this deployment has local workflow hooks and uid {uid} -- the account the host "
+                f"workflow runner will run as -- cannot reach the Docker daemon at {socket_path}.",
+                f"Local hooks run in ephemeral containers (issue #865), so the runner needs the "
+                f"docker group: `sudo usermod -aG {docker_socket_group(socket_path)} <account>` for "
+                f"uid {uid}, then re-run this installer. That membership is root-equivalent on this "
+                "host, which is why it belongs to the runner and to nothing else -- the engine "
+                "container never gets it. A deployment with no .local.sh hooks needs none of this.",
+            )
+        self.note(f"uid {uid} can reach the Docker daemon, so local hooks can run in containers")
+
 
 # ---------------------------------------------------------------------
 # The install itself
@@ -1305,6 +1361,15 @@ def render_env(args) -> str:
         "# and starts nothing. The installer reads this back on every run, so",
         "# an operator's answer survives an upgrade.",
         f"{WORKFLOW_RUNNER_ENV_KEY}={workflow_runner_mode(args)}",
+        "",
+        "# The image every LOCAL hook runs in (#865). Local hooks do not run",
+        "# on this host's shell: each one gets an ephemeral, hardened",
+        "# container, so this is the only place an operator says what a hook",
+        "# script may assume is installed. The default carries bash and",
+        "# busybox and nothing else; a hook that needs pg_dump wants an image",
+        "# of its own named here. The installer fetches whatever this names",
+        "# and the runner refuses to start without it.",
+        f"{WORKFLOW_RUNNER_HOOK_IMAGE_ENV_KEY}={hook_image(args)}",
         "",
         f"SSH_KEY_FILE={args.ssh_key}",
         f"KNOWN_HOSTS_FILE={args.known_hosts}",
@@ -2388,6 +2453,13 @@ def adopt_installed_shape(args, installed_env: dict) -> None:
     args.workflow_runner = workflow_runner_mode(
         argparse.Namespace(workflow_runner=installed_env.get(WORKFLOW_RUNNER_ENV_KEY, "auto")))
 
+    # And the same for the image local hooks run in (#865). An operator
+    # who built an image with pg_dump in it named it once; an upgrade
+    # that reverted them to the default would silently take pg_dump out
+    # of every hook in the deployment.
+    args.hook_image = str(installed_env.get(WORKFLOW_RUNNER_HOOK_IMAGE_ENV_KEY, "") or "").strip() \
+        or str(getattr(args, "hook_image", "") or "").strip()
+
     if not hasattr(args, "cli_only"):
         return
     was = installed_env.get("CLI_ONLY")
@@ -3346,6 +3418,280 @@ WORKFLOW_RUNNER_ENV_KEY = "WORKFLOW_RUNNER"
 # deployment that turns the runner off for a week must not lose either.
 WORKFLOW_RUNNER_MODES = ("auto", "on", "off")
 
+# ---------------------------------------------------------------------
+# Local hooks run in containers (EPIC L, issue #865)
+# ---------------------------------------------------------------------
+#
+# The runner does not execute a hook on this host's shell any more. Each
+# one gets an ephemeral container -- hardened, no network by default, a
+# non-root user, only its own working directory mounted, and never the
+# Docker socket -- which is why an arbitrary script an operator drops in
+# a directory is a bounded thing rather than a process with the service
+# account's whole filesystem in front of it.
+#
+# That moves exactly one privilege onto the host side: the RUNNER needs
+# to reach the Docker daemon. On the platforms this product targets that
+# is root-equivalent, and the answer to it is containment rather than
+# avoidance -- the privilege belongs to the one small, version-pinned
+# process that launches hook containers, and to nothing else. The engine
+# container gains nothing: no socket, no group, no capability, and
+# container/compose.yaml is unchanged.
+#
+# So the installer does three new things, and each one is a failure an
+# operator would otherwise meet at 3am instead of at install time:
+#
+#   * it fetches the hook image, because the runner refuses to pull one
+#     (a preflight that reached for the network would hang on a NAS with
+#     no route out);
+#   * it checks that the SERVICE ACCOUNT -- not the installing account --
+#     can reach the daemon, which is the fault that actually happens:
+#     `sudo ./install.py` works perfectly and the unrelated uid in --puid
+#     is not in the docker group;
+#   * it writes both facts into the unit, so the runner starts with the
+#     group it needs and the image it was promised.
+
+# DEFAULT_HOOK_IMAGE must equal core/internal/hostrunner's
+# DefaultHookImage. A pinned patch version of the official bash image:
+# ~15 MB, bash 5.2 plus busybox, and a tag that cannot move under a
+# deployment that changed nothing. The suite holds the two halves
+# together across the language boundary.
+DEFAULT_HOOK_IMAGE = "bash:5.2.37-alpine3.21"
+
+# WORKFLOW_RUNNER_HOOK_IMAGE_ENV_KEY is how an operator names their own
+# hook image, in the .env this installer authors, for
+# WORKFLOW_RUNNER_ENV_KEY's reason: the answer has to survive every later
+# install rather than reverting to a default.
+WORKFLOW_RUNNER_HOOK_IMAGE_ENV_KEY = "WORKFLOW_RUNNER_HOOK_IMAGE"
+
+# DEFAULT_DOCKER_SOCKET is where the daemon listens when nothing says
+# otherwise. It is the path the unit has to be allowed to write, because
+# connecting to a Unix socket is a write and ProtectSystem=strict makes
+# the filesystem read-only.
+DEFAULT_DOCKER_SOCKET = "/var/run/docker.sock"
+
+# DEFAULT_DOCKER_GROUP is the group name used when the socket's own group
+# cannot be resolved -- a container-in-container install, a host whose
+# /etc/group this process cannot read. It is a fallback for the TEXT of a
+# unit file, never a claim that the group exists.
+DEFAULT_DOCKER_GROUP = "docker"
+
+
+def hook_image(args) -> str:
+    """The image this deployment's local hooks run in."""
+    configured = str(getattr(args, "hook_image", "") or "").strip()
+    return configured or DEFAULT_HOOK_IMAGE
+
+
+class DockerConnection:
+    """WHICH daemon this install talked to, resolved once.
+
+    It exists because an installer and the unit it writes have to mean
+    the same daemon, and nothing makes that true by default. This process
+    inherits DOCKER_HOST, DOCKER_CONTEXT and DOCKER_CONFIG from the
+    operator's shell and honours all three -- the preflight, the image
+    pull and the socket check all go through them -- while systemd
+    inherits NOTHING. A unit that did not carry them produced the worst
+    kind of success: install, preflight and pull all pass against daemon
+    A, and then the runner starts, probes the DEFAULT daemon, finds no
+    hook image (or no daemon at all) and refuses to serve every local
+    hook, with a message about an image the operator did fetch.
+
+    The client binary is part of the same fact. `docker` was found on the
+    operator's PATH for every check above, and the runner searches a
+    fixed list of candidate paths instead (it will not take a runtime
+    from a PATH a service manager set), so a client at /snap/bin/docker
+    or /opt/docker/bin/docker passes the install and is invisible to the
+    runner. Naming it in the unit is what makes "the client that was
+    proved" and "the client that runs hooks" one binary.
+    """
+
+    def __init__(self, client: str, host: str, context: str, config: str, socket: str):
+        self.client = client
+        self.host = host
+        self.context = context
+        self.config = config
+        self.socket = socket
+
+    def environment(self) -> list[tuple[str, str]]:
+        """The variables the unit has to carry, in a fixed order.
+
+        DOCKER_HOST beats DOCKER_CONTEXT, which is docker's own
+        precedence, and only the winner is written: a unit that set both
+        would leave the client resolving a conflict the installer had
+        already resolved, and the two could then disagree after somebody
+        edited one of them.
+        """
+        pairs = []
+        if self.host:
+            pairs.append(("DOCKER_HOST", self.host))
+        elif self.context:
+            pairs.append(("DOCKER_CONTEXT", self.context))
+        if self.config:
+            pairs.append(("DOCKER_CONFIG", self.config))
+        return pairs
+
+
+def docker_connection() -> DockerConnection:
+    """Resolve the daemon and the client this install is using.
+
+    DOCKER_HOST is honoured when it names a Unix socket, because a
+    deployment that moved the socket (rootless Docker puts it under
+    XDG_RUNTIME_DIR) would otherwise get a unit that allows writes to a
+    path the daemon is not on. A tcp:// endpoint has no path to allow, so
+    the socket falls back to the default and the unit's ReadWritePaths
+    line is harmless either way.
+    """
+    host = os.environ.get("DOCKER_HOST", "").strip()
+    context = os.environ.get("DOCKER_CONTEXT", "").strip()
+    config = os.environ.get("DOCKER_CONFIG", "").strip()
+
+    socket_path = DEFAULT_DOCKER_SOCKET
+    if host.startswith("unix://"):
+        socket_path = host[len("unix://"):] or DEFAULT_DOCKER_SOCKET
+
+    # shutil.which on the inherited PATH, deliberately and unlike
+    # find_tool: the question is not "where is a docker" but "which
+    # docker did every check in this install use", and that is the one
+    # the operator's PATH gave us.
+    found = shutil.which("docker")
+    client = os.path.abspath(found) if found else ""
+
+    return DockerConnection(client=client, host=host, context=context, config=config, socket=socket_path)
+
+
+def docker_socket_path() -> str:
+    """The Unix socket the daemon this install talked to listens on."""
+    return docker_connection().socket
+
+
+def systemd_environment_line(name: str, value: str) -> str:
+    """One correctly escaped `Environment=` line.
+
+    Quoted, because a DOCKER_CONFIG under a path with a space in it is a
+    perfectly ordinary NAS directory and an unquoted value would silently
+    become two. Backslashes and quotes are escaped for the same reason,
+    and `%` is doubled because systemd expands specifiers in unit values
+    -- a `%h` in a path would otherwise become the account's home
+    directory.
+    """
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'Environment="{name}={escaped}"'
+
+
+def docker_socket_group(socket_path: str | None = None) -> str:
+    """The group that owns the Docker socket, by name.
+
+    Read off the SOCKET rather than assumed to be "docker": the group is
+    called `docker` on Debian-family hosts and on Synology DSM, and is
+    routinely something else on TrueNAS, in a rootless install, or
+    wherever a package maintainer chose differently. A unit naming a
+    group that does not exist fails to start with a message about the
+    group, which sends an operator to create one they do not need.
+    """
+    path = socket_path or docker_socket_path()
+    try:
+        import grp
+
+        return grp.getgrgid(os.stat(path).st_gid).gr_name
+    except Exception:
+        return DEFAULT_DOCKER_GROUP
+
+
+def account_can_reach_docker(uid: int) -> bool:
+    """Whether the account the runner will run as can reach the daemon.
+
+    The question is about the SERVICE account, which is the whole point:
+    the installing account's access was already established
+    (Preflight.check_docker), and the fault this catches is the one that
+    survives that check -- an operator who installs with sudo, or names a
+    --puid that belongs to a different account from the one they are
+    logged in as.
+    
+    Three ways to be allowed, in the order the kernel applies them: being
+    root, owning the socket, or being in its group. Anything else this
+    function cannot see (a POSIX ACL, an LDAP group this host resolves
+    lazily) is answered "yes" rather than "no" -- see its caller for why
+    a false refusal here would be worse than a missing one.
+    """
+    if uid == 0:
+        return True
+    path = docker_socket_path()
+    try:
+        import grp
+        import pwd
+
+        info = os.stat(path)
+        if info.st_uid == uid:
+            return True
+        entry = pwd.getpwuid(uid)
+        if entry.pw_gid == info.st_gid:
+            return True
+        group = grp.getgrgid(info.st_gid)
+        return entry.pw_name in group.gr_mem
+    except Exception:
+        # A socket that cannot be stat'ed, a uid with no passwd entry (a
+        # container, a NAS), a group database this process cannot read:
+        # none of those is evidence that the account is locked out, and
+        # refusing an install on them would fail deployments that work.
+        return True
+
+
+def ensure_hook_image(args) -> str:
+    """Put the hook image on this host, once, and refuse if it cannot be
+    got.
+
+    Here rather than in the runner, because the runner deliberately does
+    not pull: it starts on a NAS that may have no route out, and a
+    preflight that reached for a registry would hang instead of refusing.
+    An installer is already a program an operator watches download
+    things, so this is the honest place for it.
+
+    --platform is named, because a multi-arch tag resolves against the
+    CLIENT's default and the runner refuses an image built for another
+    architecture (it would run under emulation and make the client print
+    a warning into every hook's stderr).
+    """
+    image = hook_image(args)
+    platform = daemon_platform()
+
+    present = run(["docker", "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", image],
+                  check=False, timeout=60)
+    if present.returncode == 0 and (not platform or present.stdout.strip() == platform):
+        say(f"==> The hook image {image} is already on this host.")
+        return image
+
+    argv = ["docker", "pull"]
+    if platform:
+        argv += ["--platform", platform]
+    say(f"==> Fetching the image local hooks run in: {image}")
+    pulled = run(argv + [image], check=False, timeout=900)
+    if pulled.returncode != 0:
+        raise Refusal(
+            EXIT_PREREQ_IMAGE,
+            f"the hook image {image} is not on this host and could not be fetched:\n"
+            + (pulled.stderr or pulled.stdout).strip(),
+            "Local workflow hooks run in ephemeral containers, so the runner refuses to start "
+            f"without this image. Fetch it on a host with network access and load it here, or set "
+            f"{WORKFLOW_RUNNER_HOOK_IMAGE_ENV_KEY} in the deployment's .env to an image you already "
+            "have. A deployment with no .local.sh hooks does not need it at all.",
+        )
+    return image
+
+
+def daemon_platform() -> str:
+    """This daemon's own os/arch, or "" if it will not say.
+
+    Empty is not a failure: it means nothing here will claim a platform
+    mismatch, which is the safe direction for a `docker version` whose
+    template output changed.
+    """
+    proc = run(["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"],
+               check=False, timeout=30)
+    if proc.returncode != 0:
+        return ""
+    answer = proc.stdout.strip()
+    return answer if "/" in answer else ""
+
 
 def workflow_runner_mode(args) -> str:
     """This deployment's answer, normalised, with anything unrecognised
@@ -3452,7 +3798,29 @@ def render_workflow_runner_unit(args) -> str:
         )
 
     binary = args.prefix / "bin" / "backupd-workflow-runner"
-    return "\n".join([
+
+    # Resolved ONCE, and used for all three of the things that have to
+    # agree: the client the unit names, the connection it carries, and
+    # the socket whose group the service account is given and whose path
+    # ProtectSystem=strict has to leave writable. See DockerConnection.
+    connection = docker_connection()
+
+    launch = [
+        f"ExecStart={binary} workflow-runner serve",
+        f"--runtime-dir {args.runtime_dir}",
+        f"--workspace-dir {args.workspace_dir}",
+        f"--secrets-dir {args.prefix / 'secrets'}",
+        f"--config {args.host_dirs['--config-dir']}",
+        f"--hook-image {hook_image(args)}",
+    ]
+    if connection.client:
+        # The client this install PROVED, by absolute path. Without it
+        # the runner searches its own candidate list, which deliberately
+        # ignores PATH -- so a deployment whose docker is anywhere else
+        # installs cleanly and then refuses every hook.
+        launch.append(f"--docker {connection.client}")
+
+    lines = [
         "# Generated by scripts/install/install_docker_host.py for the",
         f"# deployment under {args.prefix}. Re-running the installer rewrites it.",
         "#",
@@ -3468,11 +3836,25 @@ def render_workflow_runner_unit(args) -> str:
         "Type=simple",
         f"User={args.puid}",
         f"Group={args.pgid}",
-        f"ExecStart={binary} workflow-runner serve"
-        f" --runtime-dir {args.runtime_dir}"
-        f" --workspace-dir {args.workspace_dir}"
-        f" --secrets-dir {args.prefix / 'secrets'}"
-        f" --config {args.host_dirs['--config-dir']}",
+    ]
+
+    if connection.environment():
+        lines += [
+            "# The daemon this install actually used, carried explicitly.",
+            "#",
+            "# systemd inherits nothing from the shell the installer ran",
+            "# in, and this installer honours DOCKER_HOST, DOCKER_CONTEXT",
+            "# and DOCKER_CONFIG for every check it makes -- the daemon",
+            "# probe, the hook image pull, the socket group. A unit without",
+            "# these lines therefore points the runner at the DEFAULT",
+            "# daemon: install and preflight pass against one daemon and",
+            "# the runner refuses to serve against another, reporting a",
+            "# missing hook image that was fetched on the first one.",
+        ]
+        lines += [systemd_environment_line(name, value) for name, value in connection.environment()]
+
+    lines += [
+        " ".join(launch),
         "Restart=on-failure",
         "RestartSec=5",
         "NoNewPrivileges=yes",
@@ -3482,12 +3864,35 @@ def render_workflow_runner_unit(args) -> str:
         "ProtectControlGroups=yes",
         "ProtectKernelModules=yes",
         "ProtectKernelTunables=yes",
-        f"ReadWritePaths={args.runtime_dir} {args.workspace_dir}",
+        # The one privilege this process has that the engine container
+        # does not, and the two lines it takes (#865).
+        #
+        # SupplementaryGroups gives the service account the Docker
+        # socket; without it the runner starts, proves no container
+        # capability, and refuses every local hook -- correctly, and for
+        # a reason nobody reading the unit would see. The socket also has
+        # to be in ReadWritePaths, because ProtectSystem=strict makes the
+        # whole filesystem read-only and CONNECTING to a Unix socket is a
+        # write: this is the line whose absence produces a permission
+        # error that names the socket and blames the group.
+        #
+        # Both are about the socket the CONNECTION resolved, not the
+        # default one: a rootless deployment under XDG_RUNTIME_DIR would
+        # otherwise be given the group of a socket it never uses and
+        # denied writes to the one it does.
+        #
+        # It is deliberately the only thing added. No capability, no
+        # device, no host mount, and nothing whatsoever for the engine
+        # container, which still cannot exec and still has no route to
+        # the daemon.
+        f"SupplementaryGroups={docker_socket_group(connection.socket)}",
+        f"ReadWritePaths={args.runtime_dir} {args.workspace_dir} {connection.socket}",
         "",
         "[Install]",
         "WantedBy=multi-user.target",
         "",
-    ])
+    ]
+    return "\n".join(lines)
 
 
 def extract_runner_binary(args) -> Path:
@@ -3620,6 +4025,10 @@ def provision_workflow_runner(args) -> str:
             f"{args.prefix / '.env'} to supervise it regardless.")
         return "idle"
 
+    # The image before the binary, because a runner that starts without
+    # one refuses every hook: #865's capability preflight proves the
+    # image is present and will not pull it itself.
+    ensure_hook_image(args)
     extract_runner_binary(args)
     return supervise_workflow_runner(args)
 
