@@ -44,10 +44,24 @@ export function StepBody({
 /**
  * The numbered rail, one column per step, every one of them a button.
  *
- * Every step is reachable at any time and that is deliberate: a rail
- * whose later steps are disabled until the earlier ones are "done" cannot
- * be used to go back and check an answer, which is the thing operators
- * actually do with it. What refuses is the SAVE, and it says why.
+ * Two optional arrays say what the rail is allowed to draw and to reach
+ * (issue #864):
+ *
+ * `completed[i]` is whether step i+1's OWN answers are satisfied, and it
+ * is what draws the tick. It is deliberately independent of the cursor:
+ * the rail used to tick every step the cursor had passed, so a flow that
+ * could be clicked through drew eight ticks for a wizard nobody had
+ * filled in — a green check standing for work that was never done.
+ *
+ * `reachable[i] === false` disables step i+1's button. A rail that can
+ * jump anywhere is a rail that can jump over the verification a later
+ * step depends on, which is what #864 is: the caller decides what
+ * "earlier steps are complete" means and every step up to and including
+ * the first incomplete one stays reachable, so going back to check or
+ * fix an answer still works — only passing an unfinished step does not.
+ *
+ * Both are optional and omitting them is the rail this file shipped
+ * before: ticks from the cursor, every step reachable.
  *
  * `tip` is one registry id for the whole rail rather than one per step:
  * what a step is, and that any of them can be revisited, is one
@@ -57,12 +71,18 @@ export function StepRail({
   steps,
   step,
   onSelect,
-  tip
+  tip,
+  completed,
+  reachable
 }: {
   steps: readonly string[];
   step: number;
   onSelect(n: number): void;
   tip: TooltipId;
+  /** Per-step "its own answers are satisfied", index 0 = step 1. */
+  completed?: readonly boolean[];
+  /** Per-step "may be navigated to", index 0 = step 1. */
+  reachable?: readonly boolean[];
 }) {
   return (
     <ol
@@ -78,14 +98,35 @@ export function StepRail({
       {steps.map((label, i) => {
         const n = i + 1;
         const active = step === n;
-        const done = step > n;
+        const done = completed ? completed[i] === true : step > n;
+        // Absent `reachable`, and a short array, both mean reachable:
+        // this rail refuses a step only when its caller has actually
+        // said the step is out of reach.
+        const locked = reachable ? reachable[i] === false : false;
         return (
           <li key={label}>
             {/* The host wraps the button, so the button keeps its own
                 accessible name. */}
             <InfoTooltip id={tip} block>
               <button
-                onClick={() => onSelect(n)}
+                // A real disabled button, so there is no keyboard path
+                // around the lock either: `disabled` takes it out of the
+                // tab order and refuses activation, and aria-disabled
+                // says so to a screen reader that reaches it by some
+                // other route. The guard in the handler is for the same
+                // reason the page's own save guards exist — a handler
+                // reachable by any route must not do the thing the
+                // control refuses.
+                disabled={locked}
+                aria-disabled={locked ? true : undefined}
+                // What the tick means, as something other than a colour
+                // an aria-hidden glyph is drawn in: the state is on the
+                // button, where a test (and a stylesheet) can read it.
+                data-complete={done ? "true" : "false"}
+                onClick={() => {
+                  if (locked) return;
+                  onSelect(n);
+                }}
                 // Without this the accessible name is "01 Engine",
                 // because the step-number span is part of the button. A
                 // screen reader should hear the step, not the numeral
@@ -105,7 +146,12 @@ export function StepRail({
                   background: active ? "var(--accent-quiet)" : "var(--surface)",
                   color: active ? "var(--text)" : "var(--text-2)",
                   font: "inherit",
-                  cursor: "pointer"
+                  // Dimmed rather than hidden: a locked step is still
+                  // part of the flow an operator is reading, and a rail
+                  // that dropped it would be a rail whose length changed
+                  // as they filled the form in.
+                  opacity: locked ? 0.55 : 1,
+                  cursor: locked ? "not-allowed" : "pointer"
                 }}
               >
                 <span
@@ -143,6 +189,7 @@ export function StepControls({
   total,
   onBack,
   onNext,
+  nextDisabled,
   finishLabel,
   onFinish,
   finishDisabled,
@@ -152,6 +199,13 @@ export function StepControls({
   total: number;
   onBack(): void;
   onNext(): void;
+  /** Refuses Continue while the step on screen is unfinished (issue
+   *  #864). Optional, and absent it Continue always advances, which is
+   *  the footer every flow had before: a Continue that walks past a step
+   *  nobody filled in is the same defect as a rail that jumps over it,
+   *  and a flow that gates the rail owes this too or the footer is the
+   *  way around it. */
+  nextDisabled?: boolean;
   finishLabel: string;
   onFinish(): void;
   finishDisabled?: boolean;
@@ -184,7 +238,7 @@ export function StepControls({
           {finishLabel}
         </button>
       ) : (
-        <button className="btn btn--primary" onClick={onNext}>
+        <button className="btn btn--primary" disabled={nextDisabled} onClick={onNext}>
           Continue
         </button>
       )}

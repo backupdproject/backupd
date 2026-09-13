@@ -124,9 +124,10 @@ export function SnapshotRestorePage({ readOnly }: { readOnly: boolean }) {
     );
 
   const missingTarget = targetPath.trim() === "";
+  const submitted = restore.operation !== null;
   const finishHint = !restore.ready
     ? "Waiting for this instance's configuration revision, which a restore is checked against."
-    : restore.operation !== null
+    : submitted
       ? "This restore has been submitted. It is durable: closing the browser does not stop it."
       : missingTarget
         ? "Name a directory on this deployment to restore into."
@@ -134,11 +135,55 @@ export function SnapshotRestorePage({ readOnly }: { readOnly: boolean }) {
           ? "Choose a snapshot to restore from."
           : undefined;
 
+  // What each step is waiting for, one entry per step, each of them
+  // about that step's OWN question and nothing about the steps around
+  // it. That independence is the point: the rail's check means "this
+  // one is answered", so it can be drawn for a step behind the cursor
+  // and withheld from one the cursor has walked past.
+  //
+  // Step 2 is answered by either scope — the whole tree needs nothing
+  // typed, a named path needs a name. Step 3 is waiting only for the
+  // directory, because the conflict answer is always one of the three
+  // (the state holds "refuse" until it is changed), and an answer that
+  // is already chosen is not a hole. Step 4 asks for nothing at all; it
+  // is answered by the submission, which is why its check appears when
+  // the operation does.
+  const completed: readonly boolean[] = [
+    selected !== null,
+    wholeTree || sourcePath.trim() !== "",
+    !missingTarget,
+    submitted
+  ];
+  // Reachable is "every question before this one is answered". The first
+  // unanswered step is itself reachable — that is where the answer gets
+  // typed — and nothing past it is, which is what stops this flow from
+  // being walked to its commit with a hole in the middle of it.
+  //
+  // A submitted restore ends the gate: there is nothing left to answer,
+  // and the step watching that operation has to stay reachable. An
+  // operator who wandered back and emptied the destination field would
+  // otherwise be locked out of the only panel reporting the restore
+  // that is actually running.
+  const reachable: boolean[] = [];
+  let open = true;
+  for (const done of completed) {
+    reachable.push(open || submitted);
+    open = open && done;
+  }
+  const currentComplete = completed[step - 1] || submitted;
+
   return (
     <div style={{ maxWidth: 980, width: "100%", margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
       {header}
 
-      <StepRail steps={STEPS} step={step} onSelect={setStep} tip="snapshots.restore.step" />
+      <StepRail
+        steps={STEPS}
+        step={step}
+        completed={completed}
+        reachable={reachable}
+        onSelect={setStep}
+        tip="snapshots.restore.step"
+      />
 
       {restore.failure ? (
         <ErrorState
@@ -370,6 +415,19 @@ export function SnapshotRestorePage({ readOnly }: { readOnly: boolean }) {
               )}
             </StepBody>
           ) : null}
+
+          {/* A disabled Continue announces nothing about why it is
+              disabled, so the steps that can disable it owe the same
+              sentence the commit button owes beside itself. */}
+          {currentComplete || step === STEPS.length ? null : (
+            <Note>
+              {step === 1
+                ? "Choose a snapshot to restore from. Nothing after this step is offered until one is."
+                : step === 2
+                  ? "Name the path inside the snapshot, or restore the whole snapshot."
+                  : "Name a directory on this deployment to restore into."}
+            </Note>
+          )}
         </div>
 
         <StepControls
@@ -377,6 +435,10 @@ export function SnapshotRestorePage({ readOnly }: { readOnly: boolean }) {
           total={STEPS.length}
           onBack={() => setStep(Math.max(1, step - 1))}
           onNext={() => setStep(Math.min(STEPS.length, step + 1))}
+          // Back is never gated: walking out of a step is how a wrong
+          // answer gets corrected. Continue is, because a step left
+          // unanswered is not a step this flow has finished.
+          nextDisabled={!currentComplete}
           finishLabel={restore.busy ? "Starting\u2026" : "Start restore"}
           finishHint={finishHint}
           finishDisabled={

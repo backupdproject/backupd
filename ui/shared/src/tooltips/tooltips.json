@@ -1501,7 +1501,7 @@
   },
   "wizard.set.step": {
     "label": "Step",
-    "html": "One of the six steps this set is described in. Any of them can be reopened at any time and the answers already given are kept; nothing is written until the save on the review step."
+    "html": "One of the eight steps this set is described in. A step you have answered can be reopened at any time and what you typed is kept; a step whose earlier steps are unfinished is not offered yet, because the questions after the connection test depend on its answer. Nothing is written until the save on the review step."
   },
   "wizard.set.key-stored": {
     "label": "Stored key",
@@ -1589,11 +1589,11 @@
   },
   "wizard.set.step-count": {
     "label": "Step position",
-    "html": "Which of the six steps is showing. The rail at the top of the page moves between them in any order."
+    "html": "Which of the eight steps is showing. Continue moves on once the step on screen is answered, and the rail at the top of the page goes back to any step already answered."
   },
   "wizard.set.continue": {
     "label": "Continue",
-    "html": "Moves to the next step. It neither validates nor saves, so a step can be left half-answered and returned to."
+    "html": "Moves to the next step, once this one is answered. It saves nothing, and Back keeps everything already typed, so a half-answered step is finished rather than skipped."
   },
   "wizard.ssh.steps": {
     "label": "Steps",
@@ -1693,7 +1693,7 @@
   },
   "snapshots.restore.step": {
     "label": "Step",
-    "html": "One of the four questions a restore answers: which snapshot, what inside it, where it goes, and what happens to a file already there. Any of them can be reopened; nothing is submitted until <strong>Start restore</strong>."
+    "html": "One of the four questions a restore answers: which snapshot, what inside it, where it goes, and what happens to a file already there. An answered step can be reopened and changed; one that is still unanswered holds the steps after it shut, and nothing is submitted until <strong>Start restore</strong>."
   },
   "repositories.maintenance-owner": {
     "label": "Maintenance owner",
