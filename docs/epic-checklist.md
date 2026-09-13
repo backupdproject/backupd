@@ -129,6 +129,49 @@ want to see happening, has to show up live.
 - [ ] **Frontend gate green**: typecheck, typecheck every provider, eslint,
   vitest, build. *(Gated.)*
 
+### Tooltips
+
+Every control the epic adds is a control somebody meets without having read
+anything. 425 entries say this product takes that seriously, and the rules
+around them are stricter than "write some help text".
+
+- [ ] **Every new control, field and page heading that needs explaining gets a
+  registry entry** in `ui/shared/src/tooltips/tooltips.json`, and the element
+  names its `TooltipId` rather than carrying copy of its own. *(Ungated in the
+  direction that matters, see below.)* Ids are namespaced by where they live
+  (`shell.*`, `nav.*`), so a new page or panel gets its own prefix.
+- [ ] **The copy stays in the registry.** *(Gated.)* What an operator reads is
+  whatever the id says today, and the test asserts that through a really wired
+  element rather than the component in isolation, because "is it wired" is the
+  half that rots silently.
+- [ ] **Only `<strong>`, `<em>`, `<code>` and `<br>`.** *(Gated.)* The copy is
+  injected as HTML, so the tag list is a safety property rather than a style one.
+- [ ] **No entry that nothing names.** *(Gated:* "has no entry that nothing in
+  the app names".*)* Note the direction: an entry with no control fails, a
+  control with no entry does not. That gap is mine to check, exactly like the
+  CLI command with no browser equivalent in section 3.
+- [ ] **An explained input also gets a `fieldHelpCopy.ts` entry, with all three
+  parts**: what the field is for, an example of something an operator could
+  type, and what typing that would actually cause. *(Gated as a compile error,*
+  since it is a struct and a missing part will not build.*)* The third part is
+  the whole point. "Remote path: the path on the remote host" restates the
+  label and helps nobody.
+- [ ] **State the effect from the code, not from the label.** *(Ungated.)* Where
+  the code and the spec disagree, the code wins, because the code is what runs.
+- [ ] **A field whose effect cannot be stated from the code gets no entry and no
+  pop-up.** *(Ungated, and the one I would most expect an epic to get wrong.)*
+  This is a decision, not a gap for somebody to fill in later. A help pop-up is
+  the easiest place in the product to add an invented claim, because a plausible
+  sentence about a decorative control reads exactly like a true one, and this UI
+  has had to remove invented claims four times already. If a control cannot be
+  explained honestly, the answer is to remove the control or make it an honest
+  non-interactive statement of fact, not to write around it.
+- [ ] **The opt-out preference still governs anything new**, including the
+  sign-in screen's blanket suppression. *(Gated.)* Test it with the preference
+  explicitly ON, so a passing case cannot be the preference doing the work.
+- [ ] **The pop-up is announced with the control it wraps** and leaves that
+  control's own accessible name exactly as it was. *(Gated.)*
+
 ## 6. The API contract
 
 - [ ] **`api/v1/openapi.json` is authoritative**, and both generated bindings are
@@ -256,10 +299,12 @@ repository will tell me I got these wrong:
 5. A global default good enough that nobody has to set it, plus the per-set
    override, plus the re-resolve after mutation.
 6. The Claude Designer mockup, and the design note landing in `docs/design/`.
-7. README, the four site pages that are not `reference.html`, and the prose docs.
-8. The "What has not been proven" section telling the truth about this epic.
-9. Regenerated GIFs and screenshots, through the capture scripts.
-10. Store submission screenshots going back to outstanding when a listed screen
+7. A new control with no tooltip entry, and the harder half: refusing to write
+   one for a control whose effect the code cannot state.
+8. README, the four site pages that are not `reference.html`, and the prose docs.
+9. The "What has not been proven" section telling the truth about this epic.
+10. Regenerated GIFs and screenshots, through the capture scripts.
+11. Store submission screenshots going back to outstanding when a listed screen
     changes.
-11. The CHANGELOG entry.
-12. Comments the change falsified.
+12. The CHANGELOG entry.
+13. Comments the change falsified.
