@@ -598,8 +598,11 @@ The incremental engine's operator surface (#788) grows six **read** routes:
 | `GET /repositories` | `ListRepositoriesResponse` |
 | `GET /repositories/{domain}/maintenance` | `RepositoryMaintenance` |
 
-and **no new mutating route at all**. Every mutating act is an `action` on
-`POST /operations`, with a single nested parameter object:
+and **no new mutating route at all** for any act on a snapshot. (#862 later
+added one route that writes CONFIGURATION, `POST /repositories`; see the
+record below for why that is the same rule rather than an exception to it.)
+Every mutating act is an `action` on `POST /operations`, with a single nested
+parameter object:
 
 | action | body field | schema | what it does |
 |---|---|---|---|
@@ -677,6 +680,57 @@ artifact retention **policy** for the set, and the first is the incremental
 pruner's per-snapshot **verdict**. Nothing is cached on either, and neither
 deletes anything — as with the repository health read, a cached verdict keeps
 reporting green after the storage under it has gone away.
+
+## Recorded decision: #862 adds the one mutating repository route, and it declares only
+
+The record above stands for every act on a snapshot; `POST /repositories` is
+the exception it did not cover, and it is recorded here rather than by
+amending it. EPIC K's six reads described a noun no surface could create: a
+repository domain was declarable only by hand-editing `config.yaml`, so the
+*Define a repository domain* screen existed to explain why it could not save.
+
+| route | request | 201 |
+|---|---|---|
+| `POST /repositories` | `CreateRepositoryDomainRequest` | `RepositoryHealth` |
+
+**It is not an `action` on `POST /operations`, and that is the same rule
+rather than an exception to it.** The operations surface exists for acts on
+DATA — long-running, idempotency-keyed, revision-checked, restartable. This
+writes one `repository_domains:` entry into `config.yaml`, which is what
+`POST /backup-sets` and `POST /storage-mediums` do, through the same
+re-read-under-lock, validate, atomic-write, hot-reload door; routing a
+configuration write through the durable-operation machinery would give the
+product two doors onto one file.
+
+**It declares, and nothing more.** No store is created: the repository is
+realized by the first backup run that stores a snapshot in the domain, which
+is the lifecycle a domain named on the add-backup-set wizard already had. So
+the route opens no storage and resolves no passphrase reference — not even to
+describe what it wrote — and its `RepositoryHealth` body is built from the
+declaration: the id, the co-tenancy posture, `degraded`, and a detail saying
+the store is not written yet. Every access boolean is `false` because nothing
+was measured. `GET /repositories` probes from then on, where a domain nothing
+has run into yet answers `reachable` true and `readable` false.
+
+A probing read-back was the first shape of this and was removed in review:
+opening the store would have made a CSRF-checked, destructive-gate-EXEMPT
+route execute a caller-named `passphrase.command` and connect to storage at
+declaration time, under the configuration lock.
+
+**The passphrase is a reference in all three spellings and there is no field
+for the material** — `file`, `env` or `command`, exactly as `config.yaml`,
+the SSH key and `key_encryption` spell a secret. A body that could carry one
+would put it in an access log.
+
+**`maintenance_owner` is a gate on the write and is persisted nowhere.**
+ADR 0017 moves maintenance ownership by transfer only, so `this` is refused
+with `REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE` when a record for that id
+already names an owner, and `another-instance` declares the boundary without
+claiming it. Two more 409s, both well-formed requests refused for the state
+of the deployment: `REPOSITORY_DOMAIN_EXISTS` and
+`INCREMENTAL_ENGINE_DISABLED`.
+
+There is still no route that EDITS, REMOVES or TRANSFERS a domain.
 
 ## Migration record: what was removed and what replaced it
 

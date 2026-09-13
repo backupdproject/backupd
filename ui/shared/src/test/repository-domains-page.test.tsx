@@ -25,16 +25,17 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import type { UserEvent } from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { ApiProvider } from "@shared/api/ApiContext";
-import { createMockApi } from "@shared/api/mock";
+import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import { BackupdError } from "@shared/api/contracts";
 import type { BackupdApi } from "@shared/api/contracts";
 import { resetGraphForTests } from "@shared/state/graph";
 import { RepositoryDomainNewPage } from "@shared/pages/RepositoryDomainNewPage";
 import { RepositoryDomainsPage } from "@shared/pages/RepositoryDomainsPage";
 import { clockSkew, failingProbes } from "@shared/pages/repositoryFleet";
-import type { RepositoryHealth } from "@shared/types/snapshot";
+import type { CreateRepositoryDomainRequest, RepositoryHealth } from "@shared/types/snapshot";
 
 async function renderDomains(api: BackupdApi = createMockApi()): Promise<void> {
   render(
@@ -72,6 +73,11 @@ function topologyCard(domain: string): HTMLElement {
 
 afterEach(() => {
   resetGraphForTests();
+  // createRepositoryDomain WRITES the domain into the fleet fixture, the
+  // same way the route writes it into the configuration, so without this
+  // a later case declaring the same id meets a REPOSITORY_DOMAIN_EXISTS
+  // its own scenario never set up.
+  resetMockFixtures();
 });
 
 describe("the domains table", () => {
@@ -215,45 +221,173 @@ describe("what the page says when there is nothing to say", () => {
   });
 });
 
-describe("defining a domain", () => {
-  /** The screen with no write behind it. It talks to nothing, so it takes
-   *  no API at all. */
-  function renderDefine() {
+describe("declaring a domain", () => {
+  /** The screen, with whatever API a case needs behind it. */
+  function renderDefine(api: BackupdApi = createMockApi()) {
     render(
-      <MemoryRouter>
-        <ApiProvider api={createMockApi()}>
-          <RepositoryDomainNewPage />
+      <MemoryRouter initialEntries={["/repositories/new"]}>
+        <ApiProvider api={api}>
+          <Routes>
+            <Route path="/repositories/new" element={<RepositoryDomainNewPage />} />
+            <Route path="/repositories" element={<div>the repository domains page</div>} />
+          </Routes>
         </ApiProvider>
       </MemoryRouter>
     );
   }
 
-  it("collects nothing it cannot store, and says why Create is refused", () => {
-    renderDefine();
+  /** Fill in the two answers a declaration cannot be made without. */
+  async function fillIdentity(user: UserEvent, id = "offsite-c2") {
+    await user.type(screen.getByLabelText("Domain id"), id);
+    await user.type(screen.getByLabelText("Passphrase file on this NAS"), "/etc/backupd/" + id);
+  }
 
-    expect(screen.getByText(/no route that creates a repository domain/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Create domain" })).toBeDisabled();
-    // Every identity field, the passphrase above all, is disabled: a box
-    // that takes a passphrase it cannot save is the worst lie on the
-    // screen.
-    for (const label of ["Domain id", "Storage location", "Encryption passphrase"]) {
-      expect(screen.getByLabelText(label)).toBeDisabled();
-    }
+  /** The same wizard, landing on the REAL fleet page rather than a stub.
+   *  Issue #862's acceptance criterion is that the declared domain
+   *  "appears on the fleet", and a stub div proves only that navigate()
+   *  was called: the screen it lands on re-reads the fleet on mount, so
+   *  a create whose domain never reached the list it navigates to passes
+   *  every assertion made against a placeholder. */
+  function renderDefineOntoTheFleet(api: BackupdApi) {
+    render(
+      <MemoryRouter initialEntries={["/repositories/new"]}>
+        <ApiProvider api={api}>
+          <Routes>
+            <Route path="/repositories/new" element={<RepositoryDomainNewPage />} />
+            <Route path="/repositories" element={<RepositoryDomainsPage readOnly={false} />} />
+          </Routes>
+        </ApiProvider>
+      </MemoryRouter>
+    );
+  }
+
+  it("lands on the fleet list with the new domain on it", async () => {
+    const user = userEvent.setup();
+    renderDefineOntoTheFleet(createMockApi());
+
+    await fillIdentity(user, "offsite-c4");
+    await user.click(screen.getByRole("radio", { name: /Isolated/ }));
+    await user.click(screen.getByRole("button", { name: "Create domain" }));
+
+    // The fleet page, proven by a domain the wizard never mentioned.
+    await waitFor(() => expect(screen.getAllByText("primary-nas").length).toBeGreaterThan(0));
+
+    // And the declared one, on the list the operator was sent to. It is
+    // not a green row: the store is written by the first backup run into
+    // the domain, so what the fleet read reports is a location that
+    // answers and holds no repository yet.
+    const row = domainRow("offsite-c4");
+    expect(within(row).getByText("Failing")).toBeTruthy();
+    // Which probe, not just that something is wrong: a store that has
+    // never been written is not readable, and the row must not say
+    // "unreachable" -- the location answered, and sending an operator to
+    // check a mount that is fine is the whole cost of that word.
+    expect(within(row).getByText(/not readable/)).toBeTruthy();
+    expect(within(row).queryByText(/unreachable/)).toBeNull();
   });
 
-  it("says which controls are dead, rather than calling live ones disabled", () => {
+  it("sends a well-formed declaration and leaves for the fleet list", async () => {
+    const user = userEvent.setup();
+    const api = createMockApi();
+    let sent: CreateRepositoryDomainRequest | null = null;
+    api.createRepositoryDomain = (req) => {
+      sent = req;
+      return createMockApi().createRepositoryDomain(req);
+    };
+    renderDefine(api);
+
+    await fillIdentity(user);
+    await user.type(screen.getByLabelText("Description"), "Second copy, off site");
+    await user.click(screen.getByRole("radio", { name: /Isolated/ }));
+    await user.click(screen.getByRole("radio", { name: /Another instance maintains it/ }));
+    await user.click(screen.getByRole("button", { name: "Create domain" }));
+
+    await waitFor(() => expect(screen.getByText("the repository domains page")).toBeTruthy());
+
+    expect(sent).toEqual({
+      domain: "offsite-c2",
+      description: "Second copy, off site",
+      isolation: "isolated",
+      // The passphrase is a REFERENCE. A request carrying the secret
+      // itself is the one failure on this screen that cannot be undone
+      // by editing a form, because it is already in an access log.
+      passphrase: { file: "/etc/backupd/offsite-c2" },
+      location: "",
+      maintenanceOwner: "another-instance"
+    });
+  });
+
+  it("sends the environment variable's NAME when that is the source chosen", async () => {
+    const user = userEvent.setup();
+    const api = createMockApi();
+    let sent: CreateRepositoryDomainRequest | null = null;
+    api.createRepositoryDomain = (req) => {
+      sent = req;
+      return createMockApi().createRepositoryDomain(req);
+    };
+    renderDefine(api);
+
+    await user.type(screen.getByLabelText("Domain id"), "offsite-c3");
+    await user.click(screen.getByRole("button", { name: "An environment variable" }));
+    await user.type(
+      screen.getByLabelText("Passphrase environment variable"),
+      "BACKUPD_OFFSITE_C3_PASSPHRASE"
+    );
+    await user.click(screen.getByRole("button", { name: "Create domain" }));
+
+    await waitFor(() => expect(sent).not.toBeNull());
+    expect(sent!.passphrase).toEqual({ env: "BACKUPD_OFFSITE_C3_PASSPHRASE" });
+  });
+
+  it("explains a deployment that does not run the incremental engine, and stays put", async () => {
+    const user = userEvent.setup();
+    const api = createMockApi();
+    api.createRepositoryDomain = () =>
+      Promise.reject(
+        new BackupdError({
+          code: "INCREMENTAL_ENGINE_DISABLED",
+          message:
+            "the incremental (kopia) backup engine is disabled in this deployment: set incremental_engine.enabled: true in config.yaml",
+          correlationId: "cid_gate"
+        })
+      );
+    renderDefine(api);
+
+    await fillIdentity(user);
+    await user.click(screen.getByRole("button", { name: "Create domain" }));
+
+    // The refusal's own sentence, which is the one place the operator is
+    // told which key to set. A generic "could not save" would leave them
+    // editing a form that is already correct.
+    expect(await screen.findByText(/incremental_engine.enabled: true/)).toBeTruthy();
+    expect(screen.getByText(/does not run the incremental engine/i)).toBeTruthy();
+    // And nothing navigated: the deployment refused, the form is intact.
+    expect(screen.queryByText("the repository domains page")).toBeNull();
+    expect(screen.getByLabelText("Domain id")).toHaveValue("offsite-c2");
+  });
+
+  it("renders a duplicate id as the refusal it is", async () => {
+    const user = userEvent.setup();
     renderDefine();
 
-    // The sharing and ownership radios ARE live: choosing between them is
-    // the whole of what this screen is for until a create route exists,
-    // and each answer changes what the page says. A banner claiming
-    // every control below is disabled tells an operator not to touch the
-    // one thing that works.
-    for (const name of [/Shared/, /Isolated/, /This instance maintains it/, /Another instance maintains it/]) {
-      expect(screen.getByRole("radio", { name })).toBeEnabled();
-    }
-    expect(screen.getByText(/no route that creates a repository domain/i)).toBeTruthy();
-    expect(document.body.textContent).not.toContain("every control below is disabled");
+    // primary-nas is a domain the fixture already declares, and the mock
+    // refuses the second declaration exactly as the route does.
+    await fillIdentity(user, "primary-nas");
+    await user.click(screen.getByRole("button", { name: "Create domain" }));
+
+    expect(await screen.findByText(/already declares a repository domain of that id/)).toBeTruthy();
+    expect(screen.queryByText("the repository domains page")).toBeNull();
+  });
+
+  it("will not offer Create until the domain has an id and somewhere to read its key from", async () => {
+    const user = userEvent.setup();
+    renderDefine();
+
+    expect(screen.getByRole("button", { name: "Create domain" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Domain id"), "offsite-c2");
+    expect(screen.getByRole("button", { name: "Create domain" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Passphrase file on this NAS"), "/etc/backupd/p");
+    expect(screen.getByRole("button", { name: "Create domain" })).toBeEnabled();
   });
 
   it("states what each sharing answer commits every set in the domain to", async () => {
@@ -274,15 +408,21 @@ describe("defining a domain", () => {
     expect(screen.getByText("One encryption key")).toBeTruthy();
   });
 
-  it("says ownership moves by transfer whichever answer is chosen", async () => {
+  it("says ownership moves by transfer, and that neither answer records anything", async () => {
     const user = userEvent.setup();
     renderDefine();
 
     expect(screen.getByText(/ownership moves by transfer, never by claim/i)).toBeTruthy();
+    // maintenance_owner is a gate on this one write: the field is
+    // persisted nowhere, so a screen promising that this deployment
+    // "then never maintains the store" would be promising something no
+    // configuration records.
+    expect(screen.getByText(/records nothing/i)).toBeTruthy();
 
     await user.click(screen.getByRole("radio", { name: /Another instance maintains it/ }));
 
-    expect(screen.getByText(/ownership is transferred by the instance that holds it, never taken/i)).toBeTruthy();
+    expect(screen.getByText(/ownership is transferred by the instance that holds it/i)).toBeTruthy();
+    expect(screen.getByText(/not written into the configuration at all/i)).toBeTruthy();
   });
 });
 

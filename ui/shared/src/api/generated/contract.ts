@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "0f1ff2799c5379515cf4406593443aa6b169cc71b595459e25bc6b39e8239b60";
+export const CONTRACT_SHA256 = "7c2ee42ab6e3fd3d8d592ed9a24feb1aaa5bef978007e72be8d8972f07ccbb7a";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -74,6 +74,8 @@ export const WIRE_ERROR_CODES = [
   "REPOSITORY_DOMAIN_NOT_FOUND",
   "BACKUP_SET_NOT_INCREMENTAL",
   "INCREMENTAL_ENGINE_DISABLED",
+  "REPOSITORY_DOMAIN_EXISTS",
+  "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
 ] as const;
 
 /** This UI's own presentation vocabulary. No endpoint emits these;
@@ -160,6 +162,8 @@ export const API_ERROR_CODES = [
   "REPOSITORY_DOMAIN_NOT_FOUND",
   "BACKUP_SET_NOT_INCREMENTAL",
   "INCREMENTAL_ENGINE_DISABLED",
+  "REPOSITORY_DOMAIN_EXISTS",
+  "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
@@ -169,7 +173,7 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 export const API_ERROR_CLASSES = {
   "authentication": ["UNAUTHENTICATED", "BOOTSTRAP_TOKEN_INVALID", "RESET_TOKEN_INVALID", "VERIFY_TOKEN_INVALID"],
   "authorization": ["ENROLLMENT_CLOSED", "DESTRUCTIVE_OPERATIONS_DISABLED", "CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
-  "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN", "SNAPSHOT_NOT_HOLDABLE", "INCREMENTAL_ENGINE_DISABLED"],
+  "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN", "SNAPSHOT_NOT_HOLDABLE", "INCREMENTAL_ENGINE_DISABLED", "REPOSITORY_DOMAIN_EXISTS", "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE"],
   "internal": ["INTERNAL", "INTERNAL_ERROR"],
   "not-found": ["BACKUP_SET_NOT_FOUND", "OPERATION_NOT_FOUND", "RETENTION_PLAN_NOT_FOUND", "ARTIFACT_NOT_FOUND", "MEDIUM_NOT_FOUND", "SNAPSHOT_NOT_FOUND", "SNAPSHOT_HOLD_NOT_FOUND", "REPOSITORY_DOMAIN_NOT_FOUND"],
   "throttling": ["RATE_LIMITED"],
@@ -1139,6 +1143,27 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
     }
   },
   {
+    id: "createRepositoryDomain",
+    method: "POST",
+    path: "/repositories",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "CreateRepositoryDomainRequest",
+    responseSchema: "RepositoryHealth",
+    successStatus: 201,
+    errorCodes: {
+      400: ["INVALID_REQUEST"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      409: ["REPOSITORY_DOMAIN_EXISTS", "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE", "INCREMENTAL_ENGINE_DISABLED"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
     id: "getRepositoryMaintenance",
     method: "GET",
     path: "/repositories/{domain}/maintenance",
@@ -2055,6 +2080,28 @@ export interface WireCreateBackupSetResponse extends WireBackupSet {
   run_error?: string;
 }
 
+/** POST /repositories: declare a repository domain. What this
+ *  persists is a DECLARATION -- an id, a co-tenancy posture and the
+ *  reference the passphrase is resolved from -- and it creates no
+ *  store: the repository itself is realized lazily by the first
+ *  backup run that stores a snapshot in it, exactly as a domain named
+ *  on the add-backup-set wizard's repository step already is. Nothing
+ *  here is proven against storage, and nothing here reads it: this
+ *  route opens no repository and resolves no passphrase reference, so
+ *  the domain it answers with is described from the declaration
+ *  alone. Once declared, the domain is probed by GET /repositories,
+ *  where one nothing has run into yet answers `reachable` true and
+ *  `readable` false -- the storage answers and holds no repository,
+ *  which is the truth about it rather than a failure of it. */
+export interface WireCreateRepositoryDomainRequest {
+  description?: string;
+  id: string;
+  isolation: "shared" | "isolated";
+  location?: string;
+  maintenance_owner?: "this" | "another-instance";
+  passphrase: WireRepositoryPassphraseReference;
+}
+
 /** POST /auth/login and POST /auth/enroll. camelCase, unlike every
  *  schema above: apps/common/auth/local predates the snake_case
  *  convention the rest of /api/v1 uses. Recorded here as it is rather
@@ -2719,6 +2766,24 @@ export interface WireRepositoryMaintenance {
   owner: string;
   reclaimed_bytes: number;
   runs: number;
+}
+
+/** Where one repository domain's encryption passphrase comes from: a
+ *  file on the manager's host, the NAME of an environment variable,
+ *  or an argv array whose stdout is the secret. Exactly one of the
+ *  three, and none of them is the passphrase itself. There is
+ *  deliberately no field to paste one into and there will not be: a
+ *  repository's passphrase is the only thing standing between its
+ *  storage and everything this product holds, and a secret that could
+ *  be typed into a request body is one that ends up in an access log,
+ *  a terminal transcript and config.yaml in the clear. This is the
+ *  same three-source shape config.yaml's own
+ *  repository_domains[].passphrase spells, because "how does a secret
+ *  reach this process" is one question this product answers once. */
+export interface WireRepositoryPassphraseReference {
+  command?: string[];
+  env?: string;
+  file?: string;
 }
 
 /** POST /auth/reset-password: the token out of the emailed link, and

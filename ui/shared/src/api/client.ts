@@ -2676,6 +2676,31 @@ export const httpApi: BackupdApi = {
     request<WireRepositoryMaintenance>(
       "/repositories/" + encodeURIComponent(domain) + "/maintenance"
     ).then(fromWireRepositoryMaintenance),
+  // Issue #862's write, beside the two reads it belongs with. The
+  // passphrase crosses as a reference and the created domain comes back
+  // through fromWireRepositoryHealth, so a screen renders a created
+  // domain with exactly the code that renders a listed one.
+  //
+  // Fields the request left empty are dropped rather than sent as "":
+  // location and maintenance_owner both have a meaning for absent (this
+  // deployment's own storage location, this deployment) and an empty
+  // string is how a form spells "I did not fill this in".
+  createRepositoryDomain: (req) =>
+    request<WireRepositoryHealth>("/repositories", {
+      method: "POST",
+      body: JSON.stringify({
+        id: req.domain,
+        isolation: req.isolation,
+        passphrase: {
+          file: req.passphrase.file ?? "",
+          env: req.passphrase.env ?? "",
+          command: req.passphrase.command ?? []
+        },
+        ...(req.description ? { description: req.description } : {}),
+        ...(req.location ? { location: req.location } : {}),
+        ...(req.maintenanceOwner ? { maintenance_owner: req.maintenanceOwner } : {})
+      })
+    }).then(fromWireRepositoryHealth),
 
   // One operation by id, which is what a page watching a restore or a
   // verify polls. It maps through the same fromWireOperation the list

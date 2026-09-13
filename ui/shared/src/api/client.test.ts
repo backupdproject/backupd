@@ -2489,6 +2489,81 @@ describe("the incremental wire boundary", () => {
     expect(repository.detail).toBe("");
   });
 
+  /** The body a declaration leaves on the wire (issue #862). The mapping
+   *  in client.ts is hand-written -- camelCase in, snake_case out, with
+   *  one nested passphrase object -- and nothing above this line looks at
+   *  it, so a renamed field would be caught by no test and by no type:
+   *  the request type is the UI's, and the wire shape is the contract's. */
+  async function createdDomainBody(
+    req: Parameters<typeof httpApi.createRepositoryDomain>[0]
+  ): Promise<Record<string, unknown>> {
+    const fetchMock = mockFetchOk({ ...WIRE_HEALTH, domain: req.domain });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await httpApi.createRepositoryDomain(req);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/repositories");
+    expect(init.method).toBe("POST");
+    return JSON.parse(init.body as string) as Record<string, unknown>;
+  }
+
+  it("declares a file-referenced domain as the contract spells it", async () => {
+    const body = await createdDomainBody({
+      domain: "offsite-b2",
+      description: "Second copy, off site",
+      isolation: "isolated",
+      passphrase: { file: "/etc/backupd/offsite-b2.passphrase" },
+      location: "",
+      maintenanceOwner: "another-instance"
+    });
+
+    // `id`, not `domain`; `maintenance_owner`, not `maintenanceOwner`;
+    // and the passphrase is a nested object naming exactly one source.
+    // An empty `location` is DROPPED rather than sent as "": absent
+    // means this deployment's own storage location, and "" is how a form
+    // spells "I did not fill this in".
+    expect(body).toEqual({
+      id: "offsite-b2",
+      description: "Second copy, off site",
+      isolation: "isolated",
+      passphrase: { file: "/etc/backupd/offsite-b2.passphrase", env: "", command: [] },
+      maintenance_owner: "another-instance"
+    });
+  });
+
+  it("declares an env-referenced domain with the variable NAME and nothing else", async () => {
+    const body = await createdDomainBody({
+      domain: "offsite-c3",
+      isolation: "shared",
+      passphrase: { env: "BACKUPD_OFFSITE_C3_PASSPHRASE" }
+    });
+
+    // The one field that must never carry material: what crosses is the
+    // variable's name. A request carrying the secret itself is the single
+    // failure on this path that cannot be undone by editing a form,
+    // because it is already in an access log.
+    expect(body).toEqual({
+      id: "offsite-c3",
+      isolation: "shared",
+      passphrase: { file: "", env: "BACKUPD_OFFSITE_C3_PASSPHRASE", command: [] }
+    });
+  });
+
+  it("declares a command-referenced domain as the argv array it is", async () => {
+    const body = await createdDomainBody({
+      domain: "vaulted",
+      isolation: "shared",
+      passphrase: { command: ["/usr/bin/vault", "read", "-field=value", "secret/backupd"] }
+    });
+
+    expect(body.passphrase).toEqual({
+      file: "",
+      env: "",
+      command: ["/usr/bin/vault", "read", "-field=value", "secret/backupd"]
+    });
+  });
+
   it("carries a write probe that PASSED through as true", async () => {
     vi.stubGlobal("fetch", mockFetchOk({ ok: true, writable: true, checks: [] }));
 

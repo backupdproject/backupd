@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "0f1ff2799c5379515cf4406593443aa6b169cc71b595459e25bc6b39e8239b60"
+const ContractSHA256 = "7c2ee42ab6e3fd3d8d592ed9a24feb1aaa5bef978007e72be8d8972f07ccbb7a"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -111,6 +111,8 @@ const (
 	ErrorCodeRepositoryDomainNotFound               ErrorCode = "REPOSITORY_DOMAIN_NOT_FOUND"
 	ErrorCodeBackupSetNotIncremental                ErrorCode = "BACKUP_SET_NOT_INCREMENTAL"
 	ErrorCodeIncrementalEngineDisabled              ErrorCode = "INCREMENTAL_ENGINE_DISABLED"
+	ErrorCodeRepositoryDomainExists                 ErrorCode = "REPOSITORY_DOMAIN_EXISTS"
+	ErrorCodeRepositoryDomainMaintainedElsewhere    ErrorCode = "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE"
 )
 
 // WireErrorCodes is codes a server may put on the wire. Every one of these is emitted by real handler code, and apps/common/webhost's TestContract_EveryWireErrorCodeIsRegistered holds that both ways.
@@ -169,6 +171,8 @@ var WireErrorCodes = []ErrorCode{
 	ErrorCodeRepositoryDomainNotFound,
 	ErrorCodeBackupSetNotIncremental,
 	ErrorCodeIncrementalEngineDisabled,
+	ErrorCodeRepositoryDomainExists,
+	ErrorCodeRepositoryDomainMaintainedElsewhere,
 }
 
 // UIErrorCodes is the shared UI's own presentation vocabulary. No endpoint emits these; they are registered here so there is one registry rather than a second hand-maintained list in ui/shared.
@@ -251,6 +255,8 @@ var ErrorCodes = []ErrorCode{
 	ErrorCodeRepositoryDomainNotFound,
 	ErrorCodeBackupSetNotIncremental,
 	ErrorCodeIncrementalEngineDisabled,
+	ErrorCodeRepositoryDomainExists,
+	ErrorCodeRepositoryDomainMaintainedElsewhere,
 }
 
 // ErrorClasses groups codes by the refusal they represent, so a caller (or
@@ -258,7 +264,7 @@ var ErrorCodes = []ErrorCode{
 var ErrorClasses = map[string][]ErrorCode{
 	"authentication": {ErrorCodeUnauthenticated, ErrorCodeBootstrapTokenInvalid, ErrorCodeResetTokenInvalid, ErrorCodeVerifyTokenInvalid},
 	"authorization":  {ErrorCodeEnrollmentClosed, ErrorCodeDestructiveOperationsDisabled, ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
-	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven, ErrorCodeSnapshotNotHoldable, ErrorCodeIncrementalEngineDisabled},
+	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven, ErrorCodeSnapshotNotHoldable, ErrorCodeIncrementalEngineDisabled, ErrorCodeRepositoryDomainExists, ErrorCodeRepositoryDomainMaintainedElsewhere},
 	"internal":       {ErrorCodeInternal, ErrorCodeInternalError},
 	"not-found":      {ErrorCodeBackupSetNotFound, ErrorCodeOperationNotFound, ErrorCodeRetentionPlanNotFound, ErrorCodeArtifactNotFound, ErrorCodeMediumNotFound, ErrorCodeSnapshotNotFound, ErrorCodeSnapshotHoldNotFound, ErrorCodeRepositoryDomainNotFound},
 	"throttling":     {ErrorCodeRateLimited},
@@ -830,6 +836,19 @@ var Endpoints = []Endpoint{
 		ErrorCodes: map[int][]ErrorCode{
 			401: {ErrorCodeUnauthenticated},
 			409: {ErrorCodeIncrementalEngineDisabled},
+			500: {ErrorCodeInternal},
+			503: {ErrorCodeNotConfigured},
+		},
+	},
+	{
+		ID: "createRepositoryDomain", Method: "POST", Path: "/repositories",
+		Authenticated: true, CSRFRequired: true, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "CreateRepositoryDomainRequest", ResponseSchema: "RepositoryHealth", SuccessStatus: 201,
+		ErrorCodes: map[int][]ErrorCode{
+			400: {ErrorCodeInvalidRequest},
+			401: {ErrorCodeUnauthenticated},
+			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
+			409: {ErrorCodeRepositoryDomainExists, ErrorCodeRepositoryDomainMaintainedElsewhere, ErrorCodeIncrementalEngineDisabled},
 			500: {ErrorCodeInternal},
 			503: {ErrorCodeNotConfigured},
 		},
@@ -1540,6 +1559,28 @@ type CreateBackupSetResponse struct {
 	RunError  string     `json:"run_error,omitempty"`
 }
 
+// CreateRepositoryDomainRequest is POST /repositories: declare a repository domain. What this
+// persists is a DECLARATION -- an id, a co-tenancy posture and the
+// reference the passphrase is resolved from -- and it creates no
+// store: the repository itself is realized lazily by the first
+// backup run that stores a snapshot in it, exactly as a domain named
+// on the add-backup-set wizard's repository step already is. Nothing
+// here is proven against storage, and nothing here reads it: this
+// route opens no repository and resolves no passphrase reference, so
+// the domain it answers with is described from the declaration
+// alone. Once declared, the domain is probed by GET /repositories,
+// where one nothing has run into yet answers `reachable` true and
+// `readable` false -- the storage answers and holds no repository,
+// which is the truth about it rather than a failure of it.
+type CreateRepositoryDomainRequest struct {
+	Description      string                        `json:"description"`
+	ID               string                        `json:"id"`
+	Isolation        string                        `json:"isolation"`
+	Location         string                        `json:"location"`
+	MaintenanceOwner string                        `json:"maintenance_owner"`
+	Passphrase       RepositoryPassphraseReference `json:"passphrase"`
+}
+
 // CredentialsRequest is POST /auth/login and POST /auth/enroll. camelCase, unlike every
 // schema above: apps/common/auth/local predates the snake_case
 // convention the rest of /api/v1 uses. Recorded here as it is rather
@@ -2204,6 +2245,24 @@ type RepositoryMaintenance struct {
 	Owner          string `json:"owner"`
 	ReclaimedBytes int64  `json:"reclaimed_bytes"`
 	Runs           int64  `json:"runs"`
+}
+
+// RepositoryPassphraseReference is where one repository domain's encryption passphrase comes from: a
+// file on the manager's host, the NAME of an environment variable,
+// or an argv array whose stdout is the secret. Exactly one of the
+// three, and none of them is the passphrase itself. There is
+// deliberately no field to paste one into and there will not be: a
+// repository's passphrase is the only thing standing between its
+// storage and everything this product holds, and a secret that could
+// be typed into a request body is one that ends up in an access log,
+// a terminal transcript and config.yaml in the clear. This is the
+// same three-source shape config.yaml's own
+// repository_domains[].passphrase spells, because "how does a secret
+// reach this process" is one question this product answers once.
+type RepositoryPassphraseReference struct {
+	Command []string `json:"command"`
+	Env     string   `json:"env"`
+	File    string   `json:"file"`
 }
 
 // ResetPasswordRequest is POST /auth/reset-password: the token out of the emailed link, and
@@ -3000,6 +3059,7 @@ var SchemaTypes = map[string]any{
 	"ConnectionCheck":                   ConnectionCheck{},
 	"CreateBackupSetRequest":            CreateBackupSetRequest{},
 	"CreateBackupSetResponse":           CreateBackupSetResponse{},
+	"CreateRepositoryDomainRequest":     CreateRepositoryDomainRequest{},
 	"CredentialsRequest":                CredentialsRequest{},
 	"CycleMoveOutcome":                  CycleMoveOutcome{},
 	"CycleOutcome":                      CycleOutcome{},
@@ -3049,6 +3109,7 @@ var SchemaTypes = map[string]any{
 	"RecoverySettingsUpdate":            RecoverySettingsUpdate{},
 	"RepositoryHealth":                  RepositoryHealth{},
 	"RepositoryMaintenance":             RepositoryMaintenance{},
+	"RepositoryPassphraseReference":     RepositoryPassphraseReference{},
 	"ResetPasswordRequest":              ResetPasswordRequest{},
 	"RestoreOperationRequest":           RestoreOperationRequest{},
 	"RetentionMove":                     RetentionMove{},

@@ -44,7 +44,9 @@ import type { LiveActivity } from "@shared/types/activity";
 // the CALLS that produce one are declared.
 import type {
   BackupEngine,
+  CreateRepositoryDomainRequest,
   RepositoryFleet,
+  RepositoryHealth,
   RepositoryMaintenance,
   RestoreConflictPolicy,
   Snapshot,
@@ -2342,6 +2344,30 @@ export interface BackupdApi {
    *  Refuses with REPOSITORY_DOMAIN_NOT_FOUND for a domain nothing
    *  declares. */
   getRepositoryMaintenance(domain: string): Promise<RepositoryMaintenance>;
+  /**
+   * Declare a repository domain (issue #862).
+   *
+   * It persists a DECLARATION and creates no store: the repository is
+   * written the first time a backup set puts a snapshot in the domain.
+   * The health that resolves is built from that declaration and is NOT a
+   * probe -- the route opens no storage and resolves no passphrase
+   * reference -- so every access boolean is false because nothing was
+   * measured, the verdict is DEGRADED, and a screen must not render
+   * either as a failed create. `listRepositories` probes from then on,
+   * where a domain nothing has run into yet is reachable and not
+   * readable: the storage answers and holds no repository.
+   *
+   * The passphrase crosses as a REFERENCE. There is no field for the
+   * secret and there will not be one.
+   *
+   * Rejects with INCREMENTAL_ENGINE_DISABLED when this deployment does
+   * not run the incremental engine, which is a state a screen has to
+   * EXPLAIN rather than retry; with REPOSITORY_DOMAIN_EXISTS for an id
+   * this deployment already declares; and with
+   * REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE when the declaration would
+   * claim a repository another instance maintains (ADR 0017).
+   */
+  createRepositoryDomain(req: CreateRepositoryDomainRequest): Promise<RepositoryHealth>;
 
   /**
    * One durable operation by id, for watching work that outlives the

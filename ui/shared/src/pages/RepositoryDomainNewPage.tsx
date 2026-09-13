@@ -1,6 +1,5 @@
 /**
- * What defining a repository domain asks, and what this deployment can
- * actually do about it today (EPIC K, issue #788).
+ * Declaring a repository domain (EPIC K #788, made writable by #862).
  *
  * # The screen exists because the decision does
  *
@@ -11,24 +10,47 @@
  * new domain, but it cannot ask any of that, because a set's wizard is the
  * wrong place to decide what a boundary several sets sit inside is for.
  *
- * # Why nothing here writes
+ * # What Create actually creates
  *
- * The /api/v1 contract this build speaks declares exactly two repository
- * routes, both GET: the fleet and one domain's maintenance record. There is
- * no POST /repositories, so there is no honest way to make a Create button
- * work, and a form that collected a passphrase and then could not store it
- * would be worse than one that does not collect it.
+ * A DECLARATION. POST /repositories persists the domain into this
+ * deployment's configuration and writes no store: the repository itself is
+ * created by the first backup run that puts a snapshot in the domain,
+ * which is the same lifecycle a domain named on the add-backup-set wizard
+ * already has. So the create itself opens no storage and resolves no
+ * passphrase reference -- what comes back is the declaration, reported as
+ * a domain whose store has not been written yet -- and the fleet list
+ * this screen navigates to shows the new domain answering but holding no
+ * repository until something has run into it. That is the truth about it
+ * rather than a failed create, which is why the success path says so on
+ * the way out.
  *
- * So the identity fields are DISABLED rather than typable — an input that
- * accepts a passphrase it cannot save is a lie told in the most dangerous
- * field on the screen — while the two questions that are explanatory
- * remain live: choosing Shared or Isolated, and choosing who maintains it,
- * changes what the screen SAYS those answers mean. That is the part an
- * operator needs before they name a domain in the wizard or write one into
- * configuration, and it is true whichever way the write eventually lands.
+ * # Why the passphrase box takes a reference and not a passphrase
+ *
+ * Because the field that took a passphrase would be the most dangerous
+ * input in this product: the request body carrying it reaches an access
+ * log, and what it protects is every snapshot in the domain. The contract
+ * has no field for one. This screen collects a PATH or a variable NAME,
+ * exactly as the configuration file does, and says which it is sending.
+ *
+ * The third spelling the contract accepts -- a command whose stdout is the
+ * passphrase -- is deliberately not a box here. It is an argv array, and a
+ * single input would have to guess where a shell would split it; the CLI
+ * takes it a word at a time instead, and the note below names that verb
+ * rather than pretending this screen can do everything the API can.
+ *
+ * # And why the engine gate is explained rather than pre-checked
+ *
+ * A deployment that does not run the incremental engine refuses this write
+ * with 409 INCREMENTAL_ENGINE_DISABLED, and the refusal's own sentence
+ * names the config key and the environment variable that answer it. The
+ * screen renders that sentence rather than deriving a second opinion about
+ * the gate from a read: two places deciding whether the engine is on is
+ * how they come to disagree.
  */
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useApi } from "@shared/api/ApiContext";
+import { BackupdError } from "@shared/api/contracts";
 import { PageHeader } from "@shared/components/PageHeader";
 import { WarningBanner } from "@shared/components/WarningBanner";
 import { Choice } from "@shared/components/Choice";
@@ -37,12 +59,64 @@ import { DOMAIN_BOUNDARIES } from "@shared/components/EngineBadge";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 type Isolation = "shared" | "isolated";
-type Ownership = "this" | "other";
+type Ownership = "this" | "another-instance";
+type PassphraseSource = "file" | "env";
+
+/** What went wrong, kept apart by what an operator does about it. A
+ *  refusal the deployment makes about itself (the engine is off) is not
+ *  the same as one it makes about this form (the id is taken), and a
+ *  screen that rendered both under the Create button would tell somebody
+ *  to edit a field that is already right. */
+type Refusal = { kind: "engine" | "form"; message: string };
 
 export function RepositoryDomainNewPage() {
   const navigate = useNavigate();
+  const api = useApi();
   const [isolation, setIsolation] = useState<Isolation>("shared");
   const [ownership, setOwnership] = useState<Ownership>("this");
+  const [domain, setDomain] = useState("");
+  const [description, setDescription] = useState("");
+  const [location, setLocation] = useState("");
+  const [passphraseSource, setPassphraseSource] = useState<PassphraseSource>("file");
+  const [passphraseRef, setPassphraseRef] = useState("");
+  const [refusal, setRefusal] = useState<Refusal | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const ready = domain.trim() !== "" && passphraseRef.trim() !== "";
+
+  async function create() {
+    setRefusal(null);
+    setSaving(true);
+    try {
+      await api.createRepositoryDomain({
+        domain: domain.trim(),
+        description: description.trim(),
+        isolation,
+        passphrase:
+          passphraseSource === "file"
+            ? { file: passphraseRef.trim() }
+            : { env: passphraseRef.trim() },
+        location: location.trim(),
+        maintenanceOwner: ownership
+      });
+      // The fleet list re-reads on mount, so the domain is there when it
+      // draws — reported as answering and not yet readable, because
+      // nothing has written its store.
+      navigate("/repositories");
+    } catch (e) {
+      const message =
+        e instanceof BackupdError ? e.api.message : "This repository domain could not be declared.";
+      setRefusal({
+        kind:
+          e instanceof BackupdError && e.api.code === "INCREMENTAL_ENGINE_DISABLED"
+            ? "engine"
+            : "form",
+        message
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <>
@@ -53,22 +127,32 @@ export function RepositoryDomainNewPage() {
         subtitle="A new encrypted store that backup sets can be pointed at."
       />
 
+      {refusal?.kind === "engine" ? (
+        <WarningBanner
+          tone="warn"
+          eyebrow="This deployment does not run the incremental engine"
+          title="Nothing here can be declared until the incremental engine is enabled"
+          dismissible={false}
+        >
+          {refusal.message} Repository domains only exist for that engine, so this deployment has
+          nowhere to put one; the artifact backup sets it already runs are unaffected. Nothing was
+          written, and this form keeps what you typed.
+        </WarningBanner>
+      ) : null}
+
       <WarningBanner
-        tone="warn"
-        eyebrow="Not writable from here yet"
-        title="This build's API has no route that creates a repository domain"
+        tone="info"
+        eyebrow="Declaring is not creating"
+        title="Create writes the declaration; the store is written by the first backup run into it"
         dismissible={false}
       >
-        The contract declares <WireField name="GET /repositories" /> and{" "}
-        <WireField name="GET /repositories/{domain}/maintenance" /> and nothing that writes, so
-        nothing typed here can be saved: every box that would describe the store — its id,
-        location and passphrase — is disabled, and so is Create. The sharing and ownership
-        choices below are live, because they are the decision this screen exists for. A domain is
-        created today by naming it on the Repository domain step of Add backup set — a name
-        nothing declares yet is created when that set first runs, with this deployment&rsquo;s own
-        storage location and passphrase reference — and its location, key and sharing rule are
-        declared in configuration. Choose Shared or Isolated below and it says what each answer
-        commits every set in the domain to.
+        This saves the domain into this deployment&rsquo;s configuration —{" "}
+        <WireField name="POST /repositories" /> — with its id, its sharing rule and a REFERENCE to
+        the passphrase that will open it. No repository is created now and nothing here opens
+        storage or reads your passphrase, so the domain appears on the fleet list as not yet
+        readable — it holds no repository — until a backup set stores its first snapshot in it.
+        That is the same lifecycle a domain named on the Repository domain step of Add backup set
+        already has.
       </WarningBanner>
 
       <section className="card">
@@ -83,24 +167,77 @@ export function RepositoryDomainNewPage() {
               gap: "15px 18px"
             }}
           >
-            <DisabledField label="Domain id" wire="domain" placeholder="offsite-b2" mono />
-            <DisabledField label="Description" placeholder="Second copy, off site" />
-            <DisabledField
-              label="Storage location"
-              wire="storage location"
-              placeholder="b2://acme-backups/primary"
+            <Field
+              label="Domain id"
+              wire="id"
+              placeholder="offsite-b2"
               mono
+              value={domain}
+              onChange={setDomain}
             />
-            <DisabledField
-              label="Encryption passphrase"
-              placeholder="set in configuration, never displayed"
-              type="password"
+            <Field
+              label="Description"
+              wire="description"
+              placeholder="Second copy, off site"
+              value={description}
+              onChange={setDescription}
             />
+            <Field
+              label="Storage location"
+              wire="location"
+              placeholder="this deployment's own storage location"
+              mono
+              value={location}
+              onChange={setLocation}
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              <label className="field">
+                <span className="field__label">
+                  {passphraseSource === "file"
+                    ? "Passphrase file on this NAS"
+                    : "Passphrase environment variable"}
+                </span>
+                <input
+                  className="input input--mono"
+                  type="text"
+                  value={passphraseRef}
+                  placeholder={
+                    passphraseSource === "file"
+                      ? "/etc/backupd/offsite-b2.passphrase"
+                      : "BACKUPD_OFFSITE_B2_PASSPHRASE"
+                  }
+                  onChange={(e) => setPassphraseRef(e.target.value)}
+                />
+              </label>
+              <WireField name={"passphrase." + passphraseSource} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className={"btn" + (passphraseSource === "file" ? " btn--primary" : "")}
+                  onClick={() => setPassphraseSource("file")}
+                >
+                  A file
+                </button>
+                <button
+                  className={"btn" + (passphraseSource === "env" ? " btn--primary" : "")}
+                  onClick={() => setPassphraseSource("env")}
+                >
+                  An environment variable
+                </button>
+              </div>
+            </div>
           </div>
           <Note>
-            A domain&rsquo;s passphrase is stored on this NAS and never displayed again. Losing it
-            loses every snapshot in the domain: nothing else can open the store. That is why this
-            field is not a box you can fill in on a screen that cannot save it.
+            The passphrase itself is never typed here and never travels over this API: what is
+            saved is where to read it from. Losing it loses every snapshot in the domain, because
+            nothing else can open the store. A passphrase produced by a COMMAND is declared from a
+            terminal instead — <WireField name="backupd repository create --passphrase-command" /> —
+            because it is a program and its arguments, and one box could only guess where they
+            split.
+          </Note>
+          <Note>
+            Leave the storage location empty and the domain is stored under this deployment&rsquo;s
+            own storage location, which is the only place this build can put one. A location naming
+            anywhere else is refused rather than quietly ignored.
           </Note>
         </div>
       </section>
@@ -187,72 +324,86 @@ export function RepositoryDomainNewPage() {
             <Choice
               name="domain-ownership"
               title="This instance maintains it"
-              detail="This deployment compacts the store and reclaims its space on the schedule below."
+              detail="This deployment compacts the store and reclaims its space, if nothing else already maintains it: declaring is refused when a maintenance record names somebody else."
               checked={ownership === "this"}
               onChange={() => setOwnership("this")}
             />
             <Choice
               name="domain-ownership"
               title="Another instance maintains it"
-              detail="This deployment reads and writes snapshots here but never maintains the store."
-              checked={ownership === "other"}
-              onChange={() => setOwnership("other")}
+              wire="maintenance_owner=another-instance"
+              detail="This deployment reads and writes snapshots here. It is the answer that lets the declaration through when the store is already maintained elsewhere; nothing about maintenance is recorded by it."
+              checked={ownership === "another-instance"}
+              onChange={() => setOwnership("another-instance")}
             />
           </div>
-          <div
-            style={{
-              marginTop: 14,
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-              gap: "15px 18px"
-            }}
-          >
-            <DisabledField
-              label="Full maintenance window"
-              wire="maintenance window"
-              placeholder={ownership === "this" ? "weekly, Sunday 02:00" : "owned elsewhere"}
-            />
-            <DisabledField
-              label="Quick maintenance"
-              placeholder={ownership === "this" ? "after every backup pass" : "owned elsewhere"}
-            />
+          <div style={{ marginTop: 14 }}>
+            <Note>
+              Neither answer claims anything. Maintenance ownership is a durable record taken by
+              whichever instance first maintains an unclaimed repository, and after that it moves
+              only by transfer (ADR 0017) — so declaring a domain cannot make this deployment its
+              maintainer. What the answer decides is whether this declaration is ALLOWED to be a
+              claim: with &ldquo;this instance&rdquo; chosen, a domain whose maintenance record
+              already names somebody else is refused, and the refusal says who holds it.
+            </Note>
           </div>
           <Note>
             {ownership === "this"
-              ? "Exactly one instance may maintain a domain, and ownership moves by transfer, never by claim: an instance that simply decided it was the owner is how two of them compact one store at once."
-              : "This deployment will still read and write snapshots here. Nothing on this screen can make it the owner: ownership is transferred by the instance that holds it, never taken."}
+              ? "Exactly one instance may maintain a domain, and ownership moves by transfer, never by claim: an instance that simply decided it was the owner is how two of them compact one store at once. Choosing this answer records nothing — it only decides that a domain somebody else already maintains is refused here rather than quietly re-declared."
+              : "This deployment will still read and write snapshots here. Nothing on this screen can make it the owner, or stop it becoming one: ownership is transferred by the instance that holds it, and this answer is not written into the configuration at all."}
           </Note>
         </div>
       </section>
+
+      {refusal?.kind === "form" ? (
+        <WarningBanner
+          tone="danger"
+          eyebrow="Not declared"
+          title="This deployment refused the declaration"
+          dismissible={false}
+        >
+          {refusal.message} Nothing was written, and this form keeps what you typed.
+        </WarningBanner>
+      ) : null}
 
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
         <button className="btn" onClick={() => navigate("/repositories")}>
           Back to repository domains
         </button>
-        <button className="btn btn--primary" disabled title="No API route creates a repository domain yet">
-          Create domain
+        <button
+          className="btn btn--primary"
+          disabled={!ready || saving}
+          title={
+            ready
+              ? "Declare this repository domain"
+              : "A domain needs an id and somewhere to read its passphrase from"
+          }
+          onClick={() => void create()}
+        >
+          {saving ? "Declaring\u2026" : "Create domain"}
         </button>
       </div>
     </>
   );
 }
 
-/** A field this screen can show and cannot write. Disabled rather than
- *  read-only-styled, so nothing about it invites typing, and carrying the
- *  wire field it would map to, because the operator most likely to be on
- *  this screen is the one writing the configuration by hand. */
-function DisabledField({
+/** One field of the declaration, carrying the wire field it maps to,
+ *  because the operator most likely to be on this screen is the one who
+ *  would otherwise be writing this into config.yaml by hand. */
+function Field({
   label,
   wire,
   placeholder,
   mono,
-  type
+  value,
+  onChange
 }: {
   label: string;
-  wire?: string;
+  wire: string;
   placeholder: string;
   mono?: boolean;
-  type?: "password";
+  value: string;
+  onChange(next: string): void;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -260,14 +411,13 @@ function DisabledField({
         <span className="field__label">{label}</span>
         <input
           className={"input" + (mono ? " input--mono" : "")}
-          type={type ?? "text"}
-          value=""
+          type="text"
+          value={value}
           placeholder={placeholder}
-          disabled
-          readOnly
+          onChange={(e) => onChange(e.target.value)}
         />
       </label>
-      {wire ? <WireField name={wire} /> : null}
+      <WireField name={wire} />
     </div>
   );
 }

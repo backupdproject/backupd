@@ -83,7 +83,7 @@ looking for their snapshots in a bucket list.
 | Names where the bytes are | yes: bucket, endpoint, prefix, region, storage class | **no.** A domain names a boundary, a passphrase and a sharing rule; its storage is local, under the backup root |
 | Encrypted by this product | no; the medium's own at-rest encryption applies | always, with the domain's declared passphrase |
 | Credential | `--credentials-id/-file/-env/-command`, per medium | a `passphrase` block naming `file`, `env` or `command`, per domain |
-| Declarable from the CLI or API | yes: `backupd medium add/edit/remove`, and a wizard | **no.** Edit `config.yaml` |
+| Declarable from the CLI or API | yes: `backupd medium add/edit/remove`, and a wizard | yes, declaring only: `backupd repository create`, `POST /repositories`, and the Define a repository domain screen. The declaration is written; the store is realized by the first backup run into the domain. There is no edit or remove verb |
 | Verified by | `backupd medium test-connection` | `backupd repository health` |
 
 A deployment can run both, and they do not interact: an artifact set's

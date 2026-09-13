@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/backupdproject/backupd/core/internal/app"
 	"github.com/backupdproject/backupd/core/service"
 )
 
@@ -30,6 +31,7 @@ import (
 // the repository is usually the thing that is not answering.
 
 var repositoryVerbs = map[string]func(args []string) int{
+	"create":      repositoryCreate,
 	"health":      repositoryHealth,
 	"maintenance": repositoryMaintenance,
 }
@@ -53,6 +55,112 @@ func cmdRepository(args []string) int {
 	}
 
 	return usageError("repository: expected a verb; the verbs are %s", strings.Join(repositoryVerbNames(), ", "))
+}
+
+// repositoryCreate is `backupd repository create <domain> ...` (#862):
+// the terminal's way to declare a repository domain, through the same
+// *BackupService method POST /api/v1/repositories calls.
+//
+// It goes through openConfigWriteRoute rather than openBackupService,
+// like every other verb in this binary that rewrites config.yaml (#538,
+// #543): beside a serving engine, a declaration written into the file by
+// this process is a change that process never reads, and its next
+// configuration write would put the file back without it.
+//
+// It creates no store. The repository is realized by the first backup run
+// that stores a snapshot in the domain, which is the lifecycle a domain
+// named on the add-backup-set wizard's repository step already has; see
+// core/service's repositorydomain.go for why eager creation would be the
+// worse half of that choice.
+func repositoryCreate(args []string) int {
+	fs, cfgPath := newFlagSet("repository create")
+	isolation := fs.String("isolation", "", "shared or isolated: whether more than one backup set may store snapshots here. Required; there is no default")
+	description := fs.String("description", "", "what this domain holds, in the operator's own words")
+	location := fs.String("location", "", "where the repository is stored; empty is this deployment's own storage location, which is the only one it can honour")
+	owner := fs.String("owner", "", "this or another-instance: which deployment maintains the repository (ADR 0017). Empty is this one")
+	passphraseFile := fs.String("passphrase-file", "", "path to a file holding this repository's passphrase")
+	passphraseEnv := fs.String("passphrase-env", "", "name of an environment variable holding this repository's passphrase")
+	var passphraseCommand stringList
+	fs.Var(&passphraseCommand, "passphrase-command", "a command whose stdout is this repository's passphrase; repeat the flag once per argv word")
+
+	operands, err := parseFlagsAroundOperands(fs, args)
+	if err != nil {
+		return 2
+	}
+	if len(operands) != 2 || operands[0] != "create" {
+		return usageError(`repository create: expected "create <repository-domain>" and exactly one domain`)
+	}
+
+	// The two required answers are refused here rather than at the
+	// service, because a terminal can say what to type and an API
+	// refusal cannot. Isolation has no default for the reason the
+	// configuration gives at length: defaulting to shared makes an
+	// isolation boundary a belief, and defaulting to isolated silently
+	// forgoes the deduplication the engine exists for.
+	if *isolation == "" {
+		return usageError("repository create: --isolation is required and is shared or isolated; a domain that does not state its co-tenancy is not a boundary")
+	}
+	named := 0
+	for _, set := range []bool{*passphraseFile != "", *passphraseEnv != "", len(passphraseCommand) > 0} {
+		if set {
+			named++
+		}
+	}
+	if named != 1 {
+		return usageError("repository create: name exactly one of --passphrase-file, --passphrase-env or --passphrase-command; a repository this product creates is always encrypted, and there is no flag to type a passphrase into")
+	}
+
+	ctx := context.Background()
+	route, cleanup, err := openConfigWriteRoute(ctx, *cfgPath)
+	if err != nil {
+		return fail(err)
+	}
+	defer cleanup()
+
+	logStartup(ctx, logger(), app.BuildVersionInfo(version, commit))
+
+	created, err := route.CreateRepositoryDomain(ctx, service.CreateRepositoryDomainRequest{
+		ID:          operands[1],
+		Description: *description,
+		Isolation:   *isolation,
+		Passphrase: service.RepositoryPassphraseRef{
+			File:    *passphraseFile,
+			Env:     *passphraseEnv,
+			Command: passphraseCommand,
+		},
+		Location:         *location,
+		MaintenanceOwner: *owner,
+	})
+	if err != nil {
+		return fail(err)
+	}
+
+	// The declaration, and deliberately NOT printRepositoryHealth's
+	// probe table. A create resolves no passphrase and opens no storage
+	// (core/service's declaredRepositoryHealth says why), so every probe
+	// row would be a false nobody measured -- and "the declared
+	// passphrase did not open this repository" is a sentence about a
+	// store that does not exist yet. `backupd repository health` is the
+	// verb that probes.
+	fmt.Printf("declared repository domain %s  %s\n", created.Domain, created.State)
+	fmt.Printf("  shared:          %v\n", created.MayShare)
+	fmt.Printf("  %s\n", created.Detail)
+	fmt.Printf("  `backupd repository health` probes it; nothing here opened its storage\n")
+
+	return 0
+}
+
+// stringList collects a flag given more than once, which is how an argv
+// array reaches a command line: one word per occurrence, so nothing has
+// to guess where a shell would have split a single string.
+type stringList []string
+
+func (l *stringList) String() string { return strings.Join(*l, " ") }
+
+func (l *stringList) Set(value string) error {
+	*l = append(*l, value)
+
+	return nil
 }
 
 // repositoryHealth is `backupd repository health`.

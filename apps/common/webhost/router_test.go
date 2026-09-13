@@ -241,6 +241,19 @@ var destructiveGateExemptRoutes = map[string]bool{
 	// run_immediately and retention apply, and this is neither.
 	"DELETE /api/v1/backup-sets/{source}/{set}": true,
 
+	// Issue #862: declaring a repository domain. The same tier as POST
+	// /backup-sets, and narrower: what it writes is ONE entry in
+	// config.yaml naming a boundary, an isolation posture and a
+	// passphrase REFERENCE. It opens no storage and creates no
+	// repository -- the store is realized lazily by the first backup run
+	// that puts a snapshot in it -- so there is no backup datum anywhere
+	// in its blast radius, which is what the gate stands in front of. It
+	// cannot even overwrite a declaration that exists: a duplicate id is
+	// refused with REPOSITORY_DOMAIN_EXISTS and the file is left alone
+	// (core/service's
+	// TestCreateRepositoryDomain_RefusesADuplicateIdAndWritesNothing).
+	"POST /api/v1/repositories": true,
+
 	// Issue #176 (B3.x): the setup submission of an instance that has no
 	// configuration yet. Gating it would be self-defeating in the literal
 	// sense: requireDestructiveGate refuses until an operator turns

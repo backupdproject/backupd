@@ -798,3 +798,76 @@ func mediumPreflightFromWire(r apicontract.MediumPreflightResponse) service.Medi
 	}
 	return out
 }
+
+// CreateRepositoryDomain is `repository create` routed at the engine
+// (#862). The declaration crosses in the contract's spelling and the
+// answer comes back as the domain's health, which is the shape the direct
+// route answers with too, so the same printer renders both modes.
+func (r *engineRoute) CreateRepositoryDomain(ctx context.Context, req service.CreateRepositoryDomainRequest) (service.RepositoryHealth, error) {
+	resp, err := r.client.CreateRepositoryDomain(ctx, apicontract.CreateRepositoryDomainRequest{
+		ID:          req.ID,
+		Description: req.Description,
+		Isolation:   req.Isolation,
+		Passphrase: apicontract.RepositoryPassphraseReference{
+			File:    req.Passphrase.File,
+			Env:     req.Passphrase.Env,
+			Command: req.Passphrase.Command,
+		},
+		Location:         req.Location,
+		MaintenanceOwner: req.MaintenanceOwner,
+	})
+	if err != nil {
+		return service.RepositoryHealth{}, err
+	}
+	return repositoryHealthFromWire(resp), nil
+}
+
+// repositoryHealthFromWire is the engine's verdict in this binary's own
+// shape.
+//
+// The nullable skew keeps its two states, which is the whole reason it is
+// nullable: null is "there is no durable timestamp to compare against
+// yet", and zero is a clock that agrees exactly. Flattening them would
+// make a brand-new deployment print a perfectly synchronised clock it has
+// never measured.
+func repositoryHealthFromWire(r apicontract.RepositoryHealth) service.RepositoryHealth {
+	out := service.RepositoryHealth{
+		Domain:                 r.Domain,
+		MayShare:               r.MayShare,
+		BackupSets:             r.BackupSets,
+		State:                  r.State,
+		Reachable:              r.Reachable,
+		Readable:               r.Readable,
+		Writable:               r.Writable,
+		CredentialsValid:       r.CredentialsValid,
+		ClockSane:              r.ClockSane,
+		MaintenanceOverdue:     r.MaintenanceOverdue,
+		LastMaintenanceAt:      wireInstant(r.LastMaintenanceAt),
+		LastMaintenanceResult:  r.LastMaintenanceResult,
+		LastSnapshotAt:         wireInstant(r.LastSnapshotAt),
+		LastSnapshotStatus:     r.LastSnapshotStatus,
+		LastVerificationAt:     wireInstant(r.LastVerificationAt),
+		LastVerificationStatus: r.LastVerificationStatus,
+		Detail:                 r.Detail,
+	}
+	if r.ClockSkewSeconds != nil {
+		skew := time.Duration(*r.ClockSkewSeconds) * time.Second
+		out.ClockSkew = &skew
+	}
+	return out
+}
+
+// wireInstant reads one RFC3339 timestamp, and reads an absent or
+// unparseable one as the zero time -- which is exactly what every printer
+// in this binary already renders as "never" or "none". A route that
+// errored here would fail a create that had already succeeded.
+func wireInstant(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}

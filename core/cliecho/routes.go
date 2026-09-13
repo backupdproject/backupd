@@ -484,6 +484,42 @@ var routes = map[string]entry{
 		build:    func(Action) *cmd { return newCmd("repository", "health") },
 		examples: []Action{{}},
 	},
+	key("POST", "/repositories"): {
+		// `repository create` writes the same declaration through the
+		// same door, so the line is the whole request: the id as the
+		// operand, the co-tenancy posture, and where the passphrase is
+		// read from.
+		//
+		// The passphrase's three spellings are echoed exactly as the
+		// storage destination's four credential spellings are, and for
+		// the same reasons: --passphrase-file is a PATH, --passphrase-env
+		// is a variable NAME, and --passphrase-command is named and never
+		// printed, because its words are the caller's and `printf %s
+		// hunter2` is a valid passphrase command and a secret on a
+		// command line.
+		build: func(a Action) *cmd {
+			var req apicontract.CreateRepositoryDomainRequest
+			if !decode(a.Body, &req) {
+				return nil
+			}
+			c := newCmd("repository", "create", req.ID)
+			c.flagIfSet("isolation", req.Isolation)
+			c.flagIfSet("description", req.Description)
+			c.flagIfSet("location", req.Location)
+			c.flagIfSet("owner", req.MaintenanceOwner)
+			c.flagIfSet("passphrase-file", req.Passphrase.File)
+			c.flagIfSet("passphrase-env", req.Passphrase.Env)
+			if len(req.Passphrase.Command) > 0 {
+				c.placeholderFlag("passphrase-command", "the command that prints this repository's passphrase")
+			}
+			return c
+		},
+		why: "there is no verb that declares a repository domain from a request body",
+		examples: []Action{
+			{Body: []byte(`{"id":"offsite-b2","isolation":"isolated","description":"Second copy, off site","passphrase":{"file":"/etc/backupd/offsite-b2.passphrase"}}`)},
+			{Body: []byte(`{"id":"production","isolation":"shared","maintenance_owner":"another-instance","passphrase":{"env":"BACKUPD_PRODUCTION_PASSPHRASE"}}`)},
+		},
+	},
 	key("GET", "/repositories/{domain}/maintenance"): {
 		build: func(a Action) *cmd {
 			return newCmd("repository", "maintenance", a.Params["domain"])

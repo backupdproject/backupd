@@ -386,6 +386,18 @@ commands:
   snapshot unhold <source/backup-set> <hold-id>  end one hold, by the id snapshot holds prints. Releasing
                                                   deletes nothing; it returns the snapshot to whatever the
                                                   retention policy already said about it
+  repository create <repository-domain> --isolation shared|isolated
+                    (--passphrase-file F | --passphrase-env V | --passphrase-command W ...)
+                    [--description D] [--location L] [--owner this|another-instance]
+                                                 declare a repository domain: the boundary an incremental backup
+                                                  set stores its snapshots in. --isolation is required and has no
+                                                  default, because sets sharing a domain share one encryption key,
+                                                  one credential, one maintenance owner, one deduplication pool
+                                                  and one corruption blast radius. The passphrase is a REFERENCE
+                                                  in all three spellings and there is no flag to type one into;
+                                                  repeat --passphrase-command once per argv word. Nothing is
+                                                  stored yet: the repository itself is written the first time a
+                                                  backup set stores a snapshot in the domain
   repository health                              every declared repository domain and its own verdict:
                                                   reachable, readable, writable, whether the declared passphrase
                                                   opens it, whether this machine's clock can be trusted for the

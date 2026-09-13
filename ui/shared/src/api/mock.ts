@@ -332,19 +332,23 @@ const PRISTINE_SETS: BackupSet[] = SETS.map((set) => ({
 }));
 
 /**
- * Puts the fixture backup sets back exactly as this module declares them.
+ * Puts the fixture backup sets and repository domains back exactly as
+ * this module declares them.
  *
  * Call it in a test's afterEach when the test drives a mutating method
- * (createBackupSet, updateBackupSet). Without it, a suite's Nth test sees
- * whatever its predecessors wrote, which is not a hypothetical: the
- * inline-edit suite's "never send a hidden field" case first failed
- * because an earlier case in the same file had already switched the
- * fixture's completion method to the very value it was checking was
- * absent.
+ * (createBackupSet, updateBackupSet, createRepositoryDomain). Without
+ * it, a suite's Nth test sees whatever its predecessors wrote, which is
+ * not a hypothetical: the inline-edit suite's "never send a hidden
+ * field" case first failed because an earlier case in the same file had
+ * already switched the fixture's completion method to the very value it
+ * was checking was absent. createRepositoryDomain has the same reach --
+ * it PUSHES the declared domain onto the fleet fixture, so a second case
+ * declaring the same id meets a REPOSITORY_DOMAIN_EXISTS its own
+ * scenario never set up.
  *
  * The clone is deep enough for what these fixtures hold: the arrays are
  * arrays of strings and the incremental block is flat, so copying those
- * three is what stops a patch that replaces includePatterns, or one that
+ * is what stops a patch that replaces includePatterns, or one that
  * raises a verification level, leaking into the pristine copy.
  */
 export function resetMockFixtures(): void {
@@ -356,6 +360,11 @@ export function resetMockFixtures(): void {
       excludePatterns: [...set.excludePatterns],
       incremental: set.incremental === null ? null : { ...set.incremental }
     });
+  }
+
+  MOCK_REPOSITORIES.length = 0;
+  for (const repository of PRISTINE_REPOSITORIES) {
+    MOCK_REPOSITORIES.push({ ...repository, backupSets: [...repository.backupSets] });
   }
 }
 
@@ -1456,6 +1465,14 @@ const MOCK_REPOSITORIES: RepositoryHealth[] = [
       "Isolated: one backup set only. A second set pointed here is refused. Full maintenance has not run inside its window since nas-02 last claimed it."
   }
 ];
+
+/** A copy of MOCK_REPOSITORIES as declared, for the same reason
+ *  PRISTINE_SETS exists: createRepositoryDomain writes into the array the
+ *  fleet read serves. */
+const PRISTINE_REPOSITORIES: RepositoryHealth[] = MOCK_REPOSITORIES.map((repository) => ({
+  ...repository,
+  backupSets: [...repository.backupSets]
+}));
 
 const MOCK_MAINTENANCE: Record<string, RepositoryMaintenance> = {
   "primary-nas": {
@@ -2855,6 +2872,71 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
           })
         );
       return delay(record);
+    },
+    // Issue #862. The mock DECLARES the domain into the fixture the fleet
+    // read serves, because that is what the real route does and it is
+    // what the screen after the create shows: a mock that resolved with a
+    // detached object would let the wizard ship without ever proving the
+    // domain turns up on the list it navigates to.
+    //
+    // The two objects below are deliberately DIFFERENT, and that is the
+    // whole fidelity of this fixture. The 201 is built from the
+    // declaration: the real route opens no storage and resolves no
+    // passphrase reference, so every access boolean is false because
+    // nothing was measured, and the verdict is DEGRADED rather than a
+    // green row nobody took a reading for. The fleet ROW is what
+    // GET /repositories then probes and reports, which for a domain
+    // nothing has run into is reachable and NOT readable: the storage
+    // answers and holds no repository (kopia's ErrRepositoryNotFound;
+    // core/internal/app/repositoryhealth.go). Reporting it unreachable —
+    // which this fixture did — sends an operator to check a mount that
+    // is fine.
+    createRepositoryDomain: (req) => {
+      if (MOCK_REPOSITORIES.some((repo) => repo.domain === req.domain))
+        return Promise.reject(
+          new BackupdError({
+            code: "REPOSITORY_DOMAIN_EXISTS",
+            message: "this deployment already declares a repository domain of that id: " + req.domain,
+            correlationId: "cid_mock409"
+          })
+        );
+
+      const unprobed = {
+        domain: req.domain,
+        mayShare: req.isolation === "shared",
+        writable: false,
+        credentialsValid: false,
+        clockSane: true,
+        clockSkewSeconds: null,
+        maintenanceOverdue: false,
+        lastMaintenanceAt: null,
+        lastMaintenanceResult: "",
+        lastSnapshotAt: null,
+        lastSnapshotStatus: "",
+        lastVerificationAt: null,
+        lastVerificationStatus: "",
+        backupSets: []
+      };
+
+      const declared: RepositoryHealth = {
+        ...unprobed,
+        state: "DEGRADED",
+        reachable: false,
+        readable: false,
+        detail:
+          "this repository domain is declared and its store has not been created yet: it is written by the first backup run that stores a snapshot here, so nothing above is a reading of storage"
+      };
+
+      MOCK_REPOSITORIES.push({
+        ...unprobed,
+        state: "FAILING",
+        reachable: true,
+        readable: false,
+        detail:
+          "the storage answered and holds no repository, which is what an empty or wrongly-mounted location looks like; nothing has been created here, deliberately"
+      });
+
+      return delay(declared);
     },
 
     getOperation: (id) => {

@@ -121,6 +121,40 @@ func (s *Service) RepositoryHealth(ctx context.Context) ([]health.RepositoryHeal
 	return out, nil
 }
 
+// MaintenanceOwnerOf reports which instance the durable record says
+// maintains one repository, and "" when nothing has ever maintained it.
+//
+// Unlike RepositoryMaintenance below, it does NOT require the domain to
+// be declared, and that is the whole point of it: the caller is the
+// create route, which asks before the declaration exists (#862). A
+// record for an undeclared id is not a contradiction -- it is what a
+// re-declared id, or a state directory shared with a second instance,
+// leaves behind, and it is exactly the case ADR 0017 says a declaration
+// must not quietly overwrite by becoming a claim.
+//
+// It opens no repository: the record is a file this deployment writes
+// beside its own state. An unreadable record reads as no record, on the
+// same terms maintenanceRecord already sets, and the create's refusal is
+// therefore never raised on the strength of something this deployment
+// could not read.
+func (s *Service) MaintenanceOwnerOf(ctx context.Context, domain string) string {
+	if s.Config == nil {
+		return ""
+	}
+
+	id, err := model.NewRepositoryDomainID(domain)
+	if err != nil {
+		return ""
+	}
+
+	record := s.maintenanceRecord(ctx, id)
+	if record == nil {
+		return ""
+	}
+
+	return record.Owner.String()
+}
+
 // RepositoryMaintenanceState is one repository's maintenance state, read
 // from the durable ownership record and weighed against the schedule.
 //
