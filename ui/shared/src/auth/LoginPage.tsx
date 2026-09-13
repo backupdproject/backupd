@@ -63,7 +63,16 @@ export function describeLoginFailure(e: unknown): OperatorFailure {
 export function LoginPage({ onSignedIn }: { onSignedIn(): void }) {
   return (
     <TooltipsSuppressed.Provider value={true}>
-      <SignInForm onSignedIn={onSignedIn} />
+      {/* The same fact twice, because since issue #874 two layers ask it
+          and only one of them can read React context. A host inside this
+          subtree reads the provider; the delegated `data-tip` layer is
+          mounted at the app root and, by the time it has a trigger, has
+          an element and not a position in the tree — so the DOM states
+          it too. `display: contents` because this screen's layout is not
+          this wrapper's business. */}
+      <div data-tips="off" style={{ display: "contents" }}>
+        <SignInForm onSignedIn={onSignedIn} />
+      </div>
     </TooltipsSuppressed.Provider>
   );
 }
