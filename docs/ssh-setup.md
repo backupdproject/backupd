@@ -482,3 +482,89 @@ reason.
   themselves. A `key_encryption` source that doesn't actually decrypt an
   at-rest-encrypted key file fails that connection loudly rather than
   silently falling back to treating the file as plaintext.
+
+## Running workflow hooks on the source host
+
+Everything above deliberately produces an account that **cannot run a
+command**: step 3 chroots it and forces `internal-sftp`, which is the
+right posture for a backup source and is exactly what backupd's own
+machine-tier fixture runs against.
+
+That has a direct consequence for EPIC L's remote hooks. A
+`NAME.remote.sh` runs on this source host, and backupd does not assume
+the transfer credential above grants shell access to it. Asked to run a
+command, an `internal-sftp`-forced account answers `This service allows
+sftp connections only.`; an account pinned behind a forced command
+(`command=` in `authorized_keys`, `ForceCommand` in `sshd_config`) runs
+that program instead and exits 0. Both are refused as workflow
+executors, with a reason naming the missing capability, and **artifact
+backup over the same credential keeps working unchanged**.
+
+To run remote hooks, declare a separate execution connection and point
+the backup set at it:
+
+```yaml
+workflows:
+  root: /workflows
+  global:
+    before_dir: global-before
+  exec_connections:
+    - id: db-hooks
+      remote:
+        type: sftp
+        host: db.example.com
+        user: backupd-hooks          # NOT the transfer account
+        known_hosts: /etc/backupd/known_hosts
+        key:
+          file: /etc/backupd/hooks_ed25519
+
+sources:
+  - id: production
+    backup_sets:
+      - id: db
+        # ... the transfer remote from step 5, unchanged ...
+        workflow:
+          remote_exec_connection_ref: db-hooks
+```
+
+The second account is created exactly like the first (steps 1, 2 and 4
+apply unchanged: its own key, its own `known_hosts` entry — the same host
+key, so step 4's capture covers both) with one difference: it keeps a
+shell, because running a command is the whole point of it. Give it the
+narrowest privileges the hooks actually need. backupd runs a hook **as
+that user** and never escalates: there is no configuration field for
+`sudo`, `su` or a command prefix.
+
+`remote_exec_connection_ref` may also name a backup set, spelled
+`source/set`, which means "reuse that set's own source connection". That
+is the right answer when the source account already has a shell on
+purpose. It is not a shortcut around the paragraph above: the connection
+is still put through a real capability check at the start of every run,
+and an `internal-sftp` account named that way is refused just the same.
+
+What backupd guarantees about a remote hook, and what it does not:
+
+- The script is streamed over the SSH channel's standard input. Nothing
+  is uploaded and no file is written on the source host at any point, so
+  there is nothing to clean up and nothing left behind if the connection
+  drops mid-hook.
+- No environment value and no secret is ever placed on the remote command
+  line, where every account on that host could read it out of the process
+  list.
+- No PTY is allocated, so the hook's stdout and stderr stay separate
+  streams.
+- Nothing is injected into the script: no `set -e`, no `nounset`, no
+  `pipefail`, no `xtrace`. A hook runs exactly as written.
+- The account's own shell startup files are that account's trust
+  boundary. Hooks are invoked with `--noprofile --norc`, so `~/.bashrc`
+  cannot change a hook's environment — but a `BASH_ENV` the server
+  exports for that account is read by bash before anything backupd sends
+  can clear it, so a connection whose session arrives with `BASH_ENV` or
+  `ENV` set is refused rather than run.
+- On a timeout or a cancellation, backupd asks the remote side to stop
+  and records whether it could **prove** that it did
+  (`confirmed`/`unconfirmed`). A hook that deliberately detaches a child
+  (`nohup`, `setsid`, a double fork) is outside that guarantee, and the
+  step says `unconfirmed` rather than claiming a clean stop.
+
+`docs/adr/0021-remote-ssh-exec.md` is the full reasoning.
