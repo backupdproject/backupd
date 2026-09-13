@@ -219,10 +219,14 @@ input, select, textarea, button {
    only their shape. Same anatomy as the field-help pop-up above, one class
    tree down, because this one hangs off buttons, nav rows, badges and
    numbers rather than off a labelled input: it sizes to its content
-   instead of to the control, it can align to its host's right edge for a
-   host at the end of a row, and it styles the tags the registry's HTML is
+   instead of to the control, it is placed from script rather than from
+   its host's box (#847), and it styles the tags the registry's HTML is
    allowed to use. */
-.tooltip { position: relative; display: inline-flex; align-items: center; }
+/* The host establishes a containing block for nothing: since #847 the
+   pop-up is portalled out of it and fixed to the viewport. What is left
+   is the host's own layout, which is a wrapper that must not change how
+   the thing it wraps sits in a row. */
+.tooltip { display: inline-flex; align-items: center; }
 .tooltip--block { display: block; }
 /* The icon-only host, for headings and column labels with no control of
    their own to hang the explanation off. Quiet until it is wanted. */
@@ -236,9 +240,14 @@ input, select, textarea, button {
 }
 .tooltip__trigger:hover { background: var(--surface-3); color: var(--text-2); }
 .tooltip__pop {
-  position: absolute; z-index: 40;
-  top: calc(100% + 6px); left: 0;
-  width: max-content; max-width: min(340px, 84vw);
+  /* Fixed, and placed from JavaScript (tooltips/popover.ts): an absolute
+     pop-up is positioned against, clipped by and painted under whichever
+     ancestor happens to establish its containing block, which is the
+     defect #847 is about. The z-index is above the modal overlay's 50 as
+     well, because a tooltip inside a dialog explains that dialog. */
+  position: fixed; z-index: 90;
+  top: 0; left: 0;
+  width: max-content; max-width: min(340px, calc(100vw - 16px));
   display: flex; align-items: flex-start; gap: var(--space-2);
   padding: 10px 12px;
   background: var(--surface);
@@ -255,9 +264,6 @@ input, select, textarea, button {
   color: var(--text-2);
   cursor: default;
 }
-/* A host at the right-hand end of a row would otherwise push its pop-up
-   off the page. */
-.tooltip__pop--end { left: auto; right: 0; }
 /* Load-bearing, exactly as it is for .fieldhelp__pop above and for the
    same reason: `hidden` gets its display: none from the user-agent
    stylesheet, which the author `display` above beats outright. Without

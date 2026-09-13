@@ -87,13 +87,28 @@
  * #829's one-question promise holds however many tooltips #834 adds. Not
  * when tooltips are already off, which since #839 is a state a pop-up on
  * screen can be in: see `useHoverPopover`.
+ *
+ * # Where the pop-up actually lives (issue #847)
+ *
+ * Not in the host's subtree. It is portalled into one layer at the end of
+ * <body> and positioned from the host's viewport rectangle, because the
+ * cards these hosts sit in clip what overflows them and the next card
+ * paints over what is left — see tooltips/popover.ts, which argues that
+ * and owns the arithmetic. A portal changes nothing about the React tree,
+ * so the state, the context reads, the cloned aria-describedby and every
+ * synthetic handler here are the same as they were; the two rules that
+ * ask the DOM directly rather than React (a click outside, focus leaving)
+ * are given `popRef` so they still see one pop-up in two subtrees.
  */
-import { cloneElement, isValidElement, useId } from "react";
+import { createPortal } from "react-dom";
+import { cloneElement, isValidElement, useId, useLayoutEffect, useState } from "react";
 import type { CSSProperties, ReactElement, ReactNode } from "react";
 import { Icon } from "@shared/design-system/icons";
 import { useTooltipsSuppressed, useTooltipsVisible } from "@shared/hooks/useTooltips";
 import { lookupTooltip } from "@shared/tooltips/tooltips";
 import type { TooltipId } from "@shared/tooltips/tooltips";
+import { placePopover, tooltipLayer } from "@shared/tooltips/popover";
+import type { PopoverPlacement } from "@shared/tooltips/popover";
 import { useHoverPopover } from "@shared/tooltips/useHoverPopover";
 
 export interface InfoTooltipProps {
@@ -127,9 +142,66 @@ export function InfoTooltip({ id, children, block, alignEnd, style }: InfoToolti
   const bodyId = "tip" + useId().replace(/:/g, "");
   const visible = useTooltipsVisible();
   const suppressed = useTooltipsSuppressed();
-  const { ref: host, shown, hostProps, pin, toggle, dismiss } = useHoverPopover<HTMLSpanElement>({
-    enabled: visible
-  });
+  const {
+    ref: host,
+    popRef,
+    shown,
+    hostProps,
+    pin,
+    toggle,
+    dismiss
+  } = useHoverPopover<HTMLSpanElement>({ enabled: visible });
+  // The hook is the gate: with the preference off it opens for a press of
+  // the icon and for nothing else (#839), so there is nothing here to
+  // disagree with it.
+  const open = shown;
+
+  // The shared overlay layer, resolved once per host: `useState`'s lazy
+  // initialiser rather than a call in the body, so a re-render does not
+  // go looking for it on every pass.
+  const [layer] = useState(tooltipLayer);
+
+  // Where the portalled pop-up sits in the viewport, `null` until it has
+  // been measured at least once — which is what the hidden first frame
+  // below is about, since an unmeasured fixed element paints in the
+  // corner of the screen.
+  //
+  // A closed pop-up keeps the last numbers rather than clearing them.
+  // Not laziness: this runs BEFORE paint, so re-opening measures again in
+  // the same commit and the stale position is never on screen, and
+  // clearing it would be a setState in an effect body for a value nothing
+  // can see.
+  const [placement, setPlacement] = useState<PopoverPlacement | null>(null);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const anchor = host.current;
+      const pop = popRef.current;
+      if (!anchor || !pop) return;
+      const next = placePopover(
+        anchor.getBoundingClientRect(),
+        pop.getBoundingClientRect(),
+        { width: window.innerWidth, height: window.innerHeight },
+        alignEnd === true
+      );
+      // Same numbers, same object: a scroll fires this dozens of times a
+      // second and a fresh object each time re-renders every open tooltip
+      // for nothing.
+      setPlacement((prev) => (prev && prev.top === next.top && prev.left === next.left ? prev : next));
+    };
+    measure();
+    // Capture, because the thing that scrolls is usually not the window:
+    // these pages scroll a main element, and a scroll event from one does
+    // not bubble. Fixed to the viewport, the pop-up would otherwise stay
+    // where it was while the control it explains moved out from under it.
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", measure);
+    };
+  }, [open, alignEnd, host, popRef]);
+
   const entry = lookupTooltip(id);
 
   // An id with no entry renders the thing it was wrapping and no host at
@@ -141,10 +213,6 @@ export function InfoTooltip({ id, children, block, alignEnd, style }: InfoToolti
   if (!entry) return <>{children}</>;
 
   const label = entry.label ?? id;
-  // The hook is the gate now: with the preference off it opens for a press
-  // of the icon and for nothing else (#839), so there is no second gate
-  // here to disagree with it.
-  const open = shown;
   // No icon on a surface that carries none — the sign-in screen. Its press
   // outranks the preference, so not drawing it is the only thing that
   // still closes that surface off.
@@ -194,53 +262,68 @@ export function InfoTooltip({ id, children, block, alignEnd, style }: InfoToolti
         described
       )}
 
-      <span
-        className={"tooltip__pop" + (alignEnd ? " tooltip__pop--end" : "")}
-        hidden={!open}
-        // Clicking the pop-up pins it, so copy can be read while the
-        // pointer travels to a scrollbar. A click on the close button
-        // inside stops before it reaches here, so closing cannot re-pin.
-        onClick={pin}
-      >
-        <span className="tooltip__icon" aria-hidden="true">
-          <Icon name="info" size={13} />
-        </span>
-        {/* The registry's HTML, rendered as HTML. First-party copy from a
-            committed JSON file and never anything from an API, an operator
-            or a URL — see the registry's module doc, which is where that
-            rule is argued and where it has to keep being true. */}
+      {createPortal(
         <span
-          id={bodyId}
-          className="tooltip__body"
-          dangerouslySetInnerHTML={{ __html: entry.html }}
-        />
-        {/* Named by aria-label rather than by visually-hidden text, which
-            is where this parts company with FieldHelp's own close control
-            and why. That name has to contain the label of the thing being
-            explained, because a page now carries dozens of these and
-            "Close help" on all of them names none of them. As TEXT, that
-            label would be a second element on the page reading "No
-            activity yet" or "Everything" — every getByText and every
-            find-in-page for a short label would match the close button of
-            its own tooltip. A label the browser does not put in the
-            document is the only form of this name that does not do that.
-            FieldHelp's is text because its one control sits inside a
-            <label> whose accessible name an aria-label would capture. */}
-        <button
-          type="button"
-          className="tooltip__close"
-          aria-label={"Close help for " + label}
-          onClick={(event) => {
-            event.stopPropagation();
-            dismiss();
+          ref={popRef}
+          className="tooltip__pop"
+          hidden={!open}
+          // The position CSS cannot know: the host's rectangle in the
+          // viewport, recomputed above whenever that rectangle moves.
+          // Hidden until it has one, because the first paint of an
+          // unmeasured pop-up is at the top-left corner of the screen.
+          style={{
+            top: (placement?.top ?? 0) + "px",
+            left: (placement?.left ?? 0) + "px",
+            visibility: placement ? undefined : "hidden"
           }}
+          // Clicking the pop-up pins it, so copy can be read while the
+          // pointer travels to a scrollbar. A click on the close button
+          // inside stops before it reaches here, so closing cannot re-pin.
+          onClick={pin}
         >
-          {/* A literal character in a string expression rather than an
-              escape in JSX text: `&times;` written as element content
-              renders as the six characters (issue #257). */}
-          <span aria-hidden="true">{"\u00d7"}</span>
-        </button>
-      </span>
+          <span className="tooltip__icon" aria-hidden="true">
+            <Icon name="info" size={13} />
+          </span>
+          {/* The registry's HTML, rendered as HTML. First-party copy from a
+              committed JSON file and never anything from an API, an operator
+              or a URL — see the registry's module doc, which is where that
+              rule is argued and where it has to keep being true. */}
+          <span
+            id={bodyId}
+            className="tooltip__body"
+            dangerouslySetInnerHTML={{ __html: entry.html }}
+          />
+          {/* Named by aria-label rather than by visually-hidden text, which
+              is where this parts company with FieldHelp's own close control
+              and why. That name has to contain the label of the thing being
+              explained, because a page now carries dozens of these and
+              "Close help" on all of them names none of them. As TEXT, that
+              label would be a second element on the page reading "No
+              activity yet" or "Everything" — every getByText and every
+              find-in-page for a short label would match the close button of
+              its own tooltip. A label the browser does not put in the
+              document is the only form of this name that does not do that.
+              FieldHelp's is text because its one control sits inside a
+              <label> whose accessible name an aria-label would capture. */}
+          <button
+            type="button"
+            className="tooltip__close"
+            aria-label={"Close help for " + label}
+            onClick={(event) => {
+              event.stopPropagation();
+              dismiss();
+            }}
+          >
+            {/* A literal character in a string expression rather than an
+                escape in JSX text: `&times;` written as element content
+                renders as the six characters (issue #257). */}
+            <span aria-hidden="true">{"\u00d7"}</span>
+          </button>
+        </span>,
+        // Out of this subtree entirely: the card around it clips, and the
+        // card after it paints later (#847).
+        layer
+      )}
     </span>
   );
 }
