@@ -297,6 +297,23 @@ func (a *Adapter) OpenRepository(ctx context.Context, loc backupengine.Repositor
 		return nil, err
 	}
 
+	// The engine's own snapshot retention is turned off here, once per
+	// repository, and enginepolicy.go is where the argument lives: the
+	// vendor's uploader applies the repository's retention policy at every
+	// mid-upload checkpoint, and its default policy would delete this
+	// product's snapshots -- holds included -- during an unrelated backup.
+	// It reads a manifest and writes nothing on a repository this product
+	// has already neutralized.
+	if err := disableEngineRetention(ctx, rep); err != nil {
+		release()
+
+		if cerr := rep.Close(ctx); cerr != nil {
+			return nil, fmt.Errorf("%w; closing it also failed: %w", err, cerr)
+		}
+
+		return nil, err
+	}
+
 	return &repository{rep: rep, direct: direct, loc: loc, adapter: a, release: release}, nil
 }
 
