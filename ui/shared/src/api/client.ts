@@ -90,6 +90,17 @@ import type {
   WireRetentionOverride,
   WireRetentionPlan,
   WireRetentionSettings,
+  WireListRepositoriesResponse,
+  WireListSnapshotHoldsResponse,
+  WireListSnapshotsResponse,
+  WireRepositoryHealth,
+  WireRepositoryMaintenance,
+  WireSnapshot,
+  WireSnapshotHold,
+  WireSnapshotResponse,
+  WireSnapshotRetentionResponse,
+  WireSnapshotRetentionVerdict,
+  WireSnapshotTransition,
   WireSSHKey,
   WireTestConnectionResponse,
   WireRetentionTier,
@@ -125,6 +136,7 @@ import type {
   SSHKeyImportResult,
   SSHKeyListing,
   SmtpSettingsInput,
+  SnapshotOperationResult,
   UpdateSettingsRequest
 } from "./contracts";
 import type {
@@ -138,6 +150,23 @@ import type {
   RetentionPlan,
   RetentionVerdictAction
 } from "@shared/types/backup";
+import type {
+  BackupEngine,
+  RepositoryFleet,
+  RepositoryHealth,
+  RepositoryMaintenance,
+  RepositoryState,
+  Snapshot,
+  SnapshotDetail,
+  SnapshotHold,
+  SnapshotRetentionAction,
+  SnapshotRetentionPreview,
+  SnapshotRetentionVerdict,
+  SnapshotTransition,
+  SnapshotVerificationStatus,
+  SourceConsistency,
+  VerificationLevel
+} from "@shared/types/snapshot";
 import type {
   ActivityEvent,
   ActivityEventType,
@@ -418,7 +447,24 @@ function wireBackupSetSpec(req: CreateBackupSetRequest): WireBackupSetSpec {
     stable_for_seconds: req.stableForSeconds,
     stale_after_seconds: req.staleAfterSeconds,
     disabled: req.disabled,
-    read_only: req.readOnly
+    read_only: req.readOnly,
+    // EPIC K (issue #788). `engine` travels on EVERY create: the wizard
+    // asks the question outright and sends the answer, including the
+    // artifact one, because a set's engine is the choice that cannot be
+    // undone and a request that left it to a server default would be
+    // relying on the default matching what the operator was shown.
+    //
+    // The four incremental settings are the other case, and `undefined`
+    // there is the honest shape: a repository domain on an artifact set
+    // is a field the service must either refuse or ignore, and the
+    // wizard does not collect one.
+    engine: req.engine,
+    repository_domain: req.repositoryDomain,
+    source_consistency: req.sourceConsistency,
+    verification_level: req.verificationLevel,
+    verification_sample_percent: req.verificationSamplePercent,
+    verification_full_every_seconds: req.verificationFullEverySeconds,
+    verification_restore_drill_every_seconds: req.verificationRestoreDrillEverySeconds
   };
 }
 
@@ -539,6 +585,9 @@ const COMPLETION_STRATEGY_TO_METHOD: Record<string, CompletionMethod> = {
  */
 function fromWireBackupSet(bs: WireBackupSet, health?: WireBackupSetHealth): BackupSet {
   const haltReason = health ? HALT_REASON[health.halt_reason ?? ""] : undefined;
+  // Read once, because two fields below depend on it: the engine, and
+  // whether there is an incremental block at all.
+  const engine: BackupEngine = bs.engine === "kopia" ? "kopia" : "artifact";
   return {
     id: bs.id,
     // BackupSet.source/BackupSet.set are model.BackupSetID's own two
@@ -639,7 +688,30 @@ function fromWireBackupSet(bs: WireBackupSet, health?: WireBackupSetHealth): Bac
     // the `?? ""` covers a server that predates the field. Both arrive
     // here as "", and the render site says so rather than showing a blank
     // where an id goes.
-    sshKeyId: bs.ssh_key_id ?? ""
+    sshKeyId: bs.ssh_key_id ?? "",
+
+    // EPIC K (issue #788). `engine` is a required enum on the wire, so
+    // the fallback covers only a response from an engine that predates
+    // the field, where "artifact" is what every set actually was.
+    engine,
+    // One block, present only for the incremental engine. Keyed on the
+    // ENGINE rather than on whether any of the six fields arrived: a
+    // deployment that has not recorded a consistency mode yet still runs
+    // an incremental set, and deriving presence from the values would
+    // report that set as an artifact one.
+    incremental:
+      engine === "kopia"
+        ? {
+            repositoryDomain: bs.repository_domain || null,
+            sourceConsistency: consistencyOf(bs.source_consistency),
+            verificationLevel: verificationLevelOf(bs.verification_level),
+            verificationSamplePercent: counter(bs.verification_sample_percent),
+            verificationFullEverySeconds: counter(bs.verification_full_every_seconds),
+            verificationRestoreDrillEverySeconds: counter(
+              bs.verification_restore_drill_every_seconds
+            )
+          }
+        : null
   };
 }
 
@@ -693,6 +765,11 @@ function fromWireConnectionTestOutcome(r: WireTestConnectionResponse): Connectio
   return {
     ok: r.ok,
     ...(r.message ? { message: r.message } : {}),
+    // `?? false` rather than `r.writable`: an engine that predates issue
+    // #852 sends no field at all, and the safe reading of "nobody
+    // proved this source can be written to" is that the
+    // delete-from-source control stays unavailable.
+    writable: r.writable ?? false,
     checks: (r.checks ?? []).map((c) => ({
       step: c.step,
       outcome: c.outcome,
@@ -1171,6 +1248,213 @@ function laterOf(a: string | null, b: string | null): string | null {
   if (!a) return b;
   if (!b) return a;
   return Date.parse(a) >= Date.parse(b) ? a : b;
+}
+
+/**
+ * EPIC K's mappers (issue #788), and the one rule all of them follow:
+ * absence survives.
+ *
+ * Every counter on a snapshot is a nullable number on the wire, and
+ * `?? null` rather than `?? 0` is the whole point — see Snapshot's own
+ * doc (types/snapshot.ts). The temptation is real because five of the
+ * seven are byte counts and a zero renders perfectly well; what a zero
+ * renders is a LIE about a run nobody measured, and for
+ * content_reused_bytes it is the specific lie EPIC K's five figures exist
+ * to prevent.
+ *
+ * `?? null` is not the same as `|| null` here, deliberately: a genuine
+ * zero is a measurement (a run over an empty tree read no bytes) and must
+ * pass through as 0, which `||` would flatten into "not measured".
+ */
+const counter = (value: number | null | undefined): number | null => value ?? null;
+
+/** The wire's verification vocabulary, narrowed. Four levels and nothing
+ *  else; anything unrecognised (an engine newer than this build) becomes
+ *  null, which every surface draws as "not reported" rather than as a
+ *  confident level nobody proved. */
+const VERIFICATION_LEVELS: readonly string[] = [
+  "structural",
+  "content_sample",
+  "content_full",
+  "restore_drill"
+];
+
+function verificationLevelOf(value: string | undefined): VerificationLevel | null {
+  return value && VERIFICATION_LEVELS.includes(value) ? (value as VerificationLevel) : null;
+}
+
+const CONSISTENCY_MODES: readonly string[] = [
+  "live_best_effort",
+  "externally_quiesced",
+  "external_snapshot"
+];
+
+function consistencyOf(value: string | undefined): SourceConsistency | null {
+  return value && CONSISTENCY_MODES.includes(value) ? (value as SourceConsistency) : null;
+}
+
+/** "", "pending", "passed" or "failed" on the wire
+ *  (core/internal/state/snapshots.go). The first two are the same fact
+ *  for a reader — nothing has checked this snapshot — and collapsing them
+ *  onto one word is what keeps a surface from having to draw a fourth
+ *  state that means the same as the third. Anything unrecognised is
+ *  "unchecked" rather than "passed": a status this build cannot read is
+ *  not evidence of a pass. */
+function verificationStatusOf(value: string | undefined): SnapshotVerificationStatus {
+  return value === "passed" || value === "failed" ? value : "unchecked";
+}
+
+function fromWireSnapshotHold(h: WireSnapshotHold): SnapshotHold {
+  return {
+    holdId: h.hold_id,
+    runId: h.run_id,
+    backupSetId: h.backup_set_id,
+    reason: h.reason,
+    placedAt: h.placed_at,
+    placedBy: h.placed_by,
+    releasedAt: stampOrNull(h.released_at),
+    releasedBy: h.released_by ?? null,
+    active: h.active
+  };
+}
+
+/**
+ * One snapshot run.
+ *
+ * `snapshot_id` is omitted for a run whose manifest was never committed,
+ * so it arrives here as null and the surfaces say "no manifest" rather
+ * than drawing an empty monospace box. `repository_domain` is the same
+ * shape for a different reason: an artifact set has no domain at all.
+ */
+function fromWireSnapshot(s: WireSnapshot): Snapshot {
+  return {
+    runId: s.run_id,
+    backupSetId: s.backup_set_id,
+    snapshotId: s.snapshot_id || null,
+    operationId: s.operation_id || null,
+    engine: s.engine,
+    phase: s.phase,
+    repositoryDomain: s.repository_domain || null,
+    consistencyMode: consistencyOf(s.consistency_mode),
+    verificationLevel: verificationLevelOf(s.verification_level),
+    // Read, never inferred from the status: ADR 0014's achieved level is
+    // absent on a failure, and inventing "the level it was asked for"
+    // here would put a proof claim on a run that proved nothing.
+    verificationLevelAchieved: verificationLevelOf(s.verification_level_achieved),
+    verificationStatus: verificationStatusOf(s.verification_status),
+    entriesScanned: counter(s.entries_scanned),
+    files: counter(s.files),
+    directories: counter(s.directories),
+    logicalBytes: counter(s.logical_bytes),
+    sourceBytesRead: counter(s.source_bytes_read),
+    repositoryBytesWritten: counter(s.repository_bytes_written),
+    contentReusedBytes: counter(s.content_reused_bytes),
+    sourceComplete: s.source_complete ?? null,
+    lastKnownGood: s.last_known_good,
+    reason: s.reason ?? "",
+    startedAt: s.started_at,
+    completedAt: stampOrNull(s.completed_at),
+    durationSeconds: counter(s.duration_seconds),
+    deleteRequestedAt: stampOrNull(s.delete_requested_at),
+    holds: (s.holds ?? []).map(fromWireSnapshotHold)
+  };
+}
+
+function fromWireSnapshotDetail(r: WireSnapshotResponse): SnapshotDetail {
+  return {
+    snapshot: fromWireSnapshot(r.snapshot),
+    // The log is a plain field rename, so it is spelled here rather than
+    // in a mapper of its own: `from` is omitted for the first edge of a
+    // run's life (nothing precedes PENDING), and "" would read as a
+    // phase.
+    transitions: (r.transitions ?? []).map((t: WireSnapshotTransition): SnapshotTransition => ({
+      from: t.from || null,
+      to: t.to,
+      at: t.at,
+      detail: t.detail ?? ""
+    }))
+  };
+}
+
+/** KEEP, DELETE or REFUSE, and nothing else. An action this build does
+ *  not know becomes REFUSE rather than DELETE: of the three, REFUSE is
+ *  the one that says "somebody should look at this", which is exactly
+ *  right for a verdict a client cannot classify. */
+function retentionActionOf(value: string): SnapshotRetentionAction {
+  return value === "KEEP" || value === "DELETE" ? value : "REFUSE";
+}
+
+function fromWireSnapshotVerdict(v: WireSnapshotRetentionVerdict): SnapshotRetentionVerdict {
+  return {
+    runId: v.run_id,
+    snapshotId: v.snapshot_id || null,
+    action: retentionActionOf(v.action),
+    startedAt: v.started_at,
+    // selected_by stays absent rather than becoming "": last-known-good
+    // protection selects a snapshot with no placement to name, and
+    // RetentionTierBadges draws a tier with no selector bare instead of
+    // appending an empty parenthesis.
+    tiers: (v.tiers ?? []).map((t) => ({ tier: t.tier, selectedBy: t.selected_by || null })),
+    holds: (v.holds ?? []).map(fromWireSnapshotHold),
+    reason: v.reason,
+    holdReason: v.hold_reason || null
+  };
+}
+
+/** HEALTHY, DEGRADED or FAILING — the same three words a backup set's
+ *  health uses. An unrecognised state reports as DEGRADED rather than
+ *  HEALTHY: a verdict this build cannot read is not a clean bill. */
+function repositoryStateOf(value: string): RepositoryState {
+  return value === "HEALTHY" || value === "FAILING" ? value : "DEGRADED";
+}
+
+function fromWireRepositoryHealth(r: WireRepositoryHealth): RepositoryHealth {
+  return {
+    domain: r.domain,
+    mayShare: r.may_share,
+    state: repositoryStateOf(r.state),
+    reachable: r.reachable,
+    readable: r.readable,
+    writable: r.writable,
+    credentialsValid: r.credentials_valid,
+    clockSane: r.clock_sane,
+    // Signed and nullable, and `?? null` for the same reason every
+    // snapshot counter uses it: a skew of exactly 0 is a measurement of a
+    // perfectly synchronised clock, and "nobody measured" must not read
+    // as that.
+    clockSkewSeconds: r.clock_skew_seconds ?? null,
+    maintenanceOverdue: r.maintenance_overdue,
+    lastMaintenanceAt: stampOrNull(r.last_maintenance_at),
+    lastMaintenanceResult: r.last_maintenance_result ?? "",
+    lastSnapshotAt: stampOrNull(r.last_snapshot_at),
+    lastSnapshotStatus: r.last_snapshot_status ?? "",
+    lastVerificationAt: stampOrNull(r.last_verification_at),
+    lastVerificationStatus: r.last_verification_status ?? "",
+    backupSets: r.backup_sets ?? [],
+    detail: r.detail ?? ""
+  };
+}
+
+function fromWireRepositoryMaintenance(m: WireRepositoryMaintenance): RepositoryMaintenance {
+  return {
+    domain: m.domain,
+    // "" is a real answer and the surfaces render it as "nobody has
+    // claimed maintenance for this domain", which is a different
+    // situation from "another instance owns it" and has a different
+    // remedy.
+    owner: m.owner,
+    lastQuickAt: stampOrNull(m.last_quick_at),
+    lastFullAt: stampOrNull(m.last_full_at),
+    nextEligibleAt: stampOrNull(m.next_eligible_at),
+    due: m.due,
+    dueMode: m.due_mode ?? "",
+    dueReason: m.due_reason ?? "",
+    overdue: m.overdue,
+    runs: m.runs,
+    failures: m.failures,
+    reclaimedBytes: m.reclaimed_bytes,
+    failing: m.failing
+  };
 }
 
 function fromWireVersion(body: WireVersionResponse): VersionInfo {
@@ -1700,6 +1984,26 @@ function fromWireOperation(op: WireOperation): Operation {
 }
 
 /**
+ * What EPIC K's four actions answer with (issue #788).
+ *
+ * Both halves of the response, because both are read. The operation is
+ * the durable record a restore or a verify is then WATCHED by; the
+ * `snapshots` array is what a hold or a release actually changed, and a
+ * dialog closing onto it shows the new truth rather than the result of a
+ * re-read that may not have landed yet.
+ *
+ * Absent snapshots become [] rather than an error: a submission the
+ * service accepted is a success even on a build whose response carries
+ * no snapshot echo, and the caller's own re-read covers it.
+ */
+function fromWireSnapshotOperation(op: WireOperation): SnapshotOperationResult {
+  return {
+    operation: fromWireOperation(op),
+    snapshots: (op.snapshots ?? []).map(fromWireSnapshot)
+  };
+}
+
+/**
  * Maps one live reading.
  *
  * Every optional field passes through as-is, undefined included: the
@@ -1816,6 +2120,21 @@ function wireBackupSetPatch(patch: BackupSetPatch): Record<string, unknown> {
   // a pre-granted re-trust.
   put("acknowledge_repoint", patch.acknowledgeRepoint);
   put("acknowledge_host_key_change", patch.acknowledgeHostKeyChange);
+  // EPIC K's four editable incremental settings (issue #788). `put`
+  // drops undefined, which is what keeps a per-box Save from clearing
+  // the boxes it was not about; an explicit 0 on either cadence is a
+  // real request ("never raise the level on a schedule") and reaches the
+  // wire as a 0.
+  //
+  // There is deliberately no engine and no repository_domain here.
+  // UpdateBackupSetRequest declares neither, because a set's history
+  // belongs to its engine and lives in the domain it was written to, and
+  // sending either would be asking for a refusal.
+  put("source_consistency", patch.sourceConsistency);
+  put("verification_level", patch.verificationLevel);
+  put("verification_sample_percent", patch.verificationSamplePercent);
+  put("verification_full_every_seconds", patch.verificationFullEverySeconds);
+  put("verification_restore_drill_every_seconds", patch.verificationRestoreDrillEverySeconds);
   return body;
 }
 
@@ -2315,6 +2634,130 @@ export const httpApi: BackupdApi = {
     request<WireBackupSetRetention>(retentionPath(source, set), { method: "DELETE" }).then(
       fromWireBackupSetRetention
     ),
+
+  // EPIC K's reads (issue #788). Every one is a plain authenticated GET
+  // and every one is a sub-resource of something that already exists on
+  // this contract, which is the shape the epic requires: no /kopia
+  // namespace, and no raw vendor passthrough anywhere.
+  listSnapshots: (source, set) =>
+    request<WireListSnapshotsResponse>(backupSetPath(source, set) + "/snapshots").then((r) =>
+      (r.snapshots ?? []).map(fromWireSnapshot)
+    ),
+  // The run id is one segment and is encoded as one. It is never built
+  // by joining anything: a run id is opaque, and the route takes it
+  // whole.
+  getSnapshot: (source, set, runId) =>
+    request<WireSnapshotResponse>(
+      backupSetPath(source, set) + "/snapshots/" + encodeURIComponent(runId)
+    ).then(fromWireSnapshotDetail),
+  listSnapshotHolds: (source, set) =>
+    request<WireListSnapshotHoldsResponse>(backupSetPath(source, set) + "/holds").then((r) =>
+      (r.holds ?? []).map(fromWireSnapshotHold)
+    ),
+  // NOT retentionPath() + something. This is a route of its own
+  // (.../snapshot-retention) precisely so it cannot be confused with
+  // FR-18's artifact retention plan, which lives under .../retention and
+  // can be applied; see BackupdApi.getSnapshotRetention.
+  getSnapshotRetention: (source, set) =>
+    request<WireSnapshotRetentionResponse>(backupSetPath(source, set) + "/snapshot-retention").then(
+      (r): SnapshotRetentionPreview => ({
+        generatedAt: r.generated_at,
+        verdicts: (r.verdicts ?? []).map(fromWireSnapshotVerdict)
+      })
+    ),
+  listRepositories: () =>
+    request<WireListRepositoriesResponse>("/repositories").then(
+      (r): RepositoryFleet => ({
+        generatedAt: r.generated_at,
+        repositories: (r.repositories ?? []).map(fromWireRepositoryHealth)
+      })
+    ),
+  getRepositoryMaintenance: (domain) =>
+    request<WireRepositoryMaintenance>(
+      "/repositories/" + encodeURIComponent(domain) + "/maintenance"
+    ).then(fromWireRepositoryMaintenance),
+
+  // One operation by id, which is what a page watching a restore or a
+  // verify polls. It maps through the same fromWireOperation the list
+  // read uses, so a screen cannot end up with two different ideas of
+  // what "running" means.
+  getOperation: (id) =>
+    request<WireOperation>("/operations/" + encodeURIComponent(id)).then(fromWireOperation),
+
+  // EPIC K's four mutating acts, all on POST /operations, each with its
+  // own parameter object and every one carrying the idempotency header
+  // and the configuration revision. Written out four times rather than
+  // funnelled through one helper because the four bodies are genuinely
+  // different and a generic submitter would have to take the parameter
+  // object as `unknown` — which is exactly the typing this file exists
+  // to provide.
+  //
+  // Each reads the operation back rather than resolving with nothing:
+  // the restore and the verify are then watched by id, and the two hold
+  // actions answer with the snapshots they changed, so a dialog closes
+  // onto the new truth instead of onto a re-read that may not have
+  // landed yet.
+  restoreSnapshot: (req) =>
+    request<WireOperation>("/operations", {
+      method: "POST",
+      headers: { [IDEMPOTENCY_KEY_HEADER]: req.idempotencyKey },
+      body: JSON.stringify({
+        action: "restore_snapshot",
+        config_revision: req.configRevision,
+        snapshot_restore: {
+          backup_set_id: req.backupSetId,
+          target_path: req.targetPath,
+          // Omitted rather than sent empty. An absent snapshot_id asks
+          // for this set's newest known-good restore point, and "" would
+          // be a request to restore a snapshot with no id.
+          ...(req.snapshotId ? { snapshot_id: req.snapshotId } : {}),
+          ...(req.sourcePath ? { source_path: req.sourcePath } : {}),
+          ...(req.conflict ? { conflict: req.conflict } : {})
+        }
+      })
+    }).then(fromWireSnapshotOperation),
+  verifySnapshot: (req) =>
+    request<WireOperation>("/operations", {
+      method: "POST",
+      headers: { [IDEMPOTENCY_KEY_HEADER]: req.idempotencyKey },
+      body: JSON.stringify({
+        action: "verify_snapshot",
+        config_revision: req.configRevision,
+        snapshot_verify: {
+          backup_set_id: req.backupSetId,
+          ...(req.runId ? { run_id: req.runId } : {}),
+          ...(req.level ? { level: req.level } : {}),
+          ...(req.samplePercent ? { sample_percent: req.samplePercent } : {})
+        }
+      })
+    }).then(fromWireSnapshotOperation),
+  holdSnapshot: (req) =>
+    request<WireOperation>("/operations", {
+      method: "POST",
+      headers: { [IDEMPOTENCY_KEY_HEADER]: req.idempotencyKey },
+      body: JSON.stringify({
+        action: "hold_snapshot",
+        config_revision: req.configRevision,
+        snapshot_hold: {
+          backup_set_id: req.backupSetId,
+          run_id: req.runId,
+          reason: req.reason
+        }
+      })
+    }).then(fromWireSnapshotOperation),
+  releaseSnapshotHold: (req) =>
+    request<WireOperation>("/operations", {
+      method: "POST",
+      headers: { [IDEMPOTENCY_KEY_HEADER]: req.idempotencyKey },
+      body: JSON.stringify({
+        action: "release_snapshot_hold",
+        config_revision: req.configRevision,
+        snapshot_hold_release: {
+          backup_set_id: req.backupSetId,
+          hold_id: req.holdId
+        }
+      })
+    }).then(fromWireSnapshotOperation),
 
   getSettings: () => request<WireSettingsResponse>("/settings").then(fromWireSettingsResponse),
   // PATCH, not POST or PUT: this applies exactly the settings the body

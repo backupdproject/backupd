@@ -137,7 +137,8 @@ type mutation struct {
 }
 
 // configMutations is every CLI invocation that rewrites config.yaml
-// THROUGH openBackupService.
+// through one of this package's two doors, openBackupService and
+// openConfigWriteRoute.
 //
 // That qualifier is the whole of what this list can honestly claim, and
 // it used to claim more. `backup-set create` against a configuration path
@@ -193,6 +194,24 @@ var configMutations = []mutation{
 		name: "backup-set retention",
 		args: func(configPath, _ string) []string {
 			return retentionArgs(configPath, "--daily-days", "3", "--weekly-months", "1", "--monthly-months", "2")
+		},
+	},
+	{
+		// The two post-creation toggles (#788). They belong here for the
+		// reason `settings patch --policy-file` does: each is a
+		// CONFIGURATION WRITE, and the two arms below are what prove it
+		// is treated as one. A posture flipped in the file beside a live
+		// engine would be #535 again on the one setting that decides
+		// whether a source's originals may be deleted.
+		name: "backup-set enabled",
+		args: func(configPath, _ string) []string {
+			return []string{"backup-set", "--config", configPath, "enabled", cliSet, "off"}
+		},
+	},
+	{
+		name: "backup-set read-only",
+		args: func(configPath, _ string) []string {
+			return []string{"backup-set", "--config", configPath, "read-only", cliSet, "on"}
 		},
 	},
 	{

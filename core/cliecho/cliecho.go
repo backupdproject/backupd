@@ -501,11 +501,11 @@ func decode(body []byte, out any) bool {
 // "1h", "1h10s" or "26h3m4s", and time.ParseDuration takes all of them
 // back as the same number of seconds. seconds_test.go sweeps the range
 // rather than sampling it.
-func seconds(v int) string {
+func seconds(v int64) string {
 	if v == 0 {
 		return "0s"
 	}
-	n := int64(v)
+	n := v
 	sign := ""
 	if n < 0 {
 		// A negative freshness budget is not a thing anybody configures,

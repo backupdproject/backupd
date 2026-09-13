@@ -66,11 +66,11 @@ describe("the wizard's honest fields are wired to their own copy", () => {
     expectHelp(screen.getByLabelText("Username"), FIELD_HELP.wizardUsername);
   });
 
-  it("on the Authentication step, including the group tooltip on the key-source radios", async () => {
+  it("on the Connection test step, including the group tooltip on the key-source radios", async () => {
     const user = userEvent.setup();
     renderWizard();
 
-    await user.click(screen.getByRole("button", { name: "Authentication" }));
+    await user.click(screen.getByRole("button", { name: "Connection test" }));
 
     // One tooltip for all three radios: the copy is a fact about the
     // GROUP ("only one of the three lets you finish this wizard"), which
@@ -84,14 +84,17 @@ describe("the wizard's honest fields are wired to their own copy", () => {
     expectHelp(screen.getByLabelText(/private key/i), FIELD_HELP.wizardPrivateKey);
   });
 
-  it("on the Discovery step, including the group tooltip on the completion-method fieldset", async () => {
+  it("on the Source and Verification steps, including the group tooltip on the completion-method fieldset", async () => {
     const user = userEvent.setup();
     renderWizard();
 
-    await user.click(screen.getByRole("button", { name: "Discovery" }));
+    // #788 moved the directory fields onto Source, where naming the
+    // source happens, and left the completion method on the step that
+    // asks how an artifact is proven good.
+    expectHelp(screen.getByLabelText("Directory to back up"), FIELD_HELP.wizardRemoteFolder);
+    expectHelp(screen.getByLabelText("Ignore paths matching"), FIELD_HELP.wizardIncludePatterns);
 
-    expectHelp(screen.getByLabelText("Remote folder"), FIELD_HELP.wizardRemoteFolder);
-    expectHelp(screen.getByLabelText("Include patterns"), FIELD_HELP.wizardIncludePatterns);
+    await user.click(screen.getByRole("button", { name: "Verification" }));
     // A <fieldset> is role "group", named by its own <legend>.
     expectHelp(screen.getByRole("group", { name: "Completion method" }), FIELD_HELP.wizardCompletionMethod);
 
@@ -100,11 +103,11 @@ describe("the wizard's honest fields are wired to their own copy", () => {
     // fields.test.tsx for the proof it's gone. Nothing to explain here.
   });
 
-  it("on the Storage & validation step", async () => {
+  it("on the Retention and Verification steps", async () => {
     const user = userEvent.setup();
     renderWizard();
 
-    await user.click(screen.getByRole("button", { name: "Storage & validation" }));
+    await user.click(screen.getByRole("button", { name: "Retention" }));
 
     // Both labels also wrap a caption sentence (and, for NAS destination,
     // a button) besides their own field name, so testing-library's exact
@@ -112,6 +115,8 @@ describe("the wizard's honest fields are wired to their own copy", () => {
     // just the name; { exact: false } is a substring match against that
     // same content, which the field name still uniquely picks out here.
     expectHelp(screen.getByLabelText("NAS destination", { exact: false }), FIELD_HELP.wizardNasDestination);
+
+    await user.click(screen.getByRole("button", { name: "Verification" }));
     expectHelp(screen.getByLabelText("Application validation", { exact: false }), FIELD_HELP.wizardValidatorId);
 
     // #111 settled retention as one global policy; the per-set Daily/
@@ -120,11 +125,11 @@ describe("the wizard's honest fields are wired to their own copy", () => {
     // see wizard-decorative-fields.test.tsx for the proof they're gone.
   });
 
-  it("on the Review step's acknowledgement checkbox", async () => {
+  it("on the Retention step's acknowledgement checkbox", async () => {
     const user = userEvent.setup();
     renderWizard();
 
-    await user.click(screen.getByRole("button", { name: "Review" }));
+    await user.click(screen.getByRole("button", { name: "Retention" }));
 
     expectHelp(
       screen.getByRole("checkbox", { name: /remote backup will be removed only after/i }),

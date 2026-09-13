@@ -996,11 +996,12 @@ function ApplyStep({
   );
 }
 
-/** One heading per step, all six of them.
+/** One heading per step, all of them.
  *
  *  Exhaustive over the union on purpose: a step with no case would render
  *  a blank heading beside a coloured glyph, which is a row a reader
- *  scores by its colour alone. */
+ *  scores by its colour alone. It is also how issue #852's write probe
+ *  arrived here as a compile error rather than as a blank row. */
 function stepTitle(c: ConnectionCheck, user: string): string {
   switch (c.step) {
     case "credentials":
@@ -1015,6 +1016,16 @@ function stepTitle(c: ConnectionCheck, user: string): string {
       return c.outcome === "failed" ? "Could not authenticate as " + user : "Authenticated as " + user;
     case "list":
       return "Listed the folder this set pulls from";
+    case "write_probe":
+      // Issue #852, and the one heading here that deliberately does not
+      // state a verdict. This step PASSES whichever way it answered,
+      // because a read-only source is a supported posture rather than a
+      // failure, so the answer lives in the row's own detail (and in
+      // `writable`) and a heading claiming either one would contradict
+      // half the results.
+      return c.outcome === "skipped"
+        ? "Write permission on the source was not checked"
+        : "Checked whether this account can write to the source";
   }
 }
 

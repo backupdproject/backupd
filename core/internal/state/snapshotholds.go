@@ -49,6 +49,24 @@ var ErrSnapshotHoldNotFound = errors.New("state: snapshot hold not found")
 // back places a new hold, with its own id, reason and author.
 var ErrSnapshotHoldReleased = errors.New("state: snapshot hold has been released")
 
+// ErrSnapshotNotHoldable marks the four refusals that are about the
+// SNAPSHOT rather than about the request: a run that committed no
+// manifest, one whose snapshot this product already deleted, one whose
+// delete intent is already durable, and one at LOST.
+//
+// A sentinel because the layers above have to tell this class apart from
+// everything else this write can return. All four are states an operator
+// reaches by clicking a button on a screen that has moved on, so all
+// four are a refusal a caller can be told about; without a sentinel they
+// arrive as unclassified errors, which the service layer turns into an
+// internal error and the API into a 500 -- a bug report for a product
+// working exactly as designed.
+//
+// One value for all four rather than four, because the four lead to the
+// same place: there is no snapshot here for a hold to protect, and the
+// sentence beside the sentinel is what says which of them it was.
+var ErrSnapshotNotHoldable = errors.New("state: this run has no snapshot a hold could protect")
+
 // SnapshotHold is one row of the hold table, read back exactly as stored.
 type SnapshotHold struct {
 	HoldID string
@@ -188,25 +206,25 @@ func (j *Journal) PlaceSnapshotHold(ctx context.Context, req SnapshotHoldRequest
 	}
 	if run.SnapshotID == "" {
 		return SnapshotHold{}, fmt.Errorf(
-			"state: run %s is at %s and has committed no manifest, so there is no snapshot for a hold to protect",
-			run.RunID, run.Phase)
+			"%w: run %s is at %s and has committed no manifest, so there is no snapshot for a hold to protect",
+			ErrSnapshotNotHoldable, run.RunID, run.Phase)
 	}
 	if run.Phase == PhaseDeleted {
 		return SnapshotHold{}, fmt.Errorf(
-			"state: run %s is at %s: its snapshot has already been removed from the repository and a hold cannot bring one back",
-			run.RunID, run.Phase)
+			"%w: run %s is at %s: its snapshot has already been removed from the repository and a hold cannot bring one back",
+			ErrSnapshotNotHoldable, run.RunID, run.Phase)
 	}
 	if run.Phase == PhaseLost {
 		return SnapshotHold{}, fmt.Errorf(
-			"state: run %s is at %s: its snapshot is not in the repository, so a hold on it would protect nothing; "+
+			"%w: run %s is at %s: its snapshot is not in the repository, so a hold on it would protect nothing; "+
 				"reconciliation records this state when a manifest has gone without a delete ever being recorded",
-			run.RunID, run.Phase)
+			ErrSnapshotNotHoldable, run.RunID, run.Phase)
 	}
 	if run.DeleteRequestedAt != nil {
 		return SnapshotHold{}, fmt.Errorf(
-			"state: run %s already carries a durable delete intent, recorded at %s: its manifest is being removed and this row will say %s shortly, "+
+			"%w: run %s already carries a durable delete intent, recorded at %s: its manifest is being removed and this row will say %s shortly, "+
 				"so a hold accepted now would protect nothing",
-			run.RunID, run.DeleteRequestedAt.UTC().Format(time.RFC3339), PhaseDeleted)
+			ErrSnapshotNotHoldable, run.RunID, run.DeleteRequestedAt.UTC().Format(time.RFC3339), PhaseDeleted)
 	}
 
 	reason := j.redact.Load().Filter(req.Reason)

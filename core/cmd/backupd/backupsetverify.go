@@ -206,6 +206,20 @@ func printConnectionReport(heading string, result service.ConnectionTestResult) 
 	if !result.OK && result.Message != "" {
 		fmt.Printf("  %s\n", result.Message)
 	}
+	// Issue #852's answer, stated as its own line rather than left for a
+	// reader to infer from the write_probe row's sentence. It is the one
+	// thing on this report that decides what an operator may CONFIGURE
+	// next (whether this set can be taken out of read-only), and the
+	// browser gets it as a field of its own for the same reason, so the
+	// terminal says it in words instead of making somebody read a
+	// paragraph to find out.
+	//
+	// Only when the check as a whole answered: after a failed step the
+	// probe never ran, and printing "read-only" for a host that did not
+	// answer would state a posture nobody established.
+	if result.OK {
+		fmt.Printf("  %s\n", sourceDeletionWord(result.Writable))
+	}
 }
 
 // connectionVerdictWord renders the whole report's answer as something an
@@ -216,6 +230,16 @@ func connectionVerdictWord(ok bool) string {
 		return "ready to back up from"
 	}
 	return "NOT reachable; see the failing check below"
+}
+
+// sourceDeletionWord says what the write probe settled, in terms of the
+// thing it decides: whether this source may be deleted from after a
+// backup (FR-16, `read_only: false`).
+func sourceDeletionWord(writable bool) string {
+	if writable {
+		return "delete from source: available — the probe wrote and removed a file, so this set may run with read_only off"
+	}
+	return "delete from source: unavailable — these credentials cannot write to this source, so it stays read-only; grant the account write permission there to enable it"
 }
 
 // backupSetTestConnection is the `test-connection` verb (and `preflight`,

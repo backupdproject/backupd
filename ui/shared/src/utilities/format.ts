@@ -79,3 +79,36 @@ export function stamp(iso: string): string {
 export function percent(fraction: number): string {
   return (fraction * 100).toFixed(1) + "%";
 }
+
+/**
+ * A counter the wire may not carry, rendered (EPIC K, issue #788).
+ *
+ * Every snapshot figure in #788's contract is nullable, and absent means
+ * NOBODY MEASURED IT. This is the single place that turns that into
+ * words, so no screen can decide on its own that an unmeasured number is
+ * a zero — which is the specific misreport EPIC K's five separate byte
+ * counts exist to prevent. A zero is a measurement, and "reused 0 bytes"
+ * sends an operator hunting a fault in a backup that is working
+ * perfectly well.
+ *
+ * It takes the renderer rather than returning a number, so the decision
+ * cannot be bypassed: there is no way to get a formatted value out of
+ * this function without having handled the null.
+ */
+export function measured(value: number | null, render: (n: number) => string): string {
+  return value === null ? "not measured" : render(value);
+}
+
+/**
+ * A duration in seconds, as an operator reads one off a run.
+ *
+ * Minutes and seconds under an hour, hours and minutes above it, and
+ * nothing finer than a second: these measure backup runs and
+ * verifications, where "0.4 s" is noise and "3m 34s" is the figure
+ * somebody compares against last night's.
+ */
+export function duration(seconds: number): string {
+  if (seconds < 60) return Math.round(seconds) + "s";
+  if (seconds < 3600) return Math.floor(seconds / 60) + "m " + Math.round(seconds % 60) + "s";
+  return Math.floor(seconds / 3600) + "h " + Math.round((seconds % 3600) / 60) + "m";
+}

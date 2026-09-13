@@ -798,6 +798,19 @@ func (s *Service) snapshotHealth(ctx context.Context, bs config.BackupSet, unfin
 		// a content verification.
 		VerificationAchieved: newest.VerificationLevelAchieved,
 		UnfinishedRuns:       unfinished[lineage],
+
+		Files: counterOf(newest.Files),
+		// "failed" and nothing else. A verification that is pending, or
+		// that never ran, is not a failure, and a scrape that treated
+		// either as one would alert on every set the moment it was
+		// configured for a level it has not reached yet.
+		VerificationFailed: newest.VerificationStatus == "failed",
+	}
+
+	// How long the newest run took, and only once it has come to rest: a
+	// duration for a pass still in flight is a measurement of now.
+	if newest.CompletedAt != nil && !newest.StartedAt.IsZero() {
+		out.Duration = newest.CompletedAt.Sub(newest.StartedAt)
 	}
 
 	if lkg, err := catalog.LastKnownGoodSnapshot(ctx, lineage); err == nil {

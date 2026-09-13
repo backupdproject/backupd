@@ -177,15 +177,15 @@ func engineRefusal(engine *service.RunningEngine, because, remedy string) error 
 }
 
 // routableRemedy is what an operator can do about a write an address could
-// have carried: the three mutating backup-set verbs and `settings patch`
-// (#543, route.go).
+// have carried: the three mutating backup-set verbs, the two
+// post-creation toggles and `settings patch` (#543 and #788, route.go).
 //
-// The four are named rather than summarised, so an operator who reaches
+// The six are named rather than summarised, so an operator who reaches
 // this refusal from one of the others is not sent to set a variable that
 // will not help them. It is offered rather than instructed because it is
 // not true everywhere either: a `daemon` has no listener to point at.
 var routableRemedy = fmt.Sprintf(
-	"Stop that process and run this command again; if it serves this deployment's Web UI or HTTP API, the change can be made there instead, and `backup-set create`, `backup-set patch`, `backup-set remove` and `settings patch` can be handed to it directly by setting $%s (with $%s and $%s) to the address it serves",
+	"Stop that process and run this command again; if it serves this deployment's Web UI or HTTP API, the change can be made there instead, and `backup-set create`, `backup-set patch`, `backup-set remove`, `backup-set enabled`, `backup-set read-only` and `settings patch` can be handed to it directly by setting $%s (with $%s and $%s) to the address it serves",
 	apiURLEnv, apiUsernameEnv, apiPasswordEnv)
 
 // firstConfigRemedy is what an operator can do about the one configuration

@@ -254,7 +254,24 @@ func (h *handlers) completeFirstRun(w http.ResponseWriter, r *http.Request) {
 		Disabled:            body.Disabled,
 		ReadOnly:            body.ReadOnly,
 		SkipConnectionCheck: body.SkipConnectionCheck,
-		Actor:               actorFromContext(r.Context()),
+
+		// EPIC K's engine seam (#788), carried here for the reason
+		// TestCompleteFirstRun_CarriesEveryFieldOfTheSpecItWasGiven
+		// exists: this request is assembled field by field, and a field
+		// added to the spec and not added here is a wizard answer that
+		// silently does not happen. An operator who chose the
+		// incremental engine on a fresh install and got an artifact set
+		// would find out at the first restore.
+		Engine:                        body.Engine,
+		UUID:                          body.UUID,
+		RepositoryDomain:              body.RepositoryDomain,
+		SourceConsistency:             body.SourceConsistency,
+		VerificationLevel:             body.VerificationLevel,
+		VerificationSamplePercent:     body.VerificationSamplePercent,
+		VerificationFullEvery:         time.Duration(body.VerificationFullEverySeconds) * time.Second,
+		VerificationRestoreDrillEvery: time.Duration(body.VerificationRestoreDrillEverySeconds) * time.Second,
+		SourceMountPrefix:             body.SourceMountPrefix,
+		Actor:                         actorFromContext(r.Context()),
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrAlreadyConfigured) {

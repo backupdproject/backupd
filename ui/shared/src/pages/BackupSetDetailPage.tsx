@@ -40,6 +40,9 @@ import {
 import type { SetEditSnapshot } from "@shared/state/backupSetDetailNodes";
 import { PageHeader } from "@shared/components/PageHeader";
 import { HealthBadge } from "@shared/components/StatusBadge";
+import { EngineBadge, VerificationBadge } from "@shared/components/EngineBadge";
+import { MetricCard } from "@shared/components/MetricCard";
+import { useAsync } from "@shared/hooks/useAsync";
 import { FingerprintDisplay } from "@shared/components/FingerprintDisplay";
 import { ActivityTimeline } from "@shared/components/ActivityTimeline";
 import { Icon } from "@shared/design-system/icons";
@@ -57,6 +60,13 @@ import { RunControlNotice } from "@shared/components/RunControlNotice";
 import { useRunControls } from "@shared/hooks/useRunControls";
 import { useHoverTitle } from "@shared/hooks/useTooltips";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+// Issue #788 promoted this page's own Cell/Row out into components/ so
+// EPIC K's nine new screens could reuse them rather than copy them a
+// third time (docs/design/788-incremental-ui-mockup.md). The shapes are
+// unchanged, including the accessible-name gap this page's decision
+// recorded — see Definitions.tsx.
+import { Cell, Row } from "@shared/components/Definitions";
+import { BackupSetConfigurationCard } from "@shared/pages/BackupSetConfigurationCard";
 import type { TooltipId } from "@shared/tooltips/tooltips";
 import { RetentionPreviewDialog } from "./RetentionPreviewDialog";
 import { BackupSetRetentionCard } from "./BackupSetRetentionCard";
@@ -64,7 +74,8 @@ import { EDIT_FIELDS, readEditFields, visibleEditFields, withCompanions } from "
 import type { EditField, EditFieldKey } from "./backupSetEditFields";
 import type { BackupSetPatch, RunningWork } from "@shared/api/contracts";
 import { apiErrorOf, describeFailure } from "@shared/api/failure";
-import { bytes, clock, relativeAge } from "@shared/utilities/format";
+import { bytes, clock, duration, measured, relativeAge } from "@shared/utilities/format";
+import { snapshotRetentionPath, snapshotsPath } from "@shared/utilities/routes";
 
 /**
  * How often an open edit form renews its hold (issue #350).
@@ -133,6 +144,17 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
   // timer next fires.
   const activityFeed = useActivityFeed(setId);
   const [testing, setTesting] = useState(false);
+  // Issue #852: what the last connection test said about WRITING to this
+  // source, or null when no test has answered in this session.
+  //
+  // Three states rather than a boolean, because "not proven yet" is not
+  // "read-only": a page that disabled the delete-from-source control
+  // before anything had been checked would hide a control an operator
+  // may well be entitled to use. So null leaves it as it was, false
+  // disables it, and a refusal from the server sets false too (see
+  // toggleReadOnly), which is how an operator who never pressed Test
+  // connection still gets the explanation rather than a silent no-op.
+  const [sourceWritable, setSourceWritable] = useState<boolean | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   // Issue #592. The SSH surface used to be two boxes in the edit list
@@ -321,7 +343,11 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
   const runConnectionTest = async () => {
     setTesting(true);
     try {
-      await api.testConnection(s.id);
+      const result = await api.testConnection(s.id);
+      // The steps are not rendered here (see above); this one field is
+      // KEPT, because it is not a step, it is what the set may be
+      // configured to do next (issue #852).
+      setSourceWritable(result.writable);
       activityFeed.refresh();
     } catch (e) {
       const failure = describeFailure(e, "Backupd could not test this backup set's connection.");
@@ -337,6 +363,42 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
       setTesting(false);
     }
   };
+
+  /**
+   * Turns this set's read-only declaration on or off, and keeps what the
+   * server says about it (issue #852).
+   *
+   * The refusal it can now get is ErrSourceNotWritable, answered as 409
+   * BACKUP_SET_SOURCE_NOT_WRITABLE when withdrawing read-only against a
+   * source these credentials cannot write to. It is recorded on this
+   * set's terminal like every other browser-side outcome AND remembered,
+   * so the control it came from disables itself with the explanation
+   * instead of inviting the same refusal again.
+   */
+  const toggleReadOnly = async () => {
+    try {
+      await api.setReadOnly(s.source, s.set, !s.readOnly);
+      set.reload();
+    } catch (e) {
+      const code = apiErrorOf(e)?.code ?? null;
+      if (code === "BACKUP_SET_SOURCE_NOT_WRITABLE") setSourceWritable(false);
+      const failure = describeFailure(e, "Backupd could not change this backup set's read-only status.");
+      emitBrowserNotice({
+        outcome: code === null ? "unreachable" : "refused",
+        code: code ?? "unknown",
+        message: failure.message,
+        ...(failure.remediation ? { remediation: failure.remediation } : {}),
+        ...(failure.correlationId ? { correlationId: failure.correlationId } : {}),
+        backupSetIds: [s.id]
+      });
+    }
+  };
+
+  // Issue #852: only the direction that ENABLES deleting from the source
+  // is blocked, and only on proof. A set that is not read-only is
+  // already deleting from its source, and taking that control away would
+  // strand it in a posture it could not leave.
+  const deleteFromSourceBlocked = s.readOnly && sourceWritable === false;
 
   // visibleEditFields, not EDIT_FIELDS: a conditional box that is not on
   // screen (the stable-size window, when another completion method is
@@ -627,6 +689,14 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
             <InfoTooltip id="sets.detail.health">
               <HealthBadge state={s.state} />
             </InfoTooltip>
+            {/* EPIC K (#788): which engine runs this set, beside its
+                name rather than three cards down in the configuration
+                panel. Everything below reads differently depending on
+                this answer — a snapshot history or an artifact chain, a
+                repository domain or a completion method — so it belongs
+                where a reader arrives, not where it happens to be
+                configured. */}
+            <EngineBadge engine={s.engine} />
           </span>
         }
         subtitle={
@@ -753,6 +823,26 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                 </button>
               </InfoTooltip>
             ) : null}
+            {/* EPIC K's per-set screens (issue #788), and only for the
+                engine that has them: every incremental read is refused
+                outright for an artifact set
+                (BACKUP_SET_NOT_INCREMENTAL), so offering the link here
+                would be offering a page that can only explain itself.
+                The set's own engine is on the list read, which is why
+                this needs no probe of its own. */}
+            {s.engine === "kopia" ? (
+              <>
+                <button className="btn" onClick={() => navigate(snapshotsPath(s.source, s.set))}>
+                  Snapshots
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => navigate(snapshotRetentionPath(s.source, s.set))}
+                >
+                  Snapshot retention
+                </button>
+              </>
+            ) : null}
             <InfoTooltip id="sets.detail.preview-retention" alignEnd>
               <button className="btn" disabled={readOnly} onClick={() => setPreviewOpen(true)}>Preview retention</button>
             </InfoTooltip>
@@ -871,6 +961,16 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
         </div>
       ) : null}
 
+      {/* EPIC K (#788), design screen 6: what this set's engine last
+          actually did. Only for the incremental engine, and not as a
+          courtesy — an artifact set has no snapshot history at all and
+          every incremental read is refused for one
+          (BACKUP_SET_NOT_INCREMENTAL), so asking would be asking a
+          question with only an error for an answer. The artifact
+          treatment of the same question is the backup chain and the
+          completion method already on this page. */}
+      {s.engine === "kopia" ? <NewestSnapshotStrip source={s.source} set={s.set} /> : null}
+
       <div
         style={{
           display: "grid", gridTemplateColumns: "minmax(0, 1.55fr) minmax(0, 1fr)",
@@ -949,6 +1049,18 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                 }
               />
             </dl>
+          </Section>
+
+          {/* EPIC K (issue #788). What this set is configured to DO,
+              drawn for the engine it runs: an incremental set's
+              repository domain, consistency declaration and verification
+              budget, or an artifact set's completion and validation. It
+              sits above the inline edit list rather than inside it
+              because two of its fields are create-only and the rest are
+              closed questions with consequences, which is a card of
+              radio choices and not a row of text boxes. */}
+          <Section title="Configuration" tip="sets.detail.configuration">
+            <BackupSetConfigurationCard set={s} readOnly={readOnly} onSaved={set.reload} />
           </Section>
 
           {editing && draft && baseline ? (
@@ -1120,15 +1232,34 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                   (core/service.SetBackupSetReadOnly's own doc) — so it
                   sits in the caution tier beside Disable, not the
                   destructive one below. */}
-              <InfoTooltip id="sets.detail.toggle-read-only" block>
+              {/* Issue #852: withdrawing read-only is the direction that
+                  asks this deployment to DELETE from the source, so it
+                  is unavailable when the connection test has proven
+                  these credentials cannot write there. Disabled with the
+                  reason in a tooltip, rather than left pressable to be
+                  refused by the server: a control that answers 409 every
+                  time is a control that reads as broken. Declaring
+                  read-only is never blocked. */}
+              <InfoTooltip
+                id={deleteFromSourceBlocked ? "source.read-only-credentials" : "sets.detail.toggle-read-only"}
+                block
+              >
                 <button
                   className="btn btn--caution"
-                  disabled={readOnly}
-                  onClick={() => api.setReadOnly(s.source, s.set, !s.readOnly).then(set.reload)}
+                  disabled={readOnly || deleteFromSourceBlocked}
+                  aria-describedby={deleteFromSourceBlocked ? "set-read-only-forced" : undefined}
+                  onClick={() => void toggleReadOnly()}
                 >
                   {s.readOnly ? "Allow remote deletion again" : "Declare source read-only"}
                 </button>
               </InfoTooltip>
+              {deleteFromSourceBlocked ? (
+                <p id="set-read-only-forced" style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+                  These SSH credentials are read-only on the source, so Backupd cannot delete
+                  there. Grant the account write permission on the source to enable deleting
+                  the original after backup.
+                </p>
+              ) : null}
               <InfoTooltip id="sets.detail.apply-retention" block>
                 <button className="btn btn--destructive" disabled={readOnly} onClick={() => setPreviewOpen(true)}>
                   Apply retention now…
@@ -1235,6 +1366,126 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
         }}
       />
     </>
+  );
+}
+
+/**
+ * The newest snapshot this incremental set holds, as the five figures
+ * EPIC K is about (design screen 6).
+ *
+ * # Why the figures and not a sentence
+ *
+ * "Last run: 4 hours ago" is what an artifact set can say, and it is all
+ * this page said for an incremental one. The incremental engine's whole
+ * claim is the relationship between them — a tree of this logical size
+ * cost that much storage because the repository already held the rest —
+ * and a single total would report a deduplicating repository as growing
+ * by the size of the source every night. Four byte counts, never one, in
+ * the same words the snapshot list and the inspector use.
+ *
+ * # Absent is not zero
+ *
+ * Every counter here is nullable on the wire and goes through
+ * `measured()`, for the reason types/snapshot.ts argues at length: a run
+ * adopted by crash reconciliation has counters nobody took, and "reused
+ * 0 bytes" is a measurement describing a repository that deduplicated
+ * nothing.
+ *
+ * # It has its own read, and its own failure
+ *
+ * The set comes off the shared graph; the snapshots do not, because this
+ * is the only surface on this page that wants them. A refused read says
+ * so in one quiet line rather than through an ErrorState: the set's own
+ * page is still worth reading when its snapshot history is not
+ * available, and a red panel here would report the sub-read as the
+ * page's condition.
+ */
+function NewestSnapshotStrip({ source, set }: { source: string; set: string }) {
+  const api = useApi();
+  const navigate = useNavigate();
+  const snapshots = useAsync(() => api.listSnapshots(source, set), [api, source, set]);
+
+  if (snapshots.error)
+    return (
+      <section className="card" aria-label="Newest snapshot">
+        <div className="card__body">
+          <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+            {"This set's snapshot history could not be read: " + snapshots.error.message}
+          </p>
+        </div>
+      </section>
+    );
+
+  const newest = snapshots.data?.[0] ?? null;
+  if (newest === null)
+    return snapshots.data === null ? null : (
+      <section className="card" aria-label="Newest snapshot">
+        <div className="card__body">
+          <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
+            {"No snapshot yet. A run that commits a manifest is what puts one here, and its " +
+              "figures then say what the repository actually stored."}
+          </p>
+        </div>
+      </section>
+    );
+
+  return (
+    <section className="card" aria-label="Newest snapshot" style={{ marginBottom: 14 }}>
+      <div
+        className="card__header"
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+      >
+        <h2 className="eyebrow">
+          {"Newest snapshot \u00b7 " + relativeAge(newest.startedAt)}
+        </h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <VerificationBadge
+            status={newest.verificationStatus}
+            achieved={newest.verificationLevelAchieved}
+          />
+          <button className="btn btn--sm" onClick={() => navigate(snapshotsPath(source, set))}>
+            All snapshots
+          </button>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(196px, 1fr))" }}>
+        <MetricCard
+          label="Entries scanned"
+          value={measured(newest.entriesScanned, (n) => n.toLocaleString())}
+          detail={measured(newest.files, (n) => n.toLocaleString() + " files")}
+        />
+        <MetricCard
+          label="Logical size"
+          value={measured(newest.logicalBytes, bytes)}
+          detail="the tree as described"
+        />
+        <MetricCard
+          label="Read from source"
+          value={measured(newest.sourceBytesRead, bytes)}
+          detail="every byte the source offered"
+        />
+        <MetricCard
+          label="Written to repository"
+          value={measured(newest.repositoryBytesWritten, bytes)}
+          detail="after deduplication"
+        />
+        <MetricCard
+          label="Reused"
+          tip="snapshots.reused"
+          value={measured(newest.contentReusedBytes, bytes)}
+          detail={
+            newest.contentReusedBytes === null
+              ? "not accounted for on this run"
+              : "content the repository already held"
+          }
+        />
+        <MetricCard
+          label="Duration"
+          value={measured(newest.durationSeconds, duration)}
+          detail={newest.repositoryDomain === null ? "" : "domain " + newest.repositoryDomain}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -1632,52 +1883,4 @@ const VALIDATION_TIPS: Record<"transfer" | "checksum" | "application", TooltipId
   application: "sets.detail.validation.application"
 };
 
-/**
- * The two label-and-value patterns this page states its facts in.
- *
- * Cell is a boxed summary tile; Row is a two-column grid whose dt and dd
- * are direct grid children, so it returns a fragment and must not wrap
- * them in anything.
- *
- * Neither gives its dt or its dd an accessible name, and that is a known
- * gap rather than an oversight. `<dt>` is role `term` and `<dd>` is role
- * `definition`, and both take their name from the author rather than from
- * their content, so every row here is unreachable by anything navigating
- * by role and every value is announced with nothing attached to it. The
- * fix is one line in each of these two functions (an id on the dt, an
- * aria-labelledby on the dd) and it was written, measured and taken back
- * out: four of this page's read-only labels are also the labels of its
- * inline EDIT fields (Host, User, Remote folder, Completion method), so
- * naming the values puts two elements with the same accessible name on
- * the page whenever edit mode is open. That is ambiguous for anything
- * looking a control up by its label, and deciding whether a read-only
- * value and an editable field may share a name is a decision about
- * backupSetEditFields.ts rather than about this file. See the pull
- * request that recorded it.
- */
-function Cell({ label, value, mono, tip }: { label: string; value: string; mono?: boolean; tip?: TooltipId }) {
-  return (
-    <div>
-      <dt className="eyebrow" style={{ fontSize: 10.5, letterSpacing: "0.06em" }}>{label}</dt>
-      {/* The host goes round the VALUE, inside the <dd>. A <dl> pairs its
-          terms with its definitions through its own children, so a
-          wrapper between them would be one an assistive technology has
-          to walk past to find the row. */}
-      <dd style={{ margin: "4px 0 0", fontFamily: mono ? "var(--font-mono)" : undefined }}>
-        {tip ? <InfoTooltip id={tip}><span>{value}</span></InfoTooltip> : value}
-      </dd>
-    </div>
-  );
-}
-
-function Row({ label, value, mono, tip }: { label: string; value: ReactNode; mono?: boolean; tip?: TooltipId }) {
-  return (
-    <>
-      <dt style={{ color: "var(--text-2)" }}>{label}</dt>
-      <dd className={mono ? "mono" : undefined} style={{ margin: 0 }}>
-        {tip ? <InfoTooltip id={tip}><span>{value}</span></InfoTooltip> : value}
-      </dd>
-    </>
-  );
-}
 

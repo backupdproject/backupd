@@ -1082,6 +1082,7 @@ describe("issues #592 and #596: the verify pane draws six steps and never invent
     // with nothing on screen explaining why.
     vi.spyOn(api, "testCandidateConnection").mockResolvedValue({
       ok: true,
+      writable: true,
       checks: [
         { step: "credentials", outcome: "skipped", detail: "this deployment does not hold this key, so its public half could not be named" },
         { step: "resolve", outcome: "passed", detail: target.host + " is 203.0.113.24 (A)", durationMs: 12 },

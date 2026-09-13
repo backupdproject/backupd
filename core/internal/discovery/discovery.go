@@ -324,6 +324,13 @@ func Discover(ctx context.Context, deps Deps, source transport.Source, set confi
 			// Expected and routine, not a discovery gap.
 			continue
 		}
+		if isOwnWriteProbe(base) {
+			// This deployment's own write probe, left behind because its
+			// removal failed. Not a candidate in any strategy: see
+			// isOwnWriteProbe for why it reaches this loop at all and
+			// why it is skipped silently rather than reported.
+			continue
+		}
 		if !includeMatches(set.Include, base) {
 			continue
 		}

@@ -46,3 +46,41 @@ export function backupSetPath(source: string, set: string): string {
 export function artifactPath(id: string): string {
   return "/backups/" + id.split("/").map(encodeURIComponent).join("/");
 }
+
+/**
+ * EPIC K's per-set screens (issue #788), all of them hanging off the
+ * backup set's own two-segment path for the reason the comment above
+ * gives: the id is composite, and every one of these routes is reached by
+ * a click on a row that holds one.
+ *
+ * A snapshot is addressed by its RUN id and never by the engine's
+ * manifest id, matching the API's own `.../snapshots/{run}` route: the
+ * run exists from the moment a pass starts, and a pass that never
+ * committed a manifest has no other name (types/snapshot.ts).
+ */
+export function snapshotsPath(source: string, set: string): string {
+  return backupSetPath(source, set) + "/snapshots";
+}
+
+export function snapshotPath(source: string, set: string, runId: string): string {
+  return snapshotsPath(source, set) + "/" + encodeURIComponent(runId);
+}
+
+/** The restore flow. `runId` preselects a snapshot in step one; without
+ *  it the flow opens on the set's newest restore point. A query parameter
+ *  rather than a path segment because it is an opening position and not
+ *  the identity of the page: a restore whose operator changed their mind
+ *  in step one is the same flow, not a different URL. */
+export function restorePath(source: string, set: string, runId?: string): string {
+  return (
+    backupSetPath(source, set) + "/restore" + (runId ? "?run=" + encodeURIComponent(runId) : "")
+  );
+}
+
+/** Snapshot retention and the holds that override it. NOT `/retention`,
+ *  which is FR-18's artifact retention plan and can be applied; this one
+ *  is a preview and has no apply route at all (client.ts's own note on
+ *  getSnapshotRetention). */
+export function snapshotRetentionPath(source: string, set: string): string {
+  return backupSetPath(source, set) + "/snapshot-retention";
+}

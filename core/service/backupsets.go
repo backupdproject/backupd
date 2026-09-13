@@ -42,6 +42,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/backupdproject/backupd/core/internal/model"
 	"github.com/backupdproject/backupd/core/internal/obs"
 	"github.com/backupdproject/backupd/core/internal/sourcecheck"
 	"github.com/backupdproject/backupd/core/internal/transport"
@@ -201,6 +202,27 @@ type BackupSet struct {
 	// say that rather than render a blank where a fingerprint goes: an
 	// empty fingerprint under a confident "Algorithm" heading is the
 	// defect this field exists to end.
+	// EPIC K's engine seam, read back (#788).
+	//
+	// Engine is always reported and always the RESOLVED value: a
+	// configuration that omits the key reads "artifact" here rather than
+	// empty, because a client that had to know the default would be a
+	// second place the default is decided.
+	//
+	// Everything below it is empty or zero for an artifact set, which
+	// has no repository, no lineage and no verification budget.
+	// Resolving any of them for an engine that reads none would report a
+	// claim nobody made.
+	Engine                        string
+	UUID                          string
+	RepositoryDomain              string
+	SourceConsistency             string
+	VerificationLevel             string
+	VerificationSamplePercent     int
+	VerificationFullEvery         time.Duration
+	VerificationRestoreDrillEvery time.Duration
+	SourceMountPrefix             string
+
 	TrustedHostKeys []TrustedHostKey
 
 	// TrustedHostKeyRecordedAt is when THIS deployment last wrote that
@@ -384,6 +406,49 @@ type CreateBackupSetRequest struct {
 	// caller gets by not mentioning it, is the one that checks.
 	SkipConnectionCheck bool
 
+	// EPIC K's engine seam on the create path (#788).
+	//
+	// Engine is "artifact", "kopia" or empty, and empty means artifact:
+	// that is what every request written before this field existed
+	// means, and reading a typo as either engine would silently either
+	// ignore an operator who asked for snapshots or change what a run
+	// does to a source tree. config.Validate parses it; nothing here
+	// does.
+	Engine string
+
+	// UUID is the durable identifier the snapshot lineage hangs off.
+	// Empty on an incremental create mints one, because a caller has
+	// nothing sensible to put here and a lineage key an operator typed
+	// is a lineage key an operator can mistype. It is refused for an
+	// artifact set by config.Validate, which is where that rule already
+	// lives.
+	UUID string
+
+	// RepositoryDomain names the declared boundary this set's snapshots
+	// are stored in. Required for an incremental set and it has no
+	// default, because a default is exactly the decision that must be
+	// intentional.
+	RepositoryDomain string
+
+	// SourceConsistency, VerificationLevel, VerificationSamplePercent
+	// and the two cadences are this set's verification budget, all
+	// optional and all resolved by config.Validate to the same defaults
+	// a hand-edited config.yaml gets. Zero on the two durations means
+	// never, which is the only safe default: nobody should acquire a
+	// nightly full read, or a nightly restore of their whole source, by
+	// leaving a field out.
+	SourceConsistency             string
+	VerificationLevel             string
+	VerificationSamplePercent     int
+	VerificationFullEvery         time.Duration
+	VerificationRestoreDrillEvery time.Duration
+
+	// SourceMountPrefix is the leading part of RemotePath that is how
+	// THIS deployment reaches the source rather than part of the
+	// source's own identity, so that moving a bind mount does not fork
+	// the snapshot lineage.
+	SourceMountPrefix string
+
 	// AcknowledgeRepoint confirms that the caller means to create this
 	// backup set somewhere other than where the history already on its id
 	// came from. It is not a field of the backup set and nothing persists
@@ -503,6 +568,23 @@ func newBackupSetFor(configPath, sourceName, keyFile string, req CreateBackupSet
 		// (omitempty), which is what keeps absence meaning what it meant
 		// in every configuration written before this field existed.
 		ConnectionUnverified: req.SkipConnectionCheck,
+
+		// EPIC K's keys, written verbatim as the caller spelled them and
+		// resolved by cfg.Validate right after this function returns --
+		// the same one-parser discipline EngineConfig's own doc sets
+		// out. An artifact create leaves every one of them empty, which
+		// is what every configuration written before EPIC K says and
+		// what keeps this file loadable by a build that predates it
+		// (omitempty on every key).
+		EngineConfig:                    req.Engine,
+		UUID:                            req.UUID,
+		RepositoryDomainConfig:          req.RepositoryDomain,
+		ConsistencyConfig:               req.SourceConsistency,
+		VerificationLevelConfig:         req.VerificationLevel,
+		VerificationSamplePercentConfig: req.VerificationSamplePercent,
+		VerificationFullEvery:           config.Duration(req.VerificationFullEvery),
+		VerificationRestoreDrillEvery:   config.Duration(req.VerificationRestoreDrillEvery),
+		SourceMountPrefix:               req.SourceMountPrefix,
 	}
 	// A pointer to a fresh local, never &req.ReadOnly: req is this
 	// function's own by-value parameter, so its address is safe to persist
@@ -519,6 +601,21 @@ func newBackupSetFor(configPath, sourceName, keyFile string, req CreateBackupSet
 	newSet.ReadOnlyConfig = &readOnly
 	if req.CompletionStrategy == "stable" {
 		newSet.Completion.StableFor = config.Duration(req.StableFor)
+	}
+
+	// EPIC K's lineage key, minted here when an incremental create did
+	// not carry one.
+	//
+	// Minted rather than required, because there is nothing useful a
+	// caller can put here: the value's only job is to be stable across
+	// every rename the set will ever have, and a wizard field for it
+	// would be a field an operator can retype differently. Minted only
+	// for the incremental engine, because config.Validate REFUSES a uuid
+	// on an artifact set -- a key nothing can act on is refused rather
+	// than ignored -- so writing one unconditionally would make every
+	// artifact create fail validation.
+	if newSet.EngineConfig == string(model.EngineKopia) && newSet.UUID == "" {
+		newSet.UUID = uuid.New().String()
 	}
 
 	knownHostsPath, err := writeKnownHostsIn(configPath, sourceName, req.Name, req.KnownHostsLine)
@@ -589,6 +686,15 @@ func (b *BackupService) CreateBackupSet(ctx context.Context, req CreateBackupSet
 			// from the caller's own values, never a transport error's
 			// text.
 			return CreateBackupSetResult{}, fmt.Errorf("%w: %s", ErrConnectionNotProven, result.Message)
+		}
+		// Issue #852: the same check that just proved the connection
+		// also proved whether these credentials may WRITE there, and a
+		// set created with delete-from-source enabled against a source
+		// that refused the write probe is refused here rather than
+		// written and discovered later. The check has already run, so
+		// this costs nothing beyond reading its answer.
+		if err := refuseDeleteOnUnwritableSource(result, req.ReadOnly); err != nil {
+			return CreateBackupSetResult{}, err
 		}
 	}
 
@@ -880,8 +986,26 @@ func validateCreateRequest(req CreateBackupSetRequest) error {
 		problems = append(problems, "known_hosts_line is required (probe and trust the host key first)")
 	}
 	problems = appendProblem(problems, requiredFieldProblem("remote_path", req.RemotePath))
-	problems = appendProblem(problems, requiredFieldProblem("local_path", req.LocalPath))
-	problems = append(problems, completionProblems(req.CompletionStrategy, req.StableFor)...)
+	// EPIC K (#788). local_path and a completion strategy are the
+	// ARTIFACT pipeline's own fields: one names where a finished file is
+	// copied to, the other names the rule that decides a file is
+	// finished, and an incremental set has neither because there is no
+	// file to recognise or copy. config.Validate REFUSES both on a
+	// kopia set, so requiring them here is not a stricter version of the
+	// same rule, it is the opposite one: every incremental create was
+	// refused for omitting exactly what it would then have been refused
+	// for carrying, which made an incremental set impossible to create
+	// through this service at all.
+	//
+	// Anything that is not the incremental engine is checked as an
+	// artifact create, a misspelled engine included: that request is
+	// refused by name a moment later, by the one parser that decides
+	// what an engine is (model.ResolveBackupEngine, through
+	// config.Validate), rather than by a second opinion here.
+	if engine, _ := model.ResolveBackupEngine(req.Engine); engine != model.EngineKopia {
+		problems = appendProblem(problems, requiredFieldProblem("local_path", req.LocalPath))
+		problems = append(problems, completionProblems(req.CompletionStrategy, req.StableFor)...)
+	}
 	problems = appendProblem(problems, validatorIDProblem(req.ValidatorID))
 	return joinProblems(problems)
 }
@@ -993,6 +1117,21 @@ func toServiceBackupSet(cfg *config.Config, configPath, sourceName string, bs co
 		// a set's own history can answer, so it is only ever what somebody
 		// wrote (issue #624).
 		ConnectionUnverified: bs.ConnectionUnverified,
+
+		// EPIC K's engine seam. bs.Engine and the three resolved fields
+		// beside it, never the raw *Config strings: every bs reaching
+		// here has been through cfg.Validate, which is the one place the
+		// engine vocabulary is parsed, and reading the raw keys would be
+		// a second parser that disagrees with it about a typo.
+		Engine:                        string(bs.Engine),
+		UUID:                          bs.UUID,
+		RepositoryDomain:              bs.Repository.Domain.String(),
+		SourceConsistency:             string(bs.Consistency),
+		VerificationLevel:             string(bs.VerificationLevel),
+		VerificationSamplePercent:     bs.VerificationSamplePercentConfig,
+		VerificationFullEvery:         bs.VerificationFullEvery.Duration(),
+		VerificationRestoreDrillEvery: bs.VerificationRestoreDrillEvery.Duration(),
+		SourceMountPrefix:             bs.SourceMountPrefix,
 
 		TrustedHostKeys:          trusted,
 		TrustedHostKeyRecordedAt: recordedAt,
@@ -1258,6 +1397,23 @@ type ConnectionTestResult struct {
 	// OK keeps meaning exactly what it meant, so a client reading only
 	// ok and message keeps working.
 	Checks []ConnectionCheck
+
+	// Writable is issue #852's answer: whether a real write-and-remove
+	// round trip under the remote path succeeded (the write_probe step).
+	//
+	// It is a top-level field beside OK rather than something a caller
+	// derives from the checks, because every consumer is making a
+	// decision with it and not rendering it: the UI disables its
+	// "delete from source after backup" control on it, and this package
+	// refuses a create or an edit that enables delete-from-source
+	// against a source where it is false (ErrSourceNotWritable).
+	//
+	// False whenever nothing was proven — a check that stopped early, a
+	// probe that was skipped, a transport that cannot ask — for the
+	// reason sourcecheck.Report.Writable gives: nothing may enable a
+	// delete on an absence of evidence. OK and Writable are therefore
+	// independent: a read-only source is a perfectly OK connection.
+	Writable bool
 }
 
 // ConnectionCheck is one step of a connection test, as the wire carries
@@ -1435,6 +1591,14 @@ func testConnectionVia(ctx context.Context, tr transport.Transport, configPath s
 			}
 			return len(entries), nil
 		},
+		// The same write probe the persisted mode runs, over the same
+		// candidate source (issue #852). The wizard needs this answer
+		// BEFORE the set exists: it is what decides whether its "delete
+		// from source after backup" control is offered at all, and a
+		// create that asked for a delete against a source proven
+		// non-writable is refused by CreateBackupSet on the strength of
+		// this very result.
+		ProbeWrite: sourceWriteProbeVia(tr, src),
 	}
 
 	// Not %w-wrapped, and not returned as a Go error at all: a failed

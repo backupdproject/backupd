@@ -82,6 +82,11 @@ function slashIdSet(overrides: Partial<BackupSet> = {}): BackupSet {
     trustedHostKeys: [{ algorithm: "ssh-ed25519", fingerprint: "SHA256:test-fingerprint" }],
     trustedHostKeyRecordedAt: "2026-08-02T10:14:00Z",
     sshKeyId: "key_a1b2c3",
+    // EPIC K (issue #788): this fixture is an artifact set, which is
+    // what every set in this suite was before the incremental engine
+    // existed, so `incremental` is null rather than an empty block.
+    engine: "artifact",
+    incremental: null,
     readOnly: false,
     readOnlyRetainedCount: 0,
     ...overrides

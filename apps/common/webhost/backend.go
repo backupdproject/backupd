@@ -426,6 +426,46 @@ type BackupServiceClient interface {
 	// the real pass exactly.
 	ScanCatalog(ctx context.Context) (service.CatalogReport, error)
 	RebuildCatalog(ctx context.Context) (service.CatalogReport, error)
+
+	// EPIC K's snapshot surface (#788): the four reads that hang off a
+	// backup set, all read-only per §50.
+	//
+	// ListSnapshots and GetSnapshot back GET .../snapshots and GET
+	// .../snapshots/{run}: what the incremental engine stored, in this
+	// product's own vocabulary. ListSnapshotHolds backs GET .../holds,
+	// and SnapshotRetention backs GET .../snapshot-retention, which is a
+	// PREVIEW and deletes nothing -- the snapshot deletion pass is the
+	// engine's own and is not reachable from this package at all.
+	//
+	// Every one of them refuses a backup set that stores artifacts
+	// rather than snapshots, which is why they are not folded into the
+	// artifact reads beside them.
+	ListSnapshots(ctx context.Context, id string) ([]service.Snapshot, error)
+	GetSnapshot(ctx context.Context, id, runID string) (service.SnapshotDetail, error)
+	ListSnapshotHolds(ctx context.Context, id string) ([]service.SnapshotHold, error)
+	SnapshotRetention(ctx context.Context, id string) (service.SnapshotRetentionPreview, error)
+
+	// ListRepositories and RepositoryMaintenanceState back GET
+	// /api/v1/repositories and GET
+	// /api/v1/repositories/{domain}/maintenance (#788). Read-only, and
+	// the first is the expensive one: it opens every declared repository
+	// to prove it is readable and writable, which is why it is its own
+	// route rather than a block on the health read a dashboard polls.
+	ListRepositories(ctx context.Context) (service.RepositoryHealthReport, error)
+	RepositoryMaintenanceState(ctx context.Context, domain string) (service.RepositoryMaintenance, error)
+
+	// The four durable actions EPIC K puts on POST /api/v1/operations
+	// (#788), beside SubmitRestorePlacement above.
+	//
+	// A hold is not long-running and is still an operation: the reason
+	// is the retry rather than the duration, and the idempotency key on
+	// that route is the mechanism this deployment already has for making
+	// a resubmitted request do one thing rather than two. See
+	// core/service.SubmitSnapshotHold.
+	SubmitSnapshotRestore(ctx context.Context, req service.SnapshotRestoreRequest) (service.Operation, error)
+	SubmitSnapshotVerify(ctx context.Context, req service.SnapshotVerifyRequest) (service.Operation, error)
+	SubmitSnapshotHold(ctx context.Context, req service.SnapshotHoldRequest) (service.Operation, error)
+	SubmitSnapshotHoldRelease(ctx context.Context, req service.SnapshotHoldReleaseRequest) (service.Operation, error)
 }
 
 var _ BackupServiceClient = (*service.BackupService)(nil)

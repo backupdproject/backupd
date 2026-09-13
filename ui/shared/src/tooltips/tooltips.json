@@ -35,6 +35,10 @@
     "label": "Quarantine",
     "html": "Artifacts held back because something about them could not be trusted. <strong>Nothing here is deleted</strong> until you decide. The number is <strong>meant to be zero</strong>; anything else is asking for a decision."
   },
+  "nav.repositories": {
+    "label": "Repositories",
+    "html": "The encrypted stores incremental backup sets write snapshots to. One store may hold several sets, which then share its key, its credential and its maintenance, so its health is a question no single backup set's page can answer."
+  },
   "nav.settings": {
     "label": "Settings",
     "html": "Deployment-wide configuration: capacity, retention defaults, appearance and this browser's own preferences."
@@ -82,6 +86,50 @@
   "settings.catalog-scan": {
     "label": "Scan backup storage",
     "html": "Reads the configured storage and lists what it finds so it can be adopted back into the catalog. <strong>Read-only</strong>: nothing is written, moved or deleted by scanning."
+  },
+  "settings.backup-defaults": {
+    "label": "Backup defaults",
+    "html": "What a new backup set starts with, the retention chain every set without an override is kept by, and who maintains each repository domain. The controls that change the first two live on this page; that screen reports them beside the things only it can show."
+  },
+  "defaults.page": {
+    "label": "Backup defaults",
+    "html": "The deployment-level answers, in one place. A per-set page can only say what one set does; this says what every new set will do and what the whole deployment is currently keeping."
+  },
+  "defaults.new-sets": {
+    "label": "New backup sets",
+    "html": "Where <strong>Add backup set</strong> starts from. This contract carries no deployment-wide default for the engine, the repository domain, the consistency mode or the verification budget: each is answered per set, so these are the wizard's opening answers rather than a stored value."
+  },
+  "defaults.retention": {
+    "label": "Retention defaults",
+    "html": "The chain every backup set without an override of its own is kept by. Shown here, edited under Settings on the Retention plan card — one editor, so two screens cannot disagree about what is configured."
+  },
+  "repositories.page": {
+    "label": "Repository domains",
+    "html": "Every encrypted store this deployment writes snapshots to. A domain is a <strong>security boundary</strong> several backup sets can sit inside, which is why it is configured here rather than from inside any one of them."
+  },
+  "repositories.define": {
+    "label": "Define a repository domain",
+    "html": "What creating a store asks: where it lives, what key opens it, whether other backup sets may join it, and who maintains it. This build's API has no route that writes any of it, so the screen states the decision and refuses the controls rather than collecting a passphrase it cannot store."
+  },
+  "repositories.may-share": {
+    "label": "Shared or isolated",
+    "html": "<strong>Shared</strong> means several backup sets may store snapshots here and deduplicate against each other, sharing one key, one credential, one maintenance owner and one blast radius. <strong>Isolated</strong> means exactly one set: a second set pointed here is refused rather than quietly admitted."
+  },
+  "repositories.topology": {
+    "label": "Topology",
+    "html": "Which backup sets are <strong>co-tenants</strong>. The table above says how each store is; this says who is inside it, which is the question that decides what a lost passphrase or a corrupted store would cost."
+  },
+  "repositories.fleet-health": {
+    "label": "Repository health",
+    "html": "Each store's own probes, reported separately: reachable, readable, writable, credentials, clock and maintenance. They are kept apart because the remedies differ — a mount, a permission, a passphrase and a schedule are four different jobs."
+  },
+  "repositories.maintenance-view": {
+    "label": "Maintenance",
+    "html": "When each store was last compacted, when it is next eligible, and what maintenance has reclaimed. Full maintenance is what actually frees space: a repository with recent quick runs and no full run is growing."
+  },
+  "repositories.maintenance-transfer": {
+    "label": "Transfer maintenance ownership",
+    "html": "Exactly one instance may maintain a repository domain, and ownership moves by <strong>transfer</strong>, never by claim — an instance that simply decided it was the owner is how two of them compact one store at once. No route on this API performs the transfer yet, so the control is drawn and refused rather than hidden."
   },
   "settings.platform": {
     "label": "Platform",
@@ -915,6 +963,10 @@
     "label": "Overview",
     "html": "What this set has actually produced, as opposed to what it is configured to do: the age of its newest recoverable backup, how much it keeps, and whether it is collected at all."
   },
+  "sets.detail.configuration": {
+    "label": "Configuration",
+    "html": "What this set is configured to DO, as opposed to what it has produced. Two answers here were settled when the set was created and cannot be changed — its <strong>engine</strong> and its <strong>repository domain</strong> — because its whole history belongs to both."
+  },
   "sets.detail.newest-known-good": {
     "label": "Newest known-good",
     "html": "How long ago the most recent backup that passed its validation was taken. This is the age of what could be recovered now, which a merely finished run is not."
@@ -1495,6 +1547,10 @@
     "label": "Connection test result",
     "html": "Every step of the test with its own verdict, in the order they ran, so a mistyped hostname and an unauthorised key are told apart rather than collapsed into one failure. A step after a failing one was never attempted, which is not a quiet pass."
   },
+  "source.read-only-credentials": {
+    "label": "Source is read-only",
+    "html": "The connection test wrote a temporary file under this source's remote path and the account was <strong>refused</strong>, so these SSH credentials can read this source but not write to it. Backupd therefore cannot delete anything there, and <strong>deleting the original after backup cannot be enabled</strong> for this set: every remote original is kept. Grant the account write permission on the source and test the connection again to enable source deletion."
+  },
   "wizard.set.remote-handling": {
     "label": "Remote source handling",
     "html": "Whether Backupd deletes the original artifact on the source once its own copy has been transferred, verified, committed and recorded as safe. A source protected from deletion keeps every remote original for good."
@@ -1598,5 +1654,49 @@
   "wizard.ssh.ledger": {
     "label": "What applying changes",
     "html": "The key and host key this set uses now, beside the ones about to replace them. The rest of the set is left untouched by the patch."
+  },
+  "wizard.incremental.engine": {
+    "label": "Backup engine",
+    "html": "<strong>Artifact</strong> pulls finished files a producer leaves for you and keeps each one whole. <strong>Incremental</strong> snapshots an entire directory tree and stores only content the repository does not already hold. It cannot be changed later: a set that switched would start a second, unrelated history."
+  },
+  "wizard.incremental.domain": {
+    "label": "Repository domain",
+    "html": "The encrypted store this set's snapshots live in. Sets that share one share <strong>everything</strong> about it — its key, its credential, its maintenance, its corruption blast radius — and in exchange store content they have in common only once."
+  },
+  "wizard.incremental.consistency": {
+    "label": "Source consistency",
+    "html": "What you have arranged on the server, which Backupd records rather than detects. It decides whether a file changing mid-run is ordinary or is reported as a <strong>broken arrangement</strong>. Only <em>frozen image</em> may be called a point in time."
+  },
+  "wizard.incremental.verification": {
+    "label": "Verification level",
+    "html": "How far each backup is checked before it counts. A run that proves <strong>less</strong> than this fails, and only a run that proves it can become the newest known-good restore point."
+  },
+  "wizard.incremental.write-probe": {
+    "label": "Write permission",
+    "html": "Backupd wrote a scratch file under the source path and deleted it again. It is the only evidence that these credentials could remove a file there, and it is what arms or refuses <code>Delete from source after a verified backup</code>."
+  },
+  "sets.source-delete": {
+    "label": "Delete from source",
+    "html": "After a backup is stored and verified, Backupd deletes the file on the server, freeing space there. It never runs on a backup that failed verification."
+  },
+  "sets.source-delete.read-only": {
+    "label": "Delete from source unavailable",
+    "html": "The SSH credentials for this source are <strong>read-only</strong>: the write test could not create a file on the server, so Backupd cannot delete there either. Grant this account write permission on the source path and re-run the connection test to enable source deletion."
+  },
+  "snapshots.reused": {
+    "label": "Reused",
+    "html": "Content this run offered the repository that it already held, so it was not stored again. When the engine cannot account for it the panel says <em>not measured</em> rather than <code>0</code> \u2014 a zero would read as a backup that deduplicated nothing."
+  },
+  "snapshots.achieved-level": {
+    "label": "Verification achieved",
+    "html": "What the check actually <strong>performed</strong>, which is not always what was asked for. A failed verification proves nothing and carries no level at all."
+  },
+  "snapshots.restore.step": {
+    "label": "Step",
+    "html": "One of the four questions a restore answers: which snapshot, what inside it, where it goes, and what happens to a file already there. Any of them can be reopened; nothing is submitted until <strong>Start restore</strong>."
+  },
+  "repositories.maintenance-owner": {
+    "label": "Maintenance owner",
+    "html": "Exactly one instance maintains a repository domain. Another instance reads and writes snapshots here but will not compact or reclaim, so a domain whose owner is switched off stops being maintained until ownership is <strong>transferred</strong>."
   }
 }

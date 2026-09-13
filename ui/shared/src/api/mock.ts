@@ -33,6 +33,13 @@ import type {
 import { BackupdError, LOCAL_DESTINATION_ID } from "./contracts";
 import type { BackupArtifact, BackupSet, RetentionPlan } from "@shared/types/backup";
 import type {
+  RepositoryHealth,
+  RepositoryMaintenance,
+  Snapshot,
+  SnapshotHold,
+  SnapshotTransition
+} from "@shared/types/snapshot";
+import type {
   ActivityEvent,
   Operation,
   SystemHealth,
@@ -66,7 +73,15 @@ export type Scenario =
   // fails, so the rest of both pages renders normally and what is
   // asserted is what the failing panel says rather than whether the page
   // came up at all.
-  | "activity-unreadable";
+  | "activity-unreadable"
+  // Issue #852: a source whose credentials can READ it and not write to
+  // it, which is a supported posture rather than a failure. The
+  // connection test answers ok:true with writable:false, so both the
+  // wizard and the per-set form have to disable their
+  // delete-from-source control and say why. It is its own scenario
+  // because the interesting state is a PASSING test with one answer
+  // inverted, and no other fixture here can produce that.
+  | "read-only-source";
 
 /** Reads the scenario out of the URL, falling back to the default for
  *  anything unrecognised. A closed allow-list rather than a cast, so a
@@ -76,7 +91,8 @@ export function scenarioFromLocation(): Scenario {
   const s = new URLSearchParams(window.location.search).get("scenario");
   const allowed: Scenario[] = [
     "default", "empty", "storage-critical", "catalog-recovery",
-    "version-mismatch", "first-run", "no-medium", "activity-unreadable"
+    "version-mismatch", "first-run", "no-medium", "activity-unreadable",
+    "read-only-source"
   ];
   return (allowed as string[]).includes(s ?? "") ? (s as Scenario) : "default";
 }
@@ -168,7 +184,20 @@ const SETS: BackupSet[] = [
     retainedCount: 32, retainedBytes: 421 * GB,
     trustedHostKeys: [{ algorithm: "ssh-ed25519", fingerprint: "SHA256:9kQ2mVv+Rt4hLc0pXeN1sJfB7yUwZaGdQ8oT3iKrEuM" }],
     trustedHostKeyRecordedAt: "2026-08-02T10:14:00+02:00",
-    sshKeyId: "key_a1b2c3"
+    sshKeyId: "key_a1b2c3",
+    // EPIC K (issue #788). The deployment these fixtures describe runs
+    // three incremental sets and one artifact set, which is the mix the
+    // UI has to tell apart on every list: an operator who runs both
+    // should never have to work out which kind they are looking at.
+    engine: "kopia",
+    incremental: {
+      repositoryDomain: "primary-nas",
+      sourceConsistency: "externally_quiesced",
+      verificationLevel: "content_sample",
+      verificationSamplePercent: 5,
+      verificationFullEverySeconds: 7 * 24 * 3600,
+      verificationRestoreDrillEverySeconds: 30 * 24 * 3600
+    }
   },
   {
     connectionUnverified: false,
@@ -197,6 +226,20 @@ const SETS: BackupSet[] = [
       { algorithm: "ssh-rsa", fingerprint: "SHA256:5dWnP1Hj+Kt6xRc9yMbE3sJf8UwZoGqT4iLrDuVeN2m" }
     ],
     trustedHostKeyRecordedAt: "2026-07-19T09:02:00+02:00",
+    // Shares primary-nas with the set above, which is what makes the
+    // domain's co-tenancy real on screen: two sets, one key, one
+    // maintenance owner, one blast radius.
+    engine: "kopia",
+    incremental: {
+      repositoryDomain: "primary-nas",
+      // The set that never froze anything, so the consistency copy's
+      // "live" branch is exercised too.
+      sourceConsistency: "live_best_effort",
+      verificationLevel: "structural",
+      verificationSamplePercent: null,
+      verificationFullEverySeconds: null,
+      verificationRestoreDrillEverySeconds: null
+    },
     // The same key as the set above, so the listing has a row that is
     // genuinely used by two sets: "used by nothing" and "used by four
     // sets" are the two ends of the column the wizard decides on.
@@ -224,7 +267,13 @@ const SETS: BackupSet[] = [
     // known_hosts an operator maintains, so there is no honest answer to
     // "when was this trusted" and the panel says so.
     trustedHostKeyRecordedAt: null,
-    sshKeyId: "key_d4e5f6"
+    sshKeyId: "key_d4e5f6",
+    // The one ARTIFACT set, and deliberately the failing one: the pages
+    // that ask about snapshots, reuse or held restore points have to be
+    // absent here rather than empty, and a set in trouble is where a
+    // surface is likeliest to render a field it does not have.
+    engine: "artifact",
+    incremental: null
   },
   {
     connectionUnverified: false,
@@ -249,6 +298,18 @@ const SETS: BackupSet[] = [
     retainedCount: 31, retainedBytes: 3.4 * TB,
     trustedHostKeys: [{ algorithm: "ssh-ed25519", fingerprint: "SHA256:4cRnW2Yk+Qp8mLb6vTdF1sJe9UzXoGhS5iNrCuJeP3t" }],
     trustedHostKeyRecordedAt: "2026-05-11T14:20:00+02:00",
+    // The isolated off-site domain, and the read-only source (#282,
+    // #852): this fixture is what the delete-from-source control's
+    // disabled state is drawn against in dev mode.
+    engine: "kopia",
+    incremental: {
+      repositoryDomain: "offsite-b2",
+      sourceConsistency: "external_snapshot",
+      verificationLevel: "content_full",
+      verificationSamplePercent: null,
+      verificationFullEverySeconds: 24 * 3600,
+      verificationRestoreDrillEverySeconds: 0
+    },
     // The set on a key this deployment does not manage: a mounted or
     // hand-provisioned key.file resolves to no store id, and "" is the
     // honest answer rather than a blank where an id goes.
@@ -261,7 +322,13 @@ const SETS: BackupSet[] = [
 const PRISTINE_SETS: BackupSet[] = SETS.map((set) => ({
   ...set,
   includePatterns: [...set.includePatterns],
-  excludePatterns: [...set.excludePatterns]
+  excludePatterns: [...set.excludePatterns],
+  // The incremental block is copied too (issue #788), because
+  // updateBackupSet writes THROUGH it: a shared reference would mean the
+  // first test that saves a verification budget edits the pristine copy
+  // as well, and resetMockFixtures would restore the edit it was called
+  // to undo. Null stays null — an artifact set has no block to copy.
+  incremental: set.incremental === null ? null : { ...set.incremental }
 }));
 
 /**
@@ -276,13 +343,19 @@ const PRISTINE_SETS: BackupSet[] = SETS.map((set) => ({
  * absent.
  *
  * The clone is deep enough for what these fixtures hold: the arrays are
- * arrays of strings, so copying them is what stops a patch that replaces
- * includePatterns leaking into the pristine copy.
+ * arrays of strings and the incremental block is flat, so copying those
+ * three is what stops a patch that replaces includePatterns, or one that
+ * raises a verification level, leaking into the pristine copy.
  */
 export function resetMockFixtures(): void {
   SETS.length = 0;
   for (const set of PRISTINE_SETS) {
-    SETS.push({ ...set, includePatterns: [...set.includePatterns], excludePatterns: [...set.excludePatterns] });
+    SETS.push({
+      ...set,
+      includePatterns: [...set.includePatterns],
+      excludePatterns: [...set.excludePatterns],
+      incremental: set.incremental === null ? null : { ...set.incremental }
+    });
   }
 }
 
@@ -1046,6 +1119,448 @@ const notFound = <T,>(): Promise<T> =>
     })
   );
 
+/**
+ * EPIC K's fixtures (issue #788): the snapshots, holds, repository
+ * domains and maintenance records the dev server and the browser suite
+ * render.
+ *
+ * They describe one coherent deployment rather than per-screen samples,
+ * because the WORKFLOW is what these screens get reviewed as: the domain
+ * a set was pointed at is the domain its snapshots are attributed to, and
+ * the snapshot a hold names is one the retention preview then refuses to
+ * delete.
+ *
+ * Three of them are deliberately awkward, and each exists to make a
+ * rendering path reachable without a real engine:
+ *
+ *   - `run-2026-09-12-1600` has NO reuse figure, no duration, no
+ *     directory count and no source_complete. That is the "not measured"
+ *     path, which every surface must draw as words rather than as a zero.
+ *   - `run-2026-09-12-1000` FAILED verification against a declared
+ *     frozen-image source, so it carries no achieved level at all and is
+ *     not a restore point.
+ *   - two runs are under holds, one of them under two, so "a snapshot
+ *     survives until the last hold is released" is something a reviewer
+ *     can see rather than something a comment claims.
+ */
+const MOCK_HOLDS: SnapshotHold[] = [
+  {
+    holdId: "hold_01J9Z4",
+    runId: "run-2026-09-12-2200",
+    backupSetId: "production/postgres-primary",
+    reason: "Kept for the 2026 Q3 audit",
+    placedAt: "2026-09-12T22:40:00+02:00",
+    placedBy: "backup-admin@example.com",
+    releasedAt: null,
+    releasedBy: null,
+    active: true
+  },
+  {
+    holdId: "hold_01J9Z5",
+    runId: "run-2026-09-12-1000",
+    backupSetId: "production/postgres-primary",
+    reason: "Under investigation: the source changed mid-run",
+    placedAt: "2026-09-12T11:05:00+02:00",
+    placedBy: "backup-admin@example.com",
+    releasedAt: null,
+    releasedBy: null,
+    active: true
+  },
+  {
+    holdId: "hold_01J9Z6",
+    runId: "run-2026-09-12-1000",
+    backupSetId: "production/postgres-primary",
+    reason: "Legal hold, matter 2026-114",
+    placedAt: "2026-09-12T12:00:00+02:00",
+    placedBy: "compliance@example.com",
+    releasedAt: null,
+    releasedBy: null,
+    active: true
+  }
+];
+
+const MOCK_SNAPSHOTS: Snapshot[] = [
+  {
+    runId: "run-2026-09-13-0400",
+    backupSetId: "production/postgres-primary",
+    snapshotId: "k7f3a91c22e8b40d",
+    operationId: "op_01J9Z4M2QK7T",
+    engine: "kopia",
+    phase: "SUCCESS",
+    repositoryDomain: "primary-nas",
+    consistencyMode: "externally_quiesced",
+    verificationLevel: "content_sample",
+    verificationLevelAchieved: "content_sample",
+    verificationStatus: "passed",
+    entriesScanned: 148_951,
+    files: 141_286,
+    directories: 7_665,
+    logicalBytes: 1_412 * GB,
+    sourceBytesRead: 1_412 * GB,
+    repositoryBytesWritten: 21 * GB,
+    contentReusedBytes: 1_391 * GB,
+    sourceComplete: true,
+    lastKnownGood: true,
+    reason: "",
+    startedAt: "2026-09-13T04:00:00+02:00",
+    completedAt: "2026-09-13T04:03:34+02:00",
+    durationSeconds: 214,
+    deleteRequestedAt: null,
+    holds: []
+  },
+  {
+    runId: "run-2026-09-12-2200",
+    backupSetId: "production/postgres-primary",
+    snapshotId: "a1c4e77b90d2f6e5",
+    operationId: "op_01J9Y8K1PJ4R",
+    engine: "kopia",
+    phase: "SUCCESS",
+    repositoryDomain: "primary-nas",
+    consistencyMode: "externally_quiesced",
+    verificationLevel: "content_sample",
+    // Asked for a sampled read and PROVED only the structure, which is
+    // the pair ADR 0014 exists for: both are shown, and the list badges
+    // what was achieved.
+    verificationLevelAchieved: "structural",
+    verificationStatus: "passed",
+    entriesScanned: 148_902,
+    files: 141_240,
+    directories: 7_662,
+    logicalBytes: 1_409 * GB,
+    sourceBytesRead: 1_409 * GB,
+    repositoryBytesWritten: 9 * GB,
+    contentReusedBytes: 1_400 * GB,
+    sourceComplete: true,
+    lastKnownGood: false,
+    reason: "",
+    startedAt: "2026-09-12T22:00:00+02:00",
+    completedAt: "2026-09-12T22:02:19+02:00",
+    durationSeconds: 139,
+    deleteRequestedAt: null,
+    holds: [MOCK_HOLDS[0]]
+  },
+  {
+    // The "not measured" run. Its counters are absent rather than zero:
+    // the engine committed a manifest and the process died before the
+    // accounting was written, which is the ordinary way this happens.
+    runId: "run-2026-09-12-1600",
+    backupSetId: "production/postgres-primary",
+    snapshotId: "2e97c604ba1d8f33",
+    operationId: null,
+    engine: "kopia",
+    phase: "MANIFEST_COMMITTED",
+    repositoryDomain: "primary-nas",
+    consistencyMode: "externally_quiesced",
+    verificationLevel: "content_sample",
+    verificationLevelAchieved: null,
+    verificationStatus: "unchecked",
+    entriesScanned: 148_880,
+    files: 141_221,
+    directories: null,
+    logicalBytes: 1_407 * GB,
+    sourceBytesRead: 1_407 * GB,
+    repositoryBytesWritten: 12 * GB,
+    contentReusedBytes: null,
+    sourceComplete: null,
+    lastKnownGood: false,
+    reason: "",
+    startedAt: "2026-09-12T16:00:00+02:00",
+    completedAt: "2026-09-12T16:02:00+02:00",
+    durationSeconds: null,
+    deleteRequestedAt: null,
+    holds: []
+  },
+  {
+    // The failure, and why it matters: the operator declared a frozen
+    // image and the walk saw the tree change under it. A failed
+    // verification writes NO achieved level, so this run cannot inherit
+    // the claim of the one before it.
+    runId: "run-2026-09-12-1000",
+    backupSetId: "production/postgres-primary",
+    snapshotId: "b83d15a0ce9f4721",
+    operationId: "op_01J9Y2C7HF9M",
+    engine: "kopia",
+    phase: "SUCCESS",
+    repositoryDomain: "primary-nas",
+    consistencyMode: "external_snapshot",
+    verificationLevel: "content_sample",
+    verificationLevelAchieved: null,
+    verificationStatus: "failed",
+    entriesScanned: 148_612,
+    files: 140_998,
+    directories: 7_614,
+    logicalBytes: 1_402 * GB,
+    sourceBytesRead: 1_402 * GB,
+    repositoryBytesWritten: 31 * GB,
+    contentReusedBytes: 1_371 * GB,
+    sourceComplete: false,
+    lastKnownGood: false,
+    reason:
+      "This set is declared as a frozen image, and 148 files changed while the walk was in progress. The snapshot is stored and is not a restore point.",
+    startedAt: "2026-09-12T10:00:00+02:00",
+    completedAt: "2026-09-12T10:04:51+02:00",
+    durationSeconds: 291,
+    deleteRequestedAt: null,
+    holds: [MOCK_HOLDS[1], MOCK_HOLDS[2]]
+  },
+  {
+    runId: "run-2026-09-12-0400",
+    backupSetId: "production/postgres-primary",
+    snapshotId: "5fa2091db7c3e864",
+    operationId: "op_01J9XW5TB2QD",
+    engine: "kopia",
+    phase: "SUCCESS",
+    repositoryDomain: "primary-nas",
+    consistencyMode: "externally_quiesced",
+    verificationLevel: "content_sample",
+    verificationLevelAchieved: "content_sample",
+    verificationStatus: "passed",
+    entriesScanned: 148_401,
+    files: 140_802,
+    directories: 7_599,
+    logicalBytes: 1_398 * GB,
+    sourceBytesRead: 1_398 * GB,
+    repositoryBytesWritten: 17 * GB,
+    contentReusedBytes: 1_381 * GB,
+    sourceComplete: true,
+    lastKnownGood: false,
+    reason: "",
+    startedAt: "2026-09-12T04:00:00+02:00",
+    completedAt: "2026-09-12T04:02:47+02:00",
+    durationSeconds: 167,
+    deleteRequestedAt: null,
+    holds: []
+  }
+];
+
+/** The transition log one run's detail read carries. It records TWO
+ *  verifications of one run, which is the case the log exists for: the
+ *  run row can say what a run is and never that it was checked twice
+ *  because a crash interrupted the first attempt. */
+const MOCK_TRANSITIONS: SnapshotTransition[] = [
+  { from: null, to: "PENDING", at: "2026-09-13T04:00:00+02:00", detail: "" },
+  { from: "PENDING", to: "SOURCE_SCAN", at: "2026-09-13T04:00:02+02:00", detail: "" },
+  {
+    from: "SOURCE_SCAN",
+    to: "SNAPSHOT_WRITE",
+    at: "2026-09-13T04:01:10+02:00",
+    detail: "148,951 entries scanned"
+  },
+  { from: "SNAPSHOT_WRITE", to: "MANIFEST_COMMITTED", at: "2026-09-13T04:02:58+02:00", detail: "" },
+  { from: "MANIFEST_COMMITTED", to: "VERIFICATION", at: "2026-09-13T04:03:00+02:00", detail: "" },
+  {
+    from: "VERIFICATION",
+    to: "VERIFICATION",
+    at: "2026-09-13T04:03:20+02:00",
+    detail: "restarted after the service was interrupted"
+  },
+  {
+    from: "VERIFICATION",
+    to: "CATALOG_COMMIT",
+    at: "2026-09-13T04:03:31+02:00",
+    detail: "7,065 of 141,286 files read and hash-checked"
+  },
+  { from: "CATALOG_COMMIT", to: "SUCCESS", at: "2026-09-13T04:03:34+02:00", detail: "" }
+];
+
+/**
+ * Three repository domains, each a different verdict: a healthy shared
+ * store, a shared off-site store that refused a write probe, and an
+ * isolated store another instance owns and has stopped maintaining.
+ *
+ * The verdicts are the ones the SERVICE would reach for these probes and
+ * not a shade chosen here (core/internal/app/repositoryhealth.go's
+ * decideRepositoryState): a store that cannot be written to cannot take
+ * a backup at all, so off-site is FAILING however readable it is, and
+ * the isolated one is DEGRADED because everything works and nothing is
+ * reclaiming. The fixture used to call the unwritable one DEGRADED,
+ * which is a state no deployment could ever be in and a screen nobody
+ * could ever see.
+ *
+ * The off-site one carries a NEGATIVE clock skew, which is the dangerous
+ * direction — it would date a new snapshot before one already stored —
+ * and the only way to see that the sign is rendered rather than dropped.
+ */
+const MOCK_REPOSITORIES: RepositoryHealth[] = [
+  {
+    domain: "primary-nas",
+    mayShare: true,
+    state: "HEALTHY",
+    reachable: true,
+    readable: true,
+    writable: true,
+    credentialsValid: true,
+    clockSane: true,
+    clockSkewSeconds: 2,
+    maintenanceOverdue: false,
+    lastMaintenanceAt: "2026-09-08T02:00:00+02:00",
+    lastMaintenanceResult: "full maintenance completed",
+    lastSnapshotAt: "2026-09-13T04:03:34+02:00",
+    lastSnapshotStatus: "SUCCESS",
+    lastVerificationAt: "2026-09-13T04:03:31+02:00",
+    lastVerificationStatus: "passed",
+    backupSets: ["production/postgres-primary", "production/billing-mysql"],
+    detail: "Two backup sets deduplicate against each other here."
+  },
+  {
+    domain: "offsite-b2",
+    mayShare: true,
+    state: "FAILING",
+    reachable: true,
+    readable: true,
+    // Readable and NOT writable, which is exactly why the health panel
+    // reports each probe separately: snapshots here can still be
+    // restored, and no new one can be written.
+    writable: false,
+    credentialsValid: true,
+    clockSane: false,
+    clockSkewSeconds: -184,
+    maintenanceOverdue: true,
+    lastMaintenanceAt: "2026-08-30T02:00:00+02:00",
+    lastMaintenanceResult: "quick maintenance completed",
+    lastSnapshotAt: "2026-09-13T01:12:00+02:00",
+    lastSnapshotStatus: "SUCCESS",
+    lastVerificationAt: "2026-09-11T03:20:00+02:00",
+    lastVerificationStatus: "passed",
+    backupSets: ["media/weekly-archive"],
+    detail:
+      "The bucket refused a write probe, and full maintenance has not run inside its window for 14 days."
+  },
+  {
+    domain: "vault-isolated",
+    mayShare: false,
+    state: "DEGRADED",
+    reachable: true,
+    readable: true,
+    writable: true,
+    credentialsValid: true,
+    clockSane: true,
+    // Not measured, which is not the same as a perfectly synchronised
+    // clock and must not render as one.
+    clockSkewSeconds: null,
+    // Overdue, and that is the whole of what is wrong with it: every
+    // probe passes and no restore point is affected, which is what
+    // DEGRADED means and why the maintenance screen says an overdue
+    // domain costs storage rather than backups. Its owner is another
+    // instance, so this is also the domain nothing on this deployment
+    // can fix.
+    maintenanceOverdue: true,
+    lastMaintenanceAt: "2026-08-29T03:00:00+02:00",
+    lastMaintenanceResult: "full maintenance completed by nas-02",
+    lastSnapshotAt: "2026-09-12T23:40:00+02:00",
+    lastSnapshotStatus: "SUCCESS",
+    lastVerificationAt: "2026-09-12T23:44:00+02:00",
+    lastVerificationStatus: "passed",
+    backupSets: [],
+    detail:
+      "Isolated: one backup set only. A second set pointed here is refused. Full maintenance has not run inside its window since nas-02 last claimed it."
+  }
+];
+
+const MOCK_MAINTENANCE: Record<string, RepositoryMaintenance> = {
+  "primary-nas": {
+    domain: "primary-nas",
+    owner: "nas-01",
+    lastQuickAt: "2026-09-13T04:05:00+02:00",
+    lastFullAt: "2026-09-08T02:00:00+02:00",
+    nextEligibleAt: "2026-09-15T02:00:00+02:00",
+    due: false,
+    dueMode: "full",
+    dueReason: "",
+    overdue: false,
+    runs: 214,
+    failures: 0,
+    reclaimedBytes: 41 * GB,
+    failing: false
+  },
+  "offsite-b2": {
+    domain: "offsite-b2",
+    owner: "nas-01",
+    lastQuickAt: "2026-09-12T04:10:00+02:00",
+    lastFullAt: "2026-08-30T02:00:00+02:00",
+    nextEligibleAt: "2026-09-13T02:00:00+02:00",
+    due: true,
+    dueMode: "full",
+    dueReason: "full maintenance has not run inside its 7-day window",
+    overdue: true,
+    runs: 96,
+    failures: 2,
+    reclaimedBytes: 0,
+    failing: false
+  },
+  // The domain this instance does NOT own, which is what decides whether
+  // anything on its card can be pressed: "press it and find out" is how
+  // two instances end up compacting one store at once.
+  "vault-isolated": {
+    domain: "vault-isolated",
+    owner: "nas-02",
+    lastQuickAt: "2026-09-12T23:50:00+02:00",
+    lastFullAt: "2026-08-29T03:00:00+02:00",
+    nextEligibleAt: "2026-09-13T03:00:00+02:00",
+    // Due AND overdue, matching this domain's health record: quick
+    // passes are still running, the full window has been missed, and the
+    // instance that owns it is the only one that can do anything about
+    // that.
+    due: true,
+    dueMode: "full",
+    dueReason: "full maintenance has not run inside its 7-day window",
+    overdue: true,
+    runs: 58,
+    failures: 0,
+    reclaimedBytes: 7 * GB,
+    failing: false
+  }
+};
+
+
+/**
+ * The refusal an incremental read owes for a set that stores artifacts
+ * (issue #788), or null when the set really is incremental.
+ *
+ * Three of the reads and all four of the actions need it, and they need
+ * the same refusal: BACKUP_SET_NOT_INCREMENTAL is what the real service
+ * answers, and a fixture that served an empty snapshot list instead would
+ * let a page ship that shows an artifact set an empty "Snapshots" table
+ * rather than saying the set can never have one.
+ */
+function incrementalSet(source: string, set: string): Promise<never> | null {
+  const found = SETS.find((s) => s.id === source + "/" + set);
+  if (!found) return notFound<never>();
+  if (found.engine === "kopia") return null;
+  return Promise.reject(
+    new BackupdError({
+      code: "BACKUP_SET_NOT_INCREMENTAL",
+      message: "this backup set stores whole artifacts and has no snapshots",
+      correlationId: "cid_mock409"
+    })
+  );
+}
+
+/** The same check for the four actions, which are handed a composite id
+ *  rather than the two halves. */
+function snapshotActionRefusal(backupSetId: string): Promise<never> | null {
+  const [source, ...rest] = backupSetId.split("/");
+  return incrementalSet(source, rest.join("/"));
+}
+
+/** The durable record a hold or a release produces: finished by the time
+ *  it is answered, because neither is long-running. It is still an
+ *  operation, and the reason is the retry rather than the duration. */
+function mockSnapshotActionOperation(label: string, backupSetId: string): Operation {
+  return {
+    id: "op_mock_" + label.replace(/ /g, "_") + "_" + Date.now(),
+    setId: backupSetId,
+    setName: backupSetId,
+    kind: "retention",
+    label,
+    status: "completed",
+    progress: null,
+    nonDestructive: false,
+    startedAt: new Date().toISOString(),
+    cycle: null
+  };
+}
+
 /** Issue #146 (B2.7): a deterministic in-memory stand-in for the real
  *  create-backup-set/import/probe/test-connection endpoints, mirroring
  *  every other resource in this file (listSets/getSet, ...) — nothing
@@ -1127,7 +1642,7 @@ function mockKeyUsage(keyId: string): string[] {
  *  render site that prints "0 ms" beside a green row look correct here
  *  and wrong in production.
  */
-function mockPassingChecks(user: string): ConnectionCheck[] {
+function mockPassingChecks(user: string, writable = true): ConnectionCheck[] {
   const addr = SETS[0].host + ":" + SETS[0].port;
   return [
     {
@@ -1154,7 +1669,27 @@ function mockPassingChecks(user: string): ConnectionCheck[] {
       durationMs: 18
     },
     { step: "authenticate", outcome: "passed", detail: "the server accepted publickey for " + user },
-    { step: "list", outcome: "passed", detail: SETS[0].remoteFolder + " listed, 41 entries" }
+    { step: "list", outcome: "passed", detail: SETS[0].remoteFolder + " listed, 41 entries" },
+    // Issue #852's seventh step, and it PASSES in both directions: the
+    // step ran and answered, and only its answer differs. A fixture that
+    // marked the read-only case as `failed` would let a page that
+    // renders a red row for a perfectly good read-only source look
+    // correct here.
+    writable
+      ? {
+          step: "write_probe",
+          outcome: "passed",
+          detail:
+            "a probe file was created under " + SETS[0].remoteFolder +
+            " and removed again, so these credentials may write and delete there and delete-from-source can be enabled"
+        }
+      : {
+          step: "write_probe",
+          outcome: "passed",
+          detail:
+            "these credentials may read " + SETS[0].remoteFolder +
+            " but not write to it, so this source is read-only: backupd will never delete from it, and delete-from-source cannot be enabled until the account is granted write permission there"
+        }
   ];
 }
 
@@ -1214,7 +1749,24 @@ function mockBackupSetFromCreateRequest(req: CreateBackupSetRequest): BackupSet 
     retainedBytes: 0,
     trustedHostKeys: [{ algorithm: "ssh-ed25519", fingerprint: mockProbedFingerprint }],
     trustedHostKeyRecordedAt: new Date().toISOString(),
-    sshKeyId: req.sshKeyId
+    sshKeyId: req.sshKeyId,
+    // Whatever the wizard chose, echoed back the way a real create does:
+    // the engine decides whether there is an incremental block at all,
+    // and the four editable settings are carried through so the detail
+    // page a save lands on shows what was actually asked for.
+    engine: req.engine ?? "artifact",
+    incremental:
+      req.engine === "kopia"
+        ? {
+            repositoryDomain: req.repositoryDomain ?? null,
+            sourceConsistency: req.sourceConsistency ?? null,
+            verificationLevel: req.verificationLevel ?? null,
+            verificationSamplePercent: req.verificationSamplePercent ?? null,
+            verificationFullEverySeconds: req.verificationFullEverySeconds ?? null,
+            verificationRestoreDrillEverySeconds:
+              req.verificationRestoreDrillEverySeconds ?? null
+          }
+        : null
   };
 }
 
@@ -1769,6 +2321,10 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
   const noMedium = scenario === "no-medium";
   // Issue #598. One call fails, and it fails the way the NAS did.
   const activityUnreadable = scenario === "activity-unreadable";
+  // Issue #852. One flag, read by both modes of the connection test, so
+  // the wizard's candidate check and the detail page's saved check
+  // cannot disagree about a source in the same fixture.
+  const sourceIsWritable = scenario !== "read-only-source";
   // Every previewRetention call advances this backup set's "inventory" by
   // one tick and issues a plan captured against it. applyRetention only
   // ever honors the plan_id from the LATEST tick — anything older is,
@@ -1972,7 +2528,8 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
     // answered {ok: true} alone would let a surface that renders nothing
     // at all look exactly like one that renders the steps, which is
     // precisely the state 0.3.2 shipped in.
-    testConnection: () => delay({ ok: true, checks: mockPassingChecks(SETS[0].username) }),
+    testConnection: () =>
+      delay({ ok: true, writable: sourceIsWritable, checks: mockPassingChecks(SETS[0].username, sourceIsWritable) }),
     // Both APPLY to the SETS fixture rather than resolving and leaving it
     // alone, for the reason updateBackupSet's own comment below gives:
     // a mock that answers "fine" without changing anything makes every
@@ -2024,6 +2581,29 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
         // override the set polls at whatever the deployment does.
         found.pollIntervalSeconds = patch.pollIntervalSeconds === 0 ? null : patch.pollIntervalSeconds;
         found.effectivePollIntervalSeconds = found.pollIntervalSeconds ?? 15 * 60;
+      }
+      // EPIC K's four editable incremental settings (issue #788),
+      // applied for the reason every field above is: a configuration
+      // card that sent the wrong field, or sent one it should have left
+      // alone, has to be visible in the dev server and in the browser
+      // suite rather than echoed back as though it had worked. An
+      // artifact set has no block to write them into and is left alone —
+      // the real service refuses that patch with
+      // BACKUP_SET_NOT_INCREMENTAL, and a mock that invented a block
+      // would make a page that sends one look correct.
+      if (found.incremental) {
+        const incremental = found.incremental;
+        if (patch.sourceConsistency !== undefined) incremental.sourceConsistency = patch.sourceConsistency;
+        if (patch.verificationLevel !== undefined) incremental.verificationLevel = patch.verificationLevel;
+        if (patch.verificationSamplePercent !== undefined) {
+          incremental.verificationSamplePercent = patch.verificationSamplePercent;
+        }
+        if (patch.verificationFullEverySeconds !== undefined) {
+          incremental.verificationFullEverySeconds = patch.verificationFullEverySeconds;
+        }
+        if (patch.verificationRestoreDrillEverySeconds !== undefined) {
+          incremental.verificationRestoreDrillEverySeconds = patch.verificationRestoreDrillEverySeconds;
+        }
       }
       return delay({ ...found });
     },
@@ -2098,7 +2678,7 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
     probeHostKey: (): Promise<HostKeyProbeResult> =>
       delay({ algorithm: "ssh-ed25519", fingerprint: mockProbedFingerprint, knownHostsLine: "mock-host.internal ssh-ed25519 AAAAC3NzaC1lZDI1NTE5mock" }),
     testCandidateConnection: (params): Promise<ConnectionTestOutcome> =>
-      delay({ ok: true, checks: mockPassingChecks(params.user) }),
+      delay({ ok: true, writable: sourceIsWritable, checks: mockPassingChecks(params.user, sourceIsWritable) }),
     // Issue #592's two reads. Both answer the way a packaged install
     // does, which means the scan reports a location it found nothing in:
     // the page has to be exercised against "I looked here and there was
@@ -2148,6 +2728,274 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
               correlationId: "cid_mock404"
             });
           });
+    },
+
+    // EPIC K's reads (issue #788). Every one of them refuses for a set
+    // this fixture does not have, and the two per-set snapshot reads
+    // refuse for an ARTIFACT set with the contract's own
+    // BACKUP_SET_NOT_INCREMENTAL — which is the refusal the real service
+    // answers and the one a page has to be able to reach in dev mode,
+    // because "this set has no snapshots" and "this set can never have
+    // snapshots" are different screens.
+    listSnapshots: (source, set) =>
+      incrementalSet(source, set) ?? delay(MOCK_SNAPSHOTS.filter((s) => s.backupSetId === source + "/" + set)),
+    getSnapshot: (source, set, runId) => {
+      const refusal = incrementalSet(source, set);
+      if (refusal) return refusal;
+      const snapshot = MOCK_SNAPSHOTS.find(
+        (s) => s.backupSetId === source + "/" + set && s.runId === runId
+      );
+      if (!snapshot)
+        return Promise.reject(
+          new BackupdError({
+            code: "SNAPSHOT_NOT_FOUND",
+            message: "no snapshot run " + runId + " in this backup set",
+            correlationId: "cid_mock404"
+          })
+        );
+      // The transition log belongs to the newest run in this fixture;
+      // every other run answers with the two edges every run has, rather
+      // than with a log borrowed from a different snapshot.
+      return delay({
+        snapshot,
+        transitions:
+          snapshot.runId === MOCK_SNAPSHOTS[0].runId
+            ? MOCK_TRANSITIONS
+            : [
+                { from: null, to: "PENDING", at: snapshot.startedAt, detail: "" },
+                {
+                  from: "PENDING",
+                  to: snapshot.phase,
+                  at: snapshot.completedAt ?? snapshot.startedAt,
+                  detail: snapshot.reason
+                }
+              ]
+      });
+    },
+    listSnapshotHolds: (source, set) =>
+      incrementalSet(source, set) ??
+      delay(MOCK_HOLDS.filter((h) => h.backupSetId === source + "/" + set && h.active)),
+    getSnapshotRetention: (source, set) => {
+      const refusal = incrementalSet(source, set);
+      if (refusal) return refusal;
+      const mine = MOCK_SNAPSHOTS.filter((s) => s.backupSetId === source + "/" + set);
+      // Oldest first, which is the order the real preview answers in and
+      // the order the screen reads: the snapshots nearest expiry are the
+      // ones a verdict is interesting about.
+      const oldestFirst = [...mine].reverse();
+      return delay({
+        generatedAt: new Date().toISOString(),
+        verdicts: oldestFirst.map((snapshot, index) => {
+          const holds = MOCK_HOLDS.filter((h) => h.runId === snapshot.runId && h.active);
+          if (holds.length > 0)
+            return {
+              runId: snapshot.runId,
+              snapshotId: snapshot.snapshotId,
+              // REFUSE, not KEEP: this snapshot WAS a delete candidate
+              // and a hold stopped it, which is the one of the three
+              // verdicts that needs somebody to look at it.
+              action: "REFUSE" as const,
+              startedAt: snapshot.startedAt,
+              tiers: [],
+              holds,
+              reason: "held: retention may not delete this snapshot while a hold is in force",
+              holdReason: holds[0].reason
+            };
+          if (snapshot.lastKnownGood)
+            return {
+              runId: snapshot.runId,
+              snapshotId: snapshot.snapshotId,
+              action: "KEEP" as const,
+              startedAt: snapshot.startedAt,
+              // Last-known-good protection carries no placement to name,
+              // so `selectedBy` is null and the badge is drawn bare.
+              tiers: [{ tier: "last-known-good", selectedBy: null }],
+              holds: [],
+              reason: "protected: this set's newest verified restore point",
+              holdReason: null
+            };
+          if (index === 0)
+            return {
+              runId: snapshot.runId,
+              snapshotId: snapshot.snapshotId,
+              action: "DELETE" as const,
+              startedAt: snapshot.startedAt,
+              tiers: [],
+              holds: [],
+              reason: "no tier selects this snapshot, and every safety check passed",
+              holdReason: null
+            };
+          return {
+            runId: snapshot.runId,
+            snapshotId: snapshot.snapshotId,
+            action: "KEEP" as const,
+            startedAt: snapshot.startedAt,
+            tiers: [{ tier: index === 1 ? "weekly" : "daily", selectedBy: snapshot.startedAt }],
+            holds: [],
+            reason: "selected by the deployment's retention chain",
+            holdReason: null
+          };
+        })
+      });
+    },
+    listRepositories: () =>
+      delay(
+        empty
+          ? { generatedAt: new Date().toISOString(), repositories: [] }
+          : { generatedAt: new Date().toISOString(), repositories: MOCK_REPOSITORIES }
+      ),
+    getRepositoryMaintenance: (domain) => {
+      const record = MOCK_MAINTENANCE[domain];
+      if (!record)
+        return Promise.reject(
+          new BackupdError({
+            code: "REPOSITORY_DOMAIN_NOT_FOUND",
+            message: "no repository domain " + domain + " is declared",
+            correlationId: "cid_mock404"
+          })
+        );
+      return delay(record);
+    },
+
+    getOperation: (id) => {
+      const found = OPERATIONS.find((op) => op.id === id);
+      if (!found)
+        return Promise.reject(
+          new BackupdError({
+            code: "unknown",
+            message: "no operation " + id,
+            correlationId: "cid_mock404"
+          })
+        );
+      return delay(found);
+    },
+
+    // EPIC K's four mutating acts. Each one PUSHES a durable operation
+    // onto the fixture's own list, because that is what the real route
+    // does and what the screens then watch: a mock that resolved with a
+    // detached object would let a page ship with no watching path at all.
+    //
+    // The restore is the one that advances: it lands as `running` with a
+    // live reading, so the progress surface has something to draw, and
+    // `completeMockOperation` is what a test uses to finish it.
+    restoreSnapshot: (req) => {
+      const refusal = snapshotActionRefusal(req.backupSetId);
+      if (refusal) return refusal;
+      const operation: Operation = {
+        id: "op_mock_restore_" + (OPERATIONS.length + 1),
+        setId: req.backupSetId,
+        setName: req.backupSetId,
+        kind: "transfer",
+        label: "restore snapshot",
+        status: "running",
+        progress: {
+          observedAt: new Date().toISOString(),
+          sequence: 1,
+          stage: "transferring",
+          backupSetId: req.backupSetId,
+          backupSetsDone: 0,
+          backupSetsTotal: 1,
+          artifact: req.sourcePath ?? "the whole snapshot",
+          artifactsDone: 0,
+          bytesDone: 32 * GB,
+          bytesTotal: 84 * GB,
+          bytesPerSecond: 210 * 1024 * 1024
+        },
+        nonDestructive: false,
+        startedAt: new Date().toISOString(),
+        cycle: null
+      };
+      OPERATIONS.unshift(operation);
+      return delay({ operation, snapshots: [] });
+    },
+    verifySnapshot: (req) => {
+      const refusal = snapshotActionRefusal(req.backupSetId);
+      if (refusal) return refusal;
+      const operation: Operation = {
+        id: "op_mock_verify_" + (OPERATIONS.length + 1),
+        setId: req.backupSetId,
+        setName: req.backupSetId,
+        kind: "validation",
+        label: "verify snapshot",
+        status: "running",
+        progress: {
+          observedAt: new Date().toISOString(),
+          sequence: 1,
+          stage: "verifying",
+          backupSetId: req.backupSetId,
+          backupSetsDone: 0,
+          backupSetsTotal: 1,
+          artifact: req.runId ?? "the newest snapshot",
+          artifactsDone: 0,
+          bytesDone: undefined,
+          bytesTotal: undefined,
+          bytesPerSecond: undefined
+        },
+        // A verification reads and proves; it writes nothing anywhere,
+        // which is exactly what this flag is for.
+        nonDestructive: true,
+        startedAt: new Date().toISOString(),
+        cycle: null
+      };
+      OPERATIONS.unshift(operation);
+      return delay({ operation, snapshots: [] });
+    },
+    holdSnapshot: (req) => {
+      const refusal = snapshotActionRefusal(req.backupSetId);
+      if (refusal) return refusal;
+      const snapshot = MOCK_SNAPSHOTS.find(
+        (s) => s.backupSetId === req.backupSetId && s.runId === req.runId
+      );
+      if (!snapshot)
+        return Promise.reject(
+          new BackupdError({
+            code: "SNAPSHOT_NOT_FOUND",
+            message: "no snapshot run " + req.runId + " in this backup set",
+            correlationId: "cid_mock404"
+          })
+        );
+      const hold: SnapshotHold = {
+        holdId: "hold_mock_" + (MOCK_HOLDS.length + 1),
+        runId: req.runId,
+        backupSetId: req.backupSetId,
+        reason: req.reason,
+        placedAt: new Date().toISOString(),
+        placedBy: "backup-admin@example.com",
+        releasedAt: null,
+        releasedBy: null,
+        active: true
+      };
+      MOCK_HOLDS.push(hold);
+      // The fixture's snapshot rows carry their own holds, so the list
+      // and the retention preview agree with the holds table without a
+      // second read.
+      snapshot.holds = [...snapshot.holds, hold];
+      return delay({
+        operation: mockSnapshotActionOperation("hold snapshot", req.backupSetId),
+        snapshots: [snapshot]
+      });
+    },
+    releaseSnapshotHold: (req) => {
+      const refusal = snapshotActionRefusal(req.backupSetId);
+      if (refusal) return refusal;
+      const hold = MOCK_HOLDS.find((h) => h.holdId === req.holdId && h.active);
+      if (!hold)
+        return Promise.reject(
+          new BackupdError({
+            code: "SNAPSHOT_HOLD_NOT_FOUND",
+            message: "no unreleased hold " + req.holdId,
+            correlationId: "cid_mock404"
+          })
+        );
+      hold.active = false;
+      hold.releasedAt = new Date().toISOString();
+      hold.releasedBy = "backup-admin@example.com";
+      const snapshot = MOCK_SNAPSHOTS.find((s) => s.runId === hold.runId);
+      if (snapshot) snapshot.holds = snapshot.holds.filter((h) => h.active);
+      return delay({
+        operation: mockSnapshotActionOperation("release snapshot hold", req.backupSetId),
+        snapshots: snapshot ? [snapshot] : []
+      });
     },
 
     listOperations: () => delay(empty ? [] : OPERATIONS),

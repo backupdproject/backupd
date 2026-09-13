@@ -162,6 +162,12 @@ func depsFor(fingerprint string, trusted []TrustedKey, verify func(string, net.A
 		Trusted:     func(context.Context) ([]TrustedKey, error) { return trusted, nil },
 		Verify:      verify,
 		List:        func(context.Context) (int, error) { return entries, nil },
+		// A write probe that completes, so the default deps describe a
+		// source this manager may also delete from. writeprobe_test.go
+		// is where the other answers are stated; a nil here would make
+		// every test in this file assert against a SKIPPED seventh step
+		// for a reason none of them are about.
+		ProbeWrite: func(context.Context) error { return nil },
 	}
 }
 

@@ -45,18 +45,32 @@ function renderWizard(api: BackupdApi = createMockApi()) {
  *  short of the connection test, so each case below isolates that one
  *  precondition rather than flipping all four at once. */
 async function everythingExceptTheConnectionTest() {
-  await userEvent.click(screen.getByRole("button", { name: "Authentication" }));
+  await userEvent.click(screen.getByRole("button", { name: "Connection test" }));
   await userEvent.click(screen.getByRole("radio", { name: /Import key/ }));
   await userEvent.type(screen.getByLabelText(/private key/i), "FAKE-TEST-KEY-MATERIAL-not-a-real-key-0123456789");
   await userEvent.click(screen.getByRole("button", { name: "Import key" }));
   await screen.findByText(/key imported/i);
 
-  await userEvent.click(screen.getByRole("button", { name: "Verify server" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Trust host" })).toBeEnabled());
   await userEvent.click(screen.getByRole("button", { name: "Trust host" }));
 
   await userEvent.click(screen.getByRole("button", { name: "Review" }));
+  await userEvent.click(screen.getByRole("button", { name: "Retention" }));
   await userEvent.click(screen.getByRole("checkbox", { name: /remote backup will be removed only after/i }));
+  // Back to Review, where the save controls are. The
+  // acknowledgement lives on the Retention step since #788 put it
+  // beside the retention chain and the source-deletion control it
+  // belongs with.
+  await userEvent.click(screen.getByRole("button", { name: "Review" }));
+}
+
+/** Presses the test on the step that owns it since #788 (the rail asks
+ *  for the connection SECOND, because the write probe's answer decides
+ *  what the later steps may offer), and comes back to Review, where the
+ *  save controls are. */
+async function runTheConnectionTest() {
+  await userEvent.click(screen.getByRole("button", { name: "Connection test" }));
+  await userEvent.click(screen.getByRole("button", { name: /^Test connection$/ }));
 }
 
 afterEach(() => {
@@ -83,7 +97,8 @@ describe("the wizard will not save an unproven connection", () => {
     renderWizard();
     await everythingExceptTheConnectionTest();
 
-    await userEvent.click(screen.getByRole("button", { name: /^Test connection$/ }));
+    await runTheConnectionTest();
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Save & enable" })).toBeEnabled());
   });
 
@@ -92,6 +107,7 @@ describe("the wizard will not save an unproven connection", () => {
     vi.spyOn(api, "testCandidateConnection").mockResolvedValue({
       ok: false,
       message: "the remote path could not be listed",
+      writable: false,
       checks: [
         { step: "list", outcome: "failed", category: "remote_path", detail: "/backups/postgresql/ could not be listed" }
       ]
@@ -99,10 +115,11 @@ describe("the wizard will not save an unproven connection", () => {
     renderWizard(api);
     await everythingExceptTheConnectionTest();
 
-    await userEvent.click(screen.getByRole("button", { name: /^Test connection$/ }));
+    await runTheConnectionTest();
     // Twice on purpose: once as the failing step's own detail, once as
     // the banner that says what it means for saving.
     expect((await screen.findAllByText(/could not be listed/i)).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
     expect(screen.getByRole("button", { name: "Save & enable" })).toBeDisabled();
   });
 
@@ -112,7 +129,7 @@ describe("the wizard will not save an unproven connection", () => {
     renderWizard(api);
     await everythingExceptTheConnectionTest();
 
-    await userEvent.click(screen.getByRole("button", { name: /^Test connection$/ }));
+    await runTheConnectionTest();
     await waitFor(() => expect(spy).toHaveBeenCalled());
     // The known_hosts line the operator actually trusted, and the key
     // they actually imported. A check run against anything else would be
@@ -126,7 +143,8 @@ describe("the wizard will not save an unproven connection", () => {
   it("makes an edited host undo a passing test", async () => {
     renderWizard();
     await everythingExceptTheConnectionTest();
-    await userEvent.click(screen.getByRole("button", { name: /^Test connection$/ }));
+    await runTheConnectionTest();
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Save & enable" })).toBeEnabled());
 
     // Going back and pointing the wizard at a different machine has to

@@ -11,6 +11,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"io"
 )
 
@@ -214,6 +215,73 @@ type Transport interface {
 	RemoteHash(ctx context.Context, source Source, remotePath string, algorithm HashAlgorithm) (string, error)
 	DeleteRemote(ctx context.Context, source Source, remotePath string) error
 }
+
+// SourceWriteProbe proves, by doing it, that the credentials a Source
+// carries may both WRITE and REMOVE under that source's root (issue
+// #852).
+//
+// It exists because FR-16's delete-from-source is the one thing this
+// product does to somebody else's machine, and until this existed the
+// only proof that it could was the first cycle that tried. A source
+// account with read-only access is a perfectly ordinary, supported and
+// frequently recommended posture (docs/ssh-setup.md's hardened account is
+// one keystroke away from being one), so "this source cannot be deleted
+// from" has to be a fact the product can establish in advance and
+// configure around, rather than a failure an operator discovers from a
+// prune that silently changes nothing every cycle for a month.
+//
+// It is a separate interface rather than a sixth method on Transport for
+// the reason SourceSession is one: a caller type-asserts for it, so a
+// transport that cannot prove this says so by not having the method,
+// which is a compile-time answer rather than a runtime ErrUnsupported.
+// Nothing on the cycle path may depend on it; the connection check is its
+// one caller.
+type SourceWriteProbe interface {
+	// ProbeSourceWrite creates a uniquely named probe object under the
+	// source's root, removes it again and confirms it is gone.
+	//
+	// A nil error means, and only means, that a full write-and-remove
+	// round trip completed: the credentials may create and destroy
+	// objects there. Any error means the source is NOT proven writable,
+	// which the caller reports as a read-only posture and never as a
+	// broken connection.
+	//
+	// An error wrapping ErrProbeNotRemoved is the one shape a caller has
+	// to tell apart: the write landed and the removal did not, so there
+	// may be a probe object left behind for somebody to clean up.
+	ProbeSourceWrite(ctx context.Context, source Source) error
+}
+
+// ProbeObjectPrefix is the fixed name prefix every object written by
+// SourceWriteProbe carries.
+//
+// It is exported because two things need it. An operator whose probe
+// could not be removed needs a name to look for, and this repository's own
+// discovery needs to recognise its own litter: internal/discovery skips a
+// basename carrying this prefix (isOwnWriteProbe), which is what keeps a
+// leftover probe from being taken for an artifact.
+//
+// That skip is the rule, and the dotfile is not. This comment used to say
+// the leading dot meant an FR-8 include pattern could not match it, and
+// that is false twice over: a backup set that configures no include
+// patterns matches everything, and path.Match gives a dot no special
+// meaning, so "*" matches one too. What the dot does buy is the smaller
+// thing it is kept for -- an operator's plain directory listing does not
+// show one -- and the name says what it is, so whoever finds one knows
+// immediately that deleting it is safe. internal/mediumcheck's probePrefix
+// is the same decision on the medium side.
+const ProbeObjectPrefix = ".backupd-write-probe-"
+
+// ErrProbeNotRemoved marks the one write-probe outcome that leaves
+// something behind: the probe object was created and could not then be
+// removed (or its absence could not be confirmed).
+//
+// A sentinel rather than a wording, because a caller has to branch on it:
+// the operator-facing sentence for "you cannot write here" and the one for
+// "you can write here, cannot delete, and there is now a file of mine on
+// your machine" are different sentences, and the second one has to be
+// said out loud.
+var ErrProbeNotRemoved = errors.New("transport: the write probe could not be removed")
 
 // SourceSession is one conversation with one backup source, held open for
 // as long as the caller is reading that source.

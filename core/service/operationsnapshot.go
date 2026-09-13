@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-
-	"github.com/backupdproject/backupd/core/internal/state"
 )
 
 // The snapshot half of a durable operation, on the surface a client
@@ -38,93 +36,6 @@ import (
 // one polling read unbounded.
 const maxOperationSnapshots = 64
 
-// OperationSnapshot is one snapshot run an operation performed.
-//
-// The four byte counts are four different facts and a surface must never
-// present one as another: LogicalBytes is what the source tree weighs,
-// SourceBytesRead is what the run pulled off the source,
-// RepositoryBytesWritten is what actually landed in storage, and
-// ContentReusedBytes is what deduplication saved. Rendering the first as
-// "uploaded" is the specific misrepresentation EPIC K forbids.
-type OperationSnapshot struct {
-	// BackupSetID is "source/set".
-	BackupSetID string
-
-	// RunID is this manager's identifier for the pass; SnapshotID is the
-	// engine's opaque manifest id, empty for a run that never committed
-	// one. Neither is a path and neither is a secret.
-	RunID      string
-	SnapshotID string
-
-	// Engine and RepositoryDomain are which machinery ran and which
-	// declared boundary its output went into.
-	Engine           string
-	RepositoryDomain string
-
-	// Phase is the run's durable phase: PENDING, SOURCE_SCAN,
-	// SNAPSHOT_WRITE, MANIFEST_COMMITTED, VERIFICATION, CATALOG_COMMIT,
-	// SUCCESS, FAILED, LOST, DELETED or QUARANTINED.
-	//
-	// A phase and not a boolean, because "did this work" has more than
-	// two answers here and the interesting ones are in the middle: a run
-	// whose manifest is committed and unverified is neither a success
-	// nor a failure, and a client that had to guess would guess wrong in
-	// whichever direction its author was feeling.
-	Phase string
-
-	// Succeeded is whether this run advertises a restore point, which is
-	// the one question every client asks and the one place the phase
-	// vocabulary should not have to be interpreted client-side.
-	Succeeded bool
-
-	// LastKnownGood is whether this run's snapshot is currently the set's
-	// last-known-good restore point.
-	LastKnownGood bool
-
-	// SourceConsistency is the mode the operator arranged around the
-	// source while it was read (live_best_effort, externally_quiesced,
-	// external_snapshot). It is on the receipt because it is what a
-	// restore point's trustworthiness rests on.
-	SourceConsistency string
-
-	// VerificationStatus is "", "pending", "passed" or "failed".
-	// VerificationLevel is what the set asked for and
-	// VerificationAchieved is what this run actually proved. The last two
-	// are separate because a set configured for a restore drill whose run
-	// only verified content must not read as having drilled.
-	VerificationStatus   string
-	VerificationLevel    string
-	VerificationAchieved string
-
-	// EntriesScanned is every source entry the pass considered, of every
-	// kind, including the ones it deliberately skipped. It is the source
-	// side's own census and not Files + Directories below: a pass that
-	// refused two hundred sockets considered them, and adding the two
-	// counts a client already has would be a derivation dressed up as a
-	// measurement.
-	EntriesScanned int64
-
-	// Files and Directories are what the snapshot holds.
-	Files       int64
-	Directories int64
-
-	// The four byte counts. See this type's own doc.
-	LogicalBytes           int64
-	SourceBytesRead        int64
-	RepositoryBytesWritten int64
-	ContentReusedBytes     int64
-
-	// Measured is false when the counters were never taken, which is the
-	// state of a snapshot adopted by crash reconciliation: the manifest
-	// exists and the process that would have counted the bytes died. A
-	// client renders that as "not measured", never as zero.
-	Measured bool
-
-	// Reason is the run's own sentence about why it failed, was
-	// quarantined or was lost. Empty for a successful run.
-	Reason string
-}
-
 // deriveSnapshots attaches the snapshot runs an operation performed.
 //
 // A read failure leaves the field nil rather than failing the poll. The
@@ -132,6 +43,13 @@ type OperationSnapshot struct {
 // "your request is still running" plus an unavailable extra is strictly
 // better than no answer at all; nothing about a byte count is a safety
 // claim that has to be refused when it cannot be read.
+//
+// The holds are NOT attached here, and that is the one asymmetry between
+// this projection and the snapshot resource next door. An operation is a
+// receipt for work that just happened, holds are a protection decision
+// somebody makes afterwards, and reading them would put one query per
+// run onto the polling path that a client hits every second while a
+// backup runs.
 func (b *BackupService) deriveSnapshots(ctx context.Context, op Operation) Operation {
 	if op.ID == "" {
 		return op
@@ -142,48 +60,12 @@ func (b *BackupService) deriveSnapshots(ctx context.Context, op Operation) Opera
 		return op
 	}
 
-	out := make([]OperationSnapshot, 0, len(runs))
+	out := make([]Snapshot, 0, len(runs))
 	for _, run := range runs {
-		out = append(out, toOperationSnapshot(run))
+		out = append(out, toSnapshot(run, nil))
 	}
 
 	op.Snapshots = out
 
 	return op
-}
-
-func toOperationSnapshot(run state.SnapshotRun) OperationSnapshot {
-	return OperationSnapshot{
-		BackupSetID:            run.Set.String(),
-		RunID:                  run.RunID,
-		SnapshotID:             run.SnapshotID,
-		Engine:                 run.Engine,
-		RepositoryDomain:       run.Domain,
-		Phase:                  string(run.Phase),
-		Succeeded:              run.Phase.Advertised(),
-		LastKnownGood:          run.LastKnownGood,
-		SourceConsistency:      run.ConsistencyMode,
-		VerificationStatus:     run.VerificationStatus,
-		VerificationLevel:      run.VerificationLevel,
-		VerificationAchieved:   run.VerificationLevelAchieved,
-		EntriesScanned:         counterOf(run.EntriesScanned),
-		Files:                  counterOf(run.Files),
-		Directories:            counterOf(run.Directories),
-		LogicalBytes:           counterOf(run.LogicalBytes),
-		SourceBytesRead:        counterOf(run.SourceBytesRead),
-		RepositoryBytesWritten: counterOf(run.RepositoryBytesWritten),
-		ContentReusedBytes:     counterOf(run.ContentReusedBytes),
-		Measured:               run.SourceBytesRead != nil && run.RepositoryBytesWritten != nil,
-		Reason:                 run.Reason,
-	}
-}
-
-// counterOf flattens a counter the catalog keeps nullable, with Measured
-// above carrying the distinction the nil was there to make.
-func counterOf(v *int64) int64 {
-	if v == nil {
-		return 0
-	}
-
-	return *v
 }

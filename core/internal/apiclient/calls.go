@@ -28,12 +28,12 @@ import (
 // this client works against it, and nothing here has watched that claim
 // fail. Adding one is three lines and a contract id.
 //
-// setBackupSetEnabled and setBackupSetReadOnly used to be here and are
-// gone, under that same rule rather than in spite of it. No command calls
-// either: this CLI has no enable/disable verb at all, and --read-only is a
-// field of a create rather than a verb of its own, so both were wrappers
-// nothing had ever driven against the routes they name. #543 is where they
-// would have acquired a caller and did not.
+// setBackupSetEnabled and setBackupSetReadOnly were absent under that
+// same rule and have a caller now (#788). `backup-set enabled` and
+// `backup-set read-only` are the two post-creation toggles a terminal
+// could not reach at all, and both rewrite config.yaml, so beside a
+// serving engine they were refused with nothing on the other side of the
+// refusal. These are that other side.
 
 // ListBackupSets is GET /backup-sets: the configuration the ENGINE holds,
 // which is the whole reason a CLI would ask over HTTP rather than read the
@@ -130,6 +130,28 @@ func (c *Client) UpdateBackupSet(ctx context.Context, source, set string, req ap
 // RemoveBackupSet is DELETE /backup-sets/{source}/{set}.
 func (c *Client) RemoveBackupSet(ctx context.Context, source, set string) error {
 	return c.call(ctx, "removeBackupSet", []string{source, set}, nil, nil)
+}
+
+// SetBackupSetEnabled is POST /backup-sets/{source}/{set}/enabled, and
+// SetBackupSetReadOnly is POST /backup-sets/{source}/{set}/read-only.
+//
+// Both answer with the WHOLE backup set rather than with an
+// acknowledgement, which is what lets the command print the posture the
+// engine actually holds instead of the one it asked for. That
+// distinction is the verb's own rule (backupsettoggle.go): a write that
+// was coerced and a write that did exactly what was asked are different
+// outcomes, and a caller that echoed its own request would report the
+// second for both.
+func (c *Client) SetBackupSetEnabled(ctx context.Context, source, set string, req apicontract.SetEnabledRequest) (apicontract.BackupSet, error) {
+	var out apicontract.BackupSet
+	err := c.call(ctx, "setBackupSetEnabled", []string{source, set}, req, &out)
+	return out, err
+}
+
+func (c *Client) SetBackupSetReadOnly(ctx context.Context, source, set string, req apicontract.SetReadOnlyRequest) (apicontract.BackupSet, error) {
+	var out apicontract.BackupSet
+	err := c.call(ctx, "setBackupSetReadOnly", []string{source, set}, req, &out)
+	return out, err
 }
 
 // GetBackupSetRetention is GET /backup-sets/{source}/{set}/retention.

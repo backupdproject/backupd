@@ -70,6 +70,16 @@ type submitOperationRequest struct {
 	// operations, and a server that quietly ignores the extra fields
 	// teaches a client that they are optional.
 	Restore *restoreOperationRequest `json:"restore,omitempty"`
+
+	// The incremental engine's four parameter objects (#788), each nil
+	// for every action but its own and each refused outright when it
+	// arrives with the wrong action, for the reason Restore above is:
+	// a server that ignores fields it did not expect teaches clients
+	// those fields are optional.
+	SnapshotRestore     *snapshotRestoreOperationRequest     `json:"snapshot_restore,omitempty"`
+	SnapshotVerify      *snapshotVerifyOperationRequest      `json:"snapshot_verify,omitempty"`
+	SnapshotHold        *snapshotHoldOperationRequest        `json:"snapshot_hold,omitempty"`
+	SnapshotHoldRelease *snapshotHoldReleaseOperationRequest `json:"snapshot_hold_release,omitempty"`
 }
 
 // restoreOperationRequest is POST /api/v1/operations' body when the action
@@ -139,6 +149,17 @@ type operationResponse struct {
 	// Restore is present only on a restore_placement operation, for the
 	// same reason and in the same shape.
 	Restore *operationRestoreResponse `json:"restore,omitempty"`
+
+	// Snapshots is what the incremental engine stored for this
+	// operation, one entry per backup set it ran, and absent for an
+	// operation that took none -- which is every operation in every
+	// deployment that has not opted into EPIC K's engine.
+	//
+	// It is here rather than only under the backup set because an
+	// operation is what a client polled: a surface that submitted a run
+	// and then had to guess which of the set's snapshots belonged to it
+	// would attribute the wrong one every time two runs overlapped.
+	Snapshots []snapshotResponse `json:"snapshots,omitempty"`
 }
 
 // cycleOutcomeResponse is issue #361's two counts on the wire, the ones
@@ -265,6 +286,9 @@ func toOperationResponse(op service.Operation) operationResponse {
 			BytesPerSecond:   p.BytesPerSecond,
 		}
 	}
+	for _, s := range op.Snapshots {
+		resp.Snapshots = append(resp.Snapshots, toSnapshotResponse(s))
+	}
 	return resp
 }
 
@@ -298,39 +322,40 @@ func (h *handlers) submitOperation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed JSON body")
 		return
 	}
+	if err := refuseForeignParameters(w, body); err != nil {
+		return
+	}
 	switch body.Action {
 	case service.ActionRunBackupSet:
 		h.submitRunBackupSet(w, r, idempotencyKey, body)
 		return
 	case service.ActionRunCycle:
-		if body.BackupSetID != "" {
-			// A run_cycle is deployment-wide by definition, so a body
-			// naming one set is asking for the other action. Refused
-			// rather than ignored: a server that drops the field teaches
-			// a client it is decorative, and the operator who sent it
-			// believes one set ran when every set did.
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-				fmt.Sprintf("a %q submission named a backup set; %q is the action that runs one set",
-					service.ActionRunCycle, service.ActionRunBackupSet))
-			return
-		}
-		if body.Restore != nil {
-			// A run_cycle carrying restore parameters is a request that
-			// has confused two operations. Ignoring the extra object
-			// would teach the client that it is decorative, and the same
-			// client will later send a restore and be surprised that
-			// nothing was restored.
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-				fmt.Sprintf("a %q submission carried restore parameters, which it has no use for", service.ActionRunCycle))
-			return
-		}
+		// Nothing to check here any more: refuseForeignParameters above
+		// already refuses a run_cycle carrying a backup_set_id, together
+		// with every other action that does not own the field. The check
+		// used to live here and covered run_cycle alone, which is how a
+		// snapshot action carrying one was served with it ignored.
 	case service.ActionRestorePlacement:
 		h.submitRestore(w, r, idempotencyKey, body)
 		return
+	case service.ActionRestoreSnapshot:
+		h.submitSnapshotRestore(w, r, idempotencyKey, body)
+		return
+	case service.ActionVerifySnapshot:
+		h.submitSnapshotVerify(w, r, idempotencyKey, body)
+		return
+	case service.ActionHoldSnapshot:
+		h.submitSnapshotHold(w, r, idempotencyKey, body)
+		return
+	case service.ActionReleaseSnapshotHold:
+		h.submitSnapshotHoldRelease(w, r, idempotencyKey, body)
+		return
 	default:
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-			fmt.Sprintf("unsupported action %q; this release supports %q, %q and %q",
-				body.Action, service.ActionRunCycle, service.ActionRunBackupSet, service.ActionRestorePlacement))
+			fmt.Sprintf("unsupported action %q; this release supports %q, %q, %q, %q, %q, %q and %q",
+				body.Action, service.ActionRunCycle, service.ActionRunBackupSet, service.ActionRestorePlacement,
+				service.ActionRestoreSnapshot, service.ActionVerifySnapshot, service.ActionHoldSnapshot,
+				service.ActionReleaseSnapshotHold))
 		return
 	}
 

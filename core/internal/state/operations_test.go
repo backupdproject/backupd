@@ -210,6 +210,57 @@ func TestCreateOperation_ReusedKeyForDifferentActorIsRefused(t *testing.T) {
 	}
 }
 
+// TestCreateOperation_ReusedKeyForDifferentParametersIsRefused is the
+// third way one key can name two different requests, and the one the
+// replay comparison could not see.
+//
+// Actor, Action and ConfigRevision are the same for every snapshot
+// action of one kind submitted by one operator against one
+// configuration, which is precisely the surface EPIC K added: hold THIS
+// snapshot, verify THAT one, restore a third to a directory somebody
+// named. A client that reuses a key across two of those -- a UI holding
+// one pending key per screen rather than per target is exactly how --
+// was handed back the FIRST request's operation with Created false, so
+// the second act never happened and the caller was told it had.
+//
+// A refusal rather than a second row: the two shapes of "this key was
+// already used" are already distinguished by Created, and a key that
+// silently started meaning something else would make the one property
+// this table exists for unusable.
+func TestCreateOperation_ReusedKeyForDifferentParametersIsRefused(t *testing.T) {
+	j, _ := openJournal(t)
+	ctx := context.Background()
+
+	first := testOperationRequest("op_1", "idem-1")
+	first.Parameters = `{"backup_set_id":"production/postgres","run_id":"run-1"}`
+	if _, err := j.CreateOperation(ctx, first); err != nil {
+		t.Fatalf("first CreateOperation: %v", err)
+	}
+
+	second := testOperationRequest("op_2", "idem-1")
+	second.Parameters = `{"backup_set_id":"production/postgres","run_id":"run-2"}`
+	outcome, err := j.CreateOperation(ctx, second)
+	if !errors.Is(err, ErrOperationIdempotencyKeyReused) {
+		t.Fatalf("CreateOperation with the same key and different parameters = (created %v, op %q, err %v), want ErrOperationIdempotencyKeyReused: replaying the first request tells the caller a different snapshot was held",
+			outcome.Created, outcome.Operation.OperationID, err)
+	}
+
+	// And the honest replay still replays: same key, same parameters, one
+	// row, Created false. Without this the case above would pass against
+	// a comparison that refused every replay, which would break every
+	// retry in the product.
+	retry := testOperationRequest("op_3", "idem-1")
+	retry.Parameters = first.Parameters
+	replayed, err := j.CreateOperation(ctx, retry)
+	if err != nil {
+		t.Fatalf("replaying the identical request: %v", err)
+	}
+	if replayed.Created || replayed.Operation.OperationID != "op_1" {
+		t.Errorf("an identical retry came back created=%v op=%q, want created=false op=%q",
+			replayed.Created, replayed.Operation.OperationID, "op_1")
+	}
+}
+
 // TestGetOperationByIdempotencyKey_FindsTheRowWithoutWritingOne is the
 // read that lets a caller find out whether a request already landed before
 // it does anything irreversible about it.

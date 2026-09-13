@@ -104,6 +104,32 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
               control has not come back. */}
           <ServiceBehaviourCard readOnly={readOnly} />
 
+          {/* EPIC K (issue #788). A card that LINKS rather than a second
+              copy of the controls: the retention chain and the polling
+              cadence are edited on this page, and the defaults screen
+              reports them beside the answers a new set starts from and
+              the maintenance ownership table. Two editors for one value
+              is how two screens end up disagreeing about what is
+              configured. */}
+          <section className="card">
+            <div className="card__header">
+              <InfoTooltip id="settings.backup-defaults">
+                <h2 className="eyebrow">Backup defaults</h2>
+              </InfoTooltip>
+            </div>
+            <div className="card__body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", maxWidth: "74ch" }}>
+                What a new backup set starts with, the retention chain every set without an
+                override is kept by, and who maintains each repository domain.
+              </p>
+              <div>
+                <button className="btn" onClick={() => navigate("/settings/backup-defaults")}>
+                  Open backup defaults
+                </button>
+              </div>
+            </div>
+          </section>
+
           {/* Issue #286: the storage cap and its two FR-21 thresholds
               used to sit here as three decorative controls that saved
               nowhere ("Storage warning threshold"/"Storage critical

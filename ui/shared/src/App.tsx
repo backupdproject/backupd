@@ -44,9 +44,22 @@ import { BackupSetDetailPage } from "@shared/pages/BackupSetDetailPage";
 import { BackupSetWizardPage } from "@shared/pages/BackupSetWizardPage";
 import { BackupsPage } from "@shared/pages/BackupsPage";
 import { BackupDetailPage } from "@shared/pages/BackupDetailPage";
+// EPIC K's operational screens (issue #788). Every one of them is a
+// sub-resource of something already routed: snapshots and their retention
+// hang off a backup set, and the two fleet screens off the repository
+// domains the deployment declares.
+import { SnapshotsPage } from "@shared/pages/SnapshotsPage";
+import { SnapshotDetailPage } from "@shared/pages/SnapshotDetailPage";
+import { SnapshotRestorePage } from "@shared/pages/SnapshotRestorePage";
+import { SnapshotRetentionPage } from "@shared/pages/SnapshotRetentionPage";
+import { RepositoryHealthPage } from "@shared/pages/RepositoryHealthPage";
+import { RepositoryMaintenancePage } from "@shared/pages/RepositoryMaintenancePage";
 import { ActivityPage } from "@shared/pages/ActivityPage";
 import { QuarantinePage } from "@shared/pages/QuarantinePage";
 import { SettingsPage } from "@shared/pages/SettingsPage";
+import { RepositoryDomainsPage } from "@shared/pages/RepositoryDomainsPage";
+import { RepositoryDomainNewPage } from "@shared/pages/RepositoryDomainNewPage";
+import { BackupDefaultsPage } from "@shared/pages/BackupDefaultsPage";
 import { CatalogRecoveryPage } from "@shared/pages/CatalogRecoveryPage";
 import { ConfigurationSavedPage } from "@shared/pages/ConfigurationSavedPage";
 import { LoginPage } from "@shared/auth/LoginPage";
@@ -307,6 +320,27 @@ export function App() {
             {set}/... shape (router.go). A single :setId segment cannot
             match a path with that extra segment in it (issue #285). */}
         <Route path="/sets/:source/:set" element={<BackupSetDetailPage readOnly={readOnly} />} />
+        {/* EPIC K's per-set screens (issue #788), under the set they
+            belong to and with the same two-segment id the route above
+            takes. A snapshot is addressed by RUN id, which is what the
+            API's own `.../snapshots/{run}` route takes and the only name
+            a run that never committed a manifest has. */}
+        <Route path="/sets/:source/:set/snapshots" element={<SnapshotsPage readOnly={readOnly} />} />
+        <Route
+          path="/sets/:source/:set/snapshots/:runId"
+          element={<SnapshotDetailPage readOnly={readOnly} />}
+        />
+        <Route path="/sets/:source/:set/restore" element={<SnapshotRestorePage readOnly={readOnly} />} />
+        <Route
+          path="/sets/:source/:set/snapshot-retention"
+          element={<SnapshotRetentionPage readOnly={readOnly} />}
+        />
+        {/* The two fleet-wide screens. Repository health is a different
+            question from any backup set's, and maintenance is a different
+            one again: a domain can be perfectly healthy and unmaintained
+            because nobody has claimed it. */}
+        <Route path="/repositories/health" element={<RepositoryHealthPage />} />
+        <Route path="/repositories/maintenance" element={<RepositoryMaintenancePage />} />
         <Route path="/backups" element={<BackupsPage readOnly={readOnly} />} />
         {/* And three, not one, for the same reason one route up: an
             artifact id (model.ArtifactID.String()) is a backup set id
@@ -323,6 +357,13 @@ export function App() {
         <Route path="/activity" element={<ActivityPage />} />
         <Route path="/quarantine" element={<QuarantinePage readOnly={readOnly} quarantine={quarantine} />} />
         <Route path="/settings" element={<SettingsPage readOnly={readOnly} />} />
+        {/* EPIC K's deployment-level screens (issue #788). A repository
+            domain is a boundary several backup sets sit inside, so it is
+            routed beside Settings rather than under any one set: nothing
+            about it can be answered from inside a set that shares it. */}
+        <Route path="/repositories" element={<RepositoryDomainsPage readOnly={readOnly} />} />
+        <Route path="/repositories/new" element={<RepositoryDomainNewPage />} />
+        <Route path="/settings/backup-defaults" element={<BackupDefaultsPage readOnly={readOnly} />} />
         <Route path="/catalog-recovery" element={<CatalogRecoveryPage readOnly={readOnly} />} />
         {/* Issue #830 §8, and mounted on BOTH sides of the sign-in gate
             (the unauthenticated router above has it too). Without this

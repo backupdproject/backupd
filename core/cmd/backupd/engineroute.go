@@ -98,6 +98,14 @@ func (r *engineRoute) CreateBackupSet(ctx context.Context, req service.CreateBac
 	if err != nil {
 		return service.CreateBackupSetResult{}, err
 	}
+	verificationFullEvery, err := wireSeconds(req.VerificationFullEvery, "--verification-full-every")
+	if err != nil {
+		return service.CreateBackupSetResult{}, err
+	}
+	verificationRestoreDrill, err := wireSeconds(req.VerificationRestoreDrillEvery, "--verification-restore-drill-every")
+	if err != nil {
+		return service.CreateBackupSetResult{}, err
+	}
 
 	resp, err := r.client.CreateBackupSet(ctx, apicontract.CreateBackupSetRequest{
 		BackupSetSpec: apicontract.BackupSetSpec{
@@ -123,6 +131,22 @@ func (r *engineRoute) CreateBackupSet(ctx context.Context, req service.CreateBac
 			// routed --no-verify that dropped this flag would be refused
 			// where the direct one writes.
 			SkipConnectionCheck: req.SkipConnectionCheck,
+
+			// EPIC K's engine seam (#788), carried across for the reason
+			// every other field here is: a routed create that dropped
+			// these would write an ARTIFACT set on the engine while the
+			// operator's command line asked for snapshots, which is the
+			// one divergence between the two routes that nothing
+			// downstream could ever notice. The two cadences are whole
+			// SECONDS on the wire, refused rather than truncated,
+			// exactly as the two completion windows above are.
+			Engine:                               req.Engine,
+			RepositoryDomain:                     req.RepositoryDomain,
+			SourceConsistency:                    req.SourceConsistency,
+			VerificationLevel:                    req.VerificationLevel,
+			VerificationSamplePercent:            req.VerificationSamplePercent,
+			VerificationFullEverySeconds:         int64(verificationFullEvery),
+			VerificationRestoreDrillEverySeconds: int64(verificationRestoreDrill),
 		},
 		RunImmediately:     req.RunImmediately,
 		AcknowledgeRepoint: req.AcknowledgeRepoint,
@@ -187,6 +211,14 @@ func (r *engineRoute) UpdateBackupSet(ctx context.Context, id string, req servic
 		// routed --no-verify that dropped this flag would be refused
 		// where the direct one succeeds.
 		SkipConnectionCheck: req.SkipConnectionCheck,
+
+		// EPIC K's editable verification budget (#788). The three that
+		// are not durations cross as the pointers they already are, so
+		// "leave this alone" and "set this to none" stay the opposite
+		// requests they are on the direct route.
+		SourceConsistency:         req.SourceConsistency,
+		VerificationLevel:         req.VerificationLevel,
+		VerificationSamplePercent: req.VerificationSamplePercent,
 	}
 	if req.ValidatorID != nil {
 		v := string(*req.ValidatorID)
@@ -222,8 +254,67 @@ func (r *engineRoute) UpdateBackupSet(ctx context.Context, id string, req servic
 		}
 		body.PollIntervalSeconds = &seconds
 	}
+	// The two verification cadences, with the whole-seconds refusal every
+	// other duration on this body gets. An explicit ZERO is "never do
+	// this any more", which is the request an operator makes when a
+	// nightly restore drill turns out to cost more than it is worth, so
+	// it crosses as a zero rather than as nothing to say.
+	if req.VerificationFullEvery != nil {
+		seconds, err := wireSeconds(*req.VerificationFullEvery, "--verification-full-every")
+		if err != nil {
+			return service.BackupSet{}, err
+		}
+		full := int64(seconds)
+		body.VerificationFullEverySeconds = &full
+	}
+	if req.VerificationRestoreDrillEvery != nil {
+		seconds, err := wireSeconds(*req.VerificationRestoreDrillEvery, "--verification-restore-drill-every")
+		if err != nil {
+			return service.BackupSet{}, err
+		}
+		drill := int64(seconds)
+		body.VerificationRestoreDrillEverySeconds = &drill
+	}
 
 	updated, err := r.client.UpdateBackupSet(ctx, source, set, body)
+	if err != nil {
+		return service.BackupSet{}, err
+	}
+	return backupSetFromWire(updated), nil
+}
+
+// SetBackupSetEnabled is POST /backup-sets/{source}/{set}/enabled and
+// SetBackupSetReadOnly is POST /backup-sets/{source}/{set}/read-only
+// (#788), the two post-creation toggles.
+//
+// Neither is a patch and neither may become one. The service has a named
+// method for each because each is a decision with its own consequence
+// (backupsettoggle.go's own doc), and folding them into the sparse edit
+// body would put a set's safety declaration where a stray field could
+// carry it. The same argument holds on the wire, where the contract
+// gives each its own route and its own one-field request.
+//
+// Both read the posture back out of the SET the engine answered with,
+// exactly as the direct route reads it out of what it persisted, so a
+// write the engine coerced is reported as what it became.
+func (r *engineRoute) SetBackupSetEnabled(ctx context.Context, id string, enabled bool) (service.BackupSet, error) {
+	source, set, ok := splitBackupSetID(id)
+	if !ok {
+		return service.BackupSet{}, fmt.Errorf("%q is not a backup set id; a backup set id is exactly source/name", id)
+	}
+	updated, err := r.client.SetBackupSetEnabled(ctx, source, set, apicontract.SetEnabledRequest{Enabled: enabled})
+	if err != nil {
+		return service.BackupSet{}, err
+	}
+	return backupSetFromWire(updated), nil
+}
+
+func (r *engineRoute) SetBackupSetReadOnly(ctx context.Context, id string, readOnly bool) (service.BackupSet, error) {
+	source, set, ok := splitBackupSetID(id)
+	if !ok {
+		return service.BackupSet{}, fmt.Errorf("%q is not a backup set id; a backup set id is exactly source/name", id)
+	}
+	updated, err := r.client.SetBackupSetReadOnly(ctx, source, set, apicontract.SetReadOnlyRequest{ReadOnly: readOnly})
 	if err != nil {
 		return service.BackupSet{}, err
 	}
@@ -276,7 +367,11 @@ func connectionTestFromWire(resp apicontract.TestConnectionResponse, err error) 
 	if err != nil {
 		return service.ConnectionTestResult{}, err
 	}
-	result := service.ConnectionTestResult{OK: resp.OK, Message: resp.Message}
+	// Writable travels with OK and Message rather than being re-derived
+	// from the write_probe row: it is the field the contract carries
+	// (issue #852), and a CLI that computed it from a sentence would be
+	// a second answer to the question the engine already answered.
+	result := service.ConnectionTestResult{OK: resp.OK, Message: resp.Message, Writable: resp.Writable}
 	for _, c := range resp.Checks {
 		result.Checks = append(result.Checks, service.ConnectionCheck{
 			Step:       c.Step,

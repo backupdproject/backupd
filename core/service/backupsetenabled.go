@@ -167,13 +167,57 @@ func (b *BackupService) SetBackupSetEnabled(_ context.Context, id string, enable
 // deletion again, the same one-way-per-artifact shape #227's
 // reinstatement already established for this codebase. It only changes
 // what happens to artifacts THIS backup set commits from here on.
-func (b *BackupService) SetBackupSetReadOnly(_ context.Context, id string, readOnly bool) (BackupSet, error) {
+//
+// # Turning it OFF has to be earned (issue #852)
+//
+// Read-only OFF means "delete from the source after backup", and backupd
+// may only promise that when the source's own credentials can actually do
+// it. So this call runs the connection test's write probe first and
+// refuses with ErrSourceNotWritable when that source is proven
+// non-writable, which is the same refusal a create or an edit asking for
+// the same thing gets. Read-only ON is never gated: making a set safer
+// asks no permission of anybody.
+func (b *BackupService) SetBackupSetReadOnly(ctx context.Context, id string, readOnly bool) (BackupSet, error) {
 	if b.configPath == "" {
 		return BackupSet{}, ErrConfigNotFileBacked
 	}
 	sourceName, setName, ok := splitBackupSetID(id)
 	if !ok {
 		return BackupSet{}, fmt.Errorf("%w: %s", ErrBackupSetNotFound, id)
+	}
+
+	// Issue #852: turning read-only OFF is asking this manager to delete
+	// from somebody else's machine, so it is the one direction that has
+	// to be earned. The connection check proves whether these
+	// credentials may write there, and a set whose source refused the
+	// write probe is refused here with ErrSourceNotWritable — the same
+	// refusal, from the same function, that the create and edit paths
+	// make, so the `backup-set read-only <set> off` verb and a wizard
+	// save cannot disagree about what this source can do.
+	//
+	// Turning read-only ON proves nothing and asks nothing: a set that
+	// never deletes needs no permission to delete, and a source that has
+	// gone unreachable must not block an operator from making a set
+	// SAFER.
+	//
+	// It runs BEFORE configMu is taken, exactly like CreateBackupSet's
+	// check and unlike UpdateBackupSet's, because nothing about it
+	// depends on the configuration the lock protects: it reads the
+	// persisted set through the same snapshot TestBackupSetConnection
+	// does. Holding a process-wide configuration lock across network I/O
+	// is what PR #628's review found on the edit path, and there is no
+	// reason to repeat it where it is avoidable.
+	if !readOnly {
+		result, err := b.TestBackupSetConnection(ctx, id)
+		if err != nil {
+			return BackupSet{}, err
+		}
+		if !result.OK {
+			return BackupSet{}, fmt.Errorf("%w: %s", ErrConnectionNotProven, result.Message)
+		}
+		if err := refuseDeleteOnUnwritableSource(result, false); err != nil {
+			return BackupSet{}, err
+		}
 	}
 
 	b.configMu.Lock()

@@ -24,6 +24,7 @@
  */
 import type { RetentionSettings } from "@shared/api/contracts";
 import type { WireArtifact, WirePlacement } from "@shared/api/generated/contract";
+import type { BackupEngine, SourceConsistency, VerificationLevel } from "@shared/types/snapshot";
 
 /** The service's verdict on one backup set, or on all of them together.
  *  Four values rather than a boolean because "stale" and "failing" call
@@ -277,6 +278,71 @@ export interface BackupSet {
    * name what it was replacing.
    */
   sshKeyId: string;
+
+  /**
+   * Which engine this set runs (EPIC K, issue #788).
+   *
+   * Required and never optional, because every set has one: the wire
+   * declares it as a closed enum with "artifact" as the value a
+   * deployment that predates the incremental engine reports, so there is
+   * no absence to carry. It is required for a second reason as well —
+   * almost every incremental surface is refused outright for an artifact
+   * set (BACKUP_SET_NOT_INCREMENTAL), so a page has to be able to decide
+   * what to OFFER from the list read alone, without a per-set probe.
+   */
+  engine: BackupEngine;
+  /**
+   * The settings only an incremental set has, or null for an artifact
+   * set (EPIC K, issue #788).
+   *
+   * One nullable block rather than six nullable fields, because the six
+   * are absent TOGETHER and for one reason: an artifact set does not
+   * have a repository domain that happens to be unset and a consistency
+   * mode that happens to be unset, it has none of these properties at
+   * all. `incremental === null` says that once, so a surface cannot
+   * render five "not applicable" cells and then draw the sixth as a
+   * value.
+   *
+   * The fields INSIDE it stay individually nullable, which is a different
+   * absence: an incremental set whose verification level is null inherits
+   * the deployment's, and a form has to draw that as "inherited" rather
+   * than as a level nobody chose.
+   */
+  incremental: IncrementalSettings | null;
+}
+
+/**
+ * What a set running the incremental engine is configured to do.
+ *
+ * Two of these can only be chosen when the set is created and four can
+ * be edited afterwards, and the difference is not a UI convention: a
+ * set's history belongs to its engine and lives in the domain it was
+ * written to, so UpdateBackupSetRequest carries no field for either
+ * `repositoryDomain` or the engine itself. The verification budget and
+ * the consistency declaration are statements about how future runs are
+ * checked, so changing them costs nothing already collected.
+ */
+export interface IncrementalSettings {
+  /** The encrypted store this set's snapshots live in. Create-only. */
+  repositoryDomain: string | null;
+  /** What the operator told Backupd they arranged on the source for the
+   *  duration of a run. Recorded, never detected — a run that
+   *  contradicts it is reported rather than silently accepted. */
+  sourceConsistency: SourceConsistency | null;
+  /** The level a run must PROVE before it counts as a restore point. A
+   *  floor: a run that proves less fails. Null inherits the
+   *  deployment's. */
+  verificationLevel: VerificationLevel | null;
+  /** The share of files a content_sample verification reads. Null
+   *  inherits; it is meaningless at the other three levels. */
+  verificationSamplePercent: number | null;
+  /** How often a run reads every file whatever the level says, in
+   *  seconds. 0 is "never on a cadence", null is "inherited", and the two
+   *  are different answers. */
+  verificationFullEverySeconds: number | null;
+  /** How often a run performs a restore drill, in seconds. Same 0 / null
+   *  distinction as the cadence above. */
+  verificationRestoreDrillEverySeconds: number | null;
 }
 
 /** One pinned host key, in the two strings an operator compares against
