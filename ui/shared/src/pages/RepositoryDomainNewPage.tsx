@@ -61,12 +61,14 @@ export function RepositoryDomainNewPage() {
       >
         The contract declares <WireField name="GET /repositories" /> and{" "}
         <WireField name="GET /repositories/{domain}/maintenance" /> and nothing that writes, so
-        every control below is disabled. A domain is created today by naming it on the Repository
-        domain step of Add backup set — a name nothing declares yet is created when that set first
-        runs, with this deployment&rsquo;s own storage location and passphrase reference — and its
-        location, key and sharing rule are declared in configuration. What this screen is for until
-        that route exists is the decision itself: choose Shared or Isolated below and it says what
-        each answer commits every set in the domain to.
+        nothing typed here can be saved: every box that would describe the store — its id,
+        location and passphrase — is disabled, and so is Create. The sharing and ownership
+        choices below are live, because they are the decision this screen exists for. A domain is
+        created today by naming it on the Repository domain step of Add backup set — a name
+        nothing declares yet is created when that set first runs, with this deployment&rsquo;s own
+        storage location and passphrase reference — and its location, key and sharing rule are
+        declared in configuration. Choose Shared or Isolated below and it says what each answer
+        commits every set in the domain to.
       </WarningBanner>
 
       <section className="card">

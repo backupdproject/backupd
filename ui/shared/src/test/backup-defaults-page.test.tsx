@@ -157,7 +157,10 @@ describe("the maintenance ownership table", () => {
     // from this instance.
     expect(within(panel).getAllByText("nas-01")).toHaveLength(2);
     expect(within(panel).getByText("nas-02")).toBeTruthy();
-    expect(within(panel).getByText(/Overdue/)).toBeTruthy();
+    // Two of the three are out of their maintenance window, and one of
+    // those is owned elsewhere: the table's job is to let an operator see
+    // which of the two they can do anything about.
+    expect(within(panel).getAllByText(/Overdue/)).toHaveLength(2);
   });
 
   it("draws Transfer and refuses it, saying no route performs it yet", async () => {

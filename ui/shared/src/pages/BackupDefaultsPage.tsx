@@ -296,7 +296,7 @@ export function BackupDefaultsPage({ readOnly }: { readOnly: boolean }) {
                         <td className="mono">{health.domain}</td>
                         <td style={{ fontSize: "var(--text-sm)" }}>
                           {maintenanceError ? (
-                            <span style={{ color: "var(--warn)" }}>{maintenanceError}</span>
+                            <span style={{ color: "var(--warn)" }}>{maintenanceError.message}</span>
                           ) : maintenance === null ? (
                             "\u2014"
                           ) : maintenance.owner === "" ? (

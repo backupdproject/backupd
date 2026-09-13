@@ -2333,3 +2333,272 @@ describe("updateBackupSet: the key and trust fields (issue #572)", () => {
     expect(body).toEqual({ host: "elsewhere.internal" });
   });
 });
+
+/**
+ * EPIC K's own mappers, at the boundary rather than through a page.
+ *
+ * Every screen test in this suite runs against `createMockApi`, which
+ * hands back domain objects directly: nothing in those tests goes through
+ * `fromWireSnapshot` or `fromWireRepositoryHealth` at all. That leaves
+ * the two rules the whole epic rests on — a measured zero is a zero, an
+ * absent counter is null and never 0, and a clock skew keeps its sign —
+ * pinned nowhere, so a `?? 0` or a `|| null` slipped into either mapper
+ * would pass the entire suite while reporting a repository that
+ * deduplicated nothing and a pair of clocks in perfect step.
+ */
+describe("the incremental wire boundary", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  /** The counters a run reports, all present and all genuinely zero: a
+   *  first run over an empty tree. */
+  const WIRE_SNAPSHOT_ZEROED = {
+    run_id: "run-1",
+    backup_set_id: "nas-a/photos",
+    snapshot_id: "k01",
+    engine: "kopia",
+    phase: "SUCCESS",
+    verification_status: "passed",
+    entries_scanned: 0,
+    files: 0,
+    directories: 0,
+    logical_bytes: 0,
+    source_bytes_read: 0,
+    repository_bytes_written: 0,
+    content_reused_bytes: 0,
+    source_complete: false,
+    last_known_good: true,
+    started_at: "2026-09-13T04:00:00Z",
+    duration_seconds: 0
+  };
+
+  it("keeps a measured zero as zero on every counter", async () => {
+    vi.stubGlobal("fetch", mockFetchOk({ snapshots: [WIRE_SNAPSHOT_ZEROED] }));
+
+    const [snapshot] = await httpApi.listSnapshots("nas-a", "photos");
+
+    // Zero is a MEASUREMENT here: a run over an empty tree read nothing,
+    // wrote nothing and reused nothing, and a mapper that folded those
+    // into null would report them as "not measured" — the one word this
+    // product uses for a figure nobody took.
+    expect(snapshot.entriesScanned).toBe(0);
+    expect(snapshot.files).toBe(0);
+    expect(snapshot.directories).toBe(0);
+    expect(snapshot.logicalBytes).toBe(0);
+    expect(snapshot.sourceBytesRead).toBe(0);
+    expect(snapshot.repositoryBytesWritten).toBe(0);
+    expect(snapshot.contentReusedBytes).toBe(0);
+    expect(snapshot.durationSeconds).toBe(0);
+    // false is an answer too, and a different one from "did not report".
+    expect(snapshot.sourceComplete).toBe(false);
+  });
+
+  it("keeps an absent counter null, and never 0", async () => {
+    vi.stubGlobal("fetch", mockFetchOk({
+      snapshots: [
+        {
+          run_id: "run-2",
+          backup_set_id: "nas-a/photos",
+          engine: "kopia",
+          phase: "FAILED",
+          verification_status: "",
+          last_known_good: false,
+          started_at: "2026-09-13T04:00:00Z"
+        }
+      ]
+    }));
+
+    const [snapshot] = await httpApi.listSnapshots("nas-a", "photos");
+
+    // A run that died before its manifest was recorded has counters
+    // nobody ever took. "reused 0 bytes" would describe a repository that
+    // deduplicated nothing, which sends an operator hunting a fault in a
+    // backup that never got far enough to have one.
+    for (const counter of [
+      snapshot.entriesScanned,
+      snapshot.files,
+      snapshot.directories,
+      snapshot.logicalBytes,
+      snapshot.sourceBytesRead,
+      snapshot.repositoryBytesWritten,
+      snapshot.contentReusedBytes,
+      snapshot.durationSeconds
+    ]) {
+      expect(counter).toBeNull();
+    }
+    expect(snapshot.sourceComplete).toBeNull();
+    // And the ids that only exist once something committed one.
+    expect(snapshot.snapshotId).toBeNull();
+    expect(snapshot.repositoryDomain).toBeNull();
+    // A status this build cannot read is not evidence of a pass.
+    expect(snapshot.verificationStatus).toBe("unchecked");
+    expect(snapshot.verificationLevelAchieved).toBeNull();
+  });
+
+  /** One domain's health, minus the clock, which each case supplies. */
+  const WIRE_HEALTH = {
+    domain: "primary-nas",
+    may_share: true,
+    state: "HEALTHY",
+    reachable: true,
+    readable: true,
+    writable: true,
+    credentials_valid: true,
+    clock_sane: true,
+    maintenance_overdue: false
+  };
+
+  it("tells a measured clock skew of zero from one nobody measured, and keeps a negative sign", async () => {
+    vi.stubGlobal("fetch", mockFetchOk({
+      generated_at: "2026-09-13T04:00:00Z",
+      repositories: [
+        { ...WIRE_HEALTH, domain: "in-step", clock_skew_seconds: 0 },
+        { ...WIRE_HEALTH, domain: "unmeasured" },
+        { ...WIRE_HEALTH, domain: "behind", clock_sane: false, clock_skew_seconds: -184 }
+      ]
+    }));
+
+    const fleet = await httpApi.listRepositories();
+    const skew = (domain: string): number | null =>
+      fleet.repositories.find((r) => r.domain === domain)?.clockSkewSeconds ?? null;
+
+    // Measured and in step.
+    expect(skew("in-step")).toBe(0);
+    // Not measured at all. The two are drawn differently, and a mapper
+    // that collapsed them would make "not measured" unreachable.
+    expect(fleet.repositories.find((r) => r.domain === "unmeasured")?.clockSkewSeconds).toBeNull();
+    // Behind is the dangerous direction — it dates a new snapshot before
+    // one already stored — so the SIGN is the message, not the magnitude.
+    expect(skew("behind")).toBe(-184);
+  });
+
+  it("reads a repository's own absences as absences rather than as words", async () => {
+    vi.stubGlobal("fetch", mockFetchOk({
+      generated_at: "2026-09-13T04:00:00Z",
+      repositories: [{ ...WIRE_HEALTH, domain: "fresh" }]
+    }));
+
+    const [repository] = (await httpApi.listRepositories()).repositories;
+
+    expect(repository.lastMaintenanceAt).toBeNull();
+    expect(repository.lastSnapshotAt).toBeNull();
+    expect(repository.lastVerificationAt).toBeNull();
+    expect(repository.backupSets).toEqual([]);
+    expect(repository.detail).toBe("");
+  });
+
+  it("carries a write probe that PASSED through as true", async () => {
+    vi.stubGlobal("fetch", mockFetchOk({ ok: true, writable: true, checks: [] }));
+
+    // The false case is the safe default and is pinned elsewhere; this is
+    // the one that arms the control that deletes a producer's files, and
+    // a mapper reading it as false would silently withhold a control the
+    // operator is entitled to.
+    expect((await httpApi.testConnection("nas-a/photos")).writable).toBe(true);
+  });
+
+  it("reads an engine that predates the write probe as not writable", async () => {
+    vi.stubGlobal("fetch", mockFetchOk({ ok: true, checks: [] }));
+
+    expect((await httpApi.testConnection("nas-a/photos")).writable).toBe(false);
+  });
+});
+
+describe("EPIC K's four acts send only what the operator answered", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  const OPERATION = { operation_id: "op_1", status: "running", action: "restore_snapshot" };
+
+  function sentBody(fetchMock: ReturnType<typeof mockFetchOk>): Record<string, unknown> {
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    return JSON.parse(init.body as string) as Record<string, unknown>;
+  }
+
+  it("omits a restore's unset optional fields rather than sending them empty", async () => {
+    const fetchMock = mockFetchOk(OPERATION);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await httpApi.restoreSnapshot({
+      backupSetId: "nas-a/photos",
+      targetPath: "/data/restores/x",
+      configRevision: "cfg_7",
+      idempotencyKey: "key-1"
+    });
+
+    // An absent snapshot_id asks for this set's newest known-good restore
+    // point; "" would be a request to restore a snapshot with no id, and
+    // an empty conflict would be a policy nobody chose.
+    expect(sentBody(fetchMock)).toEqual({
+      action: "restore_snapshot",
+      config_revision: "cfg_7",
+      snapshot_restore: { backup_set_id: "nas-a/photos", target_path: "/data/restores/x" }
+    });
+    expect(headersOfCall(fetchMock)["Idempotency-Key"]).toBe("key-1");
+  });
+
+  it("omits a verify's unset run, level and sample rather than sending them empty", async () => {
+    const fetchMock = mockFetchOk(OPERATION);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await httpApi.verifySnapshot({
+      backupSetId: "nas-a/photos",
+      configRevision: "cfg_7",
+      idempotencyKey: "key-2"
+    });
+
+    // An unnamed run verifies the newest snapshot, which is what "Verify
+    // latest" means: naming an empty one would be naming a run.
+    expect(sentBody(fetchMock)).toEqual({
+      action: "verify_snapshot",
+      config_revision: "cfg_7",
+      snapshot_verify: { backup_set_id: "nas-a/photos" }
+    });
+  });
+
+  it("sends a hold and a release with exactly the fields those acts take", async () => {
+    const held = mockFetchOk(OPERATION);
+    vi.stubGlobal("fetch", held);
+    await httpApi.holdSnapshot({
+      backupSetId: "nas-a/photos",
+      runId: "run-1",
+      reason: "Legal hold",
+      configRevision: "cfg_7",
+      idempotencyKey: "key-3"
+    });
+    expect(sentBody(held)).toEqual({
+      action: "hold_snapshot",
+      config_revision: "cfg_7",
+      snapshot_hold: { backup_set_id: "nas-a/photos", run_id: "run-1", reason: "Legal hold" }
+    });
+
+    const released = mockFetchOk(OPERATION);
+    vi.stubGlobal("fetch", released);
+    await httpApi.releaseSnapshotHold({
+      backupSetId: "nas-a/photos",
+      holdId: "hold_1",
+      configRevision: "cfg_7",
+      idempotencyKey: "key-4"
+    });
+    // By hold id, never by run: several holds may sit on one snapshot,
+    // and "release the hold on this snapshot" is ambiguous by exactly
+    // one hold.
+    expect(sentBody(released)).toEqual({
+      action: "release_snapshot_hold",
+      config_revision: "cfg_7",
+      snapshot_hold_release: { backup_set_id: "nas-a/photos", hold_id: "hold_1" }
+    });
+    expect(headersOfCall(released)["Idempotency-Key"]).toBe("key-4");
+  });
+});
+
+/** The headers one request carried. Local to the two describes above,
+ *  which are outside the block that owns the original helper. */
+function headersOfCall(fetchMock: ReturnType<typeof mockFetchOk>): Record<string, string> {
+  const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+  return (init.headers ?? {}) as Record<string, string>;
+}

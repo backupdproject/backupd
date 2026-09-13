@@ -308,7 +308,11 @@ export function SnapshotRetentionPage({ readOnly }: { readOnly: boolean }) {
         onConfirm={() => {
           const target = holding;
           if (target === null) return;
+          // The run is the target the pending idempotency key is filed
+          // under: one hook instance serves every row here, so a hold
+          // that failed on one run must not lend its key to the next.
           hold.submit(
+            target.runId,
             ({ configRevision, idempotencyKey }) =>
               api.holdSnapshot({
                 backupSetId: setId,
@@ -353,6 +357,7 @@ export function SnapshotRetentionPage({ readOnly }: { readOnly: boolean }) {
           const target = releasing;
           if (target === null) return;
           release.submit(
+            target.holdId,
             ({ configRevision, idempotencyKey }) =>
               api.releaseSnapshotHold({
                 backupSetId: setId,

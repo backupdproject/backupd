@@ -88,14 +88,51 @@ describe("repository health", () => {
     expect(isolated.queryByText(/within 0 s/)).toBeNull();
   });
 
+  // The verdict the SERVICE would reach for each fixture domain, spelled
+  // out here because the mock is what every UI-only run of this product
+  // renders — the dev server, this suite, the browser suite — and a
+  // fixture in a state the service cannot produce teaches the wrong
+  // thing to everybody reading the screen and to every test written
+  // against it. core/internal/app/repositoryhealth.go's
+  // decideRepositoryState: any failed probe is FAILING, because a
+  // repository that cannot take a backup is the case that needs somebody
+  // now; the softer facts are DEGRADED.
+  it("carries no domain in a state the service's own rule could not produce", async () => {
+    const fleet = await createMockApi().listRepositories();
+    expect(fleet.repositories.length).toBeGreaterThan(0);
+
+    for (const domain of fleet.repositories) {
+      const cannotBackUp =
+        !domain.reachable || !domain.readable || !domain.writable || !domain.credentialsValid;
+      const attention =
+        !domain.clockSane || domain.maintenanceOverdue || domain.lastVerificationStatus === "failed";
+      expect({ domain: domain.domain, state: domain.state }).toEqual({
+        domain: domain.domain,
+        state: cannotBackUp ? "FAILING" : attention ? "DEGRADED" : "HEALTHY"
+      });
+    }
+
+    // And all three verdicts are actually exercised by the fixture: a
+    // deployment fixture that only ever shows one of them leaves two
+    // treatments nobody has looked at.
+    const states = fleet.repositories.map((d) => d.state);
+    for (const verdict of ["HEALTHY", "DEGRADED", "FAILING"]) expect(states).toContain(verdict);
+  });
+
   it("badges a domain in the same three words a backup set's health uses", async () => {
     const api = createMockApi();
 
     renderHealth(api);
     await screen.findByRole("heading", { name: "offsite-b2" });
 
-    expect(within(cardFor("offsite-b2")).getByText("Degraded")).toBeTruthy();
+    // Unwritable, so it cannot take a backup at all: that is Failing and
+    // not a shade of Degraded, whatever else is also true of it.
+    expect(within(cardFor("offsite-b2")).getByText("Failing")).toBeTruthy();
     expect(within(cardFor("primary-nas")).getByText("Healthy")).toBeTruthy();
+    // Degraded is the softer verdict: every probe passes and full
+    // maintenance has not run inside its window, which costs storage and
+    // no restore point.
+    expect(within(cardFor("vault-isolated")).getByText("Degraded")).toBeTruthy();
     // An isolated store says so where it is decided: a second backup set
     // pointed here is refused rather than quietly admitted.
     expect(within(cardFor("vault-isolated")).getByText("Isolated")).toBeTruthy();
@@ -107,13 +144,14 @@ describe("repository health", () => {
     renderHealth(api);
     await screen.findByRole("heading", { name: "offsite-b2" });
 
-    // The banner names the domain that needs attention, above the cards,
+    // The banner names the domains that need attention, above the cards,
     // and offers the one screen that can answer "why is it overdue".
-    const attention = screen.getByText("One domain needs attention").closest("div")?.parentElement;
+    const attention = screen.getByText("2 domains need attention").closest("div")?.parentElement;
     expect(attention?.textContent).toContain("offsite-b2");
+    expect(attention?.textContent).toContain("vault-isolated");
     expect(screen.getByRole("button", { name: "Open maintenance" })).toBeTruthy();
-    // One domain of the three: the banner counts, rather than firing for
-    // every fleet that has any domain in it.
-    expect(screen.getAllByRole("heading").length).toBeGreaterThan(2);
+    // Two of the three: the banner counts, rather than firing for every
+    // fleet that has any domain in it.
+    expect(attention?.textContent).not.toContain("primary-nas");
   });
 });

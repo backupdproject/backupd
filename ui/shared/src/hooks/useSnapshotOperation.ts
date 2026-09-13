@@ -9,7 +9,7 @@
  * second chance to mint a fresh key per retry, which is the mistake that
  * turns "the reply was lost" into "a second restore started".
  *
- * # The key describes the RETRY, not the act
+ * # The key describes the RETRY of one act on one TARGET
  *
  * A key is minted when the operator asks for something and the SAME key
  * is sent again if they press the button again after a refusal. That is
@@ -17,6 +17,19 @@
  * It is cleared on success, so the next press is a new logical
  * submission. `useRunControls` holds exactly this rule for backup runs
  * and its module doc carries the long version.
+ *
+ * What that rule needs, and did not have, is a TARGET. One hook instance
+ * serves every row of a table (SnapshotRetentionPage holds a single
+ * `hold` and a single `release` for all of them), so a key kept after a
+ * refusal was kept for the page rather than for the snapshot the
+ * operator was acting on: a hold that failed on one run, followed by a
+ * hold on a different run, re-sent the first run's key. The service is
+ * entitled to read that as the same submission and replay the earlier —
+ * failed — one, against the wrong snapshot. So the pending key is
+ * remembered WITH the target it belongs to, and a submission naming a
+ * different target mints a new one. Dismissing the outcome clears it
+ * too: the banner is gone, the operator has moved on, and the next press
+ * is not a retry of something no longer on screen.
  *
  * # Why the configuration revision gates the button
  *
@@ -69,7 +82,15 @@ export interface SnapshotAction {
    *  later attempt succeeds. */
   failure: OperatorFailure | null;
   /**
-   * Submits one act and starts watching it.
+   * Submits one act on one target and starts watching it.
+   *
+   * `target` names what is being acted on — a run id, a hold id, the
+   * backup set for an act that takes no row — and it is what the pending
+   * idempotency key is filed under. Pressing the same button again after
+   * a refusal is a retry and re-sends the key; acting on a different
+   * target is a new submission and mints a new one. It is a required
+   * parameter rather than an optional refinement because a caller that
+   * forgot it would be the defect this exists to stop.
    *
    * `act` is handed the two things every one of the four requests needs
    * and nothing else, so a caller writes its own parameter object and
@@ -79,12 +100,14 @@ export interface SnapshotAction {
    * not have landed.
    */
   submit(
+    target: string,
     act: (credentials: { configRevision: string; idempotencyKey: string }) => Promise<SnapshotOperationResult>,
     onDone?: (result: SnapshotOperationResult) => void
   ): void;
-  /** Clears the last outcome: the failure, and the operation being
-   *  watched. What it deliberately does NOT clear is the pending
-   *  idempotency key, because a dismissed banner is not a new intent. */
+  /** Clears the last outcome: the failure, the operation being watched,
+   *  and the pending idempotency key. The key goes with them: a retry is
+   *  a second press against a refusal that is still on screen, and once
+   *  the operator has dismissed it the next press is a new intent. */
   dismiss(): void;
 }
 
@@ -103,14 +126,16 @@ export function useSnapshotOperation(fallbackMessage: string): SnapshotAction {
 
   // Survives renders on purpose: pressing the button again after a
   // refusal is the same logical submission, and the header is what lets
-  // the service see that.
-  const pendingKey = useRef<string | null>(null);
+  // the service see that. The TARGET travels with it, because one
+  // instance of this hook serves every row of a table and a key without
+  // the row it belongs to is a key the next row would inherit.
+  const pending = useRef<{ target: string; key: string } | null>(null);
 
   const configRevision = version.data?.configRevision;
   const ready = typeof configRevision === "string" && configRevision !== "";
 
   const submit = useCallback<SnapshotAction["submit"]>(
-    (act, onDone) => {
+    (target, act, onDone) => {
       if (!ready) {
         setFailure({
           message: "This page has not finished loading.",
@@ -120,15 +145,17 @@ export function useSnapshotOperation(fallbackMessage: string): SnapshotAction {
         return;
       }
 
-      const idempotencyKey = pendingKey.current ?? newIdempotencyKey();
-      pendingKey.current = idempotencyKey;
+      // A pending key is reused only for the target it was minted for.
+      const held = pending.current;
+      const idempotencyKey = held !== null && held.target === target ? held.key : newIdempotencyKey();
+      pending.current = { target, key: idempotencyKey };
 
       setBusy(true);
       setFailure(null);
       act({ configRevision, idempotencyKey }).then(
         (result) => {
           // Done with this submission, so the next press is a new one.
-          pendingKey.current = null;
+          pending.current = null;
           setBusy(false);
           setOperation(result.operation);
           onDone?.(result);
@@ -171,6 +198,10 @@ export function useSnapshotOperation(fallbackMessage: string): SnapshotAction {
     dismiss: useCallback(() => {
       setFailure(null);
       setOperation(null);
+      // The refusal this key belonged to is off the screen, so the next
+      // press is a new submission rather than a retry of something the
+      // operator can no longer see.
+      pending.current = null;
     }, [])
   };
 }

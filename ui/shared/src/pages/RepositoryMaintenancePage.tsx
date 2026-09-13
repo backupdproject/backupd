@@ -34,46 +34,23 @@ import { Cell, CellGrid, Note, Row, Rows } from "@shared/components/Definitions"
 import { EmptyState, ErrorState } from "@shared/components/EmptyState";
 import { PageHeader } from "@shared/components/PageHeader";
 import { StatusBadge } from "@shared/components/StatusBadge";
-import { asApiError } from "@shared/api/failure";
-import type { ApiError } from "@shared/api/contracts";
 import { useAsync } from "@shared/hooks/useAsync";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import { loadRepositoryFleet } from "@shared/pages/repositoryFleet";
+import type { DomainRecord } from "@shared/pages/repositoryFleet";
 import type { RepositoryMaintenance } from "@shared/types/snapshot";
 import { bytes, relativeAge, stamp } from "@shared/utilities/format";
-
-/** One domain's maintenance record, or the refusal its own read came back
- *  with. Per domain and not per page: one domain answering 404 must not
- *  blank the two that answered, because the two that answered are the
- *  ones an operator can act on. */
-interface DomainMaintenance {
-  domain: string;
-  record: RepositoryMaintenance | null;
-  error: ApiError | null;
-}
 
 export function RepositoryMaintenancePage() {
   const api = useApi();
 
-  const maintenance = useAsync<DomainMaintenance[]>(
-    () =>
-      api.listRepositories().then((fleet) =>
-        Promise.all(
-          fleet.repositories.map((repository) =>
-            api.getRepositoryMaintenance(repository.domain).then(
-              (record): DomainMaintenance => ({ domain: repository.domain, record, error: null }),
-              (e: unknown): DomainMaintenance => ({
-                domain: repository.domain,
-                record: null,
-                error: asApiError(e)
-              })
-            )
-          )
-        )
-      ),
-    [api]
-  );
+  // The fleet-and-maintenance join lives in one place (repositoryFleet.ts,
+  // whose own doc says why): this page had a second copy of it, with its
+  // own per-domain failure handling, which is two behaviours for one
+  // question the moment either is touched.
+  const maintenance = useAsync(() => loadRepositoryFleet(api), [api]);
 
-  const domains = maintenance.data ?? [];
+  const domains = maintenance.data?.domains ?? [];
 
   const header = (
     <PageHeader
@@ -113,15 +90,15 @@ export function RepositoryMaintenancePage() {
       ) : null}
 
       {domains.map((domain) => (
-        <DomainCard key={domain.domain} state={domain} />
+        <DomainCard key={domain.health.domain} state={domain} />
       ))}
     </>
   );
 }
 
-function DomainCard({ state }: { state: DomainMaintenance }) {
-  const heading = <h2 className="eyebrow mono">{state.domain}</h2>;
-  const record = state.record;
+function DomainCard({ state }: { state: DomainRecord }) {
+  const heading = <h2 className="eyebrow mono">{state.health.domain}</h2>;
+  const record = state.maintenance;
   return (
     <section className="card">
       <div
@@ -134,8 +111,9 @@ function DomainCard({ state }: { state: DomainMaintenance }) {
       <div className="card__body">
         {record === null ? (
           <ErrorState
-            message={state.error?.message ?? "This domain's maintenance record could not be read."}
-            correlationId={state.error?.correlationId}
+            message={state.maintenanceError?.message ?? "This domain's maintenance record could not be read."}
+            remediation={state.maintenanceError?.remediation}
+            correlationId={state.maintenanceError?.correlationId}
           />
         ) : (
           <>
@@ -148,11 +126,6 @@ function DomainCard({ state }: { state: DomainMaintenance }) {
                 wire="owner"
                 mono={record.owner !== ""}
                 value={record.owner === "" ? "nobody has claimed it" : record.owner}
-              />
-              <Cell
-                label="Claim expires"
-                wire="owned_until"
-                value={record.ownedUntil === null ? "no claim in force" : stamp(record.ownedUntil)}
               />
               <Cell
                 label="Last quick"

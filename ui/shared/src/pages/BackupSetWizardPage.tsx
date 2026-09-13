@@ -740,17 +740,22 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
   // than every disabled reason falling through to the acknowledgement
   // hint below regardless of which precondition actually failed.
   let saveHint = "";
+  // Each hint names the step that answers it, and #788 moved three of
+  // them: the credentials, the host key and the connection test are one
+  // step now ("Connection test"), so hints still pointing at
+  // "Authentication" and "Verify server" were sending an operator to
+  // steps this rail no longer has.
   if (hostKeyChanged) {
-    saveHint = "The host key changed since it was trusted — resolve that on the Verify server step before saving.";
+    saveHint = "The host key changed since it was trusted — resolve that on the Connection test step before saving.";
   } else if (keySource === "generate" || !importedKeyId) {
     saveHint =
       keySource === "generate"
-        ? "Generating a key on save isn't available yet — pick a key this deployment already holds, or import one, on the Authentication step."
+        ? "Generating a key on save isn't available yet — pick a key this deployment already holds, or import one, on the Connection test step."
         : keySource === "managed"
           ? "Pick one of the keys this deployment already holds before saving."
-          : "Import an SSH key on the Authentication step before saving.";
+          : "Import an SSH key on the Connection test step before saving.";
   } else if (!trustedKnownHostsLine) {
-    saveHint = "Trust the host's fingerprint on the Verify server step before saving.";
+    saveHint = "Trust the host's fingerprint on the Connection test step before saving.";
   } else if (!acknowledged && !readOnlyEffective && !readOnly) {
     // The acknowledgement comes before the connection test, and the
     // condition is now that precondition rather than the catch-all
@@ -1870,9 +1875,17 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                   tip="wizard.set.review.host-trust"
                   lines={[hostKeyChanged ? "Host key changed — blocked" : hostTrusted ? "Trusted" : "Not yet trusted"]}
                 />
+                {/* The explanation follows the LINE below it, which is
+                    `sourceNotWritable` and not `readOnlyEffective`. The
+                    two differ in exactly the case that matters: an
+                    operator who declared a perfectly writable source
+                    read-only by choice was being told the write test
+                    could not create a file on the server, which never
+                    happened and sends them to fix a permission that is
+                    not broken. */}
                 <Summary
                   label="Delete from source"
-                  tip={readOnlyEffective ? "sets.source-delete.read-only" : "sets.source-delete"}
+                  tip={sourceNotWritable ? "sets.source-delete.read-only" : "sets.source-delete"}
                   lines={[
                     sourceNotWritable
                       ? "unavailable — read-only source"
@@ -1981,17 +1994,29 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
           ) : null}
         </div>
 
+        {/* The footer counts STEPS, and every bound here reads its
+            length rather than a literal. It carried a hardcoded 6 from
+            the six-step wizard: after #788 grew the rail to eight, an
+            operator who used this Continue rather than the rail stopped
+            at step 6 and could reach neither the read-only control on
+            step 7 nor the Save on step 8. A count that can disagree with
+            the list it counts is a defect waiting for the next step to
+            be added. */}
         <div className="card__footer" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <InfoTooltip id="wizard.set.back">
             <button className="btn" onClick={() => setStep(Math.max(1, step - 1))} disabled={step === 1}>Back</button>
           </InfoTooltip>
           <InfoTooltip id="wizard.set.step-count">
             <span className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-              {"Step " + step + " of 6"}
+              {"Step " + step + " of " + STEPS.length}
             </span>
           </InfoTooltip>
           <InfoTooltip id="wizard.set.continue" alignEnd>
-            <button className="btn btn--primary" onClick={() => setStep(Math.min(6, step + 1))} disabled={step === 6}>
+            <button
+              className="btn btn--primary"
+              onClick={() => setStep(Math.min(STEPS.length, step + 1))}
+              disabled={step === STEPS.length}
+            >
               Continue
             </button>
           </InfoTooltip>

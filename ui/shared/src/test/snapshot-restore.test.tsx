@@ -64,6 +64,7 @@ describe("the restore flow", () => {
     cleanup();
     resetGraphForTests();
     resetMockFixtures();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -206,5 +207,55 @@ describe("the restore flow", () => {
     // a success message it has no evidence for.
     expect(await screen.findByText("restore snapshot")).toBeTruthy();
     expect(screen.queryByText(/Restore complete/)).toBeNull();
+  });
+
+  // The other end of the watch. The case above proves the flow shows the
+  // operation it submitted; this one proves it goes on telling the truth
+  // when that operation dies, rather than leaving a running panel up for
+  // a restore that stopped. The cadence itself is pinned on the hook
+  // (snapshot-operation-watch.test.tsx); what matters here is the screen.
+  it("reports a restore the service failed as stopped", async () => {
+    const api = createMockApi();
+    await seed(api);
+
+    renderRestore(api, "run-2026-09-13-0400");
+    await screen.findByText(/newest known-good/);
+
+    press("Where");
+    fireEvent.change(screen.getByLabelText("Restore into"), { target: { value: "/data/restores/failed" } });
+    press("Confirm");
+
+    // Faked from here, so the two-second watch can be waited out without
+    // waiting two seconds. Installed after the page has loaded, because
+    // the fixture's own reads are on real timers up to this point.
+    vi.useFakeTimers();
+    press("Start restore");
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(screen.getByText("restore snapshot")).toBeTruthy();
+
+    vi.spyOn(api, "getOperation").mockImplementation((id) =>
+      Promise.resolve({
+        id,
+        setId: "production/postgres-primary",
+        setName: "production/postgres-primary",
+        kind: "transfer",
+        label: "restore snapshot",
+        status: "failed",
+        progress: null,
+        nonDestructive: false,
+        startedAt: "2026-09-13T04:00:00+02:00",
+        cycle: null
+      })
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
+    });
+
+    // The panel says the operation stopped instead of drawing a bar for a
+    // transfer that is not happening.
+    expect(screen.getByText(/Stopped\. Progress is reported only while an operation is running\./)).toBeTruthy();
   });
 });

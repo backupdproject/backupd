@@ -25,6 +25,7 @@
  */
 import type { BackupdApi } from "@shared/api/contracts";
 import { describeFailure } from "@shared/api/failure";
+import type { OperatorFailure } from "@shared/api/failure";
 import type { RepositoryHealth, RepositoryMaintenance } from "@shared/types/snapshot";
 
 /** One domain, as the deployment screens read it. */
@@ -34,7 +35,11 @@ export interface DomainRecord {
    *  `maintenanceError` for what happened. Never null for "nobody owns
    *  it", which is `maintenance.owner === ""`. */
   maintenance: RepositoryMaintenance | null;
-  maintenanceError: string | null;
+  /** The whole translated refusal rather than its sentence: a list draws
+   *  the message inline, and the maintenance screen — which is where an
+   *  operator goes to act on it — owes the correlation id that response
+   *  was logged under (#274). One shape serves both. */
+  maintenanceError: OperatorFailure | null;
 }
 
 export interface RepositoryFleetView {
@@ -55,7 +60,7 @@ export async function loadRepositoryFleet(api: BackupdApi): Promise<RepositoryFl
           maintenanceError: describeFailure(
             e,
             "Backupd could not read who maintains this repository domain."
-          ).message
+          )
         };
       }
     })

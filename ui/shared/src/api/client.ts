@@ -448,17 +448,16 @@ function wireBackupSetSpec(req: CreateBackupSetRequest): WireBackupSetSpec {
     stale_after_seconds: req.staleAfterSeconds,
     disabled: req.disabled,
     read_only: req.readOnly,
-    // EPIC K (issue #788). Sent only when the caller named them, which
-    // for `engine` means an artifact set sends no engine key at all: the
-    // service's own default is "artifact", so omitting it is the same
-    // request every create made before the field existed, and a create
-    // that always spelled it would make a deployment on an older engine
-    // fail for naming a field it does not know.
+    // EPIC K (issue #788). `engine` travels on EVERY create: the wizard
+    // asks the question outright and sends the answer, including the
+    // artifact one, because a set's engine is the choice that cannot be
+    // undone and a request that left it to a server default would be
+    // relying on the default matching what the operator was shown.
     //
-    // The four incremental settings travel the same way and for a
-    // sharper reason: a repository domain on an artifact set is a field
-    // the service must either refuse or ignore, and the wizard simply
-    // does not collect one, so `undefined` here is the honest shape.
+    // The four incremental settings are the other case, and `undefined`
+    // there is the honest shape: a repository domain on an artifact set
+    // is a field the service must either refuse or ignore, and the
+    // wizard does not collect one.
     engine: req.engine,
     repository_domain: req.repositoryDomain,
     source_consistency: req.sourceConsistency,
@@ -1444,7 +1443,6 @@ function fromWireRepositoryMaintenance(m: WireRepositoryMaintenance): Repository
     // situation from "another instance owns it" and has a different
     // remedy.
     owner: m.owner,
-    ownedUntil: stampOrNull(m.owned_until),
     lastQuickAt: stampOrNull(m.last_quick_at),
     lastFullAt: stampOrNull(m.last_full_at),
     nextEligibleAt: stampOrNull(m.next_eligible_at),

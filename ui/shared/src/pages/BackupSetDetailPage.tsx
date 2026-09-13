@@ -40,6 +40,9 @@ import {
 import type { SetEditSnapshot } from "@shared/state/backupSetDetailNodes";
 import { PageHeader } from "@shared/components/PageHeader";
 import { HealthBadge } from "@shared/components/StatusBadge";
+import { EngineBadge, VerificationBadge } from "@shared/components/EngineBadge";
+import { MetricCard } from "@shared/components/MetricCard";
+import { useAsync } from "@shared/hooks/useAsync";
 import { FingerprintDisplay } from "@shared/components/FingerprintDisplay";
 import { ActivityTimeline } from "@shared/components/ActivityTimeline";
 import { Icon } from "@shared/design-system/icons";
@@ -71,7 +74,7 @@ import { EDIT_FIELDS, readEditFields, visibleEditFields, withCompanions } from "
 import type { EditField, EditFieldKey } from "./backupSetEditFields";
 import type { BackupSetPatch, RunningWork } from "@shared/api/contracts";
 import { apiErrorOf, describeFailure } from "@shared/api/failure";
-import { bytes, clock, relativeAge } from "@shared/utilities/format";
+import { bytes, clock, duration, measured, relativeAge } from "@shared/utilities/format";
 import { snapshotRetentionPath, snapshotsPath } from "@shared/utilities/routes";
 
 /**
@@ -686,6 +689,14 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
             <InfoTooltip id="sets.detail.health">
               <HealthBadge state={s.state} />
             </InfoTooltip>
+            {/* EPIC K (#788): which engine runs this set, beside its
+                name rather than three cards down in the configuration
+                panel. Everything below reads differently depending on
+                this answer — a snapshot history or an artifact chain, a
+                repository domain or a completion method — so it belongs
+                where a reader arrives, not where it happens to be
+                configured. */}
+            <EngineBadge engine={s.engine} />
           </span>
         }
         subtitle={
@@ -949,6 +960,16 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
           </WarningBanner>
         </div>
       ) : null}
+
+      {/* EPIC K (#788), design screen 6: what this set's engine last
+          actually did. Only for the incremental engine, and not as a
+          courtesy — an artifact set has no snapshot history at all and
+          every incremental read is refused for one
+          (BACKUP_SET_NOT_INCREMENTAL), so asking would be asking a
+          question with only an error for an answer. The artifact
+          treatment of the same question is the backup chain and the
+          completion method already on this page. */}
+      {s.engine === "kopia" ? <NewestSnapshotStrip source={s.source} set={s.set} /> : null}
 
       <div
         style={{
@@ -1345,6 +1366,126 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
         }}
       />
     </>
+  );
+}
+
+/**
+ * The newest snapshot this incremental set holds, as the five figures
+ * EPIC K is about (design screen 6).
+ *
+ * # Why the figures and not a sentence
+ *
+ * "Last run: 4 hours ago" is what an artifact set can say, and it is all
+ * this page said for an incremental one. The incremental engine's whole
+ * claim is the relationship between them — a tree of this logical size
+ * cost that much storage because the repository already held the rest —
+ * and a single total would report a deduplicating repository as growing
+ * by the size of the source every night. Four byte counts, never one, in
+ * the same words the snapshot list and the inspector use.
+ *
+ * # Absent is not zero
+ *
+ * Every counter here is nullable on the wire and goes through
+ * `measured()`, for the reason types/snapshot.ts argues at length: a run
+ * adopted by crash reconciliation has counters nobody took, and "reused
+ * 0 bytes" is a measurement describing a repository that deduplicated
+ * nothing.
+ *
+ * # It has its own read, and its own failure
+ *
+ * The set comes off the shared graph; the snapshots do not, because this
+ * is the only surface on this page that wants them. A refused read says
+ * so in one quiet line rather than through an ErrorState: the set's own
+ * page is still worth reading when its snapshot history is not
+ * available, and a red panel here would report the sub-read as the
+ * page's condition.
+ */
+function NewestSnapshotStrip({ source, set }: { source: string; set: string }) {
+  const api = useApi();
+  const navigate = useNavigate();
+  const snapshots = useAsync(() => api.listSnapshots(source, set), [api, source, set]);
+
+  if (snapshots.error)
+    return (
+      <section className="card" aria-label="Newest snapshot">
+        <div className="card__body">
+          <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+            {"This set's snapshot history could not be read: " + snapshots.error.message}
+          </p>
+        </div>
+      </section>
+    );
+
+  const newest = snapshots.data?.[0] ?? null;
+  if (newest === null)
+    return snapshots.data === null ? null : (
+      <section className="card" aria-label="Newest snapshot">
+        <div className="card__body">
+          <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
+            {"No snapshot yet. A run that commits a manifest is what puts one here, and its " +
+              "figures then say what the repository actually stored."}
+          </p>
+        </div>
+      </section>
+    );
+
+  return (
+    <section className="card" aria-label="Newest snapshot" style={{ marginBottom: 14 }}>
+      <div
+        className="card__header"
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+      >
+        <h2 className="eyebrow">
+          {"Newest snapshot \u00b7 " + relativeAge(newest.startedAt)}
+        </h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <VerificationBadge
+            status={newest.verificationStatus}
+            achieved={newest.verificationLevelAchieved}
+          />
+          <button className="btn btn--sm" onClick={() => navigate(snapshotsPath(source, set))}>
+            All snapshots
+          </button>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(196px, 1fr))" }}>
+        <MetricCard
+          label="Entries scanned"
+          value={measured(newest.entriesScanned, (n) => n.toLocaleString())}
+          detail={measured(newest.files, (n) => n.toLocaleString() + " files")}
+        />
+        <MetricCard
+          label="Logical size"
+          value={measured(newest.logicalBytes, bytes)}
+          detail="the tree as described"
+        />
+        <MetricCard
+          label="Read from source"
+          value={measured(newest.sourceBytesRead, bytes)}
+          detail="every byte the source offered"
+        />
+        <MetricCard
+          label="Written to repository"
+          value={measured(newest.repositoryBytesWritten, bytes)}
+          detail="after deduplication"
+        />
+        <MetricCard
+          label="Reused"
+          tip="snapshots.reused"
+          value={measured(newest.contentReusedBytes, bytes)}
+          detail={
+            newest.contentReusedBytes === null
+              ? "not accounted for on this run"
+              : "content the repository already held"
+          }
+        />
+        <MetricCard
+          label="Duration"
+          value={measured(newest.durationSeconds, duration)}
+          detail={newest.repositoryDomain === null ? "" : "domain " + newest.repositoryDomain}
+        />
+      </div>
+    </section>
   );
 }
 
