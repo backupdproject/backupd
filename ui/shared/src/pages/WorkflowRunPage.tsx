@@ -50,7 +50,7 @@ import { StatusBadge } from "@shared/components/StatusBadge";
 import { WarningBanner } from "@shared/components/WarningBanner";
 import { WorkflowRecoveryBanner, useWorkflowHold } from "@shared/components/WorkflowRecoveryBanner";
 import { WorkflowStatusSplit } from "@shared/components/WorkflowStatusSplit";
-import { WorkflowStepTerminalSlot } from "@shared/components/WorkflowStepTerminalSlot";
+import { StepLogTerminal } from "@shared/components/StepLogTerminal";
 import {
   RUN_PRESENTATION,
   STEP_PRESENTATION,
@@ -336,7 +336,7 @@ export function WorkflowRunPage({ readOnly }: { readOnly: boolean }) {
 
       <div style={{ marginTop: 14 }}>
         {selected ? (
-          <WorkflowStepTerminalSlot
+          <StepLogTerminal
             runId={loaded.runId}
             stepId={selected.stepId}
             step={selected}
