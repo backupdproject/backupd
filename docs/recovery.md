@@ -248,10 +248,10 @@ version:
 
 - `core/internal/retention.GFSDecide` only classifies artifacts into keep/not-kept-by-GFS. It
   contains no deletion code at all. A `Keep: false` verdict is a candidate, not an order.
-- Deletion is real, and it is deliberately somewhere else. FR-20 landed in
+- Deletion is real, and it is deliberately somewhere else. FR-20 (issue #21) landed in
   `core/internal/retention/prune.go`: `PruneApply` removes the positively identified local
-  file, and since the object on a storage medium beside it. FR-19's last-known-good
-  protection landed with it and does protect the newest good backup.
+  file, and since #239 the object on a storage medium beside it. FR-19's last-known-good
+  protection (issue #20) landed with it and does protect the newest good backup.
 - Nothing schedules that. The only thing that runs `PruneApply` is the API's retention
   preview/apply pair (`core/service`): `PreviewRetention` issues a `plan_id`, and
   `ApplyRetentionPlan` deletes only against that `plan_id`, and only while the plan it
@@ -260,9 +260,9 @@ version:
 - `backupd retention` is a preview in both of its modes and deletes nothing, with or
   without `--dry-run`. That is not a gap waiting to be filled: a CLI that deleted backups
   without the `plan_id` confirmation the HTTP path insists on would be a second, weaker
-  authorisation path to the same act.
+  authorisation path to the same act (issue #431).
 - `backupd retention apply <source/backup-set> --acknowledge` is the terminal's own
-  way in, and it is not that second path: it goes through the same
+  way in (issue #602), and it is not that second path: it goes through the same
   `PreviewRetention`/`ApplyRetentionPlan` pair, prints the plan it is about to apply, and
   refuses with `RETENTION_PLAN_STALE` and zero deletions if the set moved in between.
   `--acknowledge` is required, and the refusal without it says what it consents to.
@@ -299,7 +299,7 @@ backupd artifacts production/postgres/dump-2026-09-04.zst
 The `reason` line is the literal sentence the manager recorded at the moment it gave up.
 Three shapes come up most:
 
-- **A transient failure that ran out of attempts** ("copy failed: transient:..."). The
+- **A transient failure that ran out of attempts** ("copy failed: transient: ..."). The
   source was unreachable or the link dropped. If it is back, there is nothing else to fix.
 - **A final-name collision.** A file is already sitting where this backup's final copy
   belongs. Move or remove it first; a retry re-checks before it copies a byte, so retrying
