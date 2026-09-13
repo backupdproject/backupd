@@ -22,9 +22,9 @@ fails the build.
 **If you just want to run it:** [Installing it](#installing-it) is two commands on any
 machine with Docker.
 
-**If you're here because a backup didn't arrive and it's 3am:** skip to
-[Recovery](#recovery-when-a-backup-did-not-arrive) below, or go straight to
-[`docs/recovery.md`](docs/recovery.md).
+**If you're here because a backup didn't arrive and it's 3am:** go straight to
+[`docs/recovery.md`](docs/recovery.md) — or, for a backup set on the
+incremental engine, [`docs/incremental-runbooks.md`](docs/incremental-runbooks.md).
 
 **The same material as pages, with pictures**, is the published site: [the first-run
 tutorial](https://backupdproject.github.io/backupd/first-run.html), [the web interface in
@@ -125,7 +125,9 @@ The engine container runs `backupd daemon` instead of `backupd-web serve`, the `
 never started, and no port is published on this host at all, so nothing in the deployment
 serves HTTP and the `backupd-web` binary is never executed. What drives it is the `backupd` wrapper
 the installer writes to `<prefix>/bin/backupd`, which takes every command in
-[the CLI table below](#the-engine-and-the-cli-are-real).
+[the reference page's command table](https://backupdproject.github.io/backupd/reference.html#cli-commands)
+— this document stopped carrying a generated copy of it, because the site is where
+the operator surface is documented.
 
 There is no enrolment link on such a host and nothing to enrol into, and there is no
 first-run wizard either, which is why a fresh CLI-only install stages everything, starts
@@ -182,6 +184,112 @@ so it is the one in shot: it is mostly native `select`s and number inputs, which
 what the application used to leave at the browser's default and paint black on black.
 
 ![The settings page switching to dark mode, scrolling through a form of native selects and number inputs, then switching back](docs/site/screens/ui-dark-mode.gif)
+
+
+## Two engines: artifacts, and incremental snapshots
+
+Everything above describes the `artifact` engine: a producer writes a finished
+file, this manager pulls the whole thing, verifies it, commits it durably,
+records that it did, and only then removes the remote copy. That is still what
+a backup set does unless it says otherwise, and it is still the answer for a
+source reached over SSH.
+
+A backup set can instead run the **incremental engine** (`engine: kopia`),
+which snapshots a source *tree* into an encrypted, content-addressed
+repository and stores only content that repository does not already hold. It
+is **off by default** and turned on deliberately:
+
+```yaml
+incremental_engine:
+  enabled: true
+```
+
+`BACKUPD_INCREMENTAL_ENGINE=1` does the same from the environment and
+overrides the file in both directions. With the gate off, a configuration that
+declares incremental sets still loads and still backs up every artifact set on
+schedule; the incremental ones refuse with one sentence naming both ways to
+enable it. **Nothing ever converts an `artifact` set into a `kopia` one** —
+not on upgrade, not on reload, not as a convenience — and moving a source onto
+the incremental engine is a new backup set you create beside the old one.
+
+### Scanning is not incremental storage
+
+This is the sentence that stops a report being misread. **Every run walks the
+whole source tree, and reads all of it.** There is no incremental scan, no
+change journal and no watcher: a run enumerates every entry under the source
+root, streams every file's content through, and stores only content the
+repository does not already hold. What is incremental is **the storage**, and
+in this build that is the only thing that is — content is reused, files are
+not, because skipping a file's bytes because its size and mtime look familiar
+is how a rewritten file silently keeps its old content in every snapshot from
+then on. So this engine buys storage, not source I/O.
+
+Three costs, scaling with three different things:
+
+| Cost | Scales with | Every run? |
+| --- | --- | --- |
+| **Scan** — enumerate, stat every entry | the number of entries | yes, all of them |
+| **Read** — pull bytes off the source | the size of the tree | yes, all of it |
+| **Store** — write into the repository | content the repository does not already hold | rarely, often almost nothing |
+
+The walk is bounded in memory, which is what makes it usable on a NAS: a
+million entries in one flat directory cost 4.2 MiB of peak heap streaming,
+against 493.4 MiB for the slice-shaped listing this product used to build, and
+the first entry arrives in 12 ms rather than after 102 seconds. Ten times the
+entries is roughly 1.2× the memory.
+
+So a run reports **five separate measurements and deliberately no total** —
+entries scanned, logical size, read from source, written to repository,
+reused — because only the fourth is storage growth, and a single "bytes backed
+up" figure would report a 100 GB tree deduplicated down to 200 MB of new
+content as a 100 GB upload every night. Every one of those counters is
+nullable, and null prints `not measured` rather than `0`: "reused 0 bytes"
+sends somebody hunting a fault in a backup that is working.
+
+### What the run is allowed to claim
+
+An incremental run reads a tree over a period while something else may be
+writing to it, and this product cannot detect what the operator arranged. So
+it is declared per set, and recorded on every run rather than only in the
+configuration:
+
+| `source_consistency` | What it means | A point in time? |
+| --- | --- | --- |
+| `live_best_effort` | read while whatever writes to the source keeps writing | **no** — the default, and the weakest claim |
+| `externally_quiesced` | the writers were stopped, flushed or locked for the run | no; a mutation during the run is a **contract violation** |
+| `external_snapshot` | the run reads a frozen image (LVM, ZFS, VSS, a read-only clone) | **yes**; a mutation during the run is a **contract violation** |
+
+Only `external_snapshot` is ever rendered as "consistent". Under the other two
+a run whose every file was captured coherently is *complete*, which is a
+different sentence, and both appear in a run report. Declaring the stronger
+arrangements buys the thing that is otherwise silent: a mutation observed
+during the run is reported **against the claim**, which is how a quiesce hook
+that stopped the wrong container gets found.
+
+Underneath, no policy ever buys "trust the metadata forever". Content reuse
+rests on a metadata comparison, a modification time is settable, and so every
+path in every source is re-read on a bounded cadence whose interval the policy
+names.
+
+### Where to read the rest
+
+- [`docs/incremental-engine.md`](docs/incremental-engine.md) — the whole
+  engine: repository domains, verification levels, retention and holds,
+  maintenance, the configuration reference, and what this build does not do.
+- [`docs/incremental-runbooks.md`](docs/incremental-runbooks.md) — putting a
+  source on it, a repository that will not open, credential recovery, and the
+  gate refusing.
+- [the reference page](https://backupdproject.github.io/backupd/reference.html#cli-commands)
+  — `backupd snapshot` and `backupd repository`, and the screens behind them.
+- [ADR 0018](docs/adr/0018-shipping-the-incremental-engine-behind-a-gate.md) —
+  why it ships behind a gate, and what the twelve decisions before it settled.
+
+One limit belongs up here rather than in a footnote: an incremental set's
+source must be a backend whose directory listing this process can bound —
+`local_volume` or `s3`. **`sftp` is not one**, and a `kopia` set pointed at an
+SFTP source is refused at run time rather than walked. Pulling a producer's
+finished files off a remote machine over SSH is the `artifact` engine's job,
+and it stays the right answer for it.
 
 
 ## When it will not work and the log says nothing

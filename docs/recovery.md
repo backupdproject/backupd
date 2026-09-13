@@ -1,24 +1,44 @@
 # Recovery and the restore procedure
 
 This is the page to read when a backup didn't arrive, an artifact looks wrong, or you're
-trying to figure out whether you can still get a file back. It assumes you've already read
-the README's [Status](../README.md#status-what-actually-runs-today) section; the short
-version repeated here because it changes every answer below: there is no `backupd
-status`, `restore`, `run` or `daemon` command yet. Everything in this
-document works directly against the SQLite journal and the NAS filesystem, because that's
-genuinely the only interface that exists today.
+trying to figure out whether you can still get a file back.
 
-None of that makes this document a placeholder for later. Restore was never going to be its
-own automated command: the design's answer to "how do I get a backup back" has always been
-"the journal tells you which local file is trustworthy, go get it," whether that journal was
-populated by a full daemon loop or, as today, by your own driver code or the test suite.
-This procedure is the permanent shape, not a workaround.
+It was written when this product had no operator commands at all, and it works entirely
+against the SQLite journal and the NAS filesystem. That is still the ground truth, and it
+is still the right thing to read at 3am when you do not trust a summary — but it is no
+longer the only interface. `backupd status`, `backupd sources`, `backupd artifacts`,
+`backupd activity`, `backupd validate`, `backupd retention`, `backupd quarantine`,
+`backupd retry` and `backupd catalog rebuild` all exist and answer most of the questions
+below without a SQL prompt; [the reference
+page](https://backupdproject.github.io/backupd/reference.html#cli-commands) has every one
+of them. Where a query below and a command disagree, the query is right about the journal
+and the command is right about what the serving process believes, and the difference itself
+is a finding.
+
+What has not changed, and is not a gap waiting to be filled: **restoring an artifact is
+not an automated command.** The design's answer to "how do I get a backup back" has always
+been "the journal tells you which local file is trustworthy, go and get it". That is the
+permanent shape rather than a workaround. (A backup set on the incremental engine is a
+different story and does have a restore verb — see the note below.)
 
 > **No terminal?** Everything below assumes a shell on the NAS. If you have only the web
 > interface, which is the normal case on a NAS appliance and the case every provider store
 > assumes, read [recovery without a terminal](recovery-without-a-terminal.md) instead. It
 > covers the same three failures this page starts with, through the interface, and it is
 > the page the submission bundle's support materials point a reviewer at.
+
+> **Is this backup set on the incremental engine?** This page is about
+> **artifacts**: whole files, one per backup, sitting on storage where the
+> journal says they are. A backup set whose `engine` is `kopia` has no
+> artifacts at all — it has snapshots inside an encrypted repository, and
+> nothing on this page applies to it. Read
+> [incremental-runbooks.md](incremental-runbooks.md) instead: it covers a
+> repository that will not open, a snapshot that verified and one that did
+> not, credential recovery, and getting data back out with `backupd snapshot
+> restore`. The set's `engine:` key in `config.yaml` says which engine it
+> runs, as does `engine` on `GET /api/v1/backup-sets/{source}/{set}` and the
+> badge on its page in the web interface. (`backupd sources` does not report
+> it.)
 
 ## The one fact everything else depends on
 
@@ -49,8 +69,7 @@ sqlite3 /path/to/state.db "
 "
 ```
 
-What `core/internal/health` would tell you if it were wired to anything (see the README's
-[Status and health](../README.md#status-and-health)):
+What `backupd status` reports, and what `core/internal/health` decides it from:
 
 - If the newest row across the whole set is `COMMITTED`, `REMOTE_DELETE_PENDING`,
   `COMPLETE` or `REMOTE_RETAINED`, and it's recent enough for your `stale_after` window,
@@ -108,7 +127,7 @@ sqlite3 /path/to/state.db "
 
 The `local_path` in that row is the file. It was fsynced and atomically promoted to that
 name by `core/internal/lifecycle/commit.go` before `COMMITTED` was ever recorded (see the
-README's [Durable commit](../README.md#durable-commit)), so treat it as trustworthy on the
+`core/internal/lifecycle/commit.go`'s own doc comment), so treat it as trustworthy on the
 strength of that alone; you don't need to re-verify it before copying it out, though
 re-running whatever validator the backup set's config names is never wrong if the stakes
 are high enough to justify the time.
@@ -163,10 +182,9 @@ local copy had gone bad after the fact, while the remote side was still there or
 gone). Its one exit is back to `DISCOVERED`, meaning a fresh attempt has a real chance of
 succeeding.
 
-The design intends this to self-heal automatically the next time discovery and
-reconciliation run against this backup set. Today, with no daemon or scheduled runner (see
-[Status](../README.md#status-what-actually-runs-today)), that pass doesn't happen on its
-own. Your options, in order of how much you should trust the result:
+This self-heals the next time discovery and reconciliation run against this backup set,
+which `backupd daemon` does on the poll interval and `backupd reconcile` does on demand.
+On a deployment with nothing serving it, that pass does not happen on its own. Your options, in order of how much you should trust the result:
 
 1. If you or someone else has already wired a runner against these packages (calling
    `discovery.Discover`, `reconcile.Reconcile`, and the `core/internal/lifecycle` steps
@@ -194,8 +212,8 @@ sqlite3 /path/to/state.db "
 "
 ```
 
-If `remote_delete_error` is non-empty, this is very likely not a bug. Read the README's
-[TOCTOU protection on delete](../README.md#toctou-protection-on-delete): against the
+If `remote_delete_error` is non-empty, this is very likely not a bug. The reason is the TOCTOU protection on delete
+(`core/internal/model/identity.go`): against the
 shell-less SFTP account this project's own setup guide recommends, `CompareIdentity` can
 usually only reach `ConfidenceWeak` on the remote side, because there's no remote hash and
 usually no backend-stable identifier to check against, only size and modification time. A
@@ -225,8 +243,8 @@ That's a real operational consequence, not a cosmetic one:
 ## Step 6: retention decided this backup should be deleted, but it's still there
 
 That's expected, not a bug. A verdict and a deletion are two different things here, and
-nothing crosses between them on its own. The README's [Retention](../README.md#retention)
-section is the longer version:
+nothing crosses between them on its own. [`docs/storage-mediums.md`](storage-mediums.md) and `backupd retention` are the longer
+version:
 
 - `core/internal/retention.GFSDecide` only classifies artifacts into keep/not-kept-by-GFS. It
   contains no deletion code at all. A `Keep: false` verdict is a candidate, not an order.
