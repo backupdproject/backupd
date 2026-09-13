@@ -129,21 +129,40 @@ func (b *Broker) publish(rec workflow.StepLog) {
 	}
 }
 
+// offer hands one record to this subscription's queue, or drops it.
+//
+// The lock is held ACROSS the send, which is the opposite of what a
+// "don't hold a lock over a channel operation" instinct says and is
+// required here for two separate reasons.
+//
+// The first is that this send cannot block: it is a non-blocking select,
+// so the lock is held for a queue slot's worth of work and never for as
+// long as a reader takes. The second is what the alternative costs. A
+// version that checked s.done, released the lock and then sent had a
+// window a few instructions wide in which Close could close the channel
+// -- and a send on a closed channel is a panic, in the goroutine reading
+// a hook's stdout, which takes the daemon with it. A follower hanging up
+// mid-output is an ordinary event (a closed browser tab), so that window
+// is not theoretical.
+//
+// A subscription that has already been DROPPED is not offered to again
+// either. Once a record has been lost, this queue's contents are
+// contiguous only up to the hole, and putting later records into it
+// would hand the follower 1, 2, then 301 with nothing to mark the gap.
+// The live path stops at the drop and the journal is the authority from
+// there (Lagged, Engine.LogsAfter).
 func (s *Subscription) offer(rec workflow.StepLog) {
 	s.mu.Lock()
-	if s.done {
-		s.mu.Unlock()
+	defer s.mu.Unlock()
 
+	if s.done || s.lagged {
 		return
 	}
-	s.mu.Unlock()
 
 	select {
 	case s.records <- rec:
 	default:
-		s.mu.Lock()
 		s.lagged = true
-		s.mu.Unlock()
 	}
 }
 
@@ -167,7 +186,17 @@ func (s *Subscription) Lagged() bool {
 	return s.lagged
 }
 
-// Close releases the subscription.
+// Close releases the subscription. It is safe to call twice, which is
+// one operator closing a tab while a shutdown closes everything.
+//
+// The channel is closed INSIDE the same critical section that sets done,
+// and the pair is what makes offer's send safe: there is no moment at
+// which done is set and the channel is still open, and none at which an
+// offer holds the lock and the channel closes underneath it. The
+// broker's own map is touched afterwards, outside s.mu, because the
+// ordering there is the other way round -- publish takes the broker's
+// lock and releases it before offering -- and taking the two in one
+// order everywhere is what keeps that from being a deadlock.
 func (s *Subscription) Close() {
 	s.mu.Lock()
 	if s.done {
@@ -176,13 +205,12 @@ func (s *Subscription) Close() {
 		return
 	}
 	s.done = true
+	close(s.records)
 	s.mu.Unlock()
 
 	s.broker.mu.Lock()
 	delete(s.broker.subs, s.id)
 	s.broker.mu.Unlock()
-
-	close(s.records)
 }
 
 // LogsAfter is the catch-up read: one run's records with a sequence above

@@ -110,14 +110,29 @@ type RunRequest struct {
 	// Facts are the deployment's own answers to the built-ins this
 	// package cannot know: BACKUPD_SOURCE_HOST, BACKUPD_SOURCE_PATH,
 	// BACKUPD_DESTINATION. Anything that is not one of
-	// workflow.BuiltinEnvNames is refused by the environment model
-	// rather than passed through.
+	// workflow.BuiltinEnvNames is refused rather than passed through.
+	//
+	// They are PERSISTED with the plan, because a recovery needs them:
+	// the built-ins are injected per call and stored nowhere else, so a
+	// resumed hook would otherwise be handed an empty
+	// BACKUPD_SOURCE_PATH -- and `umount "$BACKUPD_SOURCE_PATH"` with
+	// an empty variable unmounts nothing and exits 0. A fact cannot
+	// override anything this product states about the run itself (see
+	// runner.builtins): the built-in layer is applied over these, not
+	// under them.
 	Facts map[string]string
 
-	// Bypassed records that this run's hooks were deliberately skipped
-	// (L6's --skip-workflow-scripts). It is written on the run row as
-	// history and has no effect on anything here: an engine handed a
-	// plan runs it.
+	// Bypassed says this run's hooks are deliberately skipped (L6's
+	// --skip-workflow-scripts).
+	//
+	// It is honoured HERE rather than only recorded, because the run row
+	// is the point: the backup happens, every step is recorded as
+	// skipped, neither scope is entered -- so nothing is owed a cleanup
+	// and nothing about the run can block the set -- and the row carries
+	// bypassed=1 with cleanup_status=skipped for whatever reads the
+	// history later. What it cannot do is affect the recovery axis: a
+	// set with an unresolved interruption refuses a bypassed run exactly
+	// as it refuses an ordinary one (checkNotBlocked).
 	Bypassed bool
 }
 
@@ -295,10 +310,37 @@ type runner struct {
 	byID       map[string]int
 	failedStep string
 	hookFailed bool
-	canceled   bool
-	timedOut   bool
 	cleanupBad bool
 	backupErr  error
+
+	// The two axes of "this stopped early", kept apart because they are
+	// different facts with different consequences.
+	//
+	// runCanceled and runTimedOut are about the RUN: its context was
+	// cancelled or its deadline expired. They are what stops new
+	// before-or-backup work starting (stopping), and they are the only
+	// thing that may relabel a later step's outcome -- a step this
+	// product killed because the run was being torn down is recorded as
+	// cancelled or timed out whatever the adapter made of the signal.
+	//
+	// stepCanceled and stepTimedOut are about a STEP: one hook ran out
+	// of its own bound, or came back cancelled. They decide the run's
+	// final state (a run whose hook timed out is a timed-out run) and
+	// they must NOT relabel anything else, which is what folding the two
+	// pairs into one did: one step that timed out made every later
+	// step's transport loss come back as "timed_out", which is this
+	// product asserting it killed something it never touched.
+	runCanceled  bool
+	runTimedOut  bool
+	stepCanceled bool
+	stepTimedOut bool
+
+	// recoveryOutstanding is set when a scope this run ENTERED could not
+	// be accounted for at all -- the obligation write that starts its
+	// cleanup failed -- so the run finishes as recovery_required and the
+	// set stays blocked rather than the run closing over a scope nobody
+	// has looked at.
+	recoveryOutstanding bool
 
 	// recovering marks a runner built by ResumeCleanup rather than by a
 	// run. It is what puts BACKUPD_RECOVERY=1 in front of a hook and
@@ -352,37 +394,70 @@ func (e *Engine) runPlanned(ctx context.Context, req RunRequest, set model.Backu
 		})
 	}
 
-	// The plan, its steps and both obligations, in one transaction,
-	// before a byte of any hook runs. The global scope is committed
-	// ALREADY eligible: the run has begun, so that scope is entered, and
-	// this transaction is the only write that is unambiguously before
-	// the run's first side effect.
-	if err := e.Store.CommitWorkflowPlan(ctx, state.WorkflowPlan{
+	// The plan, its steps, its facts and both obligations, in one
+	// transaction, before a byte of any hook runs. The global scope is
+	// committed ALREADY eligible: the run has begun, so that scope is
+	// entered, and this transaction is the only write that is
+	// unambiguously before the run's first side effect. A BYPASSED run
+	// enters neither scope, because it is not going to run anything in
+	// either.
+	//
+	// On jctx rather than ctx: a run cancelled between the lock and here
+	// still has to leave a record that it existed, and a commit that
+	// failed because somebody pressed Ctrl-C is a run whose spool is on
+	// disk with nothing pointing at it.
+	if err := e.Store.CommitWorkflowPlan(r.jctx, state.WorkflowPlan{
 		Run:         r.runRecord(),
 		Steps:       r.steps,
 		Env:         plan.Env(),
+		Facts:       req.Facts,
 		Obligations: r.initialObligations(),
 	}); err != nil {
 		return RunResult{}, err
 	}
 
-	r.entered[workflow.ScopeGlobal] = true
+	if !req.Bypassed {
+		r.entered[workflow.ScopeGlobal] = true
+	}
 
 	action := e.begin(ctx, r)
 
-	if err := e.Store.AdvanceWorkflowRun(ctx, r.runID, state.WorkflowRunAdvance{
+	// Also jctx, and its failure is FINALIZED rather than returned bare.
+	// The plan is committed by this point, so a bare return would leave
+	// a run row sitting at "pending" with the global scope eligible --
+	// an open run with an owed cleanup that nothing will look at until
+	// the next restart, which is the shape of interruption this whole
+	// package exists to avoid creating on purpose. So the scope is
+	// unwound, the run is closed, and the error is still what the caller
+	// gets: this run did not happen.
+	var startErr error
+
+	if err := e.Store.AdvanceWorkflowRun(r.jctx, r.runID, state.WorkflowRunAdvance{
 		To:             workflow.StateRunning,
 		WorkflowStatus: workflow.StatusRunning,
 	}); err != nil {
-		return RunResult{}, err
+		startErr = fmt.Errorf("workflowrun: recording that run %q started: %w", r.runID, err)
+
+		r.fail("", startErr)
+		r.abandon(ctx)
+	} else {
+		r.execute(ctx)
 	}
 
-	r.execute(ctx)
-
-	res, err := r.finish()
+	res, ferr := r.finish()
 	e.end(ctx, action, res)
 
-	return res, err
+	if res.RecoveryOutstanding {
+		if _, err := e.loadHolds(r.jctx); err != nil && ferr == nil {
+			ferr = err
+		}
+	}
+
+	if startErr != nil {
+		return res, startErr
+	}
+
+	return res, ferr
 }
 
 // checkExecutors refuses a plan this engine cannot dispatch, before
@@ -439,17 +514,29 @@ func (r *runner) runRecord() workflow.Run {
 
 // initialObligations is #811's nested rule, stated once: the global scope
 // is entered when the run begins, the backup-set scope is not.
+//
+// A BYPASSED run enters neither. Its hooks are deliberately not going to
+// run, so no scope of it acquires a side effect to undo, and committing
+// the global scope as eligible would make the run owe a cleanup for work
+// nobody did -- which a crash would then turn into a hold over a machine
+// nothing touched.
 func (r *runner) initialObligations() []workflow.CleanupObligation {
 	started := r.startedAt
 
+	global := workflow.CleanupObligation{
+		RunID:       r.runID,
+		Scope:       workflow.ScopeGlobal,
+		BackupSetID: r.set,
+		State:       workflow.ObligationEligible,
+		EnteredAt:   &started,
+	}
+	if r.req.Bypassed {
+		global.State = workflow.ObligationNeverEligible
+		global.EnteredAt = nil
+	}
+
 	return []workflow.CleanupObligation{
-		{
-			RunID:       r.runID,
-			Scope:       workflow.ScopeGlobal,
-			BackupSetID: r.set,
-			State:       workflow.ObligationEligible,
-			EnteredAt:   &started,
-		},
+		global,
 		{
 			RunID:       r.runID,
 			Scope:       workflow.ScopeSet,
@@ -467,26 +554,69 @@ func (r *runner) initialObligations() []workflow.CleanupObligation {
 // skipped -- but the scope WAS entered, so both "after" stages are owed.
 // Then cleanup runs whatever is owed, in unwind order, whatever happened
 // above it.
+//
+// A bypassed run is the degenerate row of the same matrix: every stage
+// skipped, no scope entered, the backup run, nothing owed. It is here
+// rather than on a path of its own because the run ROW is what L6's
+// --skip-workflow-scripts exists to produce -- "this run's hooks were
+// deliberately skipped" is history somebody reads later -- and a second
+// path would be a second set of answers about what a run records.
 func (r *runner) execute(ctx context.Context) {
-	globalBefore := r.runStage(ctx, workflow.ScopeGlobal, workflow.PhaseBefore)
-
 	switch {
-	case !globalBefore:
+	case r.req.Bypassed:
+		for _, scope := range workflow.Scopes() {
+			for _, phase := range workflow.Phases() {
+				r.skipStage(scope, phase)
+			}
+		}
+
+		r.runBackup(ctx)
+	case !r.runStage(ctx, workflow.ScopeGlobal, workflow.PhaseBefore) || r.stopping(ctx):
 		// The backup-set scope is never entered. Its "before" steps are
 		// recorded as skipped rather than left pending, so the plan read
 		// back afterwards accounts for every step it declared.
+		//
+		// The second half of the condition is the teardown case, and it
+		// is not the same as the first. A run cancelled (or past its
+		// deadline) before its global stage finished has a global stage
+		// that SUCCEEDED -- every step of it was skipped, and skipping
+		// is not failing -- so without asking, this would enter a new
+		// scope and run the backup for a run that is being torn down.
+		// "Stop starting new before-or-backup work" is the rule, and
+		// entering a scope is the most side-effecting thing this
+		// function does.
 		r.skipStage(workflow.ScopeSet, workflow.PhaseBefore)
 		r.skipBackup()
+	case !r.enterSetScope():
+		// The scope could not be recorded as entered, so it is NOT
+		// entered: nothing in it may run, and that includes the backup,
+		// which is a side effect inside that scope. Skipping both is
+		// what keeps the journal's "never eligible" true.
+		r.skipStage(workflow.ScopeSet, workflow.PhaseBefore)
+		r.skipBackup()
+	case r.runStage(ctx, workflow.ScopeSet, workflow.PhaseBefore):
+		r.runBackup(ctx)
 	default:
-		r.enterSetScope()
-
-		if r.runStage(ctx, workflow.ScopeSet, workflow.PhaseBefore) {
-			r.runBackup(ctx)
-		} else {
-			r.skipBackup()
-		}
+		r.skipBackup()
 	}
 
+	r.runCleanup(ctx)
+}
+
+// abandon is the sequence for a run whose own bookkeeping failed before
+// any hook ran: nothing is started, the backup does not happen, and the
+// scope the plan already committed as entered is still unwound.
+//
+// The unwinding is the part that is not obvious and is the reason this
+// exists rather than a bare return. The global scope's obligation is
+// eligible from the moment the plan commits, so leaving now would leave
+// a promise nobody is keeping; running the cleanup discharges it, and the
+// run then closes with everything accounted for instead of looking like
+// an interruption at the next restart.
+func (r *runner) abandon(ctx context.Context) {
+	r.skipStage(workflow.ScopeGlobal, workflow.PhaseBefore)
+	r.skipStage(workflow.ScopeSet, workflow.PhaseBefore)
+	r.skipBackup()
 	r.runCleanup(ctx)
 }
 
@@ -494,9 +624,17 @@ func (r *runner) execute(ctx context.Context) {
 // "after" stage owed, and it happens BEFORE the first side-effecting
 // command in that scope -- which is either the first backup-set "before"
 // hook or, if there are none, the backup itself.
-func (r *runner) enterSetScope() {
+//
+// It reports whether the scope was entered, and the caller must not run
+// anything in that scope when it was not. That is the whole point of the
+// return value: the first version failed the run here and carried on into
+// the stage anyway, so a journal write that did not land produced a
+// quiesced database inside a scope the journal says was never entered --
+// settled, invisible to the reconciliation, with no cleanup owed and no
+// hold on the set.
+func (r *runner) enterSetScope() bool {
 	if r.entered[workflow.ScopeSet] {
-		return
+		return true
 	}
 
 	if err := r.engine.Store.AdvanceWorkflowCleanupObligation(r.jctx, state.WorkflowObligationAdvance{
@@ -511,10 +649,12 @@ func (r *runner) enterSetScope() {
 		// run.
 		r.fail("", fmt.Errorf("recording that the backup-set scope was entered: %w", err))
 
-		return
+		return false
 	}
 
 	r.entered[workflow.ScopeSet] = true
+
+	return true
 }
 
 // runStage runs one stage's steps in plan order and reports whether the
@@ -549,7 +689,7 @@ func (r *runner) runStage(ctx context.Context, scope workflow.Scope, phase workf
 // stopping reports whether the run is being torn down, which is the point
 // at which no NEW before-or-backup work may start.
 func (r *runner) stopping(ctx context.Context) bool {
-	if r.canceled || r.timedOut {
+	if r.runCanceled || r.runTimedOut {
 		return true
 	}
 
@@ -570,12 +710,16 @@ func (r *runner) stopping(ctx context.Context) bool {
 // because the repository was full come out as a cancelled run -- two
 // completely different operator situations, one of which is nobody's
 // fault.
+//
+// What it sets is the RUN's axis, not a step's: this is "the run is being
+// torn down", which is the only fact that may relabel what a later step
+// came back with.
 func (r *runner) noteCancellation(err error) {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		r.timedOut = true
+		r.runTimedOut = true
 	case errors.Is(err, context.Canceled):
-		r.canceled = true
+		r.runCanceled = true
 	}
 }
 
@@ -671,15 +815,22 @@ func (r *runner) runStep(ctx context.Context, step workflow.Step, recovering boo
 
 	nextState := outcome.state()
 
-	// A step killed because the run was being torn down is recorded as
+	// A step killed because THE RUN was being torn down is recorded as
 	// cancelled or timed out rather than failed, whatever the adapter
 	// made of the signal: the reason it stopped is this product's own
 	// decision and an audit has to be able to attribute it.
+	//
+	// Only the run's own axis may do this, never another step's outcome.
+	// A version of this that read one flag for both made an earlier
+	// hook's timeout relabel every later step that came back with
+	// transport loss as "timed_out" -- this product claiming it killed a
+	// step it never touched, on a run whose context had not expired at
+	// all.
 	if nextState == workflow.StateFailed || nextState == workflow.StateCanceled {
 		switch {
-		case r.timedOut && outcome.Disposition != DispositionExited:
+		case r.runTimedOut && outcome.Disposition != DispositionExited:
 			nextState = workflow.StateTimedOut
-		case r.canceled && outcome.Disposition != DispositionExited:
+		case r.runCanceled && outcome.Disposition != DispositionExited:
 			nextState = workflow.StateCanceled
 		}
 	}
@@ -741,11 +892,16 @@ func (r *runner) noteFailure(step workflow.Step, st workflow.State) {
 
 	r.hookFailed = true
 
+	// A STEP's own outcome, on the step axis. It decides the run's final
+	// state (a run whose hook timed out is a timed-out run) and it
+	// deliberately does not reach the relabelling in runStep: what one
+	// hook did is not evidence about what this product did to a later
+	// one.
 	switch st {
 	case workflow.StateTimedOut:
-		r.timedOut = true
+		r.stepTimedOut = true
 	case workflow.StateCanceled:
-		r.canceled = true
+		r.stepCanceled = true
 	}
 }
 
@@ -889,7 +1045,35 @@ func (r *runner) runCleanupScope(ctx context.Context, scope workflow.Scope) {
 		To:    workflow.ObligationRunning,
 		At:    r.engine.clock(),
 	}); err != nil {
-		r.fail("", err)
+		// The scope was entered and its cleanup cannot even be recorded
+		// as starting, so nothing is going to run and nobody can
+		// account for the scope. That is the definition of
+		// recovery_required, and writing it here is what keeps this
+		// case out of the one shape #811 forbids: a TERMINAL run with
+		// an unsettled obligation, which the startup pass never looks
+		// at again (it is not an open run) and which therefore never
+		// becomes a hold. The run finishes as recovery_required
+		// instead, the set stays blocked, and an operator gets the same
+		// resume-or-acknowledge choice a crash here would have given
+		// them.
+		r.fail("", fmt.Errorf("recording that the %s scope's cleanup started: %w", scope, err))
+		r.cleanupBad = true
+		r.recoveryOutstanding = true
+
+		if err := r.engine.Store.AdvanceWorkflowCleanupObligation(r.jctx, state.WorkflowObligationAdvance{
+			RunID: r.runID,
+			Scope: scope,
+			To:    workflow.ObligationRecoveryRequired,
+			At:    r.engine.clock(),
+		}); err != nil {
+			// Both writes failed, so the journal still says the scope
+			// is eligible -- unsettled, which the next startup reads as
+			// an interruption and blocks the set on. The run's own
+			// terminal write is refused for the same reason
+			// (state.checkTerminalIsAccountedFor), so nothing here can
+			// close over it.
+			r.fail("", fmt.Errorf("recording that the %s scope needs recovery: %w", scope, err))
+		}
 
 		return
 	}
@@ -931,10 +1115,14 @@ func (r *runner) runCleanupScope(ctx context.Context, scope workflow.Scope) {
 // scope with nothing to undo is accounted for. Skipped when "after" steps
 // were planned and none of them was eligible, which is the honest answer
 // for a global-before failure: there was cleanup to do for the set scope
-// and that scope was never entered.
+// and that scope was never entered -- and for a bypassed run, where no
+// scope was entered at all because nothing was going to run in one.
 func (r *runner) finalCleanupStatus() workflow.Status {
 	if r.cleanupBad {
 		return workflow.StatusFailed
+	}
+	if r.req.Bypassed {
+		return workflow.StatusSkipped
 	}
 
 	planned, eligible := 0, 0
@@ -969,11 +1157,18 @@ func (r *runner) finish() (RunResult, error) {
 	// decided, and the cleanup's outcome is preserved in its own field
 	// either way -- which is #811's "finish with a cancellation status
 	// that preserves the cleanup outcome".
+	//
+	// An unaccountable scope wins over all of them, and it is the one
+	// case that does not CLOSE the run: recovery_required is
+	// non-terminal, because something still has to happen and a person
+	// has to do it.
 	st := workflow.StateSuccess
 	switch {
-	case r.canceled:
+	case r.recoveryOutstanding:
+		st = workflow.StateRecoveryRequired
+	case r.runCanceled || r.stepCanceled:
 		st = workflow.StateCanceled
-	case r.timedOut:
+	case r.runTimedOut || r.stepTimedOut:
 		st = workflow.StateTimedOut
 	case r.cleanupBad:
 		st = workflow.StateCleanupFailed
@@ -989,20 +1184,30 @@ func (r *runner) finish() (RunResult, error) {
 		FinishedAt:     &finishedAt,
 	}
 
+	if r.recoveryOutstanding {
+		// No finish time: this run is not over. And the recovery axis
+		// is RAISED here rather than left at none, because that axis is
+		// what the spool-retention rule and the per-set refusal are
+		// read off.
+		advance.FinishedAt = nil
+		advance.RecoveryState = workflow.RecoveryRequired
+	}
+
 	err := r.engine.Store.AdvanceWorkflowRun(r.jctx, r.runID, advance)
 
 	res := RunResult{
-		RunID:          r.runID,
-		State:          st,
-		BackupStatus:   r.backupStatus,
-		CleanupStatus:  r.cleanupStatus,
-		WorkflowStatus: r.workflowStatus,
-		FailedStep:     r.failedStep,
-		ScriptCount:    len(r.steps),
-		Duration:       finishedAt.Sub(r.startedAt),
-		Bypassed:       r.req.Bypassed,
-		Steps:          r.results,
-		BackupErr:      r.backupErr,
+		RunID:               r.runID,
+		State:               st,
+		BackupStatus:        r.backupStatus,
+		CleanupStatus:       r.cleanupStatus,
+		WorkflowStatus:      r.workflowStatus,
+		FailedStep:          r.failedStep,
+		ScriptCount:         len(r.steps),
+		Duration:            finishedAt.Sub(r.startedAt),
+		Bypassed:            r.req.Bypassed,
+		Steps:               r.results,
+		BackupErr:           r.backupErr,
+		RecoveryOutstanding: r.recoveryOutstanding,
 	}
 
 	return res, err

@@ -93,6 +93,7 @@ type stepSink struct {
 	filters   map[workflowexec.StreamID]*obs.StreamFilter
 	written   int64
 	truncated bool
+	closed    bool
 	chunks    uint64
 }
 
@@ -113,6 +114,16 @@ func (r *logRecorder) stepSink(stepID string, redactor *obs.Redactor) *stepSink 
 // (workflowexec.Capture holds a lock across the call), and it is safe
 // under its own lock anyway: the local adapter's runner delivers frames
 // off a socket and nothing in that path promises the same discipline.
+//
+// A chunk arriving AFTER the sink has been closed is refused. That is not
+// a hypothetical: a remote step whose termination this product could not
+// confirm is a step whose far side may still be writing, and its frames
+// arrive on a socket the reader has not finished draining. Recording one
+// would append to a step that already has its outcome and its flushed
+// tail, after a truncation marker that says the recording stopped -- so
+// the log would carry output past the record that says where the output
+// ends. Refusing tells the caller, which on this path is a reader that
+// has nothing left to deliver it to.
 func (s *stepSink) Chunk(c workflowexec.Chunk) error {
 	if !c.Stream.Valid() {
 		return fmt.Errorf("workflowrun: a chunk of step %s claims stream %s, and output nobody can attribute must not be recorded", s.stepID, c.Stream)
@@ -120,6 +131,10 @@ func (s *stepSink) Chunk(c workflowexec.Chunk) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.closed {
+		return fmt.Errorf("workflowrun: a chunk of step %s arrived after its output was closed off; the step's outcome and the end of its log are already recorded, so this output has nowhere it could honestly go", s.stepID)
+	}
 
 	s.chunks++
 
@@ -131,10 +146,20 @@ func (s *stepSink) Chunk(c workflowexec.Chunk) error {
 
 // close flushes what each filter is holding back, which is what stops the
 // last few bytes of every hook's output disappearing into a redaction
-// window that never completed.
+// window that never completed, and shuts the sink: see Chunk.
+//
+// Calling it twice flushes once. The filters would release nothing the
+// second time either (obs.StreamFilter.Flush is idempotent), and the flag
+// is what makes the ORDER right regardless: a second close after a
+// straggler would otherwise be a second pair of records.
 func (s *stepSink) close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 
 	for _, stream := range []workflowexec.StreamID{workflowexec.StreamStdout, workflowexec.StreamStderr} {
 		if err := s.emit(stream, s.filters[stream].Flush()); err != nil {
@@ -185,8 +210,20 @@ func (s *stepSink) emit(stream workflowexec.StreamID, payload []byte) error {
 // The journal comes first, deliberately. A subscriber that saw a record
 // the journal never got would be a follower whose catch-up read has a
 // hole in it exactly where it had been told something existed.
+//
+// The lock is held ACROSS the write and the fan-out, not just over the
+// counter. An earlier version released it after numbering, on the
+// argument that a disk write should not serialise two streams -- but what
+// that buys is the possibility of record N committing after record N+1,
+// and a follower's cursor is exactly the claim that cannot happen: a
+// consumer that has processed up to N and asks for everything after it
+// would miss a record that lands later with a lower number. Nothing here
+// is contended enough for it to matter anyway: a run's steps are serial,
+// and one step's two streams already share the sink's own lock.
 func (r *logRecorder) append(stepID string, stream workflowexec.StreamID, kind workflow.LogKind, payload []byte) error {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.seq++
 	rec := workflow.StepLog{
 		RunID:      r.runID,
@@ -197,14 +234,7 @@ func (r *logRecorder) append(stepID string, stream workflowexec.StreamID, kind w
 		CapturedAt: r.now(),
 		Payload:    payload,
 	}
-	r.mu.Unlock()
 
-	// Not under r.mu: a journal write is I/O, and holding the counter's
-	// lock across it would serialise two streams of two steps for the
-	// duration of a disk write. The counter is what needs the lock, and
-	// the records reach the journal in whatever order the writes land --
-	// which is why the SEQUENCE rather than the row order is what every
-	// reader sorts by.
 	if err := r.store.AppendWorkflowStepLog(r.ctx, rec); err != nil {
 		return err
 	}

@@ -60,6 +60,28 @@
 // BACKUPD_CLEANUP_REASON=interrupted_run, because unwinding after a crash
 // is a different job from unwinding after a run.
 //
+// What a resume executes also includes the FACTS the run was planned
+// with -- the source host, the source path, the destination -- which are
+// persisted with the plan for exactly this reason: they are injected
+// into a hook's environment per call and stored nowhere else, so a
+// recovery that could not read them back would run
+// `umount "$BACKUPD_SOURCE_PATH"` with an empty variable.
+//
+// A resume that cannot account for everything leaves the run back at
+// recovery_required, durably, so that a second resume or an
+// acknowledgement can still act on it. And because declaring or settling
+// a recovery takes two writes that cannot be made one -- the obligations
+// move first, the run's axis second, since the second write is the one
+// that reads the first -- Reconcile also brings a run whose two halves
+// disagree into line: every scope accounted for and the run still
+// blocked is resolved, a scope owed but not visibly owed is moved to
+// recovery_required. Neither direction invents anything the rows do not
+// already justify.
+//
+// Reconcile leaves a run whose backup set is LOCKED alone. It is a
+// startup pass, and a pass that reconciled a live run would mark its
+// in-flight step interrupted underneath a backup that is still running.
+//
 // AcknowledgeRecovery is the only other exit, and it takes a reason,
 // which is written down.
 //
@@ -71,6 +93,12 @@
 // #811 means by "--skip-workflow-scripts must be structurally unable to
 // clear recovery_required": the flag that skips hooks is recorded on the
 // run and has no path to the axis.
+//
+// What the flag DOES produce is a run row: the backup is taken, every
+// step is recorded as skipped, neither scope is entered (so nothing is
+// owed a cleanup and nothing can block the set), and the row carries
+// bypassed=1 with cleanup_status=skipped for whatever reads the history
+// afterwards.
 //
 // # Three statuses, never one
 //
@@ -93,8 +121,11 @@
 // run-monotonic counter, and written to the journal. A follower -- a
 // browser, a CLI tailing a run -- gets it from a bounded queue, and a
 // follower that stops reading is dropped from that queue rather than
-// waited for. It catches up by asking the journal for everything after
-// the last sequence it processed, which is gapless because the journal is
+// waited for. Once dropped it is offered nothing more, because a queue
+// holding 1, 2 and then 301 is a hole a consumer cannot see: the live
+// stream is contiguous up to the drop and the journal is the authority
+// after it. It catches up by asking the journal for everything after the
+// last sequence it processed, which is gapless because the journal is
 // the authority and the queue is only a fast path.
 //
 // Persisted output is bounded per step. When the bound is reached one

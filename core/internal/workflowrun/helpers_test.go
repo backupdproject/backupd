@@ -2,6 +2,7 @@ package workflowrun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -436,4 +437,133 @@ func obligationOf(t *testing.T, j *state.Journal, runID string, scope workflow.S
 	t.Fatalf("run %q has no %s obligation", runID, scope)
 
 	return workflow.CleanupObligation{}
+}
+
+// emitting is a fake hook that writes text and then exits 0, for the
+// suites whose bug only appears once a step has actually produced
+// output. The fakes are silent by default, which is why several of the
+// log path's failures were invisible: a hook that prints nothing never
+// reaches the recorder at all.
+func emitting(text string) func(context.Context, StepRequest) (StepOutcome, error) {
+	return func(_ context.Context, req StepRequest) (StepOutcome, error) {
+		if err := req.Sink.Chunk(workflowexec.Chunk{
+			Stream: workflowexec.StreamStdout,
+			Seq:    1,
+			Data:   []byte(text),
+		}); err != nil {
+			return StepOutcome{}, err
+		}
+
+		return exited(0), nil
+	}
+}
+
+// errWriteFailed is what a failingStore returns.
+//
+// An ERROR rather than a panic, which is the whole difference between
+// this decorator and crash_test.go's. A crash models a process that
+// stopped, and the engine gets no chance to react; a failed write is a
+// journal that is still there and still refusing -- a full disk, a
+// transition the graph does not allow, a locked database -- and what has
+// to hold then is that the engine does not carry on as though the write
+// had landed. Those are different claims and the second one is where the
+// side effects with no cleanup came from.
+var errWriteFailed = errors.New("the journal refused this write")
+
+// failingStore fails the writes a test names and passes everything else
+// through to the real journal.
+type failingStore struct {
+	Store
+
+	mu sync.Mutex
+
+	// failObligation fails an obligation advance for one scope moving to
+	// one state; failRunAdvance fails a run advance to one state.
+	failObligation map[string]bool
+	failRunAdvance map[workflow.State]bool
+
+	failed int
+}
+
+func refusing(store Store) *failingStore {
+	return &failingStore{
+		Store:          store,
+		failObligation: map[string]bool{},
+		failRunAdvance: map[workflow.State]bool{},
+	}
+}
+
+// obligation names one advance: "<scope>:<state>".
+func (f *failingStore) obligation(scope workflow.Scope, to workflow.ObligationState) *failingStore {
+	f.failObligation[string(scope)+":"+string(to)] = true
+
+	return f
+}
+
+func (f *failingStore) runAdvance(to workflow.State) *failingStore {
+	f.failRunAdvance[to] = true
+
+	return f
+}
+
+func (f *failingStore) failures() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.failed
+}
+
+func (f *failingStore) AdvanceWorkflowCleanupObligation(ctx context.Context, adv state.WorkflowObligationAdvance) error {
+	f.mu.Lock()
+	refuse := f.failObligation[string(adv.Scope)+":"+string(adv.To)]
+	if refuse {
+		f.failed++
+	}
+	f.mu.Unlock()
+
+	if refuse {
+		return fmt.Errorf("advancing the %s obligation of %q to %q: %w", adv.Scope, adv.RunID, adv.To, errWriteFailed)
+	}
+
+	return f.Store.AdvanceWorkflowCleanupObligation(ctx, adv)
+}
+
+func (f *failingStore) AdvanceWorkflowRun(ctx context.Context, runID string, adv state.WorkflowRunAdvance) error {
+	f.mu.Lock()
+	refuse := adv.To != "" && f.failRunAdvance[adv.To]
+	if refuse {
+		f.failed++
+	}
+	f.mu.Unlock()
+
+	if refuse {
+		return fmt.Errorf("advancing run %q to %q: %w", runID, adv.To, errWriteFailed)
+	}
+
+	return f.Store.AdvanceWorkflowRun(ctx, runID, adv)
+}
+
+// runWith is harness.run against a store decorator, for the suites whose
+// subject is what happens when a durable write does not land.
+func (h *harness) runWith(t *testing.T, store Store, plan workflow.Plan, backupRan *bool) (RunResult, error) {
+	t.Helper()
+
+	h.engine.Store = store
+	t.Cleanup(func() { h.engine.Store = h.store })
+
+	return h.engine.Run(context.Background(), RunRequest{
+		Plan:        plan,
+		BackupSetID: plan.BackupSetID(),
+		Backup: func(context.Context) error {
+			*backupRan = true
+
+			return nil
+		},
+	})
+}
+
+// setNamed is a second backup set, for the suites that need more than one
+// so that an ordering is observable at all.
+func setNamed(name string) (model.BackupSetID, error) {
+	return model.NewBackupSetID("production", name)
 }

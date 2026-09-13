@@ -446,3 +446,146 @@ func TestTheReconciliationIsAFunctionOfTheRowsAndNothingElse(t *testing.T) {
 		t.Errorf("an interrupted run reconciled to %q", first.Run.To)
 	}
 }
+
+// The crash matrix, over the failure matrix.
+//
+// The suite above walks every crash point of a run in which nothing goes
+// wrong. That is one row of the failure matrix, and it is the row least
+// likely to be interesting: the positions where a reconciliation has to
+// decide something are the ones where a step had already FAILED, or where
+// a scope's cleanup had already failed, before the process stopped.
+//
+// What is asserted at each point is the pair of answers this design is
+// made of. Either a scope is outstanding, in which case the run
+// reconciles to recovery_required whatever else was going on -- or every
+// scope is settled, in which case the run's work was demonstrably over
+// and the reconciliation must reach THE SAME VERDICT the engine itself
+// would have written: the same state, the same three statuses. A
+// reconciliation that finalized a run to a different verdict than the
+// uncrashed run would be a history that depends on whether the daemon
+// survived its own last write.
+func TestTheCrashMatrixAgreesWithTheUncrashedVerdict(t *testing.T) {
+	t.Parallel()
+
+	for _, scenario := range []struct {
+		name string
+		fail string
+	}{
+		{"all succeed", ""},
+		{"global before fails", "10-mount.local.sh"},
+		{"set after fails", "10-resume.remote.sh"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+
+			// The verdict of the same run with nothing interrupting it,
+			// and the number of durable writes it makes.
+			verdict, total := uncrashedVerdict(t, scenario.fail)
+
+			for allowed := range total {
+				t.Run(fmt.Sprintf("after %d durable writes", allowed), func(t *testing.T) {
+					t.Parallel()
+
+					h := newHarness(t)
+					tr := newTree(t, fullTree())
+					if scenario.fail != "" {
+						h.local.outcomes[scenario.fail] = failing(1)
+						h.remote.outcomes[scenario.fail] = failing(1)
+					}
+
+					if _, crashed := runUntilCrash(t, h, tr.snapshot(t, "run-1"), allowed); !crashed {
+						t.Fatalf("the run finished without reaching write %d", allowed+1)
+					}
+
+					restarted := &Engine{Store: h.store, Local: h.local, Remote: h.remote, Now: h.clock.Now}
+					if _, err := restarted.Reconcile(context.Background(), h.clock.Now()); err != nil {
+						t.Fatalf("Reconcile: %v", err)
+					}
+
+					run, err := h.store.WorkflowRun(context.Background(), "run-1")
+					if errors.Is(err, state.ErrWorkflowRunNotFound) {
+						return // the crash landed on the plan commit itself
+					}
+					if err != nil {
+						t.Fatalf("WorkflowRun: %v", err)
+					}
+
+					obligations, err := h.store.WorkflowCleanupObligations(context.Background(), "run-1")
+					if err != nil {
+						t.Fatalf("WorkflowCleanupObligations: %v", err)
+					}
+
+					outstanding := false
+					for _, o := range obligations {
+						if !o.State.Settled() {
+							outstanding = true
+						}
+					}
+
+					if outstanding {
+						if run.State != string(workflow.StateRecoveryRequired) {
+							t.Fatalf("a scope is outstanding and the run is %q, want recovery_required", run.State)
+						}
+
+						return
+					}
+
+					got := runVerdict{
+						state:    workflow.State(run.State),
+						backup:   workflow.Status(run.BackupStatus),
+						cleanup:  workflow.Status(run.CleanupStatus),
+						workflow: workflow.Status(run.WorkflowStatus),
+					}
+					if got != verdict {
+						t.Errorf("a run finalized by the reconciliation reads\n\t%+v\nand the same run uncrashed reads\n\t%+v", got, verdict)
+					}
+				})
+			}
+		})
+	}
+}
+
+// runVerdict is the four fields every history surface reads: what the run
+// ended as, and the three statuses that stay separate end to end.
+type runVerdict struct {
+	state    workflow.State
+	backup   workflow.Status
+	cleanup  workflow.Status
+	workflow workflow.Status
+}
+
+// uncrashedVerdict runs one scenario through to completion and reports
+// its verdict and how many durable writes it took, so the crash loop
+// covers every position rather than a number somebody typed.
+func uncrashedVerdict(t *testing.T, fail string) (runVerdict, int) {
+	t.Helper()
+
+	h := newHarness(t)
+	tr := newTree(t, fullTree())
+	if fail != "" {
+		h.local.outcomes[fail] = failing(1)
+		h.remote.outcomes[fail] = failing(1)
+	}
+
+	crash := &crashStore{Store: h.store, allowed: 1_000}
+	h.engine.Store = crash
+
+	res, err := h.engine.Run(context.Background(), RunRequest{
+		Plan:        tr.snapshot(t, "run-1"),
+		BackupSetID: tr.setID,
+		Backup:      func(context.Context) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("the control run failed: %v", err)
+	}
+	if crash.crashed {
+		t.Fatalf("the control run crashed at %d writes, so the bound is wrong", crash.count())
+	}
+
+	return runVerdict{
+		state:    res.State,
+		backup:   res.BackupStatus,
+		cleanup:  res.CleanupStatus,
+		workflow: res.WorkflowStatus,
+	}, crash.count()
+}

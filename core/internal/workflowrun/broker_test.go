@@ -2,6 +2,8 @@ package workflowrun
 
 import (
 	"context"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -225,5 +227,171 @@ func TestAFollowerOnlySeesItsOwnRun(t *testing.T) {
 
 	if got := len(other.Records()); got != 0 {
 		t.Errorf("a follower of another run received %d records", got)
+	}
+}
+
+// A follower that disconnects while a hook is producing output must not
+// take the daemon down with it.
+//
+// The bug this is about is a race with one outcome: offer checked
+// whether the subscription was closed, released the lock, and only then
+// sent on the channel, so a Close landing in that window closed the
+// channel under an in-flight send -- a send on a closed channel, which
+// is a panic, in the goroutine that is reading a hook's stdout. The
+// window is a few instructions wide, so this exercises it many times
+// rather than once, and a panic anywhere in it fails the whole test
+// binary rather than this test, which is exactly the failure a daemon
+// would suffer.
+func TestAFollowerDisconnectingMidOutputNeverPanicsTheProducer(t *testing.T) {
+	t.Parallel()
+
+	const (
+		rounds  = 300
+		records = 400
+	)
+
+	b := &Broker{}
+
+	for range rounds {
+		sub := b.Subscribe("run-1", 4)
+
+		var (
+			wg      sync.WaitGroup
+			started = make(chan struct{})
+			once    sync.Once
+		)
+
+		wg.Add(3)
+
+		// The producer: a hook's copy goroutine, offering every record
+		// it reads.
+		go func() {
+			defer wg.Done()
+
+			for i := range records {
+				if i == records/8 {
+					once.Do(func() { close(started) })
+				}
+				b.publish(workflow.StepLog{RunID: "run-1", StepID: "s", Seq: uint64(i + 1)})
+			}
+
+			once.Do(func() { close(started) })
+		}()
+
+		// A reader keeping the queue drained, so the producer reaches
+		// the SEND on every offer rather than stopping at a full queue.
+		// Without it the window being exercised is almost never open.
+		go func() {
+			defer wg.Done()
+
+			for range sub.Records() { //nolint:revive // draining is the point
+			}
+		}()
+
+		// And the follower hanging up, mid-stream.
+		go func() {
+			defer wg.Done()
+
+			<-started
+			sub.Close()
+		}()
+
+		wg.Wait()
+
+		// Closing twice is one operator closing a tab while a shutdown
+		// closes everything, and it must not close the channel twice
+		// either.
+		sub.Close()
+	}
+}
+
+// The whole run's output is still recorded while that happens: a
+// follower going away is not allowed to cost the journal a byte.
+func TestAFollowerClosingMidRunCostsTheJournalNothing(t *testing.T) {
+	t.Parallel()
+
+	const chunks = 300
+
+	h := newHarness(t)
+	h.engine.Logs = &Broker{}
+
+	tr := newTree(t, map[stage][]string{globalBefore: {"10-mount.local.sh"}})
+
+	sub := h.engine.Logs.Subscribe("run-1", 8)
+
+	var took time.Duration
+	chatty := chattyHook(chunks, &took)
+	h.local.outcomes["10-mount.local.sh"] = func(ctx context.Context, req StepRequest) (StepOutcome, error) {
+		// The follower hangs up while the hook is mid-stream, from
+		// another goroutine, which is what a closed browser tab is.
+		go sub.Close()
+
+		return chatty(ctx, req)
+	}
+
+	res, err := h.run(t, tr.snapshot(t, "run-1"))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.State != workflow.StateSuccess {
+		t.Errorf("the run ended %q, want success", res.State)
+	}
+
+	recs := logsOf(t, h, "run-1")
+	if len(recs) != chunks {
+		t.Fatalf("the journal holds %d of %d chunks", len(recs), chunks)
+	}
+	for i, rec := range recs {
+		if rec.Seq != uint64(i+1) {
+			t.Fatalf("record %d has sequence %d; the journal's sequence is not contiguous", i, rec.Seq)
+		}
+	}
+}
+
+// A follower that has been DROPPED gets nothing more on the live path,
+// and that is what makes its cursor usable.
+//
+// The alternative -- keep offering, and let whatever fits go in -- is
+// worse than dropping the follower, because what it produces is a queue
+// holding 1, 2, then 301: a consumer reading it sees three records in
+// order with no way to know that the third is not the next one. The
+// contract is that the LIVE stream is contiguous up to the drop and the
+// journal is the authority after it.
+func TestADroppedFollowerReceivesNothingMoreSoItsCursorHasNoHole(t *testing.T) {
+	t.Parallel()
+
+	b := &Broker{}
+	sub := b.Subscribe("run-1", 2)
+	defer sub.Close()
+
+	for i := range 3 {
+		b.publish(workflow.StepLog{RunID: "run-1", StepID: "s", Seq: uint64(i + 1)})
+	}
+
+	if !sub.Lagged() {
+		t.Fatal("a follower whose queue of two overflowed does not report having fallen behind")
+	}
+
+	// The follower processes one record, which makes room again. The
+	// producer keeps going.
+	first := <-sub.Records()
+	if first.Seq != 1 {
+		t.Fatalf("the first live record is %d, want 1", first.Seq)
+	}
+
+	for i := 3; i < 10; i++ {
+		b.publish(workflow.StepLog{RunID: "run-1", StepID: "s", Seq: uint64(i + 1)})
+	}
+
+	sub.Close()
+
+	var live []uint64
+	for rec := range sub.Records() {
+		live = append(live, rec.Seq)
+	}
+
+	want := []uint64{2}
+	if !reflect.DeepEqual(live, want) {
+		t.Errorf("after the drop the live stream delivered %v, want %v -- everything after the hole belongs to the journal, not the queue", live, want)
 	}
 }

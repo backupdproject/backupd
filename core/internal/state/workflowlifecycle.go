@@ -74,6 +74,15 @@ var ErrRecoveryOutstanding = errors.New("state: this workflow run still has a cl
 type execQuerier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+
+	// QueryContext is here so that a check which has to read a SET of
+	// rows -- every obligation of a run -- can be made inside the same
+	// transaction as the write it guards. A version that read them
+	// through j.db instead would be a check another connection could
+	// invalidate between the read and the write, which for
+	// ResolveWorkflowRecovery means settling a recovery on the strength
+	// of obligations that have since moved.
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 // StartWorkflowStep records that a step is RUNNING, before its bytes
@@ -333,6 +342,10 @@ func advanceWorkflowRun(ctx context.Context, q execQuerier, runID string, adv Wo
 		return err
 	}
 
+	if err := checkTerminalIsAccountedFor(ctx, q, runID, adv, currentRecovery); err != nil {
+		return err
+	}
+
 	for _, s := range []struct {
 		what  string
 		value workflow.Status
@@ -359,6 +372,56 @@ func advanceWorkflowRun(ctx context.Context, q execQuerier, runID string, adv Wo
 		string(adv.WorkflowStatus), string(adv.RecoveryState), formatTimePtr(adv.FinishedAt), runID)
 	if err != nil {
 		return fmt.Errorf("state: advancing workflow run %q: %w", runID, err)
+	}
+
+	return nil
+}
+
+// checkTerminalIsAccountedFor refuses to close a run while one of its
+// scopes is neither settled nor declared as needing recovery.
+//
+// This is the graph enforcing #811's central invariant against a FAILED
+// WRITE rather than against a crash. A crash cannot break the invariant
+// -- nothing is written -- but a journal write that fails mid-sequence
+// leaves the engine holding a scope it started and could not record, and
+// the engine's own summary write would then close the run as though the
+// scope had been accounted for. A closed run is terminal, so the startup
+// reconciliation never looks at it again (it is not an open run), and the
+// obligation that is still sitting at "eligible" or "running" is never
+// turned into a hold: the backup set is released with a machine that may
+// still be quiesced, and no surface anywhere says so.
+//
+// Two ways past it, and they are the two honest ones: account for every
+// scope, or move the run to recovery_required (or carry an unsettled
+// recovery axis already, which a resume does) so that the fact a scope is
+// outstanding is ON the run. Either way something durable says a person
+// is needed.
+func checkTerminalIsAccountedFor(ctx context.Context, q execQuerier, runID string, adv WorkflowRunAdvance, currentRecovery workflow.RecoveryState) error {
+	if adv.To == "" || !adv.To.Terminal() {
+		return nil
+	}
+
+	recovery := currentRecovery
+	if adv.RecoveryState != "" {
+		recovery = adv.RecoveryState
+	}
+	if recovery != workflow.RecoveryNone {
+		return nil
+	}
+
+	obligations, err := readObligations(ctx, q, runID)
+	if err != nil {
+		return err
+	}
+
+	for _, o := range obligations {
+		if o.State.Settled() {
+			continue
+		}
+
+		return fmt.Errorf(
+			"state: workflow run %q is being closed as %q while its %s cleanup obligation is %q; a terminal run is one the startup reconciliation will never look at again, so closing this one would release the backup set with a scope nobody has accounted for -- record the obligation's outcome, or move the run to recovery_required",
+			runID, adv.To, o.Scope, o.State)
 	}
 
 	return nil
@@ -592,7 +655,7 @@ func readObligation(ctx context.Context, q execQuerier, runID string, scope work
 // the order they unwind in, and a caller reading them back to decide what
 // to run next must not have that depend on insertion order.
 func (j *Journal) WorkflowCleanupObligations(ctx context.Context, runID string) ([]workflow.CleanupObligation, error) {
-	return j.obligationsWhere(ctx, `run_id = ?`, runID)
+	return obligationsWhere(ctx, j.db, `run_id = ?`, runID)
 }
 
 // ObligationsRequiringRecovery returns every scope, of every run, that
@@ -604,13 +667,20 @@ func (j *Journal) WorkflowCleanupObligations(ctx context.Context, runID string) 
 // same literal. TestTheRecoveryIndexMatchesTheStateThatBlocksASet is what
 // fails if one moves without the other.
 func (j *Journal) ObligationsRequiringRecovery(ctx context.Context) ([]workflow.CleanupObligation, error) {
-	return j.obligationsWhere(ctx, `state = ?`, string(workflow.ObligationRecoveryRequired))
+	return obligationsWhere(ctx, j.db, `state = ?`, string(workflow.ObligationRecoveryRequired))
+}
+
+// readObligations reads one run's obligations through whatever connection
+// it is handed, so that a guard on a write can read them INSIDE that
+// write's transaction. See execQuerier.QueryContext.
+func readObligations(ctx context.Context, q execQuerier, runID string) ([]workflow.CleanupObligation, error) {
+	return obligationsWhere(ctx, q, `run_id = ?`, runID)
 }
 
 // obligationsWhere is the list read with a caller-chosen predicate, in
 // (run, scope) order.
-func (j *Journal) obligationsWhere(ctx context.Context, where string, args ...any) ([]workflow.CleanupObligation, error) {
-	rows, err := j.db.QueryContext(ctx,
+func obligationsWhere(ctx context.Context, q execQuerier, where string, args ...any) ([]workflow.CleanupObligation, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT `+obligationColumns+`
 		   FROM workflow_cleanup_obligations
 		  WHERE `+where+`
@@ -722,12 +792,27 @@ func (j *Journal) ApplyWorkflowReconciliation(ctx context.Context, rec WorkflowR
 // leaves them acknowledged, and anything else -- including a flag that
 // skipped the hooks -- leaves at least one requiring recovery and cannot
 // get past this.
+//
+// The check is INSIDE the transaction that writes, which is the whole
+// reason execQuerier carries QueryContext. Read on the connection and
+// written in a transaction, the pair is a check another caller can
+// invalidate in between: an acknowledgement and a resume-cleanup of the
+// same run are two callers, and the interleaving that matters is
+// "obligations all settled" observed just before one of them moves a
+// scope back to recovery_required -- after which this write would settle
+// a recovery the journal can no longer justify.
 func (j *Journal) ResolveWorkflowRecovery(ctx context.Context, runID string, to workflow.State, at time.Time) error {
 	if at.IsZero() {
 		return fmt.Errorf("state: resolving the recovery of workflow run %q with no time", runID)
 	}
 
-	obligations, err := j.WorkflowCleanupObligations(ctx, runID)
+	tx, err := j.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: begin resolving the recovery of workflow run %q: %w", runID, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit has succeeded
+
+	obligations, err := readObligations(ctx, tx, runID)
 	if err != nil {
 		return err
 	}
@@ -742,12 +827,6 @@ func (j *Journal) ResolveWorkflowRecovery(ctx context.Context, runID string, to 
 				ErrRecoveryOutstanding, runID, o.Scope, o.State)
 		}
 	}
-
-	tx, err := j.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("state: begin resolving the recovery of workflow run %q: %w", runID, err)
-	}
-	defer tx.Rollback() //nolint:errcheck // no-op once Commit has succeeded
 
 	current, _, err := currentRunState(ctx, tx, runID)
 	if err != nil {
@@ -884,6 +963,33 @@ func (j *Journal) AppendWorkflowStepLog(ctx context.Context, rec workflow.StepLo
 	}
 
 	return nil
+}
+
+// WorkflowStepLogLastSeq is the highest sequence number one run's log
+// holds, or zero for a run that has recorded nothing.
+//
+// It exists for exactly one caller and one bug. A resumed cleanup writes
+// into the log of the run it is unwinding, and that log already has rows
+// in it: the interrupted run's. A recorder that started counting from
+// zero again would collide with them on UNIQUE (run_id, seq) at the
+// first byte of output a recovery hook produced -- which the engine reads
+// as a step whose output could not be recorded, which fails the step,
+// which fails the cleanup of a run somebody is trying to recover. So the
+// resumed recorder is seeded from here.
+//
+// Zero for an unknown run rather than an error: "this run has recorded
+// nothing" is the honest answer to the question, and it is the same
+// answer for a run that exists and was silent.
+func (j *Journal) WorkflowStepLogLastSeq(ctx context.Context, runID string) (uint64, error) {
+	var last int64
+
+	if err := j.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(seq), 0) FROM workflow_step_logs WHERE run_id = ?`, runID,
+	).Scan(&last); err != nil {
+		return 0, fmt.Errorf("state: reading the last log sequence of workflow run %q: %w", runID, err)
+	}
+
+	return uint64(last), nil
 }
 
 // WorkflowStepLogsAfter returns one run's log records with a sequence

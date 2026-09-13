@@ -144,6 +144,28 @@ func (s ObligationState) Settled() bool {
 	}
 }
 
+// Terminal reports whether this obligation has no exits at all.
+//
+// It is NOT the same question as Settled, and the two were conflated
+// here once. Settled means "no work is owed", and ObligationNeverEligible
+// is settled -- a scope that was never entered owes nothing -- while
+// still having an edge out of it: that scope can be ENTERED, which is
+// exactly what the backup-set obligation does once global-before has
+// succeeded. Terminal is the other property, the one the safety argument
+// actually uses: nothing leaves Success, Failed or Acknowledged, so no
+// later pass can re-open a scope somebody already closed.
+//
+// Callers deciding whether a scope holds something open ask Settled;
+// callers reasoning about the shape of the graph ask Terminal.
+func (s ObligationState) Terminal() bool {
+	switch s {
+	case ObligationSuccess, ObligationFailed, ObligationAcknowledged:
+		return true
+	default:
+		return false
+	}
+}
+
 // RequiresRecovery reports whether this obligation is the one that blocks
 // its backup set. It is one method rather than an equality test at each
 // call site because the refusal, the scheduler suspension, the health
@@ -203,9 +225,9 @@ func (s ObligationState) CanFollow(next ObligationState) error {
 		}
 	}
 
-	if s.Settled() {
+	if s.Terminal() {
 		return fmt.Errorf(
-			"workflow: a cleanup obligation in %q is settled and cannot move to %q; re-opening a scope somebody already closed would re-run an undo against a machine that is already back the way it was",
+			"workflow: a cleanup obligation in %q has no exits and cannot move to %q; re-opening a scope somebody already closed would re-run an undo against a machine that is already back the way it was",
 			s, next)
 	}
 

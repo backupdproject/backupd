@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -102,6 +103,20 @@ func (e *Engine) Reconcile(ctx context.Context, at time.Time) (ReconcileReport, 
 	var report ReconcileReport
 
 	for _, run := range open {
+		// A run whose set is LOCKED is a run this process is executing
+		// right now, not one it found lying about. Reconcile is a
+		// startup pass by design, but nothing structural stops it being
+		// called again -- a health endpoint, a second daemon component,
+		// a test -- and a pass that reconciled a live run would mark
+		// its in-flight step interrupted, move its obligations to
+		// recovery_required, and block the set underneath a backup that
+		// is still running. Skipping it is the only safe answer: the
+		// run is going to record its own outcome, and if it dies first
+		// the NEXT startup finds it with no lock held.
+		if e.setIsLocked(run.BackupSetID) {
+			continue
+		}
+
 		steps, err := e.Store.WorkflowSteps(ctx, run.RunID)
 		if err != nil {
 			return ReconcileReport{}, err
@@ -117,7 +132,20 @@ func (e *Engine) Reconcile(ctx context.Context, at time.Time) (ReconcileReport, 
 			return ReconcileReport{}, fmt.Errorf("workflowrun: reconciling interrupted workflow run %q: %w", run.RunID, err)
 		}
 
-		report.Interrupted = append(report.Interrupted, run.RunID)
+		// Reported as interrupted only when that is what it IS. The
+		// other branch of reconcileRun is a run whose work was
+		// demonstrably finished and whose summary row was missing --
+		// which this pass FINALIZED rather than interrupted, and
+		// reporting it as an interruption would put a run nobody needs
+		// to act on into the one list an operator reads to find out what
+		// broke.
+		if rec.Run.To == workflow.StateRecoveryRequired {
+			report.Interrupted = append(report.Interrupted, run.RunID)
+		}
+	}
+
+	if err := e.reconcileRecoveryAxis(ctx, at); err != nil {
+		return ReconcileReport{}, err
 	}
 
 	holds, err := e.loadHolds(ctx)
@@ -138,6 +166,163 @@ func (e *Engine) Reconcile(ctx context.Context, at time.Time) (ReconcileReport, 
 	e.warn(ctx, holds)
 
 	return report, nil
+}
+
+// setIsLocked reports whether a backup set has a run in flight in THIS
+// process, which is what makes a non-terminal run row a live run rather
+// than a leftover.
+//
+// It takes the set id as the journal spells it, because that is what the
+// row carries; an id the journal holds and this package cannot parse is
+// not a set anything here holds a lock for, and it is not this function's
+// business to refuse it (the reconciliation will, or the run will).
+func (e *Engine) setIsLocked(setID string) bool {
+	set, err := model.ParseBackupSetID(setID)
+	if err != nil {
+		return false
+	}
+
+	_, busy := e.locks().Holder(set)
+
+	return busy
+}
+
+// reconcileRecoveryAxis brings the runs whose recovery is unsettled into
+// line with their own obligations, in whichever of the two directions the
+// rows justify.
+//
+// Both directions exist because settling a recovery, and declaring one,
+// take TWO writes and nothing can make them one: the obligations move
+// first and the run's axis second, because the second write is the one
+// that reads the first (ResolveWorkflowRecovery refuses while anything
+// is unsettled). A process that dies in between -- or a journal that
+// refuses one of the pair -- leaves a run and its scopes disagreeing,
+// and recovery_required is excluded from openRunStates precisely because
+// it is the state the reconciliation WRITES, so the ordinary pass never
+// looks at these again.
+//
+//   - every scope settled and the run still saying recovery_required:
+//     an acknowledgement (or a resume) that got its obligations written
+//     and died before the resolution. Nothing is owed and nobody is
+//     needed, and leaving it would keep a backup set blocked on a hold
+//     that no longer exists for as long as the deployment lives. So the
+//     resolution is finished, in the direction the rows already justify:
+//     a scope that failed leaves the run cleanup_failed rather than
+//     recovered, which is the verdict the resume itself would have
+//     written.
+//   - the run saying recovery_required with a scope still at eligible or
+//     running: the other half, and the more dangerous one. That
+//     obligation is unsettled, so something IS owed -- but it is not in
+//     the state the per-set refusal and the health warning scan for
+//     (ObligationsRequiringRecovery), so the set would not be blocked
+//     and no surface would mention it. The scope is moved to
+//     recovery_required, which is what the run already says about
+//     itself.
+func (e *Engine) reconcileRecoveryAxis(ctx context.Context, at time.Time) error {
+	runs, err := e.Store.WorkflowRunsRequiringRecovery(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, run := range runs {
+		// A live resume-cleanup holds the set's lock and is in the
+		// middle of exactly this sequence. Leaving it alone is the same
+		// rule the open-run pass follows.
+		if e.setIsLocked(run.BackupSetID) {
+			continue
+		}
+
+		obligations, err := e.Store.WorkflowCleanupObligations(ctx, run.RunID)
+		if err != nil {
+			return err
+		}
+		if len(obligations) == 0 {
+			continue
+		}
+
+		settled, failed := true, false
+		for _, o := range obligations {
+			if !o.State.Settled() {
+				settled = false
+			}
+			if o.State == workflow.ObligationFailed {
+				failed = true
+			}
+		}
+
+		if !settled {
+			if err := e.markScopesOutstanding(ctx, run, obligations, at); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		to := workflow.StateRecovered
+		if failed {
+			to = workflow.StateCleanupFailed
+		}
+
+		if err := e.Store.ResolveWorkflowRecovery(ctx, run.RunID, to, at); err != nil {
+			return fmt.Errorf("workflowrun: settling the recovery of workflow run %q, whose every scope is accounted for: %w", run.RunID, err)
+		}
+
+		if err := e.settleStatuses(ctx, run.RunID, failed); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// markScopesOutstanding moves a scope that is owed but not VISIBLY owed
+// into recovery_required. See reconcileRecoveryAxis's second case.
+func (e *Engine) markScopesOutstanding(ctx context.Context, run state.WorkflowRun, obligations []workflow.CleanupObligation, at time.Time) error {
+	for _, o := range obligations {
+		if o.State.Settled() || o.State.RequiresRecovery() {
+			continue
+		}
+
+		if err := e.Store.AdvanceWorkflowCleanupObligation(ctx, state.WorkflowObligationAdvance{
+			RunID: run.RunID,
+			Scope: o.Scope,
+			To:    workflow.ObligationRecoveryRequired,
+			At:    at,
+		}); err != nil {
+			return fmt.Errorf("workflowrun: recording that the %s scope of workflow run %q is outstanding: %w", o.Scope, run.RunID, err)
+		}
+	}
+
+	return nil
+}
+
+// settleStatuses closes the three-status axes of a run whose recovery has
+// just been resolved.
+//
+// ResolveWorkflowRecovery writes the run's STATE and its recovery axis
+// and deliberately nothing else -- it is the one call that may settle a
+// recovery, and widening it to the statuses would widen what that
+// privilege covers. So the statuses are written here, and they have to
+// be: a run left at workflow_status=running and cleanup_status=unknown is
+// a terminal row that every history surface reads as still in flight.
+//
+// The workflow's verdict is failed either way. A run that needed a
+// recovery is a run that did not do what it set out to do, whoever
+// finished it.
+func (e *Engine) settleStatuses(ctx context.Context, runID string, cleanupFailed bool) error {
+	cleanup := workflow.StatusSuccess
+	if cleanupFailed {
+		cleanup = workflow.StatusFailed
+	}
+
+	if err := e.Store.AdvanceWorkflowRun(ctx, runID, state.WorkflowRunAdvance{
+		CleanupStatus:  cleanup,
+		WorkflowStatus: workflow.StatusFailed,
+	}); err != nil {
+		return fmt.Errorf("workflowrun: recording the statuses of resolved workflow run %q: %w", runID, err)
+	}
+
+	return nil
 }
 
 // openRunStates is the set of run states that mean "this process was in
@@ -204,6 +389,19 @@ func reconcileRun(run state.WorkflowRun, steps []state.WorkflowStep, obligations
 	rec.Run = state.WorkflowRunAdvance{
 		To:            workflow.StateRecoveryRequired,
 		RecoveryState: workflow.RecoveryRequired,
+	}
+
+	// A backup this process was in the MIDDLE of is not still running,
+	// whatever the row says. Nobody is going to observe its outcome, so
+	// it goes to unknown -- the vocabulary's "nobody knows yet", which
+	// is exactly the fact -- rather than being left at running, which
+	// claims work is in flight in a process that no longer exists and
+	// which a resumed "after" hook would be told through
+	// BACKUPD_BACKUP_STATUS. A hook deciding whether to roll something
+	// back on the strength of "the backup is still going" is the concrete
+	// damage.
+	if workflow.Status(run.BackupStatus) == workflow.StatusRunning {
+		rec.Run.BackupStatus = workflow.StatusUnknown
 	}
 
 	outstandingScope := map[workflow.Scope]bool{}
@@ -332,12 +530,24 @@ func finishedRunAdvance(run state.WorkflowRun, steps []state.WorkflowStep, oblig
 
 	finished := at
 
-	return state.WorkflowRunAdvance{
+	adv := state.WorkflowRunAdvance{
 		To:             st,
 		CleanupStatus:  cleanupStatus,
 		WorkflowStatus: workflowStatus,
 		FinishedAt:     &finished,
 	}
+
+	// A backup row still reading "running" belongs to a process that no
+	// longer exists, on either branch of the reconciliation. Nobody is
+	// going to observe its outcome, so it goes to the vocabulary's
+	// "nobody knows yet" rather than being left claiming work is in
+	// flight -- which is what a history surface would show forever and
+	// what a hook would be told through BACKUPD_BACKUP_STATUS.
+	if workflow.Status(run.BackupStatus) == workflow.StatusRunning {
+		adv.BackupStatus = workflow.StatusUnknown
+	}
+
+	return adv
 }
 
 // loadHolds reads every outstanding hold out of the journal and installs
@@ -394,6 +604,13 @@ func (e *Engine) loadHolds(ctx context.Context) ([]RecoveryHold, error) {
 
 // RecoveryHolds returns every outstanding hold, which is what a health
 // report and an activity warning are built from.
+//
+// Sorted, by run and then by scope. The holds are kept in a map keyed by
+// backup set, and ranging a map is a different order every call: a health
+// endpoint that reordered its own list between two scrapes, or an
+// activity warning whose two lines swapped, is a surface an operator
+// cannot diff -- and diffing two health reports is how somebody finds out
+// whether anything changed.
 func (e *Engine) RecoveryHolds() []RecoveryHold {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -403,11 +620,19 @@ func (e *Engine) RecoveryHolds() []RecoveryHold {
 		out = append(out, holds...)
 	}
 
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].RunID != out[j].RunID {
+			return out[i].RunID < out[j].RunID
+		}
+
+		return out[i].Scope < out[j].Scope
+	})
+
 	return out
 }
 
 // SuspendedBackupSets returns the sets whose scheduled and manual runs
-// are being refused.
+// are being refused, in a stable order for RecoveryHolds' reason.
 //
 // It is the read a scheduler makes before a tick and a manual submission
 // makes before it starts: both are refused for the same reason and must
@@ -420,6 +645,8 @@ func (e *Engine) SuspendedBackupSets() []model.BackupSetID {
 	for set := range e.recoveryFor {
 		out = append(out, set)
 	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
 
 	return out
 }
@@ -517,6 +744,16 @@ func (e *Engine) ResumeCleanup(ctx context.Context, runID string) (RunResult, er
 		return RunResult{}, err
 	}
 
+	// The facts the run was PLANNED with, out of the journal rather than
+	// out of today's configuration, for the reason the environment comes
+	// from there: a recovery finishes the run that was planned. Without
+	// them an `umount "$BACKUPD_SOURCE_PATH"` in a recovery hook runs
+	// with an empty variable.
+	facts, err := e.Store.WorkflowRunFacts(ctx, runID)
+	if err != nil {
+		return RunResult{}, err
+	}
+
 	obligations, err := e.Store.WorkflowCleanupObligations(ctx, runID)
 	if err != nil {
 		return RunResult{}, err
@@ -526,7 +763,10 @@ func (e *Engine) ResumeCleanup(ctx context.Context, runID string) (RunResult, er
 		return RunResult{}, err
 	}
 
-	r := e.resumeRunner(ctx, run, plan, set)
+	r, err := e.resumeRunner(ctx, run, plan, set, facts, steps)
+	if err != nil {
+		return RunResult{}, err
+	}
 
 	if err := e.Store.AdvanceWorkflowRun(ctx, runID, state.WorkflowRunAdvance{
 		To:            workflow.StateCleanupRunning,
@@ -556,15 +796,17 @@ func (e *Engine) ResumeCleanup(ctx context.Context, runID string) (RunResult, er
 	return e.settleRecovery(ctx, r, run)
 }
 
-// resumeRunner is a runner wired for a recovery: the recovered plan, and
-// the run's own recorded statuses rather than fresh ones.
+// resumeRunner is a runner wired for a recovery: the recovered plan, the
+// run's own recorded statuses rather than fresh ones, the facts it was
+// planned with, and its steps as the journal holds them.
 //
 // The backup status in particular is READ BACK rather than recomputed: an
 // "after" hook running under a recovery is told what the backup actually
 // did, which for an interrupted run is usually that it never ran.
-func (e *Engine) resumeRunner(ctx context.Context, run state.WorkflowRun, plan workflow.Plan, set model.BackupSetID) *runner {
+func (e *Engine) resumeRunner(ctx context.Context, run state.WorkflowRun, plan workflow.Plan, set model.BackupSetID, facts map[string]string, recorded []state.WorkflowStep) (*runner, error) {
 	r := &runner{
 		engine:         e,
+		req:            RunRequest{BackupSetID: set, Facts: facts},
 		plan:           plan,
 		set:            set,
 		runID:          run.RunID,
@@ -579,6 +821,18 @@ func (e *Engine) resumeRunner(ctx context.Context, run state.WorkflowRun, plan w
 		recovering:     true,
 	}
 
+	// The recorder carries on from where the interrupted run's log got
+	// to. Starting at zero collides with the rows that run already
+	// wrote, on UNIQUE (run_id, seq), at the FIRST byte a recovery hook
+	// produces -- and the engine reads a failed log write as a step
+	// whose output could not be recorded, fails it, and reports the
+	// cleanup of the run somebody is recovering as failed because of a
+	// counter.
+	lastSeq, err := e.Store.WorkflowStepLogLastSeq(ctx, run.RunID)
+	if err != nil {
+		return nil, err
+	}
+
 	r.logs = &logRecorder{
 		store:  e.Store,
 		broker: e.Logs,
@@ -586,21 +840,39 @@ func (e *Engine) resumeRunner(ctx context.Context, run state.WorkflowRun, plan w
 		now:    e.clock,
 		bound:  e.StepOutputBytes,
 		ctx:    context.WithoutCancel(ctx),
+		seq:    lastSeq,
+	}
+
+	// The steps' states come from the JOURNAL, not from "pending". A
+	// resumed run's result is read by the same surfaces a run's is, and
+	// seeding every step as pending contradicts the rows: the before
+	// steps of an interrupted run are already skipped, interrupted or
+	// successful, and reporting them as pending says work is owed that
+	// nothing is ever going to do.
+	states := map[string]workflow.State{}
+	for _, s := range recorded {
+		states[s.StepID] = workflow.State(s.State)
 	}
 
 	for i, s := range r.steps {
 		r.byID[s.ID] = i
+
+		st := states[s.ID]
+		if st == "" {
+			st = workflow.StatePending
+		}
+
 		r.results = append(r.results, StepResult{
 			StepID:     s.ID,
 			ScriptName: s.ScriptName,
 			Scope:      s.Scope,
 			Phase:      s.Phase,
 			Target:     s.Target,
-			State:      workflow.StatePending,
+			State:      st,
 		})
 	}
 
-	return r
+	return r, nil
 }
 
 // resumeScope runs one scope's outstanding "after" steps and decides what
@@ -621,10 +893,20 @@ func (e *Engine) resumeRunner(ctx context.Context, run state.WorkflowRun, plan w
 //     half-applied something, and it will not claim a scope is clean
 //     because it ran the steps it could. The only exit left is a person,
 //     which is what acknowledgement is for.
+//
+// Both obligation writes go on r.jctx rather than on the cleanup's
+// bounded context, and the pair matters. The bound exists to stop a hook
+// running forever; the obligation is this product's own record of what
+// that hook was for. A resume that outlived the bound -- a database that
+// took three minutes to come back -- would otherwise fail BOTH writes:
+// the scope would be left at recovery_required in the journal while this
+// process believed it had run the cleanup, and the run would be reported
+// as recovered in memory with the hold still on disk. Execution is
+// bounded; bookkeeping is not.
 func (r *runner) resumeScope(ctx context.Context, scope workflow.Scope, recorded []state.WorkflowStep) {
 	r.entered[scope] = true
 
-	if err := r.engine.Store.AdvanceWorkflowCleanupObligation(ctx, state.WorkflowObligationAdvance{
+	if err := r.engine.Store.AdvanceWorkflowCleanupObligation(r.jctx, state.WorkflowObligationAdvance{
 		RunID: r.runID,
 		Scope: scope,
 		To:    workflow.ObligationRunning,
@@ -680,7 +962,7 @@ func (r *runner) resumeScope(ctx context.Context, scope workflow.Scope, recorded
 		r.cleanupBad = true
 	}
 
-	if err := r.engine.Store.AdvanceWorkflowCleanupObligation(ctx, state.WorkflowObligationAdvance{
+	if err := r.engine.Store.AdvanceWorkflowCleanupObligation(r.jctx, state.WorkflowObligationAdvance{
 		RunID: r.runID,
 		Scope: scope,
 		To:    to,
@@ -696,6 +978,11 @@ func (r *runner) resumeScope(ctx context.Context, scope workflow.Scope, recorded
 // this cannot talk the journal out of a recovery it still needs: a scope
 // that came back recovery_required leaves the run exactly where it was,
 // the set still refused, and the result says so.
+//
+// Every write here is on r.jctx, for resumeScope's reason: a resume that
+// outlived the cleanup bound must still record what it did, or the
+// obligation it advanced in memory and the row on disk disagree
+// permanently.
 func (e *Engine) settleRecovery(ctx context.Context, r *runner, run state.WorkflowRun) (RunResult, error) {
 	at := e.clock()
 
@@ -717,7 +1004,7 @@ func (e *Engine) settleRecovery(ctx context.Context, r *runner, run state.Workfl
 		FailedStep:     r.failedStep,
 	}
 
-	err := e.Store.ResolveWorkflowRecovery(ctx, run.RunID, to, at)
+	err := e.Store.ResolveWorkflowRecovery(r.jctx, run.RunID, to, at)
 	if err != nil {
 		if !errors.Is(err, state.ErrRecoveryOutstanding) {
 			return res, err
@@ -726,14 +1013,43 @@ func (e *Engine) settleRecovery(ctx context.Context, r *runner, run state.Workfl
 		res.State = workflow.StateRecoveryRequired
 		res.RecoveryOutstanding = true
 
-		if _, err := e.loadHolds(ctx); err != nil {
+		// The cleanup did not succeed, whatever the scopes this resume
+		// COULD run did: a scope is still owed, so reporting success
+		// here would put "cleanup: success" beside "state:
+		// recovery_required" on the same row.
+		res.CleanupStatus = workflow.StatusFailed
+		cleanupStatus = workflow.StatusFailed
+
+		// The run is put BACK to recovery_required, durably, before
+		// anything else. ResumeCleanup moved it to cleanup_running with
+		// recovery in_progress on the way in, and an incomplete resume
+		// that left it there would be a run no second resume can touch:
+		// ResumeCleanup refuses anything whose recovery state is not
+		// "required", so the only way out would be a restart. That is a
+		// backup set blocked until somebody reboots a daemon, for a
+		// scope an operator was in the middle of dealing with.
+		//
+		// cleanup_running -> recovery_required and in_progress ->
+		// required are both legal (runTransitions, checkRecoveryRaise):
+		// this is the same direction a crash here would have been
+		// reconciled in.
+		if err := e.Store.AdvanceWorkflowRun(r.jctx, run.RunID, state.WorkflowRunAdvance{
+			To:             workflow.StateRecoveryRequired,
+			RecoveryState:  workflow.RecoveryRequired,
+			CleanupStatus:  cleanupStatus,
+			WorkflowStatus: workflow.StatusFailed,
+		}); err != nil {
+			return res, err
+		}
+
+		if _, err := e.loadHolds(r.jctx); err != nil {
 			return res, err
 		}
 
 		return res, nil
 	}
 
-	if err := e.Store.AdvanceWorkflowRun(ctx, run.RunID, state.WorkflowRunAdvance{
+	if err := e.Store.AdvanceWorkflowRun(r.jctx, run.RunID, state.WorkflowRunAdvance{
 		CleanupStatus:  cleanupStatus,
 		WorkflowStatus: workflow.StatusFailed,
 	}); err != nil {
@@ -742,7 +1058,7 @@ func (e *Engine) settleRecovery(ctx context.Context, r *runner, run state.Workfl
 
 	res.State = to
 
-	if _, err := e.loadHolds(ctx); err != nil {
+	if _, err := e.loadHolds(r.jctx); err != nil {
 		return res, err
 	}
 
@@ -801,6 +1117,27 @@ func (e *Engine) AcknowledgeRecovery(ctx context.Context, runID string, ack Ackn
 		return fmt.Errorf("workflowrun: workflow run %q has recovery state %q; there is nothing outstanding to acknowledge", runID, run.RecoveryState)
 	}
 
+	set, err := model.ParseBackupSetID(run.BackupSetID)
+	if err != nil {
+		return fmt.Errorf("workflowrun: workflow run %q names backup set %q: %w", runID, run.BackupSetID, err)
+	}
+
+	// The same lock a resume takes, for the same reason. An
+	// acknowledgement and a resume-cleanup of one run are two callers
+	// walking the same obligations in opposite directions: the resume
+	// moves a scope to running and then to its outcome, the
+	// acknowledgement moves every unsettled scope to acknowledged, and
+	// interleaved they produce a scope acknowledged while its hook is
+	// executing -- an audit record saying a person checked a machine
+	// that this product was at that moment still unwinding. The lock
+	// makes the two serial, and it refuses rather than queues, so an
+	// operator is told the resume is in flight.
+	release, err := e.locks().Acquire(set, runID+"/acknowledge")
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	obligations, err := e.Store.WorkflowCleanupObligations(ctx, runID)
 	if err != nil {
 		return err
@@ -826,6 +1163,19 @@ func (e *Engine) AcknowledgeRecovery(ctx context.Context, runID string, ack Ackn
 	}
 
 	if err := e.Store.ResolveWorkflowRecovery(ctx, runID, workflow.StateRecovered, at); err != nil {
+		return err
+	}
+
+	// The three statuses, closed the same way a resume closes them. A
+	// run acknowledged by hand is terminal, and leaving it at
+	// workflow_status=running with cleanup_status=unknown puts a row in
+	// the history that every surface reads as a run still in flight --
+	// for a run whose whole story is that a person finished it.
+	//
+	// cleanup_status is failed rather than success: nothing this product
+	// ran accounted for the scope. The person who acknowledged it said
+	// why, and that sentence is on the obligation.
+	if err := e.settleStatuses(ctx, runID, true); err != nil {
 		return err
 	}
 

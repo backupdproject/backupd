@@ -92,7 +92,7 @@ func TestObligationSettlementAndRecovery(t *testing.T) {
 }
 
 // The transition rule. Every legal edge is here, and so is the property
-// that matters more: nothing leaves a settled obligation, so a resolved
+// that matters more: nothing leaves a TERMINAL obligation, so a resolved
 // or acknowledged scope cannot be quietly re-opened and an acknowledged
 // one cannot be walked back to something a later pass would re-run.
 func TestObligationTransitions(t *testing.T) {
@@ -123,6 +123,49 @@ func TestObligationTransitions(t *testing.T) {
 				t.Errorf("%q -> %q is not a legal obligation transition and was accepted", from, to)
 			}
 		}
+	}
+}
+
+// Settled and Terminal are two questions, and the graph answers them
+// differently for exactly one state.
+//
+// "Nothing leaves a settled obligation" was the claim for a while, and it
+// is false: never_eligible is settled -- a scope that was never entered
+// owes nothing -- and it has an edge out, to eligible, which is the
+// backup-set scope being entered once global-before succeeds. The
+// property that IS true, and the one the crash argument leans on, is
+// about Terminal. Asserting the false version would have meant either
+// deleting that edge (and with it the nested-eligibility rule) or
+// deleting the claim.
+func TestSettledAndTerminalAreDifferentQuestions(t *testing.T) {
+	t.Parallel()
+
+	for _, s := range ObligationStates() {
+		exits := 0
+		for _, to := range ObligationStates() {
+			if s.CanFollow(to) == nil {
+				exits++
+			}
+		}
+
+		if s.Terminal() != (exits == 0) {
+			t.Errorf("%q Terminal() = %v and it has %d outgoing edges", s, s.Terminal(), exits)
+		}
+
+		// Terminal implies settled: a state with no exits cannot be
+		// holding work open, because there is no transition left that
+		// could discharge it.
+		if s.Terminal() && !s.Settled() {
+			t.Errorf("%q has no exits and is not settled, so nothing will ever account for it", s)
+		}
+	}
+
+	// And the one state where the two answers differ, named, so that a
+	// future edit that collapses the pair fails here rather than in the
+	// nested-eligibility suite two packages away.
+	if !ObligationNeverEligible.Settled() || ObligationNeverEligible.Terminal() {
+		t.Errorf("never_eligible is settled=%v terminal=%v; it owes nothing and can still be entered",
+			ObligationNeverEligible.Settled(), ObligationNeverEligible.Terminal())
 	}
 }
 

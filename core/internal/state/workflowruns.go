@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/backupdproject/backupd/core/internal/model"
@@ -167,6 +170,27 @@ type WorkflowPlan struct {
 	// first hook -- so the only write that is unambiguously before it is
 	// the one that makes the run exist at all.
 	Obligations []workflow.CleanupObligation
+
+	// Facts are the deployment's own answers to the built-ins this
+	// product injects but cannot derive: BACKUPD_SOURCE_HOST,
+	// BACKUPD_SOURCE_PATH, BACKUPD_DESTINATION.
+	//
+	// They are persisted for the same reason Env is, and the case is the
+	// same one: a RECOVERY. The built-ins are injected per call rather
+	// than stored anywhere, so a resumed cleanup that could not read
+	// these back would hand its hooks an empty BACKUPD_SOURCE_PATH --
+	// and `umount "$BACKUPD_SOURCE_PATH"` with an empty variable is a
+	// hook that unmounts nothing and reports success, which is the one
+	// outcome a recovery must not produce.
+	//
+	// They go in workflow_run_env beside the configured variables,
+	// because they are literal values of named variables and that is
+	// what the table holds. What keeps the two apart on the way back out
+	// is the reservation rule: a fact's name is always a BACKUPD_ one,
+	// which is exactly what an operator's variable can never be
+	// (workflow.ValidateEnvName), so workflowRunEnvironment skips them
+	// and WorkflowRunFacts reads only them.
+	Facts map[string]string
 }
 
 // CommitWorkflowPlan durably records one run and all of its steps in a
@@ -253,6 +277,21 @@ func (j *Journal) CommitWorkflowPlan(ctx context.Context, plan WorkflowPlan) err
 		}
 	}
 
+	// And the run's facts, in the same transaction and the same table,
+	// at positions after the configured variables. See WorkflowPlan.Facts
+	// for why they are persisted at all and what keeps them
+	// distinguishable from a variable an operator wrote.
+	for i, name := range sortedFactNames(plan.Facts) {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO workflow_run_env
+			   (run_id, position, name, literal_value, secret_file, secret_env, secret_command)
+			 VALUES (?, ?, ?, ?, '', '', '')`,
+			r.ID, len(plan.Env.Vars())+i, name, plan.Facts[name],
+		); err != nil {
+			return fmt.Errorf("state: recording the run fact %q of workflow run %q: %w", name, r.ID, err)
+		}
+	}
+
 	// The obligations go in the SAME transaction, for the reason the
 	// steps and the environment do, and for one more that is specific to
 	// them: an obligation is the record that a scope has been entered,
@@ -309,6 +348,52 @@ func envColumns(v workflow.EnvVar) (literal any, file, env, command string, err 
 	return nil, v.Secret.File, v.Secret.Env, command, nil
 }
 
+// sortedFactNames returns the fact names in a FIXED order, so that the
+// positions a plan's facts land in are a function of the facts and not of
+// Go's map iteration -- which is what keeps two commits of the same plan
+// (and therefore the rows a recovery reads) identical.
+func sortedFactNames(facts map[string]string) []string {
+	if len(facts) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(facts))
+	for name := range facts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	return names
+}
+
+// validatePlanFacts refuses a fact this journal must not store.
+//
+// The rule is membership of workflow.BuiltinEnvNames, and it is a
+// refusal rather than a filter because of what the READ is: a recovered
+// run's facts are injected into a hook's environment as built-ins, so a
+// row here naming anything else would either be refused at resolution
+// time (a run that cannot be recovered) or, worse, would be a variable an
+// operator never configured arriving in a hook with whatever is in the
+// database. The bare BACKUPD name and the run's own identity are
+// built-ins this product states itself; a caller that passes one is
+// claiming a fact on this product's behalf, and the engine's built-in
+// layer overwrites it anyway, so it is refused here rather than silently
+// ignored.
+func validatePlanFacts(plan WorkflowPlan) error {
+	for _, name := range sortedFactNames(plan.Facts) {
+		if !slices.Contains(workflow.BuiltinEnvNames(), name) || name == workflow.ReservedEnvName {
+			return fmt.Errorf(
+				"state: workflow run %q is being committed with %q as a run fact, and only the built-ins this product injects are facts it can be handed (%s)",
+				plan.Run.ID, name, strings.Join(workflow.BuiltinEnvNames(), " "))
+		}
+		if strings.ContainsRune(plan.Facts[name], 0) {
+			return fmt.Errorf("state: the run fact %q of workflow run %q contains a NUL byte", name, plan.Run.ID)
+		}
+	}
+
+	return nil
+}
+
 // validateWorkflowPlan refuses a plan this journal must not store.
 //
 // It asks the DOMAIN types their own question first -- Run.Validate and
@@ -362,6 +447,10 @@ func validateWorkflowPlan(plan WorkflowPlan) error {
 
 		seenIDs[s.ID] = true
 		seenOrders[s.Order] = true
+	}
+
+	if err := validatePlanFacts(plan); err != nil {
+		return err
 	}
 
 	return validatePlanObligations(plan)
@@ -596,6 +685,13 @@ func (j *Journal) RecoverWorkflowPlan(ctx context.Context, runID string) (workfl
 // reserved name, a variable carrying both a literal and a secret source,
 // two rows for one name -- is refused by the same rules that refused it at
 // configuration time. A journal is not a trusted input.
+//
+// The one row shape it SKIPS rather than refuses is a reserved name,
+// because this write path produces those on purpose: a run's facts live
+// in this table (see WorkflowPlan.Facts) and they are not part of the
+// configured environment. Handing one to NewEnvironment would refuse the
+// whole plan -- an operator cannot configure a BACKUPD_ name, which is
+// precisely why a fact is safe to store beside them.
 func (j *Journal) workflowRunEnvironment(ctx context.Context, runID string) (workflow.Environment, error) {
 	rows, err := j.db.QueryContext(ctx,
 		`SELECT name, literal_value, secret_file, secret_env, secret_command
@@ -618,6 +714,12 @@ func (j *Journal) workflowRunEnvironment(ctx context.Context, runID string) (wor
 
 		if err := rows.Scan(&name, &literal, &file, &env, &command); err != nil {
 			return workflow.Environment{}, fmt.Errorf("state: scanning the environment of workflow run %q: %w", runID, err)
+		}
+
+		// A run fact, not a configured variable. See this function's
+		// doc.
+		if workflow.IsReservedEnvName(name) {
+			continue
 		}
 
 		// Both halves are read out and BOTH are handed to the domain
@@ -664,6 +766,64 @@ func (j *Journal) workflowRunEnvironment(ctx context.Context, runID string) (wor
 	}
 
 	return recovered, nil
+}
+
+// WorkflowRunFacts reads back the deployment facts one run was planned
+// with: the built-ins this product injects but cannot derive.
+//
+// It is the recovery half of WorkflowPlan.Facts, and it is as
+// untrusting as the environment read next to it. A row whose name is a
+// reserved one this product does not inject is a refusal rather than a
+// skipped row: these values go straight into a hook's environment as
+// built-ins, so a name nothing recognises means either this table has
+// been edited or a built-in has been removed from the vocabulary while
+// rows still name it -- and running a recovery hook with a variable
+// nobody can account for is exactly what the environment's own
+// validation refuses on the other path.
+//
+// A run with no facts reads back as nil and no error: a deployment whose
+// hooks do not ask for them is the ordinary case.
+func (j *Journal) WorkflowRunFacts(ctx context.Context, runID string) (map[string]string, error) {
+	rows, err := j.db.QueryContext(ctx,
+		`SELECT name, literal_value FROM workflow_run_env
+		  WHERE run_id = ? ORDER BY position`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("state: reading the facts of workflow run %q: %w", runID, err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only
+
+	var facts map[string]string
+
+	for rows.Next() {
+		var (
+			name    string
+			literal sql.NullString
+		)
+
+		if err := rows.Scan(&name, &literal); err != nil {
+			return nil, fmt.Errorf("state: scanning the facts of workflow run %q: %w", runID, err)
+		}
+		if !workflow.IsReservedEnvName(name) {
+			continue
+		}
+
+		if !slices.Contains(workflow.BuiltinEnvNames(), name) || name == workflow.ReservedEnvName {
+			return nil, fmt.Errorf(
+				"state: workflow run %q records %q as a run fact, which is not one of this product's built-ins; these values are injected into a recovery hook's environment, so one nothing recognises cannot be handed on",
+				runID, name)
+		}
+
+		if facts == nil {
+			facts = map[string]string{}
+		}
+		facts[name] = literal.String
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: reading the facts of workflow run %q: %w", runID, err)
+	}
+
+	return facts, nil
 }
 
 // formatTimePtr and parseTimePtr are formatTime and parseTime for the

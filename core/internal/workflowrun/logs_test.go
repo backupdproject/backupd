@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/backupdproject/backupd/core/internal/obs"
@@ -377,5 +378,294 @@ func TestOutputSurvivesWithNoRedactorAtAll(t *testing.T) {
 	recs := logsOf(t, h, "run-1")
 	if len(recs) != 1 || string(recs[0].Payload) != "everything is fine\n" {
 		t.Fatalf("the captured output is %+v", recs)
+	}
+}
+
+// A chunk that arrives after the step's output has been closed off is
+// refused, not recorded.
+//
+// This is not hypothetical: a remote step whose termination this product
+// could not CONFIRM is a step whose far side may still be writing, and
+// its frames arrive on a socket the reader has not finished draining.
+// Recording one appends to a step that already has its outcome and its
+// flushed tail -- and, past the bound, output that lands AFTER the
+// truncation marker which says the recording stopped. A log whose last
+// record says "everything after this is missing" followed by more output
+// is not a log anybody can reason about.
+func TestAChunkThatArrivesAfterTheStepIsClosedIsRefused(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	tr := newTree(t, map[stage][]string{globalBefore: {"10-mount.local.sh"}})
+
+	var straggler workflowexec.Sink
+
+	h.local.outcomes["10-mount.local.sh"] = func(_ context.Context, req StepRequest) (StepOutcome, error) {
+		straggler = req.Sink
+
+		if err := req.Sink.Chunk(workflowexec.Chunk{
+			Stream: workflowexec.StreamStdout, Seq: 1, Data: []byte("mounted\n"),
+		}); err != nil {
+			return StepOutcome{}, err
+		}
+
+		// The step ends with its termination unconfirmed, which is the
+		// situation a late frame comes out of.
+		return StepOutcome{
+			Disposition: DispositionTransportLost,
+			Detail:      "the session ended without reporting a status",
+		}, nil
+	}
+
+	if _, err := h.run(t, tr.snapshot(t, "run-1")); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	before := logsOf(t, h, "run-1")
+	if len(before) != 1 {
+		t.Fatalf("the step recorded %d records, want 1", len(before))
+	}
+
+	err := straggler.Chunk(workflowexec.Chunk{
+		Stream: workflowexec.StreamStdout, Seq: 2, Data: []byte("late output\n"),
+	})
+	if err == nil {
+		t.Fatal("a chunk was accepted after the step's output was closed off")
+	}
+
+	after := logsOf(t, h, "run-1")
+	if len(after) != len(before) {
+		t.Errorf("the late chunk was recorded anyway: %d records, was %d", len(after), len(before))
+	}
+	for _, rec := range after {
+		if strings.Contains(string(rec.Payload), "late output") {
+			t.Errorf("the late output is in the journal: %q", rec.Payload)
+		}
+	}
+}
+
+// orderingStore records the sequence numbers in the order they reach the
+// journal.
+type orderingStore struct {
+	Store
+
+	mu    sync.Mutex
+	order []uint64
+}
+
+func (o *orderingStore) AppendWorkflowStepLog(ctx context.Context, rec workflow.StepLog) error {
+	if err := o.Store.AppendWorkflowStepLog(ctx, rec); err != nil {
+		return err
+	}
+
+	o.mu.Lock()
+	o.order = append(o.order, rec.Seq)
+	o.mu.Unlock()
+
+	return nil
+}
+
+// Records reach the journal in SEQUENCE order.
+//
+// The recorder used to number a record under its lock and then write it
+// outside, on the argument that a disk write should not serialise two
+// streams. What that buys is record N committing after record N+1 -- and
+// a follower's cursor is precisely the claim that cannot happen: a
+// consumer that has processed up to N and asks for everything after it
+// never sees a record that landed later with a lower number.
+func TestRecordsReachTheJournalInSequenceOrder(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	tr := newTree(t, map[stage][]string{globalBefore: {"10-mount.local.sh"}})
+
+	plan := tr.snapshot(t, "run-1")
+	step := plan.Steps()[0]
+
+	ordered := &orderingStore{Store: h.store}
+
+	// The plan has to exist before its log can: the rows reference it.
+	h.engine.Store = ordered
+	t.Cleanup(func() { h.engine.Store = h.store })
+
+	if _, err := h.run(t, plan); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	rec := &logRecorder{
+		store: ordered,
+		runID: "run-1",
+		now:   h.clock.Now,
+		ctx:   context.Background(),
+	}
+
+	// Two producers, which is what the two streams of one step are, and
+	// what a runner delivering frames off a socket may be.
+	var wg sync.WaitGroup
+	for _, stream := range []workflowexec.StreamID{workflowexec.StreamStdout, workflowexec.StreamStderr} {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for range 150 {
+				if err := rec.append(step.ID, stream, workflow.LogOutput, []byte("x")); err != nil {
+					t.Errorf("append: %v", err)
+
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	ordered.mu.Lock()
+	order := append([]uint64(nil), ordered.order...)
+	ordered.mu.Unlock()
+
+	for i := 1; i < len(order); i++ {
+		if order[i] < order[i-1] {
+			t.Fatalf("record %d reached the journal after %d; a cursor cannot survive that", order[i], order[i-1])
+		}
+	}
+}
+
+// The bound is per STEP and covers both of its streams together, which
+// is the only reading that bounds anything: a hook that writes a
+// megabyte to stderr has written a megabyte whatever it did on stdout.
+//
+// And what happens at the bound is one marker, in position, followed by
+// nothing -- including nothing from the CLOSE, which flushes whatever
+// each filter was still holding back. A flush that wrote after the
+// marker would put output past the record saying the output ends.
+func TestTheBoundCoversBothStreamsAndTheFlushAfterIt(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.engine.StepOutputBytes = 64
+
+	tr := newTree(t, map[stage][]string{globalBefore: {"10-mount.local.sh"}})
+
+	h.local.outcomes["10-mount.local.sh"] = func(_ context.Context, req StepRequest) (StepOutcome, error) {
+		for i := range 20 {
+			stream := workflowexec.StreamStdout
+			if i%2 == 1 {
+				stream = workflowexec.StreamStderr
+			}
+
+			if err := req.Sink.Chunk(workflowexec.Chunk{
+				Stream: stream, Seq: uint64(i + 1), Data: []byte("0123456789abcdef"),
+			}); err != nil {
+				return StepOutcome{}, err
+			}
+		}
+
+		return exited(0), nil
+	}
+
+	if _, err := h.run(t, tr.snapshot(t, "run-1")); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	recs := logsOf(t, h, "run-1")
+	if len(recs) == 0 {
+		t.Fatal("nothing was captured")
+	}
+
+	markers, kept := 0, 0
+	for _, rec := range recs {
+		if rec.Kind == workflow.LogTruncated {
+			markers++
+
+			continue
+		}
+		kept += len(rec.Payload)
+	}
+
+	if markers != 1 {
+		t.Errorf("the step produced %d truncation markers, want exactly 1", markers)
+	}
+	if kept > 64 {
+		t.Errorf("%d bytes were persisted across the two streams for a step bounded at 64", kept)
+	}
+	if recs[len(recs)-1].Kind != workflow.LogTruncated {
+		t.Errorf("the last record is %q; the marker must be where the recording stopped, flush included", recs[len(recs)-1].Kind)
+	}
+}
+
+// The bound and the redaction are on the same path, and the bound must
+// not be the thing that lets a credential through.
+//
+// A secret straddling the truncation point is the case: the filter holds
+// its first half back, the second half arrives, the whole value is
+// redacted -- and THEN the payload crosses the bound. What gets written
+// is a marker, not a half-redacted credential, and nothing after it.
+func TestASecretStraddlingTheBoundIsStillNeverPersisted(t *testing.T) {
+	t.Parallel()
+
+	const secret = "s3cr3t-passphrase-value"
+
+	h := newHarness(t)
+	h.engine.StepOutputBytes = 48
+
+	tr := newTree(t, map[stage][]string{globalBefore: {"10-mount.local.sh"}})
+
+	secretFile := filepath.Join(custodyTempDir(t), "db.pw")
+	if err := os.WriteFile(secretFile, []byte(secret+"\n"), 0o600); err != nil {
+		t.Fatalf("writing the secret fixture: %v", err)
+	}
+
+	plan := tr.snapshotWithEnv(t, "run-1", []workflow.EnvVar{
+		{Name: "PGPASSWORD", Secret: secretref.Ref{File: secretFile}},
+	})
+
+	h.local.outcomes["10-mount.local.sh"] = func(_ context.Context, req StepRequest) (StepOutcome, error) {
+		// Enough output to pass the bound, with the credential split
+		// across two chunks right at it.
+		for _, piece := range []string{
+			"0123456789abcdef0123456789abcdef",
+			"+ psql --password s3cr3t-",
+			"passphrase-value --db main\n",
+			"and more output after the bound\n",
+		} {
+			if err := req.Sink.Chunk(workflowexec.Chunk{
+				Stream: workflowexec.StreamStderr, Seq: 1, Data: []byte(piece),
+			}); err != nil {
+				return StepOutcome{}, err
+			}
+		}
+
+		return exited(0), nil
+	}
+
+	if _, err := h.run(t, plan); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	recs := logsOf(t, h, "run-1")
+	if len(recs) == 0 {
+		t.Fatal("nothing was captured")
+	}
+
+	var whole strings.Builder
+	markers := 0
+	for _, rec := range recs {
+		if rec.Kind == workflow.LogTruncated {
+			markers++
+		}
+		whole.Write(rec.Payload)
+	}
+
+	got := whole.String()
+	if strings.Contains(got, secret) {
+		t.Errorf("the credential is in the journal: %q", got)
+	}
+	for _, half := range []string{"s3cr3t-", "passphrase-value"} {
+		if strings.Contains(got, half) {
+			t.Errorf("the fragment %q is in the journal, so the value can be reassembled: %q", half, got)
+		}
+	}
+	if markers != 1 {
+		t.Errorf("the step produced %d truncation markers, want 1", markers)
 	}
 }

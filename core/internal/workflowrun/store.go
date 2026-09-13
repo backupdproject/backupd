@@ -45,10 +45,13 @@ type Store interface {
 	WorkflowCleanupObligations(ctx context.Context, runID string) ([]workflow.CleanupObligation, error)
 	ObligationsRequiringRecovery(ctx context.Context) ([]workflow.CleanupObligation, error)
 	WorkflowRunsInStates(ctx context.Context, states ...workflow.State) ([]state.WorkflowRun, error)
+	WorkflowRunsRequiringRecovery(ctx context.Context) ([]state.WorkflowRun, error)
 	RecoverWorkflowPlan(ctx context.Context, runID string) (workflow.Plan, error)
+	WorkflowRunFacts(ctx context.Context, runID string) (map[string]string, error)
 
 	AppendWorkflowStepLog(ctx context.Context, rec workflow.StepLog) error
 	WorkflowStepLogsAfter(ctx context.Context, runID string, afterSeq uint64, limit int) ([]workflow.StepLog, error)
+	WorkflowStepLogLastSeq(ctx context.Context, runID string) (uint64, error)
 }
 
 // The journal is the Store. Asserted here rather than left to the call

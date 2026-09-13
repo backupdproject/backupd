@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -173,6 +174,18 @@ func TestWorkflowRunAdvanceRecordsTheThreeStatusesSeparately(t *testing.T) {
 		To: workflow.StateCleanupRunning, CleanupStatus: workflow.StatusRunning,
 	}); err != nil {
 		t.Fatalf("AdvanceWorkflowRun: %v", err)
+	}
+
+	// And the scope it entered is accounted for: a cleanup that failed
+	// is a cleanup that RAN, so the obligation moves with it. A run
+	// cannot be closed while a scope is neither settled nor declared as
+	// needing recovery (TestNoRunReachesATerminalStateWithAScopeUnaccountedFor).
+	for _, to := range []workflow.ObligationState{workflow.ObligationRunning, workflow.ObligationFailed} {
+		if err := j.AdvanceWorkflowCleanupObligation(ctx, WorkflowObligationAdvance{
+			RunID: "run-1", Scope: workflow.ScopeGlobal, To: to, At: finished,
+		}); err != nil {
+			t.Fatalf("AdvanceWorkflowCleanupObligation(%s): %v", to, err)
+		}
 	}
 
 	// The three statuses are separate fields end to end: a backup that
@@ -599,4 +612,225 @@ func namedWord(named bool) string {
 	}
 
 	return "omits"
+}
+
+// A run does NOT reach a terminal state while a scope of it is still
+// unaccounted for, and the graph is what refuses it rather than the
+// engine remembering to.
+//
+// The crash-safety argument is stated as "a run with an unsettled
+// obligation is either non-terminal or in recovery", and a crash cannot
+// break it: nothing is written at all. A failed WRITE can, and that is
+// the reachable case -- the advance that starts a scope's cleanup fails,
+// the after steps never run, and the engine's summary write then closes
+// the run as though the scope had been accounted for. A terminal run is
+// invisible to the reconciliation (it is not an open run) and its
+// obligation is therefore never turned into a hold, so the set is
+// released with a machine still quiesced. Refusing the write here is
+// what makes that unreachable however the caller is written.
+func TestNoRunReachesATerminalStateWithAScopeUnaccountedFor(t *testing.T) {
+	t.Parallel()
+
+	j, _ := openJournal(t)
+	ctx := context.Background()
+
+	commitTestPlan(t, j, "run-1")
+	at := time.Date(2026, 9, 13, 3, 0, 0, 0, time.UTC)
+
+	// The global scope is committed eligible: entered, cleanup owed.
+	err := j.AdvanceWorkflowRun(ctx, "run-1", WorkflowRunAdvance{
+		To:             workflow.StateFailed,
+		WorkflowStatus: workflow.StatusFailed,
+		FinishedAt:     &at,
+	})
+	if err == nil {
+		t.Fatal("a run was closed as failed with its global cleanup obligation still eligible")
+	}
+	if !strings.Contains(err.Error(), "global") {
+		t.Errorf("the refusal does not name the scope that is outstanding: %v", err)
+	}
+
+	run, err := j.WorkflowRun(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("WorkflowRun: %v", err)
+	}
+	if run.State != string(workflow.StatePending) {
+		t.Errorf("the refused advance moved the run to %q", run.State)
+	}
+
+	// The two ways past it are the two that are honest. Either the
+	// scope is accounted for...
+	if err := j.AdvanceWorkflowCleanupObligation(ctx, WorkflowObligationAdvance{
+		RunID: "run-1", Scope: workflow.ScopeGlobal, To: workflow.ObligationRunning, At: at,
+	}); err != nil {
+		t.Fatalf("AdvanceWorkflowCleanupObligation: %v", err)
+	}
+	if err := j.AdvanceWorkflowCleanupObligation(ctx, WorkflowObligationAdvance{
+		RunID: "run-1", Scope: workflow.ScopeGlobal, To: workflow.ObligationFailed, At: at,
+	}); err != nil {
+		t.Fatalf("AdvanceWorkflowCleanupObligation: %v", err)
+	}
+	if err := j.AdvanceWorkflowRun(ctx, "run-1", WorkflowRunAdvance{
+		To:             workflow.StateFailed,
+		WorkflowStatus: workflow.StatusFailed,
+		FinishedAt:     &at,
+	}); err != nil {
+		t.Fatalf("a run whose every scope is settled was refused a terminal state: %v", err)
+	}
+}
+
+// ...or the run says out loud that it needs a person, which is
+// non-terminal and blocks the set.
+func TestARunWithAnOutstandingScopeMayStillSayItNeedsRecovery(t *testing.T) {
+	t.Parallel()
+
+	j, _ := openJournal(t)
+	ctx := context.Background()
+
+	commitTestPlan(t, j, "run-1")
+
+	if err := j.AdvanceWorkflowRun(ctx, "run-1", WorkflowRunAdvance{
+		To:            workflow.StateRecoveryRequired,
+		RecoveryState: workflow.RecoveryRequired,
+	}); err != nil {
+		t.Fatalf("a run with an outstanding scope could not be moved to recovery_required: %v", err)
+	}
+
+	// And a run whose recovery is outstanding may be closed as
+	// cleanup_failed: the recovery axis carries the fact that a scope is
+	// unaccounted for, the spool is retained on that axis
+	// (workflow.Run.SpoolRetainable), and the hold is what blocks the
+	// set.
+	at := time.Date(2026, 9, 13, 3, 0, 0, 0, time.UTC)
+	if err := j.AdvanceWorkflowRun(ctx, "run-1", WorkflowRunAdvance{
+		To:            workflow.StateCleanupFailed,
+		CleanupStatus: workflow.StatusFailed,
+		FinishedAt:    &at,
+	}); err != nil {
+		t.Fatalf("a run in recovery could not be closed as cleanup_failed: %v", err)
+	}
+}
+
+// The deployment's own facts -- the source host, the source path, the
+// destination -- are persisted WITH the plan, for the same reason the
+// environment is: a recovery has to hand a hook the run it is unwinding,
+// and those three are not things the journal could derive or today's
+// configuration could be trusted for. An unmount of "$BACKUPD_SOURCE_PATH"
+// with an empty variable runs against the wrong thing or against nothing.
+func TestAPlansFactsRoundTripSeparatelyFromItsEnvironment(t *testing.T) {
+	t.Parallel()
+
+	j, _ := openJournal(t)
+	ctx := context.Background()
+
+	plan := testWorkflowPlan("run-1")
+	plan.Facts = map[string]string{
+		"BACKUPD_SOURCE_HOST": "db.internal",
+		"BACKUPD_SOURCE_PATH": "/srv/data",
+		"BACKUPD_DESTINATION": "nas:/backups/production",
+	}
+
+	if err := j.CommitWorkflowPlan(ctx, plan); err != nil {
+		t.Fatalf("CommitWorkflowPlan: %v", err)
+	}
+
+	facts, err := j.WorkflowRunFacts(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("WorkflowRunFacts: %v", err)
+	}
+	if !reflect.DeepEqual(facts, plan.Facts) {
+		t.Errorf("the facts came back as %v, want %v", facts, plan.Facts)
+	}
+
+	// The CONFIGURED environment is unchanged by their presence: a fact
+	// is not a variable an operator wrote, and it must not appear in the
+	// environment a recovered plan resolves (where a BACKUPD_ name is
+	// refused outright).
+	recovered, err := j.RecoverWorkflowPlan(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("RecoverWorkflowPlan: %v", err)
+	}
+	if !reflect.DeepEqual(recovered.Env().Vars(), plan.Env.Vars()) {
+		t.Errorf("the recovered environment is %+v, want %+v", recovered.Env().Vars(), plan.Env.Vars())
+	}
+
+	// A run planned with no facts reads back as none rather than as an
+	// error: the zero-fact case is a deployment whose hooks do not ask.
+	if err := j.CommitWorkflowPlan(ctx, testWorkflowPlan("run-2")); err != nil {
+		t.Fatalf("CommitWorkflowPlan: %v", err)
+	}
+	if got, err := j.WorkflowRunFacts(ctx, "run-2"); err != nil || len(got) != 0 {
+		t.Errorf("a run with no facts read back %v, %v", got, err)
+	}
+}
+
+// A fact this product does not inject is refused at the write, because
+// the read is a hook's environment: a row saying PGPASSWORD is a fact
+// would be a variable an operator never configured arriving in a
+// recovered hook with whatever somebody put in the database.
+func TestAPlansFactsMustBeBuiltinsThisProductInjects(t *testing.T) {
+	t.Parallel()
+
+	j, _ := openJournal(t)
+	ctx := context.Background()
+
+	plan := testWorkflowPlan("run-1")
+	plan.Facts = map[string]string{"PGPASSWORD": "hunter2"}
+
+	err := j.CommitWorkflowPlan(ctx, plan)
+	if err == nil {
+		t.Fatal("a plan naming an arbitrary variable as a run fact was committed")
+	}
+	if !strings.Contains(err.Error(), "PGPASSWORD") {
+		t.Errorf("the refusal does not name the offending fact: %v", err)
+	}
+
+	if _, err := j.WorkflowRun(ctx, "run-1"); err == nil {
+		t.Error("the refused plan left a run row behind")
+	}
+}
+
+// A resumed run appends to the log its interrupted self already wrote, so
+// it has to know where that got to: one sequence number names one record
+// (UNIQUE (run_id, seq)), and a recorder restarting at zero makes the
+// first byte of output a failed insert -- which the engine reads as a
+// step whose output could not be recorded.
+func TestTheLastLogSequenceIsWhereAResumedRecorderCarriesOnFrom(t *testing.T) {
+	t.Parallel()
+
+	j, _ := openJournal(t)
+	ctx := context.Background()
+
+	plan := commitTestPlan(t, j, "run-1")
+	ids := stepIDs(t, plan)
+
+	if got, err := j.WorkflowStepLogLastSeq(ctx, "run-1"); err != nil || got != 0 {
+		t.Fatalf("a run with no output reports last sequence %d, %v; want 0", got, err)
+	}
+
+	at := plan.Run.StartedAt.Add(time.Second)
+	for seq := uint64(1); seq <= 3; seq++ {
+		if err := j.AppendWorkflowStepLog(ctx, workflow.StepLog{
+			RunID: "run-1", StepID: ids[0], Seq: seq,
+			Kind: workflow.LogOutput, Stream: workflow.LogStreamStdout,
+			CapturedAt: at, Payload: []byte("out\n"),
+		}); err != nil {
+			t.Fatalf("AppendWorkflowStepLog: %v", err)
+		}
+	}
+
+	got, err := j.WorkflowStepLogLastSeq(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("WorkflowStepLogLastSeq: %v", err)
+	}
+	if got != 3 {
+		t.Errorf("the last sequence is %d, want 3", got)
+	}
+
+	// It is per RUN: another run's output does not move this one's
+	// cursor, because the cursor a follower holds is per run.
+	commitTestPlan(t, j, "run-2")
+	if got, err := j.WorkflowStepLogLastSeq(ctx, "run-2"); err != nil || got != 0 {
+		t.Errorf("another run's last sequence is %d, %v; want 0", got, err)
+	}
 }
