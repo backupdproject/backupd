@@ -47,6 +47,7 @@ func aDeploymentWithSnapshots(t *testing.T) string {
 	content := "poll_interval: 15m\n" +
 		"state:\n" +
 		"  database: " + filepath.Join(dir, "state.db") + "\n" +
+		"incremental_engine:\n  enabled: true\n" +
 		"repository_domains:\n" +
 		"  - id: production\n" +
 		"    description: Snapshots for this deployment\n" +
