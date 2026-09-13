@@ -143,3 +143,9 @@ go.work.sum
 # checkout's, and removed again by t.Cleanup. The name is hidden so the Go
 # tool and the format checks skip whatever an interrupted run leaves.
 /core/internal/workflow/.wf-custody-*
+
+# core/internal/workflowrun's fixtures, for exactly the same reason: that
+# suite snapshots a real workflow tree into a real spool through the same
+# custody walk, and it deliberately stops the process mid-run, so an
+# interrupted run leaves one behind more often than most.
+/core/internal/workflowrun/.wfrun-*

@@ -83,6 +83,12 @@ type WorkflowRun struct {
 
 	ResolvedPlanHash string
 	ScriptSpoolRef   string
+
+	// Bypassed is #811's history field: this run's hooks were
+	// deliberately skipped. Written once, with the plan; see
+	// 0013_workflow_lifecycle.sql for why there is no write that turns
+	// it on later.
+	Bypassed bool
 }
 
 // WorkflowStep is one step's row.
@@ -131,9 +137,9 @@ type WorkflowStep struct {
 // CommitWorkflowPlan writes, because it is the unit that has to be durable
 // before a hook runs.
 //
-// The three are DOMAIN types, not this package's row shapes. A journal
-// that accepted the row shapes here would be a journal whose write path
-// cannot tell a plan from a set of strings; see this file's preamble.
+// They are DOMAIN types, not this package's row shapes. A journal that
+// accepted the row shapes here would be a journal whose write path cannot
+// tell a plan from a set of strings; see this file's preamble.
 type WorkflowPlan struct {
 	Run   workflow.Run
 	Steps []workflow.Step
@@ -146,6 +152,21 @@ type WorkflowPlan struct {
 	// what it forbids: the value a location resolves to is never written
 	// anywhere.
 	Env workflow.Environment
+
+	// Obligations are the run's cleanup obligations, one per scope, in
+	// the state the run BEGINS in: the global scope already eligible
+	// (the run has begun, so that scope is entered), the backup-set
+	// scope not yet (#811's nested rule -- it is entered only once
+	// global-before has succeeded).
+	//
+	// They are committed in the same transaction as the run and its
+	// steps, and that is the point rather than tidiness. "The obligation
+	// is durably written before the first side-effecting command in a
+	// scope" is the claim the whole crash-safety argument rests on, and
+	// for the global scope the first side-effecting command is the run's
+	// first hook -- so the only write that is unambiguously before it is
+	// the one that makes the run exist at all.
+	Obligations []workflow.CleanupObligation
 }
 
 // CommitWorkflowPlan durably records one run and all of its steps in a
@@ -178,11 +199,11 @@ func (j *Journal) CommitWorkflowPlan(ctx context.Context, plan WorkflowPlan) err
 		`INSERT INTO workflow_runs
 		   (run_id, backup_set_id, state, started_at, finished_at,
 		    backup_status, cleanup_status, workflow_status, recovery_state,
-		    resolved_plan_hash, script_spool_ref)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    resolved_plan_hash, script_spool_ref, bypassed)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.BackupSetID.String(), string(r.State), formatTime(r.StartedAt), formatTimePtr(r.FinishedAt),
 		string(r.BackupStatus), string(r.CleanupStatus), string(r.WorkflowStatus), string(r.RecoveryState),
-		r.ResolvedPlanHash, r.ScriptSpoolRef,
+		r.ResolvedPlanHash, r.ScriptSpoolRef, r.Bypassed,
 	); err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf(
@@ -229,6 +250,26 @@ func (j *Journal) CommitWorkflowPlan(ctx context.Context, plan WorkflowPlan) err
 			r.ID, i, v.Name, literal, file, env, command,
 		); err != nil {
 			return fmt.Errorf("state: recording environment variable %q of workflow run %q: %w", v.Name, r.ID, err)
+		}
+	}
+
+	// The obligations go in the SAME transaction, for the reason the
+	// steps and the environment do, and for one more that is specific to
+	// them: an obligation is the record that a scope has been entered,
+	// and this transaction is what makes the run exist. A crash between
+	// the two would leave a run with a first hook about to execute and
+	// no record that the scope it executes in is owed a cleanup.
+	for _, o := range plan.Obligations {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO workflow_cleanup_obligations
+			   (run_id, scope, backup_set_id, state, entered_at, started_at, finished_at,
+			    acknowledged_at, acknowledged_by, acknowledge_reason)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.ID, string(o.Scope), o.BackupSetID.String(), string(o.State),
+			formatTimePtr(o.EnteredAt), formatTimePtr(o.StartedAt), formatTimePtr(o.FinishedAt),
+			formatTimePtr(o.AcknowledgedAt), o.AcknowledgedBy, o.AcknowledgeReason,
+		); err != nil {
+			return fmt.Errorf("state: recording the %s cleanup obligation of workflow run %q: %w", o.Scope, r.ID, err)
 		}
 	}
 
@@ -323,6 +364,54 @@ func validateWorkflowPlan(plan WorkflowPlan) error {
 		seenOrders[s.Order] = true
 	}
 
+	return validatePlanObligations(plan)
+}
+
+// validatePlanObligations refuses an obligation set a run cannot be
+// committed with.
+//
+// The requirement that there is EXACTLY one obligation per scope is the
+// load-bearing one. A run missing the set scope's row would be a run
+// whose set-scope cleanup can never be marked eligible -- so a crash
+// after the backup-set "before" stage had already quiesced something
+// would reconcile to "nothing outstanding", which is the one outcome the
+// whole record exists to prevent. A run with no obligations at all is
+// refused for the same reason rather than treated as "hooks with no
+// cleanup", because every scope a run enters is a scope it can be
+// interrupted in.
+func validatePlanObligations(plan WorkflowPlan) error {
+	r := plan.Run
+
+	byScope := map[workflow.Scope]bool{}
+	for _, o := range plan.Obligations {
+		if err := o.Validate(); err != nil {
+			return fmt.Errorf("state: refusing to record a cleanup obligation of workflow run %q: %w", r.ID, err)
+		}
+
+		switch {
+		case o.RunID != r.ID:
+			return fmt.Errorf(
+				"state: the %s cleanup obligation of run %q is being committed as part of run %q; an obligation attributed to the wrong run is a promise nothing can discharge",
+				o.Scope, o.RunID, r.ID)
+		case o.BackupSetID != r.BackupSetID:
+			return fmt.Errorf(
+				"state: the %s cleanup obligation of run %q names backup set %s and the run names %s; the refusal an obligation drives is per set, so the two disagreeing would block the wrong one",
+				o.Scope, r.ID, o.BackupSetID, r.BackupSetID)
+		case byScope[o.Scope]:
+			return fmt.Errorf("state: workflow run %q has two %s cleanup obligations, which is two answers to whether that scope is owed its cleanup", r.ID, o.Scope)
+		}
+
+		byScope[o.Scope] = true
+	}
+
+	for _, scope := range workflow.Scopes() {
+		if !byScope[scope] {
+			return fmt.Errorf(
+				"state: workflow run %q is being committed with no %s cleanup obligation; every scope a run can enter needs its row before the run starts, because a scope with no row reconciles after a crash as one that was never entered -- which is how a quiesced database gets reported as clean",
+				r.ID, scope)
+		}
+	}
+
 	return nil
 }
 
@@ -331,7 +420,7 @@ func (j *Journal) WorkflowRun(ctx context.Context, runID string) (WorkflowRun, e
 	row := j.db.QueryRowContext(ctx,
 		`SELECT run_id, backup_set_id, state, started_at, finished_at,
 		        backup_status, cleanup_status, workflow_status, recovery_state,
-		        resolved_plan_hash, script_spool_ref
+		        resolved_plan_hash, script_spool_ref, bypassed
 		   FROM workflow_runs WHERE run_id = ?`, runID)
 
 	var (
@@ -342,7 +431,7 @@ func (j *Journal) WorkflowRun(ctx context.Context, runID string) (WorkflowRun, e
 
 	err := row.Scan(&r.RunID, &r.BackupSetID, &r.State, &startedAt, &finishedAt,
 		&r.BackupStatus, &r.CleanupStatus, &r.WorkflowStatus, &r.RecoveryState,
-		&r.ResolvedPlanHash, &r.ScriptSpoolRef)
+		&r.ResolvedPlanHash, &r.ScriptSpoolRef, &r.Bypassed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WorkflowRun{}, fmt.Errorf("%w: %s", ErrWorkflowRunNotFound, runID)
 	}
