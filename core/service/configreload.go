@@ -101,6 +101,17 @@ func (b *BackupService) adoptConfig(cfg *config.Config) string {
 	if !newInner.AdoptAlerts(prevInner.Alerts) && b.alertSink != nil {
 		newInner.EnableAlerts(sinkAdapter{sink: b.alertSink})
 	}
+	// Carried forward for AdoptAlerts' reason: the lifecycle is a
+	// property of this PROCESS (one engine, one lock table, one record of
+	// which sets are blocked), and a reload that dropped it would leave a
+	// deployment running every backup with no hooks and no refusal, with
+	// nothing anywhere saying why. Carrying the previous inner's value
+	// rather than rebuilding one also preserves the ordering
+	// ReconcileWorkflows relies on: a process whose startup
+	// reconciliation FAILED has no lifecycle installed, and a
+	// configuration reload must not be the thing that quietly switches
+	// one on.
+	newInner.Workflow = prevInner.Workflow
 	// Before the store, deliberately: see this function's doc.
 	newInner.AdoptPollSchedule(prevInner)
 	revision := computeConfigRevision(cfg)

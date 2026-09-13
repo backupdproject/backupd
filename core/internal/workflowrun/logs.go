@@ -89,6 +89,15 @@ type stepSink struct {
 	rec    *logRecorder
 	stepID string
 
+	// onTruncate is called once, the first time this step's recording
+	// stops at the bound.
+	//
+	// A callback rather than a field the recorder reads afterwards,
+	// because the fact is an EVENT with a target attached (observe.go)
+	// and the recorder deliberately knows nothing about a step beyond
+	// its id. Optional: nil is a deployment with nothing measuring.
+	onTruncate func()
+
 	mu        sync.Mutex
 	filters   map[workflowexec.StreamID]*obs.StreamFilter
 	written   int64
@@ -97,10 +106,11 @@ type stepSink struct {
 	chunks    uint64
 }
 
-func (r *logRecorder) stepSink(stepID string, redactor *obs.Redactor) *stepSink {
+func (r *logRecorder) stepSink(stepID string, redactor *obs.Redactor, onTruncate func()) *stepSink {
 	return &stepSink{
-		rec:    r,
-		stepID: stepID,
+		rec:        r,
+		stepID:     stepID,
+		onTruncate: onTruncate,
 		filters: map[workflowexec.StreamID]*obs.StreamFilter{
 			workflowexec.StreamStdout: redactor.NewStreamFilter(),
 			workflowexec.StreamStderr: redactor.NewStreamFilter(),
@@ -191,6 +201,17 @@ func (s *stepSink) emit(stream workflowexec.StreamID, payload []byte) error {
 
 	if s.written+int64(len(payload)) > bound {
 		s.truncated = true
+
+		// Announced once, here, and not from the guard above: the flag
+		// is what makes this the FIRST payload that did not fit, and
+		// every payload after it takes the early return. A counter
+		// incremented per dropped chunk would report a hook that
+		// overflowed by one byte and one that overflowed by a gigabyte
+		// as wildly different numbers of truncations, when both are one
+		// truncated step.
+		if s.onTruncate != nil {
+			s.onTruncate()
+		}
 
 		marker := fmt.Sprintf(
 			"[backupd] output truncated: this step reached the %d-byte persisted-output bound for one step. The hook is still running and its output is still being read; it is no longer being recorded.",

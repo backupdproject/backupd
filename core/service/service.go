@@ -170,6 +170,20 @@ type BackupService struct {
 	// to the edit-hold warning specifically.
 	cycleWatch *cycleWatch
 
+	// workflow is EPIC L's engine and its counters (workflowengine.go),
+	// built once by New and never replaced.
+	//
+	// Never replaced, unlike state above, because two of the engine's
+	// fields are per-DEPLOYMENT rather than per-configuration: the set
+	// lock table, and the in-memory record of which backup sets have an
+	// unresolved interruption. A hot reload that rebuilt it would drop a
+	// lock a running backup is holding and forget every recovery hold
+	// the startup pass found, which would unblock a set nobody had
+	// looked at. The configuration-dependent parts -- the runner's
+	// address, the execution connections -- are resolved per step from
+	// b.state instead, so a reload moves them without moving this.
+	workflow *workflowRuntime
+
 	// configPath is the YAML file this BackupService was opened from
 	// (Open), or "" for a BackupService built directly with New (every
 	// core/ test, which constructs its own *config.Config in memory and
@@ -305,6 +319,20 @@ func New(cfg *config.Config, journal *state.Journal, tr transport.Transport, log
 	b.logger = logger
 	b.activity = activity
 	b.state.Store(&configState{inner: app.New(cfg, journal, tr, logger), revision: computeConfigRevision(cfg)})
+
+	// EPIC L's engine, built here and switched on later. It is
+	// constructed unconditionally, including for a deployment that
+	// configures no hooks, because "does this deployment run workflows"
+	// is a question about the CURRENT configuration and a hot reload can
+	// change the answer: an engine built only when workflows were
+	// configured at startup would leave a deployment that adds its first
+	// hook needing a restart to run it. It costs a struct and two maps.
+	//
+	// It is not RECONCILED here, and until it is, its own Run refuses
+	// everything: see ReconcileWorkflows for why the startup pass belongs
+	// to whichever process is about to serve rather than to a
+	// constructor every test calls.
+	b.workflow = newWorkflowRuntime(b)
 
 	// The sweep skips actions whose work does not happen in this process.
 	// A restore runs at the storage provider for hours and is entirely

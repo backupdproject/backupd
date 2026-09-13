@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -76,6 +75,12 @@ type Engine struct {
 	// resolved secret values are layered onto it for the duration of
 	// that step and dropped afterwards.
 	Redactor *obs.Redactor
+
+	// Observer receives one measurement per finished run, per finished
+	// step and per truncated step log (observe.go). Optional: a nil
+	// Observer is a deployment with nothing scraping it, and it costs a
+	// nil check.
+	Observer Observer
 
 	// CleanupTimeout bounds a torn-down run's cleanup stage. Zero takes
 	// DefaultCleanupTimeout.
@@ -420,7 +425,7 @@ func (e *Engine) runPlanned(ctx context.Context, req RunRequest, set model.Backu
 		r.entered[workflow.ScopeGlobal] = true
 	}
 
-	action := e.begin(ctx, r)
+	e.begin(ctx, r)
 
 	// Also jctx, and its failure is FINALIZED rather than returned bare.
 	// The plan is committed by this point, so a bare return would leave
@@ -445,7 +450,7 @@ func (e *Engine) runPlanned(ctx context.Context, req RunRequest, set model.Backu
 	}
 
 	res, ferr := r.finish()
-	e.end(ctx, action, res)
+	e.end(ctx, res, set)
 
 	if res.RecoveryOutstanding {
 		if _, err := e.loadHolds(r.jctx); err != nil && ferr == nil {
@@ -779,12 +784,20 @@ func (r *runner) runStep(ctx context.Context, step workflow.Step, recovering boo
 		return false
 	}
 	r.results[idx].State = workflow.StateRunning
+	r.announceStepStart(step)
 
 	// The step's own secret material is layered onto the deployment's
 	// redactor for the duration of this step and dropped afterwards, so
 	// a hook that prints its own credential does not write it into the
 	// journal or stream it to a browser.
-	sink := r.logs.stepSink(step.ID, r.engine.Redactor.WithValues(resolved.SecretValues()...))
+	//
+	// The truncation callback is this step's: the recorder counts bytes
+	// and knows nothing about targets, and a metric label has to say
+	// whether the output that stopped being recorded came off a local
+	// hook or a remote one.
+	sink := r.logs.stepSink(step.ID, r.engine.Redactor.WithValues(resolved.SecretValues()...), func() {
+		r.engine.observeTruncation(step.Target)
+	})
 
 	stepCtx, cancel := context.WithTimeout(ctx, step.Timeout)
 	outcome, execErr := executor.ExecuteStep(stepCtx, StepRequest{
@@ -869,8 +882,81 @@ func (r *runner) finishStep(step workflow.Step, outcome StepOutcome, st workflow
 		return
 	}
 
+	// After the durable write and before the failure bookkeeping: a step
+	// this product could not RECORD is not a step it may report a clean
+	// measurement for, and the branch above has already said so.
+	r.announceStepEnd(step, outcome, st, took)
+
 	if st != workflow.StateSuccess && st != workflow.StateSkipped {
 		r.noteFailure(step, st)
+	}
+}
+
+// announceStepStart and announceStepEnd are the two halves of one step's
+// bracket on the event stream, and announceStepEnd is also where the
+// step's measurement is taken.
+//
+// A SKIPPED step is announced by neither. Nothing ran, nothing was
+// dispatched and nothing took any time, so a start-and-completion pair
+// around it would put a run's whole skipped tail into an operator's live
+// feed as activity -- which on a global-before failure is every step
+// there is -- and a duration measurement of zero into a histogram that is
+// there to answer how long hooks take. The run row records every step's
+// skipped state, which is where "what did not run" belongs.
+func (r *runner) announceStepStart(step workflow.Step) {
+	if r.engine.Logger == nil {
+		return
+	}
+
+	r.engine.Logger.WorkflowStepStart(r.jctx, r.runID, r.set.String(), step.ID, step.ScriptName,
+		string(step.Scope), string(step.Phase), string(step.Target))
+}
+
+func (r *runner) announceStepEnd(step workflow.Step, outcome StepOutcome, st workflow.State, took time.Duration) {
+	if st == workflow.StateSkipped {
+		return
+	}
+
+	r.engine.observeStep(StepObservation{
+		BackupSetID: r.set,
+		Scope:       step.Scope,
+		Phase:       step.Phase,
+		Target:      step.Target,
+		State:       st,
+		Disposition: outcome.Disposition,
+		Duration:    took,
+	})
+
+	if r.engine.Logger == nil {
+		return
+	}
+
+	var exitCode *int
+	if outcome.Disposition == DispositionExited {
+		exitCode = outcome.ExitCode
+	}
+
+	r.engine.Logger.WorkflowStepEnd(r.jctx, r.runID, r.set.String(), step.ID, step.ScriptName,
+		string(step.Scope), string(step.Phase), string(step.Target),
+		string(st), string(outcome.Disposition), exitCode, took, stepResult(st))
+}
+
+// stepResult maps a step's terminal state onto the outcome vocabulary the
+// event stream states (obs.Result).
+//
+// A skipped step reports ResultInfo rather than success: it completed in
+// the sense that the run moved past it, and nothing was attempted, which
+// is exactly the case obs.ResultInfo exists for. It is unreachable from
+// announceStepEnd, which returns before this, and is here because the
+// mapping is the vocabulary's and not one call site's.
+func stepResult(st workflow.State) obs.Result {
+	switch st {
+	case workflow.StateSuccess:
+		return obs.ResultSuccess
+	case workflow.StateSkipped:
+		return obs.ResultInfo
+	default:
+		return obs.ResultError
 	}
 }
 
@@ -1217,37 +1303,67 @@ func (r *runner) finish() (RunResult, error) {
 // carrying an action id, and a completion carrying the same id and an
 // outcome, which is what lets a reader pair them and notice a run that
 // announced itself and went quiet (obs/action.go).
-func (e *Engine) begin(ctx context.Context, r *runner) *obs.Action {
+//
+// They go through internal/obs's own typed catalog entries
+// (obs.EventWorkflowRunStart / EventWorkflowRunEnd) rather than through
+// the generic Begin, because the event field is a wire contract: every
+// other FR-23 moment has a named constant a test pins the literal of, and
+// a workflow run announced under a string typed at this call site is the
+// one line in the catalog a rename could silently break. It is also what
+// puts a run in front of an operator without anything else being built:
+// service/liveactivity.go buckets on the backup_set field, so the run and
+// its steps land in that set's live strip the moment they are emitted.
+func (e *Engine) begin(ctx context.Context, r *runner) {
 	if e.Logger == nil {
-		return nil
+		return
 	}
 
-	return e.Logger.Begin(ctx, "workflow_run_start", "workflow_run",
-		"workflow run started",
-		obsAttrs(r.runID, r.set.String(), len(r.steps))...,
-	)
+	e.Logger.WorkflowRunStart(ctx, r.runID, r.set.String(), len(r.steps), r.req.Bypassed)
 }
 
-func (e *Engine) end(ctx context.Context, action *obs.Action, res RunResult) {
-	if action == nil {
+// end closes the pair and takes the run's measurement.
+//
+// The measurement is here rather than in finish() because this is the one
+// place that has the RESULT the engine settled on, including the runs
+// finish() reports an error for: a run whose summary row would not write
+// still happened, still took time, and still ran somebody's hooks, and a
+// counter that skipped it would under-report exactly the deployments that
+// most need looking at.
+func (e *Engine) end(ctx context.Context, res RunResult, set model.BackupSetID) {
+	e.observeRun(RunObservation{
+		BackupSetID: set,
+		Status:      res.WorkflowStatus,
+		Bypassed:    res.Bypassed,
+		Duration:    res.Duration,
+	})
+
+	if e.Logger == nil {
 		return
 	}
 
-	attrs := []slog.Attr{
-		slog.String("run_id", res.RunID),
-		slog.String("workflow_status", string(res.WorkflowStatus)),
-		slog.String("backup_status", string(res.BackupStatus)),
-		slog.String("cleanup_status", string(res.CleanupStatus)),
-	}
-	if res.FailedStep != "" {
-		attrs = append(attrs, slog.String("failed_step", res.FailedStep))
-	}
+	e.Logger.WorkflowRunEnd(ctx, res.RunID, set.String(), res.ScriptCount, res.Duration,
+		string(res.BackupStatus), string(res.CleanupStatus), string(res.WorkflowStatus),
+		res.FailedStep, res.Bypassed, runResult(res))
+}
 
-	if res.WorkflowStatus == workflow.StatusSuccess {
-		action.Succeeded(ctx, "workflow run finished", attrs...)
-
-		return
+// runResult maps a run's WORKFLOW status onto the outcome vocabulary the
+// event stream states.
+//
+// The workflow status and not the backup's, because the workflow status
+// is already this product's combined verdict: #811's rule is that an
+// "after" hook that failed fails the run even when the backup succeeded,
+// and that decision is made once, in noteFailure, rather than a second
+// time here. A run still needing recovery is an error whatever the
+// statuses say, because a scope of it cannot be accounted for at all.
+func runResult(res RunResult) obs.Result {
+	switch {
+	case res.RecoveryOutstanding:
+		return obs.ResultError
+	case res.WorkflowStatus == workflow.StatusSuccess:
+		return obs.ResultSuccess
+	case res.WorkflowStatus == workflow.StatusSkipped:
+		return obs.ResultInfo
+	default:
+		return obs.ResultError
 	}
-
-	action.End(ctx, obs.ResultError, "workflow run finished", attrs...)
 }

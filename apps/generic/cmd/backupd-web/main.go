@@ -625,6 +625,31 @@ func cmdServe(args []string) int {
 			fmt.Fprintln(os.Stderr, cliecho.WebBinary+": shutdown complete, the backup service is closed")
 		}()
 		enableAlerts(backend, platformAdapter)
+		// EPIC L (#813): the workflow engine's startup reconciliation,
+		// BEFORE anything is served and before the scheduler can tick.
+		//
+		// It is here rather than inside service.Open for the reason
+		// ReconcileWorkflows' own doc gives: the reconciliation decides
+		// which backup sets have an interrupted run whose cleanup nobody
+		// has accounted for, and a backup started before that answer
+		// exists is one taken over a machine that may still be quiesced.
+		// internal/workflowrun refuses every run until it has happened,
+		// so this is also what switches the lifecycle on.
+		//
+		// A failure is a WARNING and not a fatal error, and that is a
+		// deliberate trade. Refusing to serve would mean one unreadable
+		// journal row stops a deployment backing anything up AND stops
+		// the operator reaching the UI that would let them look at it.
+		// What a failure costs instead is the hooks: the lifecycle stays
+		// uninstalled, the cycle runs exactly as it did before EPIC L,
+		// and this line is the record of why.
+		backend.SetBuildVersion(version)
+		if report, wfErr := backend.ReconcileWorkflows(ctx); wfErr != nil {
+			fmt.Fprintln(os.Stderr, cliecho.WebBinary+": workflow runs could not be reconciled, so hook scripts are disabled for this process:", wfErr)
+		} else if len(report.Holds) > 0 {
+			fmt.Fprintf(os.Stderr, cliecho.WebBinary+": %d workflow cleanup(s) from an interrupted run are outstanding; the affected backup sets refuse to run until each is resumed or acknowledged (`%s workflow recovery show`)\n",
+				len(report.Holds), cliecho.Binary)
+		}
 		engineConfig.Backend = backend
 		handler = serve.NewEngine(engineConfig)
 		scheduler = backend

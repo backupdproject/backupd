@@ -1,0 +1,901 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/backupdproject/backupd/core/internal/remoteexec"
+	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/google/uuid"
+)
+
+// `backupd validate workflow <source/backup-set>`: everything this
+// product can find out about a set's hooks WITHOUT running one (#813).
+//
+// # The rule that shapes the whole file
+//
+// Validation never executes a script body. Not once, not "just the safe
+// ones", not behind a flag. A hook is arbitrary code an operator wrote to
+// quiesce a database, and a validation that ran it would be a command
+// somebody types to check their configuration that stops a production
+// database. So the only two things that ever reach an interpreter here
+// are `bash -n` -- parse, never execute -- and the remote capability
+// PROBE, which is internal/remoteexec's own fixed script and not the
+// operator's.
+//
+// # Why the bulk of it is one call to Snapshot
+//
+// Because Snapshot is what a real run does, and validating through a
+// second implementation would validate the second implementation. It
+// resolves each stage directory inside the approved root, refuses a
+// symlink or a group-writable ancestor at every level, parses every
+// script name into a target, orders the plan bytewise, captures the bytes
+// and records their sha256. Those are six of #813's items and they are
+// exactly the six a run would refuse on. Re-deriving them here would
+// produce a validation that can pass while the run fails, which is worse
+// than no validation.
+//
+// What it costs is a spool, because capturing is what hashing means. So
+// validation spools to a directory of its own and removes it: a real run
+// keeps its spool because a recovery has to be able to re-execute the
+// exact bytes, and a validation has nothing to recover.
+//
+// # Why a set can be valid for backup and invalid for workflows
+//
+// #813 requires this to be sayable and it is the normal case during
+// setup: a backup set whose source connects, whose destination is
+// writable and whose retention is sound, with a hook directory somebody
+// has not created yet. Reporting the set as broken would tell an operator
+// their backups are failing when they are not. So there are two verdicts
+// and the report carries both.
+
+// The check ids this validation reports, one per item #813 enumerates.
+//
+// A closed vocabulary rather than free text, because these reach a JSON
+// surface and a UI: a client that groups by check, or an operator who
+// greps for one, needs the id to be a value rather than a sentence. The
+// SENTENCE is Detail, and it is free to be rewritten; the id is not.
+const (
+	WorkflowCheckDirectories        = "resolved_directories"
+	WorkflowCheckScriptNames        = "script_names"
+	WorkflowCheckOrdering           = "ordering"
+	WorkflowCheckTarget             = "target"
+	WorkflowCheckScriptHash         = "script_hash"
+	WorkflowCheckPermissionAncestry = "permission_ancestry"
+	WorkflowCheckRunnerHealth       = "runner_health"
+	WorkflowCheckLocalBashSyntax    = "local_bash_syntax"
+	WorkflowCheckExecConnection     = "exec_connection"
+	WorkflowCheckExecCapability     = "exec_capability"
+	WorkflowCheckRemoteBashSyntax   = "remote_bash_syntax"
+	WorkflowCheckEnvConflicts       = "environment_conflicts"
+	WorkflowCheckReservedEnv        = "reserved_variables"
+	WorkflowCheckSecretRefs         = "secret_references"
+	WorkflowCheckTimeouts           = "timeouts"
+)
+
+// WorkflowChecks lists every check, in report order.
+//
+// Exported so the CLI's own output, the API's enum and a test that
+// asserts every item #813 names is covered can all read one list rather
+// than three copies of it.
+func WorkflowChecks() []string {
+	return []string{
+		WorkflowCheckDirectories,
+		WorkflowCheckScriptNames,
+		WorkflowCheckOrdering,
+		WorkflowCheckTarget,
+		WorkflowCheckScriptHash,
+		WorkflowCheckPermissionAncestry,
+		WorkflowCheckTimeouts,
+		WorkflowCheckEnvConflicts,
+		WorkflowCheckReservedEnv,
+		WorkflowCheckSecretRefs,
+		WorkflowCheckRunnerHealth,
+		WorkflowCheckLocalBashSyntax,
+		WorkflowCheckExecConnection,
+		WorkflowCheckExecCapability,
+		WorkflowCheckRemoteBashSyntax,
+	}
+}
+
+// The severities a finding can carry.
+//
+// Four, and "skipped" is the one that earns its place: a deployment with
+// no remote hooks has nothing to say about its exec capability, and
+// reporting that as OK would be this product claiming it proved something
+// it never looked at. An operator debugging a remote hook that does not
+// run needs to see "skipped: this set has no remote scripts" rather than
+// a green tick.
+const (
+	WorkflowSeverityOK      = "ok"
+	WorkflowSeveritySkipped = "skipped"
+	WorkflowSeverityWarning = "warning"
+	WorkflowSeverityError   = "error"
+)
+
+// WorkflowFinding is one check's answer.
+type WorkflowFinding struct {
+	Check    string
+	Severity string
+
+	// Detail is the operator-facing sentence. It may name a script by
+	// BASENAME, a stage directory as configured, a variable NAME and a
+	// secret's LOCATION -- and never a secret's value, because nothing
+	// on this path resolves one.
+	Detail string
+
+	// Scope, Phase, Target and Script narrow a finding to one step where
+	// the check is per script. All empty for a check about the set.
+	Scope  string
+	Phase  string
+	Target string
+	Script string
+}
+
+// WorkflowValidation is one set's whole report.
+type WorkflowValidation struct {
+	BackupSetID string
+
+	// ValidForBackup says nothing is wrong with the backup set ITSELF.
+	// WorkflowValid says nothing is wrong with its hooks. They are
+	// separate answers on purpose; see this file's doc.
+	ValidForBackup bool
+	WorkflowValid  bool
+
+	// Configured says this set runs hooks at all. A set with no stages
+	// reports WorkflowValid true and every check skipped, which is the
+	// honest answer: there is nothing to be wrong.
+	Configured bool
+
+	Root   string
+	Stages []WorkflowStage
+
+	// Scripts is every hook this set would run, in plan order, with the
+	// resolved bound each one gets.
+	Scripts []WorkflowValidatedScript
+
+	Findings []WorkflowFinding
+}
+
+// WorkflowValidatedScript is one discovered hook.
+type WorkflowValidatedScript struct {
+	StepID     string
+	Order      int
+	ScriptName string
+	Scope      string
+	Phase      string
+	Target     string
+
+	// SHA256 is the hash of the bytes as they are on disk right now. It
+	// is what a run would record and what a recovery would re-verify
+	// against, so an operator comparing two deployments can compare this.
+	SHA256 string
+	Size   int64
+
+	TimeoutMillis int64
+
+	ExecutionConnectionRef string
+}
+
+// ErrWorkflowValidationUnavailable is what validation reports when it
+// cannot even begin: no state directory to spool into.
+var ErrWorkflowValidationUnavailable = errors.New("service: this deployment cannot validate workflows")
+
+// ValidateWorkflow reports everything this product can establish about a
+// backup set's hooks without running one.
+//
+// It takes a context because the two probes it makes are network calls (a
+// Unix socket and an SSH connection) and an operator's Ctrl-C has to stop
+// them. Both are bounded independently of that, at workflowProbeTimeout,
+// so a validation against an unreachable host answers rather than hangs.
+func (b *BackupService) ValidateWorkflow(ctx context.Context, id string) (WorkflowValidation, error) {
+	cfg := b.state.Load().inner.Config
+
+	bs, err := lookupConfiguredBackupSet(cfg, id)
+	if err != nil {
+		return WorkflowValidation{}, err
+	}
+
+	// The whole pass is bounded as well as each probe. Every CLI verb in
+	// this repository passes context.Background(), so without this a set
+	// with six remote hooks against a host that black-holes packets would
+	// wait six probe timeouts in a row at somebody's terminal.
+	ctx, cancel := context.WithTimeout(ctx, workflowValidationDeadline)
+	defer cancel()
+
+	v := &workflowValidator{
+		svc: b,
+		cfg: cfg,
+		set: bs,
+		report: WorkflowValidation{
+			BackupSetID: bs.ID.String(),
+			// A set this configuration holds has already been through
+			// config.Validate, which is what "valid for backup" means:
+			// the service refuses to load a configuration that is not.
+			// The value is carried anyway rather than assumed by the
+			// caller, because it is half of the answer #813 requires
+			// this report to give and a reader must not have to know
+			// that it is always true today to interpret the other half.
+			ValidForBackup: true,
+			Root:           cfg.Workflows.Root,
+		},
+	}
+
+	v.run(ctx)
+
+	return v.report, nil
+}
+
+// workflowValidator accumulates one report.
+type workflowValidator struct {
+	svc *BackupService
+	cfg *config.Config
+	set config.BackupSet
+
+	report WorkflowValidation
+	plan   workflow.Plan
+}
+
+func (v *workflowValidator) add(f WorkflowFinding) {
+	v.report.Findings = append(v.report.Findings, f)
+}
+
+func (v *workflowValidator) ok(check, detail string) {
+	v.add(WorkflowFinding{Check: check, Severity: WorkflowSeverityOK, Detail: detail})
+}
+
+func (v *workflowValidator) skip(check, detail string) {
+	v.add(WorkflowFinding{Check: check, Severity: WorkflowSeveritySkipped, Detail: detail})
+}
+
+func (v *workflowValidator) fail(check, detail string) {
+	v.add(WorkflowFinding{Check: check, Severity: WorkflowSeverityError, Detail: detail})
+}
+
+func (v *workflowValidator) warn(check, detail string) {
+	v.add(WorkflowFinding{Check: check, Severity: WorkflowSeverityWarning, Detail: detail})
+}
+
+// run performs every check, in report order, and settles the verdict.
+func (v *workflowValidator) run(ctx context.Context) {
+	stages := v.cfg.WorkflowStagesFor(&v.set)
+	v.report.Configured = len(stages) > 0
+
+	for _, st := range stages {
+		v.report.Stages = append(v.report.Stages, WorkflowStage{
+			Scope: string(st.Scope), Phase: string(st.Phase), Dir: st.Dir,
+		})
+	}
+
+	// The environment checks come first and run whatever the stages say,
+	// because they are about CONFIGURATION rather than about what is on
+	// disk: a reserved variable name or a secret reference pointing at a
+	// file nobody created is worth reporting to an operator who has not
+	// made their hook directory yet.
+	v.checkEnvironment()
+
+	if !v.report.Configured {
+		for _, check := range []string{
+			WorkflowCheckDirectories, WorkflowCheckScriptNames, WorkflowCheckOrdering,
+			WorkflowCheckTarget, WorkflowCheckScriptHash, WorkflowCheckPermissionAncestry,
+			WorkflowCheckTimeouts, WorkflowCheckRunnerHealth, WorkflowCheckLocalBashSyntax,
+			WorkflowCheckExecConnection, WorkflowCheckExecCapability, WorkflowCheckRemoteBashSyntax,
+		} {
+			v.skip(check, "this backup set runs no workflow hooks: neither the deployment nor the set configures a stage directory")
+		}
+		v.settle()
+
+		return
+	}
+
+	v.checkPlan(stages)
+	v.checkTimeouts()
+	v.checkRunner(ctx)
+	v.checkRemote(ctx)
+	v.settle()
+}
+
+// settle decides the two verdicts and sorts the findings into check
+// order.
+//
+// Sorted, so two runs of this command over an unchanged deployment print
+// identical output. A report an operator cannot diff is one they cannot
+// use to find out what they just changed.
+func (v *workflowValidator) settle() {
+	order := make(map[string]int, len(WorkflowChecks()))
+	for i, c := range WorkflowChecks() {
+		order[c] = i
+	}
+
+	sort.SliceStable(v.report.Findings, func(i, j int) bool {
+		return order[v.report.Findings[i].Check] < order[v.report.Findings[j].Check]
+	})
+
+	v.report.WorkflowValid = true
+	for _, f := range v.report.Findings {
+		if f.Severity == WorkflowSeverityError {
+			v.report.WorkflowValid = false
+
+			break
+		}
+	}
+}
+
+// checkPlan is the six on-disk checks, taken from one Snapshot.
+func (v *workflowValidator) checkPlan(stages []workflow.StageSpec) {
+	spool, cleanup, err := v.tempSpool()
+	if err != nil {
+		for _, check := range planChecks() {
+			v.fail(check, err.Error())
+		}
+
+		return
+	}
+	defer cleanup()
+
+	root, err := workflow.NewRoot(v.cfg.Workflows.Root)
+	if err != nil {
+		v.fail(WorkflowCheckDirectories, err.Error())
+		for _, check := range planChecks()[1:] {
+			v.skip(check, "the workflow root could not be approved, so nothing under it was examined")
+		}
+
+		return
+	}
+
+	var execRef string
+	if v.set.Workflow != nil {
+		execRef = v.set.Workflow.RemoteExecConnectionRef
+	}
+
+	plan, err := workflow.Snapshot(workflow.SnapshotRequest{
+		RunID:                   "validate_" + uuid.New().String(),
+		BackupSetID:             v.set.ID,
+		Root:                    root,
+		Stages:                  stages,
+		Env:                     v.set.WorkflowEnvironment,
+		Timeout:                 v.cfg.EffectiveScriptTimeout(&v.set),
+		RemoteExecConnectionRef: execRef,
+		MaxScriptSize:           v.cfg.EffectiveMaxScriptSize(),
+		SpoolRoot:               spool,
+	})
+	if err != nil {
+		v.attributeSnapshotFailure(err)
+
+		return
+	}
+
+	v.plan = plan
+	v.recordScripts(plan)
+
+	v.ok(WorkflowCheckDirectories, fmt.Sprintf("every stage directory resolves inside the approved root %s", root.Path()))
+	v.ok(WorkflowCheckScriptNames, fmt.Sprintf("%d script name(s) parse as NAME.local.sh or NAME.remote.sh", len(plan.Steps())))
+	v.ok(WorkflowCheckOrdering, "the plan is ordered by scope, then phase, then script name, bytewise")
+	v.ok(WorkflowCheckTarget, "every script's target is decided by its own file name and cannot be overridden")
+	v.ok(WorkflowCheckScriptHash, "every script was read and hashed; a run re-verifies these hashes before it executes anything")
+	v.ok(WorkflowCheckPermissionAncestry, "no stage directory, and no ancestor of one inside the root, is a symbolic link or writable by group or other")
+}
+
+// planChecks are the checks one Snapshot answers, in report order.
+func planChecks() []string {
+	return []string{
+		WorkflowCheckDirectories,
+		WorkflowCheckScriptNames,
+		WorkflowCheckOrdering,
+		WorkflowCheckTarget,
+		WorkflowCheckScriptHash,
+		WorkflowCheckPermissionAncestry,
+	}
+}
+
+// attributeSnapshotFailure puts one Snapshot error against the check it
+// belongs to, and marks the rest as unexamined.
+//
+// The attribution is by SENTINEL and not by reading the message, because
+// internal/workflow exports one error value per class of refusal for
+// exactly this: a substring match on a sentence is a classification that
+// silently stops working when somebody improves the wording, and this is
+// the surface an operator reads to find out which of fifteen things is
+// wrong.
+//
+// Every check the failure did not land on is reported as SKIPPED rather
+// than as passing. Snapshot stops at the first refusal, so nothing after
+// it was examined, and a green tick on a check that never ran is the one
+// output that would actively mislead.
+func (v *workflowValidator) attributeSnapshotFailure(err error) {
+	blamed := WorkflowCheckDirectories
+
+	switch {
+	case errors.Is(err, workflow.ErrRoot), errors.Is(err, workflow.ErrStageDir):
+		blamed = WorkflowCheckDirectories
+	case errors.Is(err, workflow.ErrCustody):
+		blamed = WorkflowCheckPermissionAncestry
+	case errors.Is(err, workflow.ErrScriptName):
+		blamed = WorkflowCheckScriptNames
+	case errors.Is(err, workflow.ErrScriptTooLarge), errors.Is(err, workflow.ErrSpool):
+		blamed = WorkflowCheckScriptHash
+	case errors.Is(err, workflow.ErrPlan):
+		blamed = WorkflowCheckOrdering
+	}
+
+	for _, check := range planChecks() {
+		if check == blamed {
+			v.fail(check, err.Error())
+
+			continue
+		}
+		v.skip(check, "not examined: the plan could not be captured, and this check runs over a captured plan")
+	}
+
+	for _, check := range []string{WorkflowCheckRunnerHealth, WorkflowCheckLocalBashSyntax, WorkflowCheckExecConnection, WorkflowCheckExecCapability, WorkflowCheckRemoteBashSyntax} {
+		v.skip(check, "not examined: there is no plan to check an executor against")
+	}
+}
+
+func (v *workflowValidator) recordScripts(plan workflow.Plan) {
+	for _, s := range plan.Steps() {
+		v.report.Scripts = append(v.report.Scripts, WorkflowValidatedScript{
+			StepID:                 s.ID,
+			Order:                  s.Order,
+			ScriptName:             s.ScriptName,
+			Scope:                  string(s.Scope),
+			Phase:                  string(s.Phase),
+			Target:                 string(s.Target),
+			SHA256:                 s.ScriptSHA256,
+			Size:                   s.ScriptSize,
+			TimeoutMillis:          s.Timeout.Milliseconds(),
+			ExecutionConnectionRef: s.ExecutionConnectionRef,
+		})
+	}
+}
+
+// tempSpool makes a throwaway spool for this validation and returns the
+// function that removes it.
+//
+// Under the state directory's own spool root rather than in /tmp, because
+// the guarantee that makes a spool safe is that it is 0600 files in a
+// 0700 directory nothing else can reach, and /tmp on a NAS is a directory
+// every account on the box can reach.
+func (v *workflowValidator) tempSpool() (string, func(), error) {
+	root := v.cfg.WorkflowSpoolDir()
+	if root == "" {
+		return "", nil, ErrWorkflowValidationUnavailable
+	}
+
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", nil, fmt.Errorf("service: preparing a workflow spool at %s: %w", root, err)
+	}
+
+	dir, err := os.MkdirTemp(root, "validate-")
+	if err != nil {
+		return "", nil, fmt.Errorf("service: preparing a workflow spool at %s: %w", root, err)
+	}
+
+	return dir, func() { _ = os.RemoveAll(dir) }, nil
+}
+
+// checkTimeouts reports the bound each script will get and where it came
+// from.
+//
+// It is a check rather than a bare field because the inheritance is where
+// operators get surprised: a set that pins thirty seconds while the
+// deployment allows five minutes is a hook that will be killed, and the
+// only place that is visible is a report that says which value won.
+func (v *workflowValidator) checkTimeouts() {
+	effective := v.cfg.EffectiveScriptTimeout(&v.set)
+
+	source := "internal default"
+	switch {
+	case v.set.Workflow != nil && v.set.Workflow.ScriptTimeout.Duration() > 0:
+		source = "this backup set's own script_timeout"
+	case v.cfg.Workflows.ScriptTimeout.Duration() > 0:
+		source = "the deployment's script_timeout"
+	}
+
+	v.ok(WorkflowCheckTimeouts, fmt.Sprintf("every hook of this set is bounded at %s, from %s", effective, source))
+}
+
+// checkEnvironment covers three of #813's items: name conflicts between
+// the two layers, reserved names, and secret references that do not
+// resolve to anything.
+func (v *workflowValidator) checkEnvironment() {
+	v.checkEnvConflicts()
+	v.checkReservedNames()
+	v.checkSecretRefs()
+}
+
+// checkEnvConflicts reports a variable configured in both layers.
+//
+// A WARNING and not an error, because it is legal and often deliberate:
+// the whole point of a per-set layer is that it wins over the
+// deployment's. What makes it worth a line is that the loser is invisible
+// -- an operator who changed the deployment value and saw no effect is
+// looking at exactly this -- so the finding names which one wins.
+func (v *workflowValidator) checkEnvConflicts() {
+	global := map[string]bool{}
+	for _, e := range v.cfg.Workflows.Environment {
+		global[e.Name] = true
+	}
+
+	var clashes []string
+	for _, e := range v.set.Environment {
+		if global[e.Name] {
+			clashes = append(clashes, e.Name)
+		}
+	}
+	sort.Strings(clashes)
+
+	if len(clashes) == 0 {
+		v.ok(WorkflowCheckEnvConflicts, "no variable is configured in both the deployment's environment and this set's")
+
+		return
+	}
+
+	v.warn(WorkflowCheckEnvConflicts, fmt.Sprintf(
+		"configured in both layers, and this backup set's value wins: %s", strings.Join(clashes, ", ")))
+}
+
+// checkReservedNames reports a configured variable in this product's own
+// namespace.
+//
+// It should be unreachable through a validated configuration --
+// config.Validate refuses the whole BACKUPD_ prefix -- and it is checked
+// anyway, because this report is also read against a configuration
+// somebody is in the middle of editing by hand, and "your hook cannot see
+// BACKUPD_RUN_ID because you set it yourself" is a sentence worth having.
+func (v *workflowValidator) checkReservedNames() {
+	var reserved []string
+
+	for _, layer := range [][]config.EnvironmentVariable{v.cfg.Workflows.Environment, v.set.Environment} {
+		for _, e := range layer {
+			if workflow.IsReservedEnvName(e.Name) {
+				reserved = append(reserved, e.Name)
+			}
+		}
+	}
+	sort.Strings(reserved)
+
+	if len(reserved) == 0 {
+		v.ok(WorkflowCheckReservedEnv, fmt.Sprintf(
+			"no configured variable uses this product's reserved %s namespace, so every built-in a hook reads is this product's own",
+			workflow.ReservedEnvPrefix))
+
+		return
+	}
+
+	v.fail(WorkflowCheckReservedEnv, fmt.Sprintf(
+		"configured in this product's reserved %s namespace and shadowed at every run: %s",
+		workflow.ReservedEnvPrefix, strings.Join(reserved, ", ")))
+}
+
+// checkSecretRefs reports a secret reference that names a location this
+// deployment cannot see.
+//
+// # What it does and does not do
+//
+// It establishes PRESENCE, and deliberately not the value. A file is
+// stat'ed, an environment variable is looked up by name, and a command's
+// executable is looked up on PATH -- and the command is NOT RUN. That
+// asymmetry is the whole design: `secretref.Resolve` executes a program
+// the operator named, and this is a command an operator types to check
+// their configuration. A validation that ran `vault read ...` would make
+// `backupd validate` an authenticated call against somebody's secret
+// store, and on a misconfigured deployment, a call that hangs.
+//
+// So the honest report for a command reference is that the program
+// exists, which is the failure mode that actually happens (a helper that
+// is not installed in the engine's container), and it says that is all it
+// checked.
+func (v *workflowValidator) checkSecretRefs() {
+	type layer struct {
+		what string
+		vars []config.EnvironmentVariable
+	}
+
+	var problems []string
+	checked := 0
+
+	for _, l := range []layer{
+		{"the deployment's environment", v.cfg.Workflows.Environment},
+		{"this backup set's environment", v.set.Environment},
+	} {
+		for _, e := range l.vars {
+			if e.FromSecret == nil {
+				continue
+			}
+			checked++
+			if detail := secretRefProblem(*e.FromSecret); detail != "" {
+				problems = append(problems, fmt.Sprintf("%s in %s: %s", e.Name, l.what, detail))
+			}
+		}
+	}
+
+	switch {
+	case checked == 0:
+		v.skip(WorkflowCheckSecretRefs, "no workflow environment variable takes its value from a secret reference")
+	case len(problems) == 0:
+		v.ok(WorkflowCheckSecretRefs, fmt.Sprintf(
+			"%d secret reference(s) name a location this deployment can see. A command reference is checked for the program's presence only: this validation never runs it", checked))
+	default:
+		sort.Strings(problems)
+		v.fail(WorkflowCheckSecretRefs, strings.Join(problems, "; "))
+	}
+}
+
+// secretRefProblem reports what is wrong with one reference, or "".
+func secretRefProblem(s config.SecretSource) string {
+	switch {
+	case s.File != "":
+		info, err := os.Lstat(s.File)
+		switch {
+		case err != nil:
+			return fmt.Sprintf("the secret file %s cannot be read (%v)", s.File, err)
+		case info.Mode()&os.ModeSymlink != 0:
+			return fmt.Sprintf("the secret file %s is a symbolic link, and this product will not follow one to a credential", s.File)
+		case !info.Mode().IsRegular():
+			return fmt.Sprintf("the secret file %s is not a regular file", s.File)
+		case info.Mode().Perm()&0o077 != 0:
+			return fmt.Sprintf("the secret file %s is readable by group or other (mode %04o), so it is not a credential", s.File, info.Mode().Perm())
+		}
+
+		return ""
+	case s.Env != "":
+		if _, ok := os.LookupEnv(s.Env); !ok {
+			return fmt.Sprintf("the environment variable %s is not set in this process, so the reference resolves to nothing", s.Env)
+		}
+
+		return ""
+	case len(s.Command) > 0:
+		if _, err := exec.LookPath(s.Command[0]); err != nil {
+			return fmt.Sprintf("the program %s is not on this process's PATH", filepath.Base(s.Command[0]))
+		}
+
+		return ""
+	default:
+		return "the reference names no location: set exactly one of file, env or command"
+	}
+}
+
+// checkRunner asks the Host Workflow Runner what it is, and asks it to
+// PARSE every local script.
+//
+// Both questions go to the runner rather than to bash in this process,
+// and that is the point of the runner existing: a `.local.sh` hook means
+// "run this on the machine backupd is installed on", the engine's
+// canonical runtime is a distroless container with no shell at all, and a
+// syntax check performed by a bash this container does not have would be
+// a check against an interpreter the hook will never meet.
+func (v *workflowValidator) checkRunner(ctx context.Context) {
+	local := stepsWithTarget(v.plan, workflow.TargetLocal)
+
+	if len(local) == 0 {
+		v.skip(WorkflowCheckRunnerHealth, "this backup set runs no local (NAME.local.sh) hooks, so it needs no host workflow runner")
+		v.skip(WorkflowCheckLocalBashSyntax, "this backup set runs no local (NAME.local.sh) hooks")
+
+		return
+	}
+
+	client, err := v.svc.hostRunnerClient()
+	if err != nil {
+		v.fail(WorkflowCheckRunnerHealth, err.Error())
+		v.skip(WorkflowCheckLocalBashSyntax, "not examined: there is no runner to ask")
+
+		return
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, workflowProbeTimeout)
+	defer cancel()
+
+	status, err := client.Status(probeCtx)
+	if err != nil {
+		v.fail(WorkflowCheckRunnerHealth, err.Error())
+		v.skip(WorkflowCheckLocalBashSyntax, "not examined: the runner did not answer")
+
+		return
+	}
+
+	v.ok(WorkflowCheckRunnerHealth, fmt.Sprintf(
+		"the host workflow runner answered: version %s, bash %s, running as %s", status.Version, status.BashVersion, status.User))
+
+	v.checkLocalSyntax(ctx, client, local)
+}
+
+// checkLocalSyntax asks the runner to parse each local script's captured
+// bytes.
+//
+// hostrunner.SyntaxCheck runs `bash -n` over the bytes and executes
+// nothing, which is the runner's own documented guarantee and the only
+// reason this is safe to do from a validation command.
+func (v *workflowValidator) checkLocalSyntax(ctx context.Context, client hostRunnerStatus, steps []workflow.Step) {
+	failures := 0
+
+	for _, s := range steps {
+		script, err := v.plan.OpenScript(s.ID)
+		if err != nil {
+			v.add(WorkflowFinding{
+				Check: WorkflowCheckLocalBashSyntax, Severity: WorkflowSeverityError,
+				Detail: err.Error(),
+				Scope:  string(s.Scope), Phase: string(s.Phase), Target: string(s.Target), Script: s.ScriptName,
+			})
+			failures++
+
+			continue
+		}
+
+		probeCtx, cancel := context.WithTimeout(ctx, workflowProbeTimeout)
+		err = client.SyntaxCheck(probeCtx, v.plan.RunID(), s.ID, script.Body)
+		cancel()
+
+		if err != nil {
+			v.add(WorkflowFinding{
+				Check: WorkflowCheckLocalBashSyntax, Severity: WorkflowSeverityError,
+				Detail: err.Error(),
+				Scope:  string(s.Scope), Phase: string(s.Phase), Target: string(s.Target), Script: s.ScriptName,
+			})
+			failures++
+		}
+	}
+
+	if failures == 0 {
+		v.ok(WorkflowCheckLocalBashSyntax, fmt.Sprintf("%d local hook(s) parse. Nothing was executed: the runner was asked to parse the bytes and run nothing", len(steps)))
+	}
+}
+
+// hostRunnerStatus is the slice of hostrunner.Client this validation
+// uses, named as an interface so a test can answer both questions without
+// a real socket.
+//
+// Narrow on purpose: a validation may ask what the runner IS and ask it
+// to PARSE, and there is deliberately no Execute on this interface, so
+// the rule that validation never runs a script body is a property of the
+// type rather than of a reviewer noticing.
+type hostRunnerStatus interface {
+	SyntaxCheck(ctx context.Context, runID, stepID string, script []byte) error
+}
+
+// checkRemote covers the three remote items: which connection was
+// selected, whether it can actually run a command, and whether the remote
+// bash parses each script.
+func (v *workflowValidator) checkRemote(ctx context.Context) {
+	remote := stepsWithTarget(v.plan, workflow.TargetRemote)
+
+	if len(remote) == 0 {
+		for _, check := range []string{WorkflowCheckExecConnection, WorkflowCheckExecCapability, WorkflowCheckRemoteBashSyntax} {
+			v.skip(check, "this backup set runs no remote (NAME.remote.sh) hooks")
+		}
+
+		return
+	}
+
+	ref := remote[0].ExecutionConnectionRef
+
+	conn, err := remoteexec.Resolve(v.cfg, ref)
+	if err != nil {
+		v.fail(WorkflowCheckExecConnection, err.Error())
+		v.skip(WorkflowCheckExecCapability, "not examined: no execution connection resolved")
+		v.skip(WorkflowCheckRemoteBashSyntax, "not examined: no execution connection resolved")
+
+		return
+	}
+
+	v.ok(WorkflowCheckExecConnection, fmt.Sprintf(
+		"remote hooks run over execution connection %q as %s@%s", conn.Ref, conn.Source.User, conn.Source.Host))
+
+	probeCtx, cancel := context.WithTimeout(ctx, workflowProbeTimeout)
+	defer cancel()
+
+	client, err := remoteexec.Dial(probeCtx, conn)
+	if err != nil {
+		v.fail(WorkflowCheckExecCapability, err.Error())
+		v.skip(WorkflowCheckRemoteBashSyntax, "not examined: the execution connection did not open")
+
+		return
+	}
+	defer client.Close() //nolint:errcheck // a probe connection
+
+	v.checkRemoteCapability(probeCtx, client, conn, remote)
+}
+
+// checkRemoteCapability proves the far side can run a command at all, and
+// that it can parse each script.
+//
+// Both come out of one call per script: remoteexec.Preflight runs this
+// product's own fixed probe -- not the operator's hook -- and then a
+// `bash -n` of the script's bytes, and it refuses a forced-command
+// account that merely ACCEPTS an exec request and runs its own program.
+// That refusal is the reason the capability check exists at all: the
+// recommended posture for a backup source is an account confined to
+// internal-sftp, which authenticates perfectly and cannot run a hook, and
+// a deployment that only discovered this at 2am is exactly what #810
+// exists to prevent.
+func (v *workflowValidator) checkRemoteCapability(ctx context.Context, client *remoteexec.Client, conn remoteexec.Connection, steps []workflow.Step) {
+	capable := false
+	syntaxFailures := 0
+
+	for _, s := range steps {
+		script, err := v.plan.OpenScript(s.ID)
+		if err != nil {
+			v.add(WorkflowFinding{
+				Check: WorkflowCheckRemoteBashSyntax, Severity: WorkflowSeverityError,
+				Detail: err.Error(),
+				Scope:  string(s.Scope), Phase: string(s.Phase), Target: string(s.Target), Script: s.ScriptName,
+			})
+			syntaxFailures++
+
+			continue
+		}
+
+		if _, err := client.Preflight(ctx, script.Body); err != nil {
+			// A capability refusal is about the CONNECTION and a syntax
+			// refusal is about the SCRIPT, and #813 lists them as two
+			// items because the remedies are unrelated: one is an
+			// account or an sshd configuration, the other is a typo in
+			// somebody's hook. remoteexec exports a sentinel for the
+			// first, which is what tells them apart here rather than a
+			// reading of the sentence.
+			if errors.Is(err, remoteexec.ErrExecCapability) {
+				v.fail(WorkflowCheckExecCapability, err.Error())
+				v.skip(WorkflowCheckRemoteBashSyntax, "not examined: this connection cannot run a command, so nothing on it could parse a script")
+
+				return
+			}
+
+			capable = true
+			syntaxFailures++
+			v.add(WorkflowFinding{
+				Check: WorkflowCheckRemoteBashSyntax, Severity: WorkflowSeverityError,
+				Detail: err.Error(),
+				Scope:  string(s.Scope), Phase: string(s.Phase), Target: string(s.Target), Script: s.ScriptName,
+			})
+
+			continue
+		}
+
+		capable = true
+	}
+
+	if capable {
+		v.ok(WorkflowCheckExecCapability, fmt.Sprintf(
+			"%s@%s accepted an exec channel and proved it runs the bytes it is sent rather than a program of its own", conn.Source.User, conn.Source.Host))
+	}
+
+	if syntaxFailures == 0 {
+		v.ok(WorkflowCheckRemoteBashSyntax, fmt.Sprintf(
+			"%d remote hook(s) parse with %s on the far side. Nothing was executed: each script was sent to bash -n", len(steps), conn.Bash()))
+	}
+}
+
+// stepsWithTarget filters a plan, tolerating the zero plan a failed
+// snapshot leaves behind.
+func stepsWithTarget(plan workflow.Plan, target workflow.Target) []workflow.Step {
+	if plan.IsZero() {
+		return nil
+	}
+
+	var out []workflow.Step
+	for _, s := range plan.Steps() {
+		if s.Target == target {
+			out = append(out, s)
+		}
+	}
+
+	return out
+}
+
+// workflowValidationDeadline is how long a whole validation may take.
+//
+// It exists so a caller that passed context.Background() -- which is
+// every CLI verb in this repository -- still gets an answer from a
+// deployment whose source host is down: two probes at
+// workflowProbeTimeout each, per script, could otherwise add up past any
+// operator's patience. It is generous rather than tight because the sum
+// is legitimately several probes on a set with several remote hooks.
+const workflowValidationDeadline = 5 * time.Minute

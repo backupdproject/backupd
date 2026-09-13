@@ -298,11 +298,18 @@ func (b *BackupService) runScheduledCycle(ctx context.Context) {
 	// interval has elapsed on a cycle marked this way, and every enabled
 	// set on one that is not. An operator-submitted run (executeRunCycle,
 	// operations.go) deliberately carries no such mark.
+	// withWorkflowRunOptions marks the pass as SCHEDULED, which is what
+	// makes #813's "never applied to scheduled runs" structural rather
+	// than a rule somebody has to remember: the lifecycle refuses a
+	// bypass on a run carrying this mark, so there is no combination of
+	// configuration and request that could produce one here.
 	runCycle(b.state.Load().inner,
-		app.WithScheduledCycle(
-			app.WithBackupSetHolds(
-				app.WithProgressObserver(ctx, progressFanout{b.cycleWatch, b.activity}),
-				b.holds)))
+		withWorkflowRunOptions(
+			app.WithScheduledCycle(
+				app.WithBackupSetHolds(
+					app.WithProgressObserver(ctx, progressFanout{b.cycleWatch, b.activity}),
+					b.holds)),
+			workflowRunOptions{Scheduled: true}))
 }
 
 // runAlertTicks repeats one out-of-cycle alerting pass at interval until

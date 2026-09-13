@@ -57,6 +57,11 @@ func TestEventNamesAreStable(t *testing.T) {
 		{"EventDiskPressure", EventDiskPressure, "disk_pressure"},
 		{"EventAlert", EventAlert, "alert"},
 		{"EventAPIAction", EventAPIAction, "api_action"},
+		{"EventWorkflowRunStart", EventWorkflowRunStart, "workflow_run_start"},
+		{"EventWorkflowRunEnd", EventWorkflowRunEnd, "workflow_run_end"},
+		{"EventWorkflowStepStart", EventWorkflowStepStart, "workflow_step_start"},
+		{"EventWorkflowStepEnd", EventWorkflowStepEnd, "workflow_step_end"},
+		{"EventWorkflowBypassed", EventWorkflowBypassed, "workflow_bypassed"},
 		{"EventError", EventError, "error"},
 	}
 	seen := make(map[string]string, len(cases))

@@ -550,12 +550,38 @@ type Report struct {
 	Process     ProcessHealth
 	BackupSets  []BackupSetHealth
 	GeneratedAt time.Time
+
+	// Workflow is FR-24's workflow half (workflow.go): whether this
+	// deployment can run hooks at all, and whether an interrupted run
+	// is waiting for a person.
+	//
+	// It is a field the caller assigns rather than a fourth parameter
+	// on NewReport, and that is a deliberate choice against the more
+	// obvious one. A positional parameter would have forced every
+	// existing call site and every existing test to pass something for
+	// a section almost none of them have anything to say about -- and
+	// what they would pass is the zero value, which is exactly what
+	// they already get. Worse, the next section to land would face the
+	// same decision and either grow the signature again or start an
+	// options struct beside a constructor that already takes three
+	// positional arguments. So the constructor keeps meaning "the two
+	// halves FR-24 was written about", and a caller that has probed a
+	// runner sets this one field on the result.
+	//
+	// The zero value reads "this deployment runs no workflows", so a
+	// caller that never sets it is not reporting a broken workflow
+	// subsystem; it is reporting the absence of one. See
+	// WorkflowHealth's own doc.
+	Workflow WorkflowHealth
 }
 
 // NewReport bundles an already-computed ProcessHealth and set of
 // BackupSetHealth values into one Report. It performs no computation of its
 // own; every BackupSetHealth in sets should already come from
 // ComputeBackupSetHealth.
+//
+// It does not take the workflow half: see Report.Workflow for why that
+// section is assigned rather than passed.
 func NewReport(process ProcessHealth, sets []BackupSetHealth, now time.Time) Report {
 	return Report{Process: process, BackupSets: sets, GeneratedAt: now}
 }

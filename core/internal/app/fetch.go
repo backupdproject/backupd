@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/backupdproject/backupd/core/internal/config"
 	"github.com/backupdproject/backupd/core/internal/discovery"
 	"github.com/backupdproject/backupd/core/internal/model"
 	"github.com/backupdproject/backupd/core/internal/reconcile"
@@ -165,6 +166,32 @@ func (s *Service) Fetch(ctx context.Context, sourceName, setName string, dryRun 
 		return s.fetchDryRun(ctx, source, bs.ID)
 	}
 
+	// EPIC L (#813): the hooks wrap the pass, at BOTH entry points into
+	// this package's pipeline. See workflow.go for why the seam is here
+	// and what the lifecycle may decide.
+	//
+	// It is after the --dry-run branch on purpose. A dry run lists the
+	// remote and records nothing, so there is nothing for a "before" hook
+	// to prepare and nothing for an "after" hook to unwind, and running
+	// somebody's quiesce script to produce a preview would be the one
+	// thing --dry-run promises not to do. What a caller wanting to see
+	// the workflow a real run WOULD execute asks for instead is the
+	// resolved plan, which core/service reports without executing
+	// anything.
+	return s.fetchInWorkflow(ctx, bs, func(ctx context.Context) (FetchResult, error) {
+		return s.fetchPass(ctx, source, bs)
+	})
+}
+
+// fetchPass is one backup set's pass, as Fetch has always run it: the
+// reconcile, the discovery, and every in-flight artifact driven forward.
+//
+// Split out of Fetch so the workflow lifecycle has something to wrap. It
+// is deliberately the WHOLE pass and not part of it: a "before" hook
+// quiesces a database so that what this function reads is consistent, so
+// the hook has to be outside the reconcile as well as outside the
+// transfer.
+func (s *Service) fetchPass(ctx context.Context, source transport.Source, bs config.BackupSet) (FetchResult, error) {
 	// Live progress and the per-set feed, for a caller that installed an
 	// observer (progress.go). Nothing here changes what `backupd
 	// fetch` does in its own process: with no observer on ctx, beginCycle

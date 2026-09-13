@@ -154,13 +154,21 @@ func exportedNames(decl ast.Decl) []string {
 // vocabulary: §71's own list -- stale backup, repeated failure, changed
 // SSH host key, critical storage pressure -- plus EPIC K's two, a
 // repository whose maintenance is failing (#786) and a repository that
-// cannot take a backup at all (#789), and nothing else.
+// cannot take a backup at all (#789), plus EPIC L's three workflow
+// conditions (#813), and nothing else.
 //
 // A new kind is how "one proactive mechanism for a few specific
 // conditions" quietly becomes the framework §71 rules out, so it takes an
 // edit here to add one, and the justification belongs beside the constant
 // (see alert.MaintenanceFailed's and alert.RepositoryUnavailable's docs
 // for what that looks like).
+//
+// EPIC L adding three at once is the case this pin is most useful
+// against, and they earned it separately: a missing backup, a source
+// machine that may still be quiesced, and a backup set blocked pending
+// recovery are three different jobs for an operator, so collapsing them
+// would silence whichever one was not the headline. alert.WorkflowFailed's
+// doc is where that argument is made in full.
 func TestKindsAreExactlyTheDeliberatelyChosenConditions(t *testing.T) {
 	want := []alert.Kind{
 		alert.StaleBackup,
@@ -169,6 +177,9 @@ func TestKindsAreExactlyTheDeliberatelyChosenConditions(t *testing.T) {
 		alert.CriticalStoragePressure,
 		alert.MaintenanceFailed,
 		alert.RepositoryUnavailable,
+		alert.WorkflowFailed,
+		alert.WorkflowCleanupFailed,
+		alert.WorkflowRecoveryRequired,
 	}
 
 	if len(alert.Kinds) != len(want) {

@@ -110,7 +110,61 @@ type Workflows struct {
 	// field for a shell, a sudo user or a command prefix: a hook runs as
 	// the configured SSH user, and this product never escalates.
 	ExecConnections []WorkflowExecConnection `yaml:"exec_connections,omitempty"`
+
+	// Runner is how this ENGINE reaches the Host Workflow Runner that
+	// executes NAME.local.sh hooks (#809).
+	//
+	// It is here and not derived, because the two ends of that socket
+	// see different paths and neither can compute the other's. The
+	// runner is a process on the HOST and owns <prefix>/run; the engine
+	// is normally a distroless container that has that directory bind
+	// mounted somewhere else entirely (container/compose.yaml binds it
+	// at /data/run). cmd/backupd's `workflow-runner` verbs take the host
+	// paths as flags for exactly this reason, and its own file header
+	// makes the argument at length: a single field in config.yaml could
+	// not be right on both sides, so each side states the path it can
+	// see.
+	//
+	// There is deliberately no default. Guessing /data/run would be
+	// guessing that this binary is the containerised one, which it is
+	// not on a bare-metal install, and a guess that is wrong produces a
+	// deployment reporting a runner as unreachable at an address nobody
+	// configured. Unset means "this engine cannot run local hooks", and
+	// every surface that needs one -- validation, health, and the run
+	// itself -- says so in those words rather than failing at a socket.
+	Runner WorkflowRunner `yaml:"runner,omitempty"`
 }
+
+// WorkflowRunner is the engine's side of the host runner's Unix socket.
+//
+// Two fields and no third. There is no host, no port and no TCP mode,
+// because the runner has none: internal/hostrunner's Client carries a
+// socket path and nothing else, and the reason is in that package's own
+// doc -- a runner reachable over a network is a remote-code-execution
+// service, and the whole design is one local socket that authenticates
+// every connection.
+type WorkflowRunner struct {
+	// Socket is the runner's listening socket AS THIS PROCESS SEES IT.
+	// Empty disables local hooks entirely.
+	Socket string `yaml:"socket,omitempty"`
+
+	// TokenFile holds the installation-scoped credential, again as this
+	// process sees it. It is a REFERENCE and never the token: a
+	// credential typed into config.yaml is one sitting in the clear
+	// beside the hostnames it protects, which is the exposure #298
+	// closes for the SSH key and secretref's package doc argues for the
+	// repository passphrase.
+	TokenFile string `yaml:"token_file,omitempty"`
+}
+
+// Configured reports whether this deployment has told the engine how to
+// reach a runner. Both halves are required: a socket with no credential
+// is a connection the runner will refuse, and saying so here rather than
+// at the socket is what turns it into a validation finding an operator
+// can read.
+func (r WorkflowRunner) Configured() bool { return r.Socket != "" && r.TokenFile != "" }
+
+func (r WorkflowRunner) isZero() bool { return r.Socket == "" && r.TokenFile == "" }
 
 // WorkflowExecConnection is one declared remote execution connection.
 //
@@ -437,7 +491,54 @@ func (v *validator) validateWorkflows(c *Config) {
 		v.addf("workflows.root: must be set when workflows.exec_connections is configured; an execution connection with no hook directories to run scripts from is configuration that does nothing")
 	}
 
+	if w.Root == "" && !w.Runner.isZero() {
+		v.addf("workflows.root: must be set when workflows.runner is configured; a host runner with no hook directories to run scripts from is configuration that does nothing")
+	}
+
 	v.validateExecConnections(w.ExecConnections)
+	v.validateWorkflowRunner(&w.Runner)
+}
+
+// validateWorkflowRunner checks the engine's side of the host runner
+// socket: two absolute paths, or neither.
+//
+// Shape only, like everything else in this package: whether the socket is
+// THERE, whether anything is listening on it and whether the credential
+// file is 0600 are facts about the machine at a moment, and this file's
+// own header explains why a daemon must not refuse to start over one. The
+// answers live in `backupd validate` and in the health report, where an
+// operator can read them and act.
+//
+// Half a configuration is refused, though, because that one IS a fact
+// about the file: a socket with no credential is a connection the runner
+// authenticates and rejects, every time, and a credential with no socket
+// is a path nothing opens.
+func (v *validator) validateWorkflowRunner(r *WorkflowRunner) {
+	if r.isZero() {
+		return
+	}
+
+	for _, f := range []struct {
+		path  string
+		value string
+	}{
+		{"workflows.runner.socket", r.Socket},
+		{"workflows.runner.token_file", r.TokenFile},
+	} {
+		if f.value == "" {
+			continue
+		}
+		if err := validAbsolutePath(f.value); err != nil {
+			v.addf("%s: %v", f.path, err)
+		}
+	}
+
+	switch {
+	case r.Socket == "":
+		v.addf("workflows.runner.socket: must be set when workflows.runner.token_file is; the runner authenticates every connection, so a credential with no socket to present it on runs nothing")
+	case r.TokenFile == "":
+		v.addf("workflows.runner.token_file: must be set when workflows.runner.socket is; the runner refuses an unauthenticated connection, so a socket with no credential is a local hook that fails at every run")
+	}
 }
 
 // validateExecConnections checks the declared execution connections: that

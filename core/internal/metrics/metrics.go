@@ -359,6 +359,13 @@ func Render(report health.Report) string {
 			return float64(s.Snapshot.LastKnownGoodAt.Unix()), true
 		})
 
+	// EPIC L's health half (#813). The seven workflow COUNTER families
+	// live in workflow.go, on a live counter set with a process
+	// lifetime; these three are readings of an already-computed
+	// health.Report like everything above them, which is why they
+	// render here and not there.
+	writeWorkflowHealth(&b, sets, report.Workflow)
+
 	return b.String()
 }
 
@@ -414,6 +421,163 @@ func writeGauge(b *strings.Builder, sets []health.BackupSetHealth, suffix, help 
 		}
 		fmt.Fprintf(b, "%s{backup_set=%s} %s\n", name, quoteLabel(s.Set.String()), formatFloat(v))
 	}
+}
+
+// writeWorkflowHealth renders EPIC L's three workflow-health gauges
+// (#813): whether hooks can be run at all, and whether a run is waiting
+// for a person.
+//
+// They are gauges rather than counters because every one of them is a
+// STATE that can go back: a runner comes back, a far side regains its
+// capabilities, a hold gets acknowledged. The counters in workflow.go
+// answer the other half ("has this been failing"), and neither shape
+// substitutes for the other -- a counter cannot say "it is broken right
+// now" and a gauge cannot say "it broke fourteen times last night".
+//
+// Each family writes its HELP and TYPE lines unconditionally and its
+// samples only where a reading exists, which is exactly what writeGauge
+// above does for the backup-set families. A scraper reading a family
+// with no samples learns "nobody measured this", which is the truth on a
+// deployment that runs no workflows; a fabricated zero would tell it the
+// runner is unreachable, and this package's doc argues at length that
+// those two must never render the same.
+func writeWorkflowHealth(b *strings.Builder, sets []health.BackupSetHealth, w health.WorkflowHealth) {
+	writeWorkflowRunner(b, w.Runner)
+	writeWorkflowExecConnections(b, w.ExecConnections)
+	writeWorkflowRecoveryRequired(b, sets, w)
+}
+
+// writeWorkflowRunner renders the Host Workflow Runner's reachability,
+// labelled with the version it answered with.
+//
+// The version is a label rather than a second metric for the reason
+// process_info already carries its build strings that way: a version is
+// a dimension of the reading and not a number to graph. It is on THIS
+// family rather than a runner_info family beside it because the pair is
+// the diagnosis -- 0 with a version label is a runner that refused this
+// engine's release, 0 with an empty one is a socket nobody answered --
+// and two families would make an operator join them by hand to find that
+// out. An empty label value is the exposition format's own spelling of
+// "no such dimension", which is what an unanswered handshake knows about
+// the far side's version.
+//
+// The runner's bash version is deliberately NOT a label. This family
+// answers one question, and a deployment that upgrades bash would
+// otherwise mint a new series for a change that has nothing to do with
+// whether the socket answers. It is on the status surface, where
+// hostrunner reports it, and that is where somebody writing a hook reads
+// it.
+//
+// A deployment that declares no runner gets no sample at all: nothing
+// took a reading, and a 0 would read as "the runner is down" on every
+// deployment that never had one.
+func writeWorkflowRunner(b *strings.Builder, r health.WorkflowRunnerHealth) {
+	name := namePrefix + "workflow_runner_reachable"
+	writeHelp(b, name, "1 when this engine completed a handshake with the Host Workflow Runner that executes local hook scripts, 0 when it could not. Absent when this deployment declares no runner. Why a handshake failed is a sentence on the status surface, never a label here.")
+	writeType(b, name, "gauge")
+
+	if !r.Configured {
+		return
+	}
+
+	writeSample(b, name, []label{{"version", r.Version}}, gaugeBool(r.Reachable))
+}
+
+// writeWorkflowExecConnections renders one capability reading per
+// declared execution connection.
+//
+// `connection` is the one new free-text label this package gained, and it
+// is bounded by the CONFIGURATION: the values are the ids in
+// workflows.exec_connections, an operator edits that file and restarts
+// to change them, and config's own validation already refuses a
+// duplicate. That is the same bound backup_set has, which is the only
+// free-text label this package had before, and it is the reason this one
+// is allowed where a script name or a step id is not: those are minted
+// per run, by whoever wrote the hook, and would grow a series per hook
+// forever (workflow.go's rule one).
+//
+// Sorted by ref, stably, so two scrapes of the same report are
+// byte-identical. Stably specifically because a duplicate ref would
+// otherwise render in whichever order the sort happened to leave it:
+// configuration validation forbids one, and a renderer whose output
+// depends on validation having run is a renderer that is wrong on the
+// day somebody constructs a Report in a test.
+func writeWorkflowExecConnections(b *strings.Builder, conns []health.WorkflowExecConnectionHealth) {
+	name := namePrefix + "workflow_exec_connection_capable"
+	writeHelp(b, name, "1 when a declared workflow execution connection was proven able to run this product's remote hooks, 0 when it was not or could not be checked. One sample per connection declared in workflows.exec_connections. Why a connection is not capable is a sentence on the status surface, never a label here.")
+	writeType(b, name, "gauge")
+
+	sorted := append([]health.WorkflowExecConnectionHealth(nil), conns...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Ref < sorted[j].Ref })
+
+	for _, c := range sorted {
+		writeSample(b, name, []label{{"connection", c.Ref}}, gaugeBool(c.Capable))
+	}
+}
+
+// writeWorkflowRecoveryRequired renders how many unaccounted-for cleanup
+// scopes each backup set is blocked by.
+//
+// A count per set rather than a series per hold, because a hold is
+// identified by a run id and a run id must never become a label
+// (workflow.go's rule one: it is minted per run, so a deployment with a
+// nightly backup and an unlucky month would leave thirty dead series
+// behind). The ids an operator needs in order to resume or acknowledge
+// are on the status surface, which is the surface those commands are run
+// from anyway.
+//
+// Every backup set in the report renders, including the ones at zero,
+// and that is the opposite of the rule the optional gauges above follow.
+// Zero here is a real reading -- this pass looked and found nothing
+// outstanding -- and it is the reading an alert has to see in order to
+// RESOLVE. A family that only appeared when something was wrong would
+// make "recovery_required > 0" resolve on a scrape failure and on a
+// restart, which are the two moments an operator most needs it not to.
+//
+// A hold naming a set that is not in the report still renders, which is
+// why the counts start from the report's sets and are then incremented
+// from the holds rather than looked up. A set removed from the
+// configuration while one of its runs is still blocked is exactly the
+// case where dropping the series would hide the problem forever.
+//
+// Nothing renders at all when no workflows are configured: there is no
+// engine, so there is no pass that could have found a hold, and a screen
+// of zeros for a subsystem this deployment does not run is how an
+// operator learns to scroll past this section.
+func writeWorkflowRecoveryRequired(b *strings.Builder, sets []health.BackupSetHealth, w health.WorkflowHealth) {
+	name := namePrefix + "workflow_recovery_required"
+	writeHelp(b, name, "Workflow cleanup scopes this deployment cannot account for, per backup set: a run was interrupted and nobody has resumed or acknowledged it, so this set's runs are being refused. Zero is the ordinary reading. The run ids needed to resolve one are on the status surface, never a label here.")
+	writeType(b, name, "gauge")
+
+	if !w.Configured {
+		return
+	}
+
+	counts := make(map[string]uint64, len(sets)+len(w.RecoveryHolds))
+	for _, s := range sets {
+		counts[s.Set.String()] = 0
+	}
+	for _, hold := range w.RecoveryHolds {
+		counts[hold.BackupSet.String()]++
+	}
+
+	for _, s := range sortedCounters(counts, func(set string) []label {
+		return []label{{"backup_set", set}}
+	}) {
+		writeSample(b, name, s.labels, float64(s.value))
+	}
+}
+
+// gaugeBool is how a boolean reaches a gauge VALUE, as opposed to
+// boolLabel, which is how one reaches a label. Both spellings exist
+// because the two positions have different conventions and mixing them
+// is how a dashboard ends up summing the string "true".
+func gaugeBool(v bool) float64 {
+	if v {
+		return 1
+	}
+
+	return 0
 }
 
 func writeHelp(b *strings.Builder, name, help string) {
