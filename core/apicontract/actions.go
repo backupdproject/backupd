@@ -61,4 +61,28 @@ const (
 	// the durable operation land in #787 and the route that submits one
 	// lands in #788.
 	ActionRestoreSnapshot = "restore_snapshot"
+
+	// ActionVerifySnapshot proves, now, that a stored snapshot is
+	// actually restorable, at a stated depth (EPIC K, #788).
+	//
+	// It is separate from the verification a RUN performs because the
+	// two are different claims about different moments: a run's
+	// verification says what was proven on the night it ran, and this
+	// one says what is provable today. Recording this one onto that
+	// run's row would make a snapshot nobody verified at the time
+	// indistinguishable from one that was, so it is reported on the
+	// operation that performed it instead.
+	ActionVerifySnapshot = "verify_snapshot"
+
+	// ActionHoldSnapshot stops retention deleting one named snapshot
+	// until somebody releases the hold (EPIC K, #788).
+	ActionHoldSnapshot = "hold_snapshot"
+
+	// ActionReleaseSnapshotHold ends one hold, by its id.
+	//
+	// It is a separate action from placing one rather than a boolean on
+	// the same action, because the two take different parameters and
+	// mean opposite things: a request whose meaning is decided by a flag
+	// is a request somebody eventually sends with the flag wrong.
+	ActionReleaseSnapshotHold = "release_snapshot_hold"
 )

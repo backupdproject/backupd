@@ -38,6 +38,13 @@ import (
 var backupSetVerbs = map[string]func([]string) int{
 	"retention": cmdBackupSetRetention,
 	"edit-hold": cmdBackupSetEditHold,
+	// The two post-creation toggles (#788). They have flag sets of their
+	// own rather than sharing declareBackupSetFlags, because each takes
+	// one word and nothing else: sharing that flag set would let
+	// `backup-set enabled a/b on --remote-path /x` parse, exit 0, and
+	// change only the thing it was not asked about.
+	"enabled":   cmdBackupSetEnabled,
+	"read-only": cmdBackupSetReadOnly,
 }
 
 // backupSetSharedFlagVerbs are the verbs that share declareBackupSetFlags

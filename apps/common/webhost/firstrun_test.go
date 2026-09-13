@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -728,7 +729,16 @@ const wholeSpecCreateBody = `{
 	"validator_id": "postgres-custom-format",
 	"disabled": true,
 	"read_only": true,
-	"skip_connection_check": true
+	"skip_connection_check": true,
+	"engine": "kopia",
+	"uuid": "6d1a7e3c-0f0d-4d5e-9a2b-3c4d5e6f7a8b",
+	"repository_domain": "production-vault",
+	"source_consistency": "externally_quiesced",
+	"verification_level": "content_sample",
+	"verification_sample_percent": 17,
+	"verification_full_every_seconds": 604800,
+	"verification_restore_drill_every_seconds": 2592000,
+	"source_mount_prefix": "/srv/snap-47"
 }`
 
 // firstRunSpecCarriage is every field of backupSetSpec, paired with what
@@ -768,6 +778,19 @@ var firstRunSpecCarriage = []struct {
 	{"Disabled", func(r service.CreateBackupSetRequest) any { return r.Disabled }, func(s backupSetSpec) any { return s.Disabled }},
 	{"ReadOnly", func(r service.CreateBackupSetRequest) any { return r.ReadOnly }, func(s backupSetSpec) any { return s.ReadOnly }},
 	{"SkipConnectionCheck", func(r service.CreateBackupSetRequest) any { return r.SkipConnectionCheck }, func(s backupSetSpec) any { return s.SkipConnectionCheck }},
+	{"Engine", func(r service.CreateBackupSetRequest) any { return r.Engine }, func(s backupSetSpec) any { return s.Engine }},
+	{"UUID", func(r service.CreateBackupSetRequest) any { return r.UUID }, func(s backupSetSpec) any { return s.UUID }},
+	{"RepositoryDomain", func(r service.CreateBackupSetRequest) any { return r.RepositoryDomain }, func(s backupSetSpec) any { return s.RepositoryDomain }},
+	{"SourceConsistency", func(r service.CreateBackupSetRequest) any { return r.SourceConsistency }, func(s backupSetSpec) any { return s.SourceConsistency }},
+	{"VerificationLevel", func(r service.CreateBackupSetRequest) any { return r.VerificationLevel }, func(s backupSetSpec) any { return s.VerificationLevel }},
+	{"VerificationSamplePercent", func(r service.CreateBackupSetRequest) any { return r.VerificationSamplePercent }, func(s backupSetSpec) any { return s.VerificationSamplePercent }},
+	{"VerificationFullEverySeconds", func(r service.CreateBackupSetRequest) any { return r.VerificationFullEvery }, func(s backupSetSpec) any {
+		return time.Duration(s.VerificationFullEverySeconds) * time.Second
+	}},
+	{"VerificationRestoreDrillEverySeconds", func(r service.CreateBackupSetRequest) any { return r.VerificationRestoreDrillEvery }, func(s backupSetSpec) any {
+		return time.Duration(s.VerificationRestoreDrillEverySeconds) * time.Second
+	}},
+	{"SourceMountPrefix", func(r service.CreateBackupSetRequest) any { return r.SourceMountPrefix }, func(s backupSetSpec) any { return s.SourceMountPrefix }},
 }
 
 // TestCompleteFirstRun_CarriesEveryFieldOfTheSpecItWasGiven is the whole

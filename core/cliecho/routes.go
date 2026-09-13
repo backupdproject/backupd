@@ -186,13 +186,45 @@ var routes = map[string]entry{
 				// them.
 				return newCmd().refuse(gapRunBackupSet)
 			case apicontract.ActionRestoreSnapshot:
-				// Its own sentence for the reason the arm above has one,
-				// and more urgently: the nearest-looking verb, `restore`,
-				// is the ARCHIVED-COPY retrieval on the arm above this
-				// one. Printing it for a snapshot restore would answer
+				// The gap this arm used to print is closed (#788):
+				// `snapshot restore` is the verb, and it is deliberately
+				// NOT `restore`, which is the archived-copy retrieval on
+				// the arm above -- printing that one here would answer
 				// "get this file back out of last night's restore point"
 				// with a billed provider retrieval of a different object.
-				return newCmd().refuse(gapRestoreSnapshot)
+				if req.SnapshotRestore == nil {
+					return nil
+				}
+				c := newCmd("snapshot", "restore", req.SnapshotRestore.BackupSetID).
+					flag("to", req.SnapshotRestore.TargetPath)
+				c.flagIfSet("snapshot", req.SnapshotRestore.SnapshotID)
+				c.flagIfSet("path", req.SnapshotRestore.SourcePath)
+				c.flagIfSet("conflict", req.SnapshotRestore.Conflict)
+				return c
+			case apicontract.ActionVerifySnapshot:
+				if req.SnapshotVerify == nil {
+					return nil
+				}
+				c := newCmd("snapshot", "verify", req.SnapshotVerify.BackupSetID)
+				c.flagIfSet("run", req.SnapshotVerify.RunID)
+				c.flagIfSet("level", req.SnapshotVerify.Level)
+				if req.SnapshotVerify.SamplePercent > 0 {
+					c.flag("sample-percent", itoa(req.SnapshotVerify.SamplePercent))
+				}
+				return c
+			case apicontract.ActionHoldSnapshot:
+				if req.SnapshotHold == nil {
+					return nil
+				}
+				c := newCmd("snapshot", "hold", req.SnapshotHold.BackupSetID).
+					flag("reason", req.SnapshotHold.Reason)
+				c.flagIfSet("run", req.SnapshotHold.RunID)
+				return c
+			case apicontract.ActionReleaseSnapshotHold:
+				if req.SnapshotHoldRelease == nil {
+					return nil
+				}
+				return newCmd("snapshot", "unhold", req.SnapshotHoldRelease.BackupSetID, req.SnapshotHoldRelease.HoldID)
 			default:
 				// The gap the issue names, and the one a lazier
 				// implementation gets wrong. `backupd run`
@@ -211,13 +243,16 @@ var routes = map[string]entry{
 		// for that case rather than one of the two below, which are
 		// answers about a specific act.
 		why:               "there is no verb that submits an operation from a request body",
-		refusals:          []string{gapRunCycle, gapRunBackupSet, gapRestoreSnapshot},
-		namesShippedVerbs: []string{"run", "fetch", "restore"},
+		refusals:          []string{gapRunCycle, gapRunBackupSet},
+		namesShippedVerbs: []string{"run", "fetch"},
 		examples: []Action{
 			{Body: []byte(`{"action":"` + apicontract.ActionRestorePlacement + `","config_revision":"r1","restore":{"artifact_id":"api-server/var-backups/dump.tar","medium":"offsite_s3","window_days":7,"acknowledged":true}}`)},
 			{Body: []byte(`{"action":"` + apicontract.ActionRunBackupSet + `","config_revision":"r1","backup_set_id":"api-server/var-backups"}`)},
 			{Body: []byte(`{"action":"` + apicontract.ActionRunCycle + `","config_revision":"r1"}`)},
-			{Body: []byte(`{"action":"` + apicontract.ActionRestoreSnapshot + `","config_revision":"r1","backup_set_id":"api-server/var-backups"}`)},
+			{Body: []byte(`{"action":"` + apicontract.ActionRestoreSnapshot + `","config_revision":"r1","snapshot_restore":{"backup_set_id":"api-server/var-backups","target_path":"/srv/restored","snapshot_id":"k1234","source_path":"var/lib/pg","conflict":"skip"}}`)},
+			{Body: []byte(`{"action":"` + apicontract.ActionVerifySnapshot + `","config_revision":"r1","snapshot_verify":{"backup_set_id":"api-server/var-backups","run_id":"run_1","level":"content_sample","sample_percent":10}}`)},
+			{Body: []byte(`{"action":"` + apicontract.ActionHoldSnapshot + `","config_revision":"r1","snapshot_hold":{"backup_set_id":"api-server/var-backups","run_id":"run_1","reason":"kept for the incident review"}}`)},
+			{Body: []byte(`{"action":"` + apicontract.ActionReleaseSnapshotHold + `","config_revision":"r1","snapshot_hold_release":{"backup_set_id":"api-server/var-backups","hold_id":"hold_1"}}`)},
 		},
 	},
 	key("GET", "/operations"): {
@@ -362,17 +397,73 @@ var routes = map[string]entry{
 		build:    func(a Action) *cmd { return newCmd("backup-set", "remove", setID(a)) },
 		examples: []Action{{Params: map[string]string{"source": "api-server", "set": "var-backups"}}},
 	},
+	// The two post-creation toggles (#788). Both were gaps until this
+	// issue, and the gap sentences said so honestly: --disabled and
+	// --read-only are in backupSetCreateOnlyFlags, so `backup-set patch`
+	// refuses them, and a set created disabled from a terminal could
+	// never be enabled from one again. Each now has a verb of its own,
+	// taking one word rather than a flag, because "on" and "off" read as
+	// instructions where a bare --read-only has no off and a
+	// --read-only=false is a spelling people get wrong under pressure.
 	key("POST", "/backup-sets/{source}/{set}/enabled"): {
-		// A real gap, and one this feature is how anybody noticed.
-		// --disabled is in backupSetCreateOnlyFlags, so `backup-set
-		// patch` refuses it: a set can be created disabled from a
-		// terminal and never enabled or disabled again from one.
-		why:               "`backup-set patch` refuses --disabled, which is a create-only flag, so there is no verb that enables or disables a set that already exists",
-		namesShippedVerbs: []string{"backup-set"},
+		build: func(a Action) *cmd {
+			var req apicontract.SetEnabledRequest
+			if !decode(a.Body, &req) {
+				return nil
+			}
+			return newCmd("backup-set", "enabled", setID(a), onOff(req.Enabled))
+		},
+		why: "there is no verb that enables or disables a set from a request body",
+		examples: []Action{
+			{Params: map[string]string{"source": "api-server", "set": "var-backups"}, Body: []byte(`{"enabled":true}`)},
+			{Params: map[string]string{"source": "api-server", "set": "var-backups"}, Body: []byte(`{"enabled":false}`)},
+		},
 	},
 	key("POST", "/backup-sets/{source}/{set}/read-only"): {
-		why:               "`backup-set patch` refuses --read-only, which is a create-only flag, so there is no verb that changes a set's read-only posture after it exists",
-		namesShippedVerbs: []string{"backup-set"},
+		build: func(a Action) *cmd {
+			var req apicontract.SetReadOnlyRequest
+			if !decode(a.Body, &req) {
+				return nil
+			}
+			return newCmd("backup-set", "read-only", setID(a), onOff(req.ReadOnly))
+		},
+		why: "there is no verb that changes a set's read-only posture from a request body",
+		examples: []Action{
+			{Params: map[string]string{"source": "api-server", "set": "var-backups"}, Body: []byte(`{"read_only":true}`)},
+			{Params: map[string]string{"source": "api-server", "set": "var-backups"}, Body: []byte(`{"read_only":false}`)},
+		},
+	},
+	// EPIC K's snapshot and repository reads (#788). Every one has a
+	// verb, which is the whole point of shipping the CLI and the API
+	// together: a screen an operator is reading can print the command
+	// that would have shown them the same thing.
+	key("GET", "/backup-sets/{source}/{set}/snapshots"): {
+		build:    func(a Action) *cmd { return newCmd("snapshot", "list", setID(a)) },
+		examples: []Action{{Params: map[string]string{"source": "api-server", "set": "var-backups"}}},
+	},
+	key("GET", "/backup-sets/{source}/{set}/snapshots/{run}"): {
+		build: func(a Action) *cmd {
+			return newCmd("snapshot", "show", setID(a), a.Params["run"])
+		},
+		examples: []Action{{Params: map[string]string{"source": "api-server", "set": "var-backups", "run": "run_1"}}},
+	},
+	key("GET", "/backup-sets/{source}/{set}/holds"): {
+		build:    func(a Action) *cmd { return newCmd("snapshot", "holds", setID(a)) },
+		examples: []Action{{Params: map[string]string{"source": "api-server", "set": "var-backups"}}},
+	},
+	key("GET", "/backup-sets/{source}/{set}/snapshot-retention"): {
+		build:    func(a Action) *cmd { return newCmd("snapshot", "retention", setID(a)) },
+		examples: []Action{{Params: map[string]string{"source": "api-server", "set": "var-backups"}}},
+	},
+	key("GET", "/repositories"): {
+		build:    func(Action) *cmd { return newCmd("repository", "health") },
+		examples: []Action{{}},
+	},
+	key("GET", "/repositories/{domain}/maintenance"): {
+		build: func(a Action) *cmd {
+			return newCmd("repository", "maintenance", a.Params["domain"])
+		},
+		examples: []Action{{Params: map[string]string{"domain": "production-vault"}}},
 	},
 	key("GET", "/backup-sets/{source}/{set}/retention"): {
 		build:    func(a Action) *cmd { return newCmd("backup-set", "retention", setID(a)) },
@@ -1108,4 +1199,17 @@ func mustQuery(raw string) url.Values {
 		panic("cliecho: bad example query " + raw + ": " + err.Error())
 	}
 	return v
+}
+
+// onOff is the word the two backup-set toggles take.
+//
+// Two words and not true/false, 1/0 or yes/no: a toggle that accepts six
+// spellings is a toggle whose scripts each pick a different one, and the
+// verb itself refuses everything but these two.
+func onOff(v bool) string {
+	if v {
+		return "on"
+	}
+
+	return "off"
 }

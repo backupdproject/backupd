@@ -186,13 +186,24 @@ var contractBindings = map[string]contractBinding{
 	// Issue #350's edit hold. The release has no response body at all
 	// (204), so it binds no response type; the contract declares no
 	// response schema for it either, which is what keeps the two in step.
-	"getBackupSetEditHold":      {nil, editHoldStateResponse{}, "/api/v1/backup-sets/src/set-1/edit-hold"},
-	"takeBackupSetEditHold":     {nil, editHoldResponse{}, "/api/v1/backup-sets/src/set-1/edit-hold"},
-	"releaseBackupSetEditHold":  {nil, nil, "/api/v1/backup-sets/src/set-1/edit-hold/release"},
-	"scanCatalog":               {nil, catalogReportResponse{}, "/api/v1/catalog/scan"},
-	"rebuildCatalog":            {nil, catalogReportResponse{}, "/api/v1/catalog/rebuild"},
-	"getRetentionErrorEnvelope": {nil, errorResponse{}, ""},
-	"getConfigRevisionStale":    {nil, configRevisionStaleResponse{}, ""},
+	"getBackupSetEditHold":     {nil, editHoldStateResponse{}, "/api/v1/backup-sets/src/set-1/edit-hold"},
+	"takeBackupSetEditHold":    {nil, editHoldResponse{}, "/api/v1/backup-sets/src/set-1/edit-hold"},
+	"releaseBackupSetEditHold": {nil, nil, "/api/v1/backup-sets/src/set-1/edit-hold/release"},
+	"scanCatalog":              {nil, catalogReportResponse{}, "/api/v1/catalog/scan"},
+	"rebuildCatalog":           {nil, catalogReportResponse{}, "/api/v1/catalog/rebuild"},
+	// EPIC K's snapshot and repository reads (#788). Every one of them
+	// spells its identity one parameter per segment, for the reason the
+	// backup-set reads above do, and the snapshot detail adds a third:
+	// a run id is one segment, so a route that says so lets chi answer a
+	// malformed one with a 404.
+	"listBackupSetSnapshots":        {nil, listSnapshotsResponse{}, "/api/v1/backup-sets/src/set-1/snapshots"},
+	"getBackupSetSnapshot":          {nil, snapshotDetailResponse{}, "/api/v1/backup-sets/src/set-1/snapshots/run-1"},
+	"listBackupSetSnapshotHolds":    {nil, listSnapshotHoldsResponse{}, "/api/v1/backup-sets/src/set-1/holds"},
+	"getBackupSetSnapshotRetention": {nil, snapshotRetentionResponse{}, "/api/v1/backup-sets/src/set-1/snapshot-retention"},
+	"listRepositories":              {nil, listRepositoriesResponse{}, "/api/v1/repositories"},
+	"getRepositoryMaintenance":      {nil, repositoryMaintenanceResponse{}, "/api/v1/repositories/vault/maintenance"},
+	"getRetentionErrorEnvelope":     {nil, errorResponse{}, ""},
+	"getConfigRevisionStale":        {nil, configRevisionStaleResponse{}, ""},
 }
 
 // nonRoutedBindings are the two entries above that describe a body shape
@@ -1312,6 +1323,21 @@ func TestContract_APathBuiltFromTheContractReachesTheResourceItNames(t *testing.
 			reached: func(t *testing.T, b *backupSetFakeBackend, rec *httptest.ResponseRecorder) {
 				if got := b.lastRetried; got != artifactID {
 					t.Errorf("the retry reached the backend for %q, want %q (response %d %q)", got, artifactID, rec.Code, rec.Body.String())
+				}
+			},
+		},
+		{
+			// EPIC K's snapshot detail (#788): three parameters, so a
+			// client fills three segments, and the run id has to arrive
+			// as its own value rather than glued onto the set's name.
+			operation: "getBackupSetSnapshot",
+			identity:  "src/set-1/run-1",
+			arrange:   func(*backupSetFakeBackend) {},
+			reached: func(t *testing.T, b *backupSetFakeBackend, rec *httptest.ResponseRecorder) {
+				fx := snapshotsOf(b.syncFakeBackend)
+				if fx.lastReadSet != "src/set-1" || fx.lastReadRun != "run-1" {
+					t.Errorf("the snapshot read reached the backend for set %q run %q, want \"src/set-1\" and \"run-1\" (response %d %q)",
+						fx.lastReadSet, fx.lastReadRun, rec.Code, rec.Body.String())
 				}
 			},
 		},

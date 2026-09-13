@@ -207,7 +207,7 @@ type Operation struct {
 	//
 	// Nil rather than an empty slice, and derived per read rather than
 	// stored: see core/service/operationsnapshot.go, which argues both.
-	Snapshots []OperationSnapshot
+	Snapshots []Snapshot
 
 	// Cycle is what a FINISHED run cycle actually got done, read back off
 	// the summary this package recorded when it completed the operation.

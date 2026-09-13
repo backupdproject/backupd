@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "05d60cf9e86ac71f05897351b16a6ca16d95b00003931c7f1dcedd1faaf3ba09"
+const ContractSHA256 = "7c2df3f950be932ff25ff9ab4f524aef5afdbfea5de05d9089bed84086001283"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -104,6 +104,10 @@ const (
 	ErrorCodeSSHKeyCandidateNotFound                ErrorCode = "SSH_KEY_CANDIDATE_NOT_FOUND"
 	ErrorCodeBackupSetConnectionNotProven           ErrorCode = "BACKUP_SET_CONNECTION_NOT_PROVEN"
 	ErrorCodeMediumConnectionNotProven              ErrorCode = "MEDIUM_CONNECTION_NOT_PROVEN"
+	ErrorCodeSnapshotNotFound                       ErrorCode = "SNAPSHOT_NOT_FOUND"
+	ErrorCodeSnapshotHoldNotFound                   ErrorCode = "SNAPSHOT_HOLD_NOT_FOUND"
+	ErrorCodeRepositoryDomainNotFound               ErrorCode = "REPOSITORY_DOMAIN_NOT_FOUND"
+	ErrorCodeBackupSetNotIncremental                ErrorCode = "BACKUP_SET_NOT_INCREMENTAL"
 )
 
 // WireErrorCodes is codes a server may put on the wire. Every one of these is emitted by real handler code, and apps/common/webhost's TestContract_EveryWireErrorCodeIsRegistered holds that both ways.
@@ -155,6 +159,10 @@ var WireErrorCodes = []ErrorCode{
 	ErrorCodeSSHKeyCandidateNotFound,
 	ErrorCodeBackupSetConnectionNotProven,
 	ErrorCodeMediumConnectionNotProven,
+	ErrorCodeSnapshotNotFound,
+	ErrorCodeSnapshotHoldNotFound,
+	ErrorCodeRepositoryDomainNotFound,
+	ErrorCodeBackupSetNotIncremental,
 }
 
 // UIErrorCodes is the shared UI's own presentation vocabulary. No endpoint emits these; they are registered here so there is one registry rather than a second hand-maintained list in ui/shared.
@@ -230,6 +238,10 @@ var ErrorCodes = []ErrorCode{
 	ErrorCodeSSHKeyCandidateNotFound,
 	ErrorCodeBackupSetConnectionNotProven,
 	ErrorCodeMediumConnectionNotProven,
+	ErrorCodeSnapshotNotFound,
+	ErrorCodeSnapshotHoldNotFound,
+	ErrorCodeRepositoryDomainNotFound,
+	ErrorCodeBackupSetNotIncremental,
 }
 
 // ErrorClasses groups codes by the refusal they represent, so a caller (or
@@ -239,10 +251,10 @@ var ErrorClasses = map[string][]ErrorCode{
 	"authorization":  {ErrorCodeEnrollmentClosed, ErrorCodeDestructiveOperationsDisabled, ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
 	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven},
 	"internal":       {ErrorCodeInternal, ErrorCodeInternalError},
-	"not-found":      {ErrorCodeBackupSetNotFound, ErrorCodeOperationNotFound, ErrorCodeRetentionPlanNotFound, ErrorCodeArtifactNotFound, ErrorCodeMediumNotFound},
+	"not-found":      {ErrorCodeBackupSetNotFound, ErrorCodeOperationNotFound, ErrorCodeRetentionPlanNotFound, ErrorCodeArtifactNotFound, ErrorCodeMediumNotFound, ErrorCodeSnapshotNotFound, ErrorCodeSnapshotHoldNotFound, ErrorCodeRepositoryDomainNotFound},
 	"throttling":     {ErrorCodeRateLimited},
 	"unavailable":    {ErrorCodeNotConfigured, ErrorCodeSmtpSendFailed},
-	"validation":     {ErrorCodeInvalidRequest, ErrorCodeInvalidEmail, ErrorCodeSSHKeyNotFound, ErrorCodeHostKeyProbeFailed, ErrorCodeMediumDisclosureRequired},
+	"validation":     {ErrorCodeInvalidRequest, ErrorCodeInvalidEmail, ErrorCodeSSHKeyNotFound, ErrorCodeHostKeyProbeFailed, ErrorCodeMediumDisclosureRequired, ErrorCodeBackupSetNotIncremental},
 }
 
 // Endpoint is one operation of the contract, with the requirements a
@@ -544,6 +556,18 @@ var Endpoints = []Endpoint{
 		},
 	},
 	{
+		ID: "listBackupSetSnapshotHolds", Method: "GET", Path: "/backup-sets/{source}/{set}/holds",
+		Authenticated: true, CSRFRequired: false, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "", ResponseSchema: "ListSnapshotHoldsResponse", SuccessStatus: 200,
+		ErrorCodes: map[int][]ErrorCode{
+			400: {ErrorCodeBackupSetNotIncremental},
+			401: {ErrorCodeUnauthenticated},
+			404: {ErrorCodeBackupSetNotFound},
+			500: {ErrorCodeInternal},
+			503: {ErrorCodeNotConfigured},
+		},
+	},
+	{
 		ID: "setBackupSetReadOnly", Method: "POST", Path: "/backup-sets/{source}/{set}/read-only",
 		Authenticated: true, CSRFRequired: true, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
 		RequestSchema: "SetReadOnlyRequest", ResponseSchema: "BackupSet", SuccessStatus: 200,
@@ -619,6 +643,42 @@ var Endpoints = []Endpoint{
 		},
 	},
 	{
+		ID: "getBackupSetSnapshotRetention", Method: "GET", Path: "/backup-sets/{source}/{set}/snapshot-retention",
+		Authenticated: true, CSRFRequired: false, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "", ResponseSchema: "SnapshotRetentionResponse", SuccessStatus: 200,
+		ErrorCodes: map[int][]ErrorCode{
+			400: {ErrorCodeBackupSetNotIncremental},
+			401: {ErrorCodeUnauthenticated},
+			404: {ErrorCodeBackupSetNotFound},
+			500: {ErrorCodeInternal},
+			503: {ErrorCodeNotConfigured},
+		},
+	},
+	{
+		ID: "listBackupSetSnapshots", Method: "GET", Path: "/backup-sets/{source}/{set}/snapshots",
+		Authenticated: true, CSRFRequired: false, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "", ResponseSchema: "ListSnapshotsResponse", SuccessStatus: 200,
+		ErrorCodes: map[int][]ErrorCode{
+			400: {ErrorCodeBackupSetNotIncremental},
+			401: {ErrorCodeUnauthenticated},
+			404: {ErrorCodeBackupSetNotFound},
+			500: {ErrorCodeInternal},
+			503: {ErrorCodeNotConfigured},
+		},
+	},
+	{
+		ID: "getBackupSetSnapshot", Method: "GET", Path: "/backup-sets/{source}/{set}/snapshots/{run}",
+		Authenticated: true, CSRFRequired: false, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "", ResponseSchema: "SnapshotResponse", SuccessStatus: 200,
+		ErrorCodes: map[int][]ErrorCode{
+			400: {ErrorCodeBackupSetNotIncremental},
+			401: {ErrorCodeUnauthenticated},
+			404: {ErrorCodeBackupSetNotFound, ErrorCodeSnapshotNotFound},
+			500: {ErrorCodeInternal},
+			503: {ErrorCodeNotConfigured},
+		},
+	},
+	{
 		ID: "listArtifacts", Method: "GET", Path: "/backups",
 		Authenticated: true, CSRFRequired: false, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
 		RequestSchema: "", ResponseSchema: "ListArtifactsResponse", SuccessStatus: 200,
@@ -684,10 +744,10 @@ var Endpoints = []Endpoint{
 		Authenticated: true, CSRFRequired: true, IdempotencyKey: "required", DestructiveGate: true, Concurrency: "config_revision",
 		RequestSchema: "SubmitOperationRequest", ResponseSchema: "Operation", SuccessStatus: 202,
 		ErrorCodes: map[int][]ErrorCode{
-			400: {ErrorCodeInvalidRequest},
+			400: {ErrorCodeInvalidRequest, ErrorCodeBackupSetNotIncremental},
 			401: {ErrorCodeUnauthenticated},
 			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch, ErrorCodeDestructiveOperationsDisabled},
-			404: {ErrorCodeBackupSetNotFound, ErrorCodeArtifactNotFound, ErrorCodeCopyNotFound},
+			404: {ErrorCodeBackupSetNotFound, ErrorCodeArtifactNotFound, ErrorCodeCopyNotFound, ErrorCodeSnapshotNotFound, ErrorCodeSnapshotHoldNotFound},
 			409: {ErrorCodeConfigRevisionStale, ErrorCodeIdempotencyKeyConflict, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeRestoreRefused},
 			500: {ErrorCodeInternal},
 			503: {ErrorCodeRestoreUnavailable},
@@ -747,6 +807,27 @@ var Endpoints = []Endpoint{
 			404: {ErrorCodeArtifactNotFound, ErrorCodeBackupSetNotFound},
 			409: {ErrorCodeArtifactNotQuarantined},
 			500: {ErrorCodeInternal},
+		},
+	},
+	{
+		ID: "listRepositories", Method: "GET", Path: "/repositories",
+		Authenticated: true, CSRFRequired: false, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "", ResponseSchema: "ListRepositoriesResponse", SuccessStatus: 200,
+		ErrorCodes: map[int][]ErrorCode{
+			401: {ErrorCodeUnauthenticated},
+			500: {ErrorCodeInternal},
+			503: {ErrorCodeNotConfigured},
+		},
+	},
+	{
+		ID: "getRepositoryMaintenance", Method: "GET", Path: "/repositories/{domain}/maintenance",
+		Authenticated: true, CSRFRequired: false, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "", ResponseSchema: "RepositoryMaintenance", SuccessStatus: 200,
+		ErrorCodes: map[int][]ErrorCode{
+			401: {ErrorCodeUnauthenticated},
+			404: {ErrorCodeRepositoryDomainNotFound},
+			500: {ErrorCodeInternal},
+			503: {ErrorCodeNotConfigured},
 		},
 	},
 	{
@@ -1191,28 +1272,37 @@ type BackendProbeStep struct {
 
 // BackupSet is A persisted backup set as the API reports it.
 type BackupSet struct {
-	CompletionStrategy           string           `json:"completion_strategy"`
-	ConnectionUnverified         bool             `json:"connection_unverified,omitempty"`
-	Disabled                     bool             `json:"disabled"`
-	EffectivePollIntervalSeconds int              `json:"effective_poll_interval_seconds"`
-	Host                         string           `json:"host"`
-	ID                           string           `json:"id"`
-	Include                      []string         `json:"include"`
-	LocalPath                    string           `json:"local_path"`
-	Name                         string           `json:"name"`
-	PollIntervalSeconds          *int             `json:"poll_interval_seconds"`
-	Port                         int              `json:"port"`
-	ReadOnly                     bool             `json:"read_only"`
-	RemotePath                   string           `json:"remote_path"`
-	RetentionIsOverride          bool             `json:"retention_is_override"`
-	SourceName                   string           `json:"source_name"`
-	SSHKeyID                     string           `json:"ssh_key_id"`
-	StableForSeconds             int              `json:"stable_for_seconds"`
-	StaleAfterSeconds            int              `json:"stale_after_seconds"`
-	TrustedHostKeyRecordedAt     string           `json:"trusted_host_key_recorded_at,omitempty"`
-	TrustedHostKeys              []TrustedHostKey `json:"trusted_host_keys,omitempty"`
-	User                         string           `json:"user"`
-	ValidatorID                  string           `json:"validator_id"`
+	CompletionStrategy                   string           `json:"completion_strategy"`
+	ConnectionUnverified                 bool             `json:"connection_unverified,omitempty"`
+	Disabled                             bool             `json:"disabled"`
+	EffectivePollIntervalSeconds         int              `json:"effective_poll_interval_seconds"`
+	Engine                               string           `json:"engine"`
+	Host                                 string           `json:"host"`
+	ID                                   string           `json:"id"`
+	Include                              []string         `json:"include"`
+	LocalPath                            string           `json:"local_path"`
+	Name                                 string           `json:"name"`
+	PollIntervalSeconds                  *int             `json:"poll_interval_seconds"`
+	Port                                 int              `json:"port"`
+	ReadOnly                             bool             `json:"read_only"`
+	RemotePath                           string           `json:"remote_path"`
+	RepositoryDomain                     string           `json:"repository_domain,omitempty"`
+	RetentionIsOverride                  bool             `json:"retention_is_override"`
+	SourceConsistency                    string           `json:"source_consistency,omitempty"`
+	SourceMountPrefix                    string           `json:"source_mount_prefix,omitempty"`
+	SourceName                           string           `json:"source_name"`
+	SSHKeyID                             string           `json:"ssh_key_id"`
+	StableForSeconds                     int              `json:"stable_for_seconds"`
+	StaleAfterSeconds                    int              `json:"stale_after_seconds"`
+	TrustedHostKeyRecordedAt             string           `json:"trusted_host_key_recorded_at,omitempty"`
+	TrustedHostKeys                      []TrustedHostKey `json:"trusted_host_keys,omitempty"`
+	User                                 string           `json:"user"`
+	Uuid                                 string           `json:"uuid,omitempty"`
+	ValidatorID                          string           `json:"validator_id"`
+	VerificationFullEverySeconds         int64            `json:"verification_full_every_seconds,omitempty"`
+	VerificationLevel                    string           `json:"verification_level,omitempty"`
+	VerificationRestoreDrillEverySeconds int64            `json:"verification_restore_drill_every_seconds,omitempty"`
+	VerificationSamplePercent            int              `json:"verification_sample_percent,omitempty"`
 }
 
 // BackupSetEditHold is POST /backup-sets/{source}/{set}/edit-hold. The lease just taken
@@ -1302,23 +1392,32 @@ type BackupSetRetention struct {
 // so the wizard that collects these answers can never be right about
 // one operation and wrong about the other.
 type BackupSetSpec struct {
-	CompletionStrategy  string   `json:"completion_strategy"`
-	Disabled            bool     `json:"disabled"`
-	Host                string   `json:"host"`
-	Include             []string `json:"include"`
-	KnownHostsLine      string   `json:"known_hosts_line"`
-	LocalPath           string   `json:"local_path"`
-	Name                string   `json:"name"`
-	Port                int      `json:"port"`
-	ReadOnly            bool     `json:"read_only"`
-	RemotePath          string   `json:"remote_path"`
-	SkipConnectionCheck bool     `json:"skip_connection_check"`
-	SourceName          string   `json:"source_name"`
-	SSHKeyID            string   `json:"ssh_key_id"`
-	StableForSeconds    int      `json:"stable_for_seconds"`
-	StaleAfterSeconds   int      `json:"stale_after_seconds"`
-	User                string   `json:"user"`
-	ValidatorID         string   `json:"validator_id"`
+	CompletionStrategy                   string   `json:"completion_strategy"`
+	Disabled                             bool     `json:"disabled"`
+	Engine                               string   `json:"engine,omitempty"`
+	Host                                 string   `json:"host"`
+	Include                              []string `json:"include"`
+	KnownHostsLine                       string   `json:"known_hosts_line"`
+	LocalPath                            string   `json:"local_path"`
+	Name                                 string   `json:"name"`
+	Port                                 int      `json:"port"`
+	ReadOnly                             bool     `json:"read_only"`
+	RemotePath                           string   `json:"remote_path"`
+	RepositoryDomain                     string   `json:"repository_domain,omitempty"`
+	SkipConnectionCheck                  bool     `json:"skip_connection_check"`
+	SourceConsistency                    string   `json:"source_consistency,omitempty"`
+	SourceMountPrefix                    string   `json:"source_mount_prefix,omitempty"`
+	SourceName                           string   `json:"source_name"`
+	SSHKeyID                             string   `json:"ssh_key_id"`
+	StableForSeconds                     int      `json:"stable_for_seconds"`
+	StaleAfterSeconds                    int      `json:"stale_after_seconds"`
+	User                                 string   `json:"user"`
+	Uuid                                 string   `json:"uuid,omitempty"`
+	ValidatorID                          string   `json:"validator_id"`
+	VerificationFullEverySeconds         int64    `json:"verification_full_every_seconds,omitempty"`
+	VerificationLevel                    string   `json:"verification_level,omitempty"`
+	VerificationRestoreDrillEverySeconds int64    `json:"verification_restore_drill_every_seconds,omitempty"`
+	VerificationSamplePercent            int      `json:"verification_sample_percent,omitempty"`
 }
 
 // CapabilitiesResponse is GET /system/capabilities. The API expression of the
@@ -1626,6 +1725,15 @@ type ListOperationsResponse struct {
 	Operations []Operation `json:"operations"`
 }
 
+// ListRepositoriesResponse is GET /repositories: every repository domain this deployment
+// declares, with its health. Nothing is cached, for the reason the
+// backup-set health read is not: a cached repository verdict keeps
+// reporting green after the storage under it has gone away.
+type ListRepositoriesResponse struct {
+	GeneratedAt  string             `json:"generated_at"`
+	Repositories []RepositoryHealth `json:"repositories"`
+}
+
 // ListSSHKeyCandidatesResponse is GET /ssh/key-candidates. The locations travel beside the
 // candidates, in one response, so a client cannot render one without
 // the other.
@@ -1640,6 +1748,17 @@ type ListSSHKeyCandidatesResponse struct {
 // would tell anybody.
 type ListSSHKeysResponse struct {
 	Keys []SSHKey `json:"keys"`
+}
+
+// ListSnapshotHoldsResponse is GET /backup-sets/{source}/{set}/holds: every unreleased hold in
+// this backup set's snapshot lineage.
+type ListSnapshotHoldsResponse struct {
+	Holds []SnapshotHold `json:"holds"`
+}
+
+// ListSnapshotsResponse is GET /backup-sets/{source}/{set}/snapshots, newest first.
+type ListSnapshotsResponse struct {
+	Snapshots []Snapshot `json:"snapshots"`
 }
 
 // ListStorageMediumsResponse is every declared storage destination, in declaration order. An
@@ -1909,6 +2028,7 @@ type Operation struct {
 	Progress       *OperationProgress `json:"progress,omitempty"`
 	Restore        *OperationRestore  `json:"restore,omitempty"`
 	Result         string             `json:"result,omitempty"`
+	Snapshots      []Snapshot         `json:"snapshots,omitempty"`
 	StartedAt      string             `json:"started_at,omitempty"`
 	Status         string             `json:"status"`
 }
@@ -2015,6 +2135,61 @@ type RecoverySettingsUpdate struct {
 	CurrentPassword string        `json:"currentPassword"`
 	RecoveryEmail   *string       `json:"recoveryEmail"`
 	Smtp            *SmtpSettings `json:"smtp"`
+}
+
+// RepositoryHealth is one repository domain's own health, which is a different question
+// from any backup set's. A set can be perfectly fresh while the
+// repository holding its snapshots is unwritable, out of
+// maintenance, or reachable only by a process whose clock has
+// drifted far enough to mis-order manifests -- and none of those
+// show up in a freshness verdict. Every probe here is reported
+// separately rather than reduced to one boolean, because the
+// remedies are different: unreachable is a mount, unwritable is a
+// permission, invalid credentials is a passphrase, and overdue
+// maintenance is a schedule.
+type RepositoryHealth struct {
+	BackupSets             []string `json:"backup_sets,omitempty"`
+	ClockSane              bool     `json:"clock_sane"`
+	ClockSkewSeconds       *int64   `json:"clock_skew_seconds"`
+	CredentialsValid       bool     `json:"credentials_valid"`
+	Detail                 string   `json:"detail,omitempty"`
+	Domain                 string   `json:"domain"`
+	LastMaintenanceAt      string   `json:"last_maintenance_at,omitempty"`
+	LastMaintenanceResult  string   `json:"last_maintenance_result,omitempty"`
+	LastSnapshotAt         string   `json:"last_snapshot_at,omitempty"`
+	LastSnapshotStatus     string   `json:"last_snapshot_status,omitempty"`
+	LastVerificationAt     string   `json:"last_verification_at,omitempty"`
+	LastVerificationStatus string   `json:"last_verification_status,omitempty"`
+	MaintenanceOverdue     bool     `json:"maintenance_overdue"`
+	MayShare               bool     `json:"may_share"`
+	Reachable              bool     `json:"reachable"`
+	Readable               bool     `json:"readable"`
+	State                  string   `json:"state"`
+	Writable               bool     `json:"writable"`
+}
+
+// RepositoryMaintenance is GET /repositories/{domain}/maintenance: who owns this repository's
+// maintenance, when it last ran and when it is next eligible.
+// Ownership is the load-bearing part: several deployments may share
+// one repository, exactly one of them may run maintenance on it, and
+// an operator looking at a repository that is not being maintained
+// needs to know whether that is because nobody owns it or because
+// the owner is somebody else.
+type RepositoryMaintenance struct {
+	Domain         string `json:"domain"`
+	Due            bool   `json:"due"`
+	DueMode        string `json:"due_mode,omitempty"`
+	DueReason      string `json:"due_reason,omitempty"`
+	Failing        bool   `json:"failing"`
+	Failures       int64  `json:"failures"`
+	LastFullAt     string `json:"last_full_at,omitempty"`
+	LastQuickAt    string `json:"last_quick_at,omitempty"`
+	NextEligibleAt string `json:"next_eligible_at,omitempty"`
+	Overdue        bool   `json:"overdue"`
+	OwnedUntil     string `json:"owned_until,omitempty"`
+	Owner          string `json:"owner"`
+	ReclaimedBytes int64  `json:"reclaimed_bytes"`
+	Runs           int64  `json:"runs"`
 }
 
 // ResetPasswordRequest is POST /auth/reset-password: the token out of the emailed link, and
@@ -2316,6 +2491,166 @@ type SmtpSettingsView struct {
 	Username    string `json:"username"`
 }
 
+// Snapshot is one snapshot run: what the incremental engine did on one pass over
+// one backup set's source, and what it proved about the result. This
+// is the record the operator surfaces render for a Kopia run, and
+// its shape is the whole reason EPIC K refuses a single "bytes
+// backed up" figure: entries_scanned, logical_bytes,
+// source_bytes_read, repository_bytes_written and
+// content_reused_bytes are five different measurements of one pass,
+// and collapsing them reports a 100 GB tree deduplicated down to 200
+// MB of new content as a 100 GB upload. A run is identified by
+// run_id, which exists from the moment the pass starts; snapshot_id
+// is the engine's manifest id and exists only once a manifest was
+// committed, so a failed run has the first and not the second.
+type Snapshot struct {
+	BackupSetID               string         `json:"backup_set_id"`
+	CompletedAt               string         `json:"completed_at,omitempty"`
+	ConsistencyMode           string         `json:"consistency_mode"`
+	ContentReusedBytes        *int64         `json:"content_reused_bytes"`
+	DeleteRequestedAt         string         `json:"delete_requested_at,omitempty"`
+	Directories               *int64         `json:"directories"`
+	DurationSeconds           *int64         `json:"duration_seconds"`
+	Engine                    string         `json:"engine"`
+	EntriesScanned            *int64         `json:"entries_scanned"`
+	Files                     *int64         `json:"files"`
+	Holds                     []SnapshotHold `json:"holds,omitempty"`
+	LastKnownGood             bool           `json:"last_known_good"`
+	LogicalBytes              *int64         `json:"logical_bytes"`
+	OperationID               string         `json:"operation_id,omitempty"`
+	Phase                     string         `json:"phase"`
+	Reason                    string         `json:"reason,omitempty"`
+	RepositoryBytesWritten    *int64         `json:"repository_bytes_written"`
+	RepositoryDomain          string         `json:"repository_domain"`
+	RunID                     string         `json:"run_id"`
+	SnapshotID                string         `json:"snapshot_id,omitempty"`
+	SourceBytesRead           *int64         `json:"source_bytes_read"`
+	SourceComplete            *bool          `json:"source_complete"`
+	StartedAt                 string         `json:"started_at"`
+	VerificationLevel         string         `json:"verification_level"`
+	VerificationLevelAchieved string         `json:"verification_level_achieved,omitempty"`
+	VerificationStatus        string         `json:"verification_status,omitempty"`
+}
+
+// SnapshotHold is one hold: a durable statement that a named snapshot must not be
+// deleted, whoever's retention policy says otherwise, until somebody
+// releases it. A hold is the mechanism an investigation, a legal
+// request or a suspected corruption uses, so it names who placed it
+// and why: a hold nobody can attribute is one nobody dares release.
+type SnapshotHold struct {
+	Active      bool   `json:"active"`
+	BackupSetID string `json:"backup_set_id"`
+	HoldID      string `json:"hold_id"`
+	PlacedAt    string `json:"placed_at"`
+	PlacedBy    string `json:"placed_by"`
+	Reason      string `json:"reason"`
+	ReleasedAt  string `json:"released_at,omitempty"`
+	ReleasedBy  string `json:"released_by,omitempty"`
+	RunID       string `json:"run_id"`
+}
+
+// SnapshotHoldReleaseRequest is POST /operations' parameters when the action is
+// release_snapshot_hold: end one hold, by its id. Releasing does not
+// delete anything; it returns the snapshot to whatever the retention
+// policy already said about it.
+type SnapshotHoldReleaseRequest struct {
+	BackupSetID string `json:"backup_set_id"`
+	HoldID      string `json:"hold_id"`
+}
+
+// SnapshotHoldRequest is POST /operations' parameters when the action is hold_snapshot:
+// stop retention deleting one named snapshot until somebody releases
+// the hold.
+type SnapshotHoldRequest struct {
+	BackupSetID string `json:"backup_set_id"`
+	Reason      string `json:"reason"`
+	RunID       string `json:"run_id"`
+}
+
+// SnapshotResponse is GET /backup-sets/{source}/{set}/snapshots/{run}: one run, plus the
+// transition log that says how it got where it is. The log is on the
+// detail read and not on the list because it is unbounded per run
+// and nothing on a list renders it.
+type SnapshotResponse struct {
+	Snapshot    Snapshot             `json:"snapshot"`
+	Transitions []SnapshotTransition `json:"transitions"`
+}
+
+// SnapshotRestoreRequest is POST /operations' parameters when the action is restore_snapshot:
+// read a restore point this deployment holds and write a tree onto a
+// disk it can reach. It is a different act from restore_placement
+// and the two are never folded together -- that one asks a storage
+// provider to make an archived object readable again, over hours, at
+// a cost, and writes nothing anywhere.
+type SnapshotRestoreRequest struct {
+	BackupSetID string `json:"backup_set_id"`
+	Conflict    string `json:"conflict,omitempty"`
+	SnapshotID  string `json:"snapshot_id,omitempty"`
+	SourcePath  string `json:"source_path,omitempty"`
+	TargetPath  string `json:"target_path"`
+}
+
+// SnapshotRetentionResponse is GET /backup-sets/{source}/{set}/snapshot-retention: what this
+// set's snapshot retention would decide right now, oldest snapshot
+// first. It is a PREVIEW and changes nothing. This is not
+// /backup-sets/{source}/{set}/retention, and the two must not be
+// confused: that one is FR-18's artifact retention policy, and this
+// one is the per-snapshot verdict the incremental engine's own
+// pruner would reach.
+type SnapshotRetentionResponse struct {
+	GeneratedAt string                     `json:"generated_at"`
+	Verdicts    []SnapshotRetentionVerdict `json:"verdicts"`
+}
+
+// SnapshotRetentionTier is one reason a snapshot survived: which tier selected it, and what
+// about the snapshot the tier selected it for.
+type SnapshotRetentionTier struct {
+	SelectedBy string `json:"selected_by,omitempty"`
+	Tier       string `json:"tier"`
+}
+
+// SnapshotRetentionVerdict is what snapshot retention would do about one snapshot, and why.
+// Three actions and never two: KEEP means something selects it,
+// DELETE means nothing does and every safety check passed, and
+// REFUSE means it was a delete candidate and something stopped it.
+// Folding REFUSE into KEEP would hide the only one of the three that
+// needs somebody to look at it.
+type SnapshotRetentionVerdict struct {
+	Action     string                  `json:"action"`
+	HoldReason string                  `json:"hold_reason,omitempty"`
+	Holds      []SnapshotHold          `json:"holds,omitempty"`
+	Reason     string                  `json:"reason"`
+	RunID      string                  `json:"run_id"`
+	SnapshotID string                  `json:"snapshot_id,omitempty"`
+	StartedAt  string                  `json:"started_at"`
+	Tiers      []SnapshotRetentionTier `json:"tiers,omitempty"`
+}
+
+// SnapshotTransition is one edge of the snapshot state machine, as it actually happened.
+// The run record is overwritten by every advance, so it can say what
+// a run IS and never how it got there: a run verified twice because
+// a crash interrupted the first attempt reads identically on the row
+// to one verified once, and this log is what tells them apart.
+type SnapshotTransition struct {
+	At     string `json:"at"`
+	Detail string `json:"detail,omitempty"`
+	From   string `json:"from,omitempty"`
+	To     string `json:"to"`
+}
+
+// SnapshotVerifyRequest is POST /operations' parameters when the action is verify_snapshot:
+// prove, now, that a restore point is actually restorable, at a
+// stated depth. It records nothing onto the snapshot row -- what a
+// RUN proved is what that run proved, and an on-demand check months
+// later is a different claim about a different moment, reported on
+// the operation that performed it.
+type SnapshotVerifyRequest struct {
+	BackupSetID   string `json:"backup_set_id"`
+	Level         string `json:"level,omitempty"`
+	RunID         string `json:"run_id,omitempty"`
+	SamplePercent int    `json:"sample_percent,omitempty"`
+}
+
 // StorageMediumCredentialsReference is where one storage medium's credentials come from. Exactly one of
 // the four must be set, and none of them is credential MATERIAL:
 // this is a reference in all four spellings. credentials_id is the
@@ -2424,12 +2759,26 @@ type StorageStatus struct {
 // field: it is a property of the retry, not of the operation. action
 // selects which of the parameter objects below is read;
 // restore_placement reads restore, run_backup_set reads
-// backup_set_id, and run_cycle reads neither.
+// backup_set_id, restore_snapshot reads snapshot_restore,
+// verify_snapshot reads snapshot_verify, hold_snapshot reads
+// snapshot_hold, release_snapshot_hold reads snapshot_hold_release,
+// and run_cycle reads none of them. A body naming another action's
+// parameters is refused rather than ignored: a server that ignores
+// fields it did not expect teaches clients those fields are
+// optional, and the next reader of that client cannot tell which
+// operation was meant. Every mutating incremental-backup action this
+// product has is on this one route, which is what makes each of them
+// durable, idempotency-keyed and revision-checked without a second
+// answer to how long work begins.
 type SubmitOperationRequest struct {
-	Action         string                   `json:"action"`
-	BackupSetID    string                   `json:"backup_set_id,omitempty"`
-	ConfigRevision string                   `json:"config_revision"`
-	Restore        *RestoreOperationRequest `json:"restore,omitempty"`
+	Action              string                      `json:"action"`
+	BackupSetID         string                      `json:"backup_set_id,omitempty"`
+	ConfigRevision      string                      `json:"config_revision"`
+	Restore             *RestoreOperationRequest    `json:"restore,omitempty"`
+	SnapshotHold        *SnapshotHoldRequest        `json:"snapshot_hold,omitempty"`
+	SnapshotHoldRelease *SnapshotHoldReleaseRequest `json:"snapshot_hold_release,omitempty"`
+	SnapshotRestore     *SnapshotRestoreRequest     `json:"snapshot_restore,omitempty"`
+	SnapshotVerify      *SnapshotVerifyRequest      `json:"snapshot_verify,omitempty"`
 }
 
 // TestConnectionRequest is POST /backup-sets/test-connection. A reachability and
@@ -2501,22 +2850,27 @@ type UnregisteredBackend struct {
 // here, and re-trusting a host is still a trust decision, which is
 // what acknowledge_host_key_change is for.
 type UpdateBackupSetRequest struct {
-	AcknowledgeHostKeyChange bool      `json:"acknowledge_host_key_change"`
-	AcknowledgeRepoint       bool      `json:"acknowledge_repoint"`
-	CompletionStrategy       *string   `json:"completion_strategy"`
-	Host                     *string   `json:"host"`
-	Include                  *[]string `json:"include"`
-	KnownHostsLine           *string   `json:"known_hosts_line"`
-	LocalPath                *string   `json:"local_path"`
-	PollIntervalSeconds      *int      `json:"poll_interval_seconds"`
-	Port                     *int      `json:"port"`
-	RemotePath               *string   `json:"remote_path"`
-	SkipConnectionCheck      bool      `json:"skip_connection_check"`
-	SSHKeyID                 *string   `json:"ssh_key_id"`
-	StableForSeconds         *int      `json:"stable_for_seconds"`
-	StaleAfterSeconds        *int      `json:"stale_after_seconds"`
-	User                     *string   `json:"user"`
-	ValidatorID              *string   `json:"validator_id"`
+	AcknowledgeHostKeyChange             bool      `json:"acknowledge_host_key_change"`
+	AcknowledgeRepoint                   bool      `json:"acknowledge_repoint"`
+	CompletionStrategy                   *string   `json:"completion_strategy"`
+	Host                                 *string   `json:"host"`
+	Include                              *[]string `json:"include"`
+	KnownHostsLine                       *string   `json:"known_hosts_line"`
+	LocalPath                            *string   `json:"local_path"`
+	PollIntervalSeconds                  *int      `json:"poll_interval_seconds"`
+	Port                                 *int      `json:"port"`
+	RemotePath                           *string   `json:"remote_path"`
+	SkipConnectionCheck                  bool      `json:"skip_connection_check"`
+	SourceConsistency                    *string   `json:"source_consistency,omitempty"`
+	SSHKeyID                             *string   `json:"ssh_key_id"`
+	StableForSeconds                     *int      `json:"stable_for_seconds"`
+	StaleAfterSeconds                    *int      `json:"stale_after_seconds"`
+	User                                 *string   `json:"user"`
+	ValidatorID                          *string   `json:"validator_id"`
+	VerificationFullEverySeconds         *int64    `json:"verification_full_every_seconds,omitempty"`
+	VerificationLevel                    *string   `json:"verification_level,omitempty"`
+	VerificationRestoreDrillEverySeconds *int64    `json:"verification_restore_drill_every_seconds,omitempty"`
+	VerificationSamplePercent            *int      `json:"verification_sample_percent,omitempty"`
 }
 
 // UpdateCapacitySettings is A PARTIAL capacity update. An omitted field is left exactly as the
@@ -2651,8 +3005,11 @@ var SchemaTypes = map[string]any{
 	"ListBackendsResponse":              ListBackendsResponse{},
 	"ListBackupSetsResponse":            ListBackupSetsResponse{},
 	"ListOperationsResponse":            ListOperationsResponse{},
+	"ListRepositoriesResponse":          ListRepositoriesResponse{},
 	"ListSSHKeyCandidatesResponse":      ListSSHKeyCandidatesResponse{},
 	"ListSSHKeysResponse":               ListSSHKeysResponse{},
+	"ListSnapshotHoldsResponse":         ListSnapshotHoldsResponse{},
+	"ListSnapshotsResponse":             ListSnapshotsResponse{},
 	"ListStorageMediumsResponse":        ListStorageMediumsResponse{},
 	"ListStorageStatusResponse":         ListStorageStatusResponse{},
 	"ListValidatorsResponse":            ListValidatorsResponse{},
@@ -2674,6 +3031,8 @@ var SchemaTypes = map[string]any{
 	"Placement":                         Placement{},
 	"RecoverySettingsResponse":          RecoverySettingsResponse{},
 	"RecoverySettingsUpdate":            RecoverySettingsUpdate{},
+	"RepositoryHealth":                  RepositoryHealth{},
+	"RepositoryMaintenance":             RepositoryMaintenance{},
 	"ResetPasswordRequest":              ResetPasswordRequest{},
 	"RestoreOperationRequest":           RestoreOperationRequest{},
 	"RetentionMove":                     RetentionMove{},
@@ -2699,6 +3058,17 @@ var SchemaTypes = map[string]any{
 	"SettingsSchema":                    SettingsSchema{},
 	"SmtpSettings":                      SmtpSettings{},
 	"SmtpSettingsView":                  SmtpSettingsView{},
+	"Snapshot":                          Snapshot{},
+	"SnapshotHold":                      SnapshotHold{},
+	"SnapshotHoldReleaseRequest":        SnapshotHoldReleaseRequest{},
+	"SnapshotHoldRequest":               SnapshotHoldRequest{},
+	"SnapshotResponse":                  SnapshotResponse{},
+	"SnapshotRestoreRequest":            SnapshotRestoreRequest{},
+	"SnapshotRetentionResponse":         SnapshotRetentionResponse{},
+	"SnapshotRetentionTier":             SnapshotRetentionTier{},
+	"SnapshotRetentionVerdict":          SnapshotRetentionVerdict{},
+	"SnapshotTransition":                SnapshotTransition{},
+	"SnapshotVerifyRequest":             SnapshotVerifyRequest{},
 	"StorageMediumCredentialsReference": StorageMediumCredentialsReference{},
 	"StorageMediumRequest":              StorageMediumRequest{},
 	"StorageMediumSummary":              StorageMediumSummary{},

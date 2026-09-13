@@ -90,6 +90,8 @@ var commands = map[string]func([]string) int{
 	"medium":       cmdMedium,
 	"retry":        cmdRetry,
 	"restore":      cmdRestore,
+	"snapshot":     cmdSnapshot,
+	"repository":   cmdRepository,
 	"settings":     cmdSettings,
 	"version":      cmdVersion,
 }
@@ -335,6 +337,59 @@ commands:
                                                   to skip, because a restore is billed and takes hours; --days
                                                   defaults to 7 and is bounded to 1..30. artifacts <id> lists
                                                   which medium each copy is on
+  backup-set enabled <source/backup-set> <on|off>
+                                                  turn one already-configured backup set on or off, which
+                                                  --disabled can only do at creation. "off" stops the scheduler
+                                                  offering the set to the next cycle; a pass already inside it
+                                                  finishes (#788)
+  backup-set read-only <source/backup-set> <on|off>
+                                                  declare whether this manager may ever delete this backup set's
+                                                  remote originals, which --read-only can only do at creation.
+                                                  "on" is the promise never to delete from the source; "off"
+                                                  gives that promise up and is refused when the source itself
+                                                  cannot support it (#282, #788)
+  snapshot list <source/backup-set>              every snapshot run this incremental backup set has on record,
+                                                  newest first: what each one scanned, read from the source,
+                                                  wrote and reused, and what it proved. Five separate numbers
+                                                  and deliberately no total, because a deduplicated run that
+                                                  scanned 100 GB and stored 200 MB is not a 100 GB upload.
+                                                  "not measured" is a real answer and never a zero (EPIC K)
+  snapshot show <source/backup-set> <run-id>     one snapshot run in full, plus the transition log that says how
+                                                  it reached the phase it is in
+  snapshot holds <source/backup-set>             every unreleased hold over this set's snapshots: what is being
+                                                  kept, why, and by whom
+  snapshot retention <source/backup-set>         what snapshot retention would decide about each of this set's
+                                                  snapshots right now -- KEEP, DELETE or REFUSE, each with the
+                                                  reason. A preview; it deletes nothing
+  snapshot verify <source/backup-set> [--run R] [--level L] [--sample-percent N]
+                                                  prove now that a restore point is readable, at a stated depth:
+                                                  structural, content_sample, content_full or restore_drill.
+                                                  Without --run it verifies the set's last known good snapshot,
+                                                  and without --level it uses the level the set is configured
+                                                  for. Exits non-zero when the verification finds damage
+  snapshot restore <source/backup-set> --to DIR [--snapshot ID] [--path P] [--conflict refuse|skip|overwrite]
+                                                  restore one snapshot, or one path inside it, into a local
+                                                  directory. This is NOT restore above: that one asks a storage
+                                                  provider to make an ARCHIVED COPY readable again, over hours
+                                                  and at a cost. --conflict defaults to refuse, so nothing
+                                                  already at the destination is replaced unless you say so
+  snapshot hold <source/backup-set> --reason R [--run R]
+                                                  stop retention deleting one snapshot until somebody releases
+                                                  the hold. --reason is required: a hold nobody explained is one
+                                                  nobody dares release, which makes it permanent by accident
+  snapshot unhold <source/backup-set> <hold-id>  end one hold, by the id snapshot holds prints. Releasing
+                                                  deletes nothing; it returns the snapshot to whatever the
+                                                  retention policy already said about it
+  repository health                              every declared repository domain and its own verdict:
+                                                  reachable, readable, writable, whether the declared passphrase
+                                                  opens it, whether this machine's clock can be trusted for the
+                                                  timestamps a repository reasons about, whether maintenance is
+                                                  overdue, and the last snapshot and verification it holds. Exits
+                                                  non-zero when a repository is FAILING
+  repository maintenance <repository-domain>     who owns maintenance for one repository, when it last ran quick
+                                                  and full, when it is next eligible, and whether it is overdue
+                                                  or failing. Opens nothing, so it answers while the repository
+                                                  itself is unreachable
   settings [patch [--timezone T] [--week-starts-on D] [--protect-last-known-good=BOOL]
                    [--policy-file F] [--acknowledge-medium-disclosure]
                    [--cap-bytes N] [--warning-free-bytes N] [--critical-free-bytes N] [--safety-margin-bytes N]]

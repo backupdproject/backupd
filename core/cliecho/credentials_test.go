@@ -173,6 +173,16 @@ var flagsThatEchoWhatTheRequestSaid = map[string]string{
 	// The rest.
 	"--medium": "the id of the destination a restore reads from",
 	"--note":   "the operator's own note on a retry, which they wrote and can read back",
+
+	// EPIC K's snapshot verbs (#788). Every one of these is a value the
+	// operator themselves supplied and has to be able to retype: a
+	// restore that landed somewhere they cannot name is a restore they
+	// cannot find, and the durable operation row already records the
+	// destination for exactly that reason.
+	"--to":       "the directory a snapshot restore writes into, which the operator named and has to be able to find afterwards",
+	"--snapshot": "the engine's opaque manifest id, which is neither a path nor a secret",
+	"--path":     "one path INSIDE the snapshot, which is a path in the operator's own source tree and is what they asked to get back",
+	"--conflict": "one of three words deciding what happens to a file already at the destination",
 }
 
 // operandsThatNameTheSubject is the same list for the positional argument
