@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -270,10 +271,13 @@ type Status struct {
 	User string `json:"user"`
 	UID  int    `json:"uid"`
 
-	// SocketPath is where this runner is listening, and RuntimeDir is
-	// the directory it creates working directories under.
-	SocketPath string `json:"socket_path"`
-	RuntimeDir string `json:"runtime_dir"`
+	// SocketPath is where this runner is listening; RuntimeDir is the
+	// directory holding that socket, and the only one the engine's
+	// container has a mount for; WorkspaceDir is where the per-step
+	// working directories are, deliberately outside it.
+	SocketPath   string `json:"socket_path"`
+	RuntimeDir   string `json:"runtime_dir"`
+	WorkspaceDir string `json:"workspace_dir"`
 
 	// Active names the steps running right now, as "<run id>/<step id>".
 	Active []string `json:"active,omitempty"`
@@ -437,5 +441,55 @@ func ReadMessage(r io.Reader) (Message, error) {
 	if dec.More() {
 		return Message{}, fmt.Errorf("%w: a frame carrying more than one JSON value", ErrProtocol)
 	}
+	if err := m.checkArms(); err != nil {
+		return Message{}, err
+	}
 	return m, nil
+}
+
+// checkArms holds a decoded frame to the invariant its Kind states:
+// exactly one payload, and the one the Kind names.
+//
+// DisallowUnknownFields does not do this. Every arm below is a field
+// this type really has, so a frame of kind "request" that also carries a
+// "failure" decodes cleanly and the extra arm is silently dropped by
+// whichever branch reads only what it expected. That is a frame meaning
+// two things at once, accepted -- and the shape of every parser
+// differential worth having: a sender that gets one half read here and
+// the other half read somewhere else has found a way to say something
+// this protocol has no word for.
+func (m Message) checkArms() error {
+	arms := []struct {
+		kind    Kind
+		present bool
+	}{
+		{KindHello, m.Hello != nil},
+		{KindWelcome, m.Welcome != nil},
+		{KindRequest, m.Request != nil},
+		{KindChunk, m.Chunk != nil},
+		{KindResult, m.Result != nil},
+		{KindFailure, m.Failure != nil},
+	}
+
+	var carried []string
+	matched := false
+	for _, arm := range arms {
+		if !arm.present {
+			continue
+		}
+		carried = append(carried, string(arm.kind))
+		if arm.kind == m.Kind {
+			matched = true
+		}
+	}
+
+	switch {
+	case len(carried) == 0:
+		return fmt.Errorf("%w: a %s frame carrying no payload at all", ErrProtocol, m.Kind)
+	case len(carried) > 1:
+		return fmt.Errorf("%w: a %s frame carrying %s. One frame is one thing, and a frame that is two is not a frame this runner will guess about", ErrProtocol, m.Kind, strings.Join(carried, " and "))
+	case !matched:
+		return fmt.Errorf("%w: a %s frame whose payload is a %s", ErrProtocol, m.Kind, carried[0])
+	}
+	return nil
 }

@@ -48,14 +48,14 @@ func testLayout(t *testing.T) Layout {
 	}
 	t.Cleanup(func() { os.RemoveAll(root) })
 	layout := Layout{
-		RuntimeDir: filepath.Join(root, "run"),
-		SecretsDir: filepath.Join(root, "secrets"),
+		RuntimeDir:   filepath.Join(root, "run"),
+		WorkspaceDir: filepath.Join(root, "workspace"),
+		SecretsDir:   filepath.Join(root, "secrets"),
 	}
-	if err := EnsureDir(layout.RuntimeDir); err != nil {
-		t.Fatalf("preparing the runtime directory: %v", err)
-	}
-	if err := EnsureDir(layout.SecretsDir); err != nil {
-		t.Fatalf("preparing the secrets directory: %v", err)
+	for _, dir := range []string{layout.RuntimeDir, layout.WorkspaceDir, layout.SecretsDir} {
+		if err := EnsureDir(dir); err != nil {
+			t.Fatalf("preparing %s: %v", dir, err)
+		}
 	}
 	return layout
 }

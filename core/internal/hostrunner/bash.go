@@ -154,6 +154,23 @@ func (b Bash) SyntaxCheck(ctx context.Context, script []byte) error {
 	if err == nil {
 		return nil
 	}
+
+	// A cancelled context first, before the exit status is read as an
+	// opinion about the script. exec.CommandContext kills the process
+	// when ctx is done, and a killed `bash -n` exits non-zero with
+	// nothing on stderr -- which is indistinguishable, HERE, from bash
+	// having read the bytes and refused them. Mapping it to CodeSyntax
+	// tells an operator whose runner was shutting down, or whose engine
+	// hung up mid-check, that their perfectly valid hook "does not
+	// parse", and that sentence is the one they will act on: they will
+	// go and edit a correct script.
+	if cause := context.Cause(ctx); cause != nil {
+		return &Failure{
+			Code:    CodeInternal,
+			Message: fmt.Sprintf("this runner stopped checking the script's syntax before %s answered: %v", b.Path, cause),
+		}
+	}
+
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		message := strings.TrimSpace(stderr.String())

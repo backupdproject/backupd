@@ -389,6 +389,16 @@ services:
       # beyond this one directory; docs/runtime-contract.md states the
       # same thing in the contract's own words.
       #
+      # And that directory holds the socket and NOTHING else. This mount
+      # is read-write, so everything under it is writable by whatever
+      # this container runs as -- while the runner's per-step working
+      # directories and its private copies of hook scripts are the paths
+      # it CREATES and later REMOVES RECURSIVELY. Those live in
+      # <prefix>/workspace, which no mount here names: a symbolic link
+      # planted at a run directory would otherwise let a compromised
+      # engine choose which host path the runner writes an executable
+      # file into, and which one it then deletes.
+      #
       # Both default rather than using `:?`, so a deployment whose .env
       # predates EPIC L still starts. `./` resolves beside this file,
       # which is the installation prefix, and is where the installer

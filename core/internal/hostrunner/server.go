@@ -106,8 +106,14 @@ type Server struct {
 	exec     *Executor
 	listener net.Listener
 
-	mu     sync.Mutex
-	active map[string]context.CancelCauseFunc
+	// One mutex over both registries. active maps a step key to the
+	// cancel function that kills it; conns is every connection being
+	// served, so that shutting down can close them rather than wait for
+	// reads that are meant to block.
+	mu       sync.Mutex
+	active   map[string]context.CancelCauseFunc
+	conns    map[net.Conn]struct{}
+	stopping bool
 }
 
 // RefuseRoot is the unprivileged-by-default rule, as a function, so that
@@ -187,6 +193,7 @@ func NewServer(cfg Config) (*Server, error) {
 			MaxScriptSize: cfg.MaxScriptSize,
 		},
 		active: map[string]context.CancelCauseFunc{},
+		conns:  map[net.Conn]struct{}{},
 	}, nil
 }
 
@@ -226,6 +233,12 @@ func (s *Server) Listen() error {
 	if err := EnsureDir(s.cfg.Layout.RuntimeDir); err != nil {
 		return err
 	}
+	// The workspace, not the runtime directory: the per-step working
+	// directories deliberately live outside the one mount the engine's
+	// container has. See Layout.
+	if err := EnsureDir(s.cfg.Layout.WorkspaceDir); err != nil {
+		return err
+	}
 	if err := EnsureDir(s.cfg.Layout.WorkflowRoot()); err != nil {
 		return err
 	}
@@ -263,9 +276,22 @@ func (s *Server) SocketPath() string { return s.cfg.Layout.SocketPath() }
 
 // Serve accepts connections until ctx is done or the listener is closed.
 //
-// Every connection is handled in its own goroutine and every one of them
-// is cancelled when Serve returns, which is what makes shutting the
-// runner down also terminate the hooks it owns rather than orphan them.
+// Every connection is handled in its own goroutine, and shutting down
+// CLOSES those connections rather than waiting for them. That is what
+// makes a SIGTERM a shutdown rather than a hang: a connection is blocked
+// in a read that has no deadline -- the lease watcher is a read that is
+// meant to block for as long as the hook runs, and a handshake from a
+// client that connected and then said nothing blocks the same way --
+// so a Serve that only stopped accepting would sit in its final Wait
+// until systemd's timeout turned into SIGKILL, and SIGKILL on this
+// process orphans every setsid'd hook it was supervising, which is the
+// exact runaway the lease exists to prevent.
+//
+// Closing the connection is also how the in-flight steps are terminated
+// rather than abandoned: the lease watcher's read fails, the step's
+// context is cancelled with errLeaseExpired, and Executor.Execute
+// signals the process group and proves it gone before this function's
+// Wait returns.
 func (s *Server) Serve(ctx context.Context) error {
 	if s.listener == nil {
 		if err := s.Listen(); err != nil {
@@ -279,6 +305,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		s.listener.Close()
+		s.closeConns()
 	}()
 
 	var conns sync.WaitGroup
@@ -292,12 +319,52 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 			return fmt.Errorf("hostrunner: the workflow runner stopped accepting connections: %w", err)
 		}
+		if !s.addConn(conn) {
+			// Shutdown won the race with this accept.
+			conn.Close()
+			continue
+		}
 		conns.Add(1)
 		go func() {
 			defer conns.Done()
+			defer s.forgetConn(conn)
 			defer conn.Close()
 			s.handleConn(ctx, conn)
 		}()
+	}
+}
+
+// addConn registers a live connection, or reports that the server is
+// already shutting down and this one must not be served.
+func (s *Server) addConn(conn net.Conn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping {
+		return false
+	}
+	s.conns[conn] = struct{}{}
+	return true
+}
+
+func (s *Server) forgetConn(conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.conns, conn)
+}
+
+// closeConns closes every live connection, which is what unblocks the
+// reads that have no deadline and ends the leases those reads are.
+func (s *Server) closeConns() {
+	s.mu.Lock()
+	s.stopping = true
+	live := make([]net.Conn, 0, len(s.conns))
+	for conn := range s.conns {
+		live = append(live, conn)
+	}
+	s.mu.Unlock()
+
+	for _, conn := range live {
+		_ = conn.Close()
 	}
 }
 
@@ -408,16 +475,17 @@ func (s *Server) handleSyntaxCheck(ctx context.Context, conn net.Conn, req Reque
 
 // handleExecute runs one step, streams its output, and holds the lease.
 func (s *Server) handleExecute(ctx context.Context, conn net.Conn, req Request) {
-	key, failure := s.claim(req)
+	// The cancel function is made BEFORE the claim, because the claim is
+	// what publishes it: see claim's second paragraph.
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
+	key, failure := s.claim(req, cancel)
 	if failure != nil {
 		writeFailure(conn, failure)
 		return
 	}
-
-	runCtx, cancel := context.WithCancelCause(ctx)
-	s.register(key, cancel)
 	defer s.release(key)
-	defer cancel(nil)
 
 	// The lease watcher. A read returning ANYTHING ends the lease: EOF
 	// and a connection error are the engine going away, and unsolicited
@@ -481,8 +549,19 @@ func (s *Server) handleCancel(conn net.Conn, req Request) {
 // timeout it decided locally, or two engines pointed at one runner by a
 // misconfigured deployment, would both produce it, and the visible
 // symptom is a working directory whose script file already exists (see
-// writeScript's O_EXCL). Refusing here makes the reason legible instead.
-func (s *Server) claim(req Request) (string, *Failure) {
+// writeScriptAt's O_EXCL). Refusing here makes the reason legible
+// instead.
+//
+// The check and the insert are ONE critical section, and that is the
+// whole point of passing the cancel function in. Two lock sections --
+// look, unlock, insert -- let two connections for the same step both see
+// an empty registry and both proceed; the one that lost the race then
+// fails O_EXCL on the WINNER's script, cleans up the winner's live
+// working directory on its way out, and its deferred release deletes the
+// winner's cancel function, leaving a running hook nothing can kill.
+// Everything about that failure is silent and none of it is the retry
+// the engine asked for.
+func (s *Server) claim(req Request, cancel context.CancelCauseFunc) (string, *Failure) {
 	key, failure := stepKey(req)
 	if failure != nil {
 		return "", failure
@@ -492,6 +571,7 @@ func (s *Server) claim(req Request) (string, *Failure) {
 	if _, running := s.active[key]; running {
 		return "", &Failure{Code: CodeBusy, Message: fmt.Sprintf("this runner is already running %s", key)}
 	}
+	s.active[key] = cancel
 	return key, nil
 }
 
@@ -503,12 +583,6 @@ func stepKey(req Request) (string, *Failure) {
 		return "", &Failure{Code: CodeRefused, Message: err.Error()}
 	}
 	return req.RunID + "/" + req.StepID, nil
-}
-
-func (s *Server) register(key string, cancel context.CancelCauseFunc) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.active[key] = cancel
 }
 
 func (s *Server) release(key string) {
@@ -528,14 +602,15 @@ func (s *Server) status() Status {
 	s.mu.Unlock()
 
 	return Status{
-		Version:     s.cfg.Version,
-		BashPath:    s.cfg.Bash.Path,
-		BashVersion: s.cfg.Bash.Version,
-		User:        s.cfg.Username,
-		UID:         s.cfg.EUID,
-		SocketPath:  s.cfg.Layout.SocketPath(),
-		RuntimeDir:  s.cfg.Layout.RuntimeDir,
-		Active:      active,
+		Version:      s.cfg.Version,
+		BashPath:     s.cfg.Bash.Path,
+		BashVersion:  s.cfg.Bash.Version,
+		User:         s.cfg.Username,
+		UID:          s.cfg.EUID,
+		SocketPath:   s.cfg.Layout.SocketPath(),
+		RuntimeDir:   s.cfg.Layout.RuntimeDir,
+		WorkspaceDir: s.cfg.Layout.WorkspaceDir,
+		Active:       active,
 	}
 }
 

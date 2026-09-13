@@ -37,13 +37,14 @@ import (
 //
 // # Why the directories are flags and not configuration
 //
-// The runner's paths are HOST paths: <prefix>/run and <prefix>/secrets as
-// they exist on the machine, not as they appear inside the container. The
-// same config.yaml is read from both sides -- the engine sees /data/state
-// and /etc/backupd/config, a shell on the host sees <prefix>/state and
-// <prefix>/config -- so a field in that file could not be right in both
-// places. route.go makes exactly this argument about where the engine's
-// address comes from, and this is the same fact from the other end.
+// The runner's paths are HOST paths: <prefix>/run, <prefix>/workspace and
+// <prefix>/secrets as they exist on the machine, not as they appear
+// inside the container. The same config.yaml is read from both sides --
+// the engine sees /data/state and /etc/backupd/config, a shell on the
+// host sees <prefix>/state and <prefix>/config -- so a field in that file
+// could not be right in both places. route.go makes exactly this argument
+// about where the engine's address comes from, and this is the same fact
+// from the other end.
 //
 // --config is still accepted and still does something: it carries the
 // deployment's configured bound on one script's size, so the runner
@@ -98,24 +99,30 @@ func cmdWorkflowRunner(args []string) int {
 	return entry.run(rest)
 }
 
-// runnerDirs are the two host directories every verb needs, and the one
+// runnerDirs are the three host directories every verb needs, and the one
 // place their flags are declared.
 type runnerDirs struct {
-	runtimeDir *string
-	secretsDir *string
+	runtimeDir   *string
+	workspaceDir *string
+	secretsDir   *string
 }
 
 func runnerDirFlags(fs interface {
 	String(name string, value string, usage string) *string
 }) runnerDirs {
 	return runnerDirs{
-		runtimeDir: fs.String("runtime-dir", "", "the host directory holding the runner socket and the per-step working directories, normally <prefix>/run"),
-		secretsDir: fs.String("secrets-dir", "", "the host directory holding this installation's workflow-runner credential, normally <prefix>/secrets"),
+		runtimeDir:   fs.String("runtime-dir", "", "the host directory holding the runner socket, normally <prefix>/run. It is the only directory the engine's container mounts, so nothing else lives in it"),
+		workspaceDir: fs.String("workspace-dir", "", "the runner-private host directory holding the per-step working directories, normally <prefix>/workspace. It is mounted into no container"),
+		secretsDir:   fs.String("secrets-dir", "", "the host directory holding this installation's workflow-runner credential, normally <prefix>/secrets"),
 	}
 }
 
 func (d runnerDirs) layout() (hostrunner.Layout, error) {
-	layout := hostrunner.Layout{RuntimeDir: *d.runtimeDir, SecretsDir: *d.secretsDir}
+	layout := hostrunner.Layout{
+		RuntimeDir:   *d.runtimeDir,
+		WorkspaceDir: *d.workspaceDir,
+		SecretsDir:   *d.secretsDir,
+	}
 	if err := layout.Validate(); err != nil {
 		return hostrunner.Layout{}, err
 	}
@@ -233,6 +240,7 @@ func workflowRunnerStatus(args []string) int {
 	fmt.Printf("bash %s (%s)\n", status.BashPath, status.BashVersion)
 	fmt.Printf("user %s (uid %d)\n", status.User, status.UID)
 	fmt.Printf("runtime %s\n", status.RuntimeDir)
+	fmt.Printf("workspace %s\n", status.WorkspaceDir)
 	if len(status.Active) == 0 {
 		fmt.Println("running nothing")
 		return exitOK

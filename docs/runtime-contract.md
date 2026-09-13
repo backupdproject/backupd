@@ -114,7 +114,8 @@ else:
 
 ```text
 ${WORKFLOWS_DIR:-./workflows}:/workflows:ro    the hook scripts, READ-ONLY
-${RUNTIME_DIR:-./run}:/data/run                the runner's socket directory
+${RUNTIME_DIR:-./run}:/data/run                the runner's socket directory,
+                                               and nothing but the socket
 ```
 
 The scripts are read-only because the engine reads each one once, hashes it and
@@ -122,6 +123,12 @@ copies it into its own private spool under `/data/state`, and never opens the
 original again (`core/internal/workflow`), so write access would buy nothing and
 would let a compromised engine edit what the host is about to execute. The
 runtime directory is writable because connecting to a Unix socket is a write.
+
+That is also why it holds the socket and nothing else. A read-write mount makes
+everything under it writable by this container, and the runner's per-step
+working directories are the paths it creates and later removes recursively —
+so they live in `<prefix>/workspace` on the host, which nothing here mounts
+(ADR 0020, Decision 6a).
 
 Neither mount uses `:?`, so a deployment whose `.env` predates EPIC L still
 starts.

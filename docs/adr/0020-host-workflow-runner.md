@@ -54,7 +54,8 @@ backupd does the fourth. `core/internal/hostrunner` is that process and
 
 The container gains exactly two bind mounts — the hook scripts read-only
 at `/workflows`, and the runner's socket directory at `/data/run` — and
-nothing else. No capability, no privilege, no namespace, no Docker
+nothing else. That second mount holds the **socket and nothing else**:
+see Decision 6a. No capability, no privilege, no namespace, no Docker
 socket, no shell. `distribution/compose`'s prohibition rules and the
 installer's byte-for-byte compose gate pass unchanged, which is #809's
 own acceptance criterion and is checked rather than asserted.
@@ -183,10 +184,48 @@ still a member of its process group, and `kill(-pgid, 0)` cannot tell one
 from a running process — so a probe taken before `cmd.Wait` reports
 "still there" for every termination, including the ones that worked.
 
+`kill(-pgid, 0)` failing after the leader was reaped is not the end of
+the sequence either. A hook that exits on its SIGTERM while leaving
+behind a child that ignores it — any daemon that traps the signal to
+finish work first does exactly that — leaves the group occupied by a
+process nothing else on the host still knows the pgid of. So an
+unconfirmed probe is followed by the `SIGKILL` it justifies, and only a
+group that survives *that* is reported unconfirmed.
+
 The per-step working directory is removed after the step **unless**
 termination could not be confirmed. Removing a directory something may
 still be writing into is how a cleanup turns into a half-written dump
-nobody can explain.
+nobody can explain. That holds on the paths that end in an ERROR as well
+as the ones that end in a result: a step whose output stream was lost
+mid-run (the engine died) still went through a kill, and "the operation
+failed" is not a reason to delete the evidence of one that could not be
+proved.
+
+## Decision 6a: the socket directory and the workspace are two directories
+
+`<prefix>/run` holds the socket. `<prefix>/workspace` holds every
+per-step working directory and every runner-private copy of a captured
+script. They are separate because only one of them is mounted.
+
+Connecting to a Unix socket is a write, so `/data/run` has to be bound
+read-write into the engine — which makes everything under it writable by
+whatever that container runs as. The paths the runner CREATES, chmods and
+later REMOVES RECURSIVELY must therefore not be under it: an engine that
+was compromised, or merely authenticated, could otherwise plant a
+symbolic link at `workflow/<run id>` and choose which host directory this
+process writes a `0500` executable into and which one it then deletes.
+Nothing mounts `<prefix>/workspace`, so that link cannot be created in
+the first place.
+
+And the runner does not rely on that alone. Every directory it creates
+under the workspace, and every recursive removal, goes through an
+**openat-style directory descriptor** (`os.Root`), one component at a
+time, refusing a symbolic link at any of them rather than following it.
+A path-based `MkdirAll`/`RemoveAll` follows whatever it meets at each
+component; a final-component `Lstat` catches the last hop and nothing
+before it. `Layout.Validate` refuses a layout that nests the workspace or
+the secrets area inside the runtime directory, so a deployment cannot put
+back by configuration what this decision took apart.
 
 ## Decision 7: the execution envelope, agreed with #810
 
@@ -236,9 +275,13 @@ its own acceptance criteria.
 
 ## Decision 8: the installer provisions, and the operator's answer survives
 
-`<prefix>/workflows` and `<prefix>/run` are created `0700` by the
-installer **before** any `docker compose up`, because Docker creates a
-missing bind-mount source itself, as root, with a mode nobody chose.
+`<prefix>/workflows`, `<prefix>/run` and `<prefix>/workspace` are created
+`0700` by the installer **before** any `docker compose up`, because
+Docker creates a missing bind-mount source itself, as root, with a mode
+nobody chose. The unit names the workspace too — `--workspace-dir`, and
+`ReadWritePaths` lists exactly those two writable directories — so a
+runner started by systemd can give a hook somewhere to write and can
+write nothing else on the host.
 
 The credential is written **once** and never rotated by an upgrade: a
 rotated credential is an engine that cannot authenticate to its own
@@ -267,7 +310,7 @@ anywhere, and escalating to root to write into `/etc` uninvited is not
 something an installer gets to do on the machine an operator is most
 careful about.
 
-Uninstall takes the unit, the socket and the run directory, and
+Uninstall takes the unit, the socket directory and the workspace, and
 deliberately leaves `<prefix>/workflows`. Those files are the operator's,
 like the backups: an uninstall that deleted them by default is a
 data-loss bug with a friendly name.

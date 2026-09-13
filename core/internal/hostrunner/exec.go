@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -171,20 +170,11 @@ func (e *Executor) Execute(ctx context.Context, req Request, sink Sink) (Result,
 		return Result{}, err
 	}
 
-	workDir, err := e.Layout.StepWorkDir(req.RunID, req.StepID)
+	workDir, scriptPath, err := e.Layout.prepareStep(req.RunID, req.StepID, req.Script)
 	if err != nil {
-		return Result{}, &Failure{Code: CodeRefused, Message: err.Error()}
-	}
-	scriptPath, err := e.Layout.StepScriptPath(req.RunID, req.StepID)
-	if err != nil {
-		return Result{}, &Failure{Code: CodeRefused, Message: err.Error()}
-	}
-
-	if err := EnsureDir(workDir); err != nil {
-		return Result{}, &Failure{Code: CodeInternal, Message: err.Error()}
-	}
-	if err := writeScript(scriptPath, req.Script); err != nil {
-		e.cleanupStep(req.RunID, req.StepID)
+		if errors.Is(err, ErrLayout) {
+			return Result{}, &Failure{Code: CodeRefused, Message: err.Error()}
+		}
 		return Result{}, &Failure{Code: CodeInternal, Message: err.Error()}
 	}
 
@@ -213,7 +203,15 @@ func (e *Executor) Execute(ctx context.Context, req Request, sink Sink) (Result,
 		timeout:    timeout,
 	}, sink)
 	if err != nil {
-		e.cleanupStep(req.RunID, req.StepID)
+		// Even a failed operation obeys the invariant below. run
+		// returns a POPULATED result alongside its error when the
+		// engine's connection died mid-stream, and that path reaches
+		// here having already signalled a process group: removing a
+		// working directory whose termination could not be confirmed
+		// would be the exact deletion the next paragraph refuses.
+		if result.TerminationCertainty != CertaintyUnconfirmed {
+			e.cleanupStep(req.RunID, req.StepID)
+		}
 		return Result{}, err
 	}
 	result.DroppedEnvNames = req.Env.DroppedEnvNames()
@@ -389,39 +387,6 @@ func pump(wg *sync.WaitGroup, r io.Reader, w io.Writer) {
 	}
 }
 
-// writeScript puts the verified bytes where bash will read them.
-//
-// O_EXCL, so a file already at that path is a refusal rather than a
-// truncate-and-overwrite: the same run and step executing twice at once
-// is a bug worth seeing, and following an existing path would be
-// following whatever is there. O_NOFOLLOW for the same reason
-// internal/workflow uses it -- a symbolic link at that name would send
-// these bytes somewhere else entirely.
-func writeScript(path string, body []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, ScriptFileMode)
-	if err != nil {
-		return fmt.Errorf("hostrunner: this runner cannot write the step's script to %s: %w", path, err)
-	}
-	if _, err := f.Write(body); err != nil {
-		f.Close()
-		os.Remove(path)
-		return fmt.Errorf("hostrunner: this runner cannot write the step's script to %s: %w", path, err)
-	}
-	// The mode is set again through the descriptor because O_CREATE's
-	// mode is masked by the process umask, and a umask of 0077 is not
-	// the only one a service manager might hand this process.
-	if err := f.Chmod(ScriptFileMode); err != nil {
-		f.Close()
-		os.Remove(path)
-		return fmt.Errorf("hostrunner: this runner cannot set the mode of %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(path)
-		return fmt.Errorf("hostrunner: this runner cannot close %s: %w", path, err)
-	}
-	return nil
-}
-
 // cleanupStep removes one step's working directory and script, and the
 // run directory once it is empty.
 //
@@ -430,20 +395,11 @@ func writeScript(path string, body []byte) error {
 // that happened to a step: a caller that reported "the hook succeeded but
 // the working directory could not be removed" as an error would fail runs
 // for a full disk. What it must not do is remove something it did not
-// create, which is why every path goes through the layout and its id
-// validation rather than through string concatenation.
+// create, which is why the whole removal happens inside Layout.removeStep
+// -- validated ids, and descriptors that cannot be walked out of the
+// workspace -- rather than through string concatenation and os.RemoveAll.
 func (e *Executor) cleanupStep(runID, stepID string) {
-	if scriptPath, err := e.Layout.StepScriptPath(runID, stepID); err == nil {
-		_ = os.Remove(scriptPath)
-	}
-	if workDir, err := e.Layout.StepWorkDir(runID, stepID); err == nil {
-		_ = os.RemoveAll(workDir)
-	}
-	if runDir, err := e.Layout.RunDir(runID); err == nil {
-		// Remove, not RemoveAll: it succeeds only when this was the run's
-		// last step, and leaves another step's directory alone.
-		_ = os.Remove(runDir)
-	}
+	e.Layout.removeStep(runID, stepID)
 }
 
 // errLeaseExpired is the cancellation cause the server uses when the
@@ -473,6 +429,16 @@ var errLeaseExpired = errors.New("hostrunner: the engine's lease expired")
 // a database lock or unmount a snapshot -- which is the reason a hook
 // exists at all. SIGKILL after, because a grace period nobody enforces is
 // a hang.
+//
+// SIGKILL after BOTH ways of arriving at an unconfirmed group, which is
+// the part that is easy to miss. The leader being reaped does not mean
+// the group is empty: a hook that started a child which ignores SIGTERM
+// -- a `while :; do :; done` under `trap ” TERM`, or any daemon that
+// traps it to finish work first -- exits itself and leaves that child
+// holding the group. Reporting "unconfirmed" there and stopping would
+// leave a process running forever with nothing left that knows its pgid,
+// on a host where the operator's only clue is a load average. So the
+// probe failing is followed by the kill it exists to justify.
 func (e *Executor) killGroup(pgid int, waited chan error) (error, TerminationCertainty) {
 	if pgid <= 0 {
 		return <-waited, CertaintyUnconfirmed
@@ -481,6 +447,14 @@ func (e *Executor) killGroup(pgid int, waited chan error) (error, TerminationCer
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	select {
 	case err := <-waited:
+		if certainty := confirmGone(pgid, killConfirmWindow); certainty == CertaintyConfirmed {
+			return err, certainty
+		}
+		// The leader is reaped and the group is not empty. Nothing is
+		// left to wait for -- the survivors are not this process's
+		// children -- so this is a signal and a second look, and the
+		// answer after it is the honest one.
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		return err, confirmGone(pgid, killConfirmWindow)
 	case <-time.After(e.grace()):
 	}

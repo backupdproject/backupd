@@ -2,11 +2,16 @@ package hostrunner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -483,4 +488,364 @@ func waitForFileEventually(path string, within time.Duration) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// TestExecute_FollowsNoSymbolicLinkUnderTheWorkspace is the traversal
+// case the id validation does NOT cover.
+//
+// ValidID stops a run id from being "../../etc". It says nothing about
+// what is already AT <workflow>/<run id>: a symbolic link planted there
+// points a path-based MkdirAll, OpenFile and RemoveAll at whatever it
+// names, and the process doing the creating and the recursive removing
+// is this one. The workspace is deliberately outside every container
+// mount so that nothing the engine can write is on this path at all, and
+// this is the second half of that argument -- the descriptors, so that a
+// link which somehow appeared is refused rather than followed.
+//
+// Both directions are covered: a link out of the workspace, and a link
+// that stays inside it. Neither is something this design ever creates.
+func TestExecute_FollowsNoSymbolicLinkUnderTheWorkspace(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		external bool
+	}{
+		{"a link out of the workspace", true},
+		{"a link to a sibling inside the workspace", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			executor := testExecutor(t)
+			root := executor.Layout.WorkflowRoot()
+			if err := EnsureDir(root); err != nil {
+				t.Fatalf("preparing the workflow root: %v", err)
+			}
+
+			target := filepath.Join(t.TempDir(), "somewhere-else")
+			if !tc.external {
+				target = filepath.Join(root, "another-run")
+			}
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				t.Fatalf("preparing the link's target: %v", err)
+			}
+			precious := filepath.Join(target, "precious")
+			if err := os.WriteFile(precious, []byte("evidence"), 0o600); err != nil {
+				t.Fatalf("preparing the file the link points at: %v", err)
+			}
+
+			link := filepath.Join(root, "run-planted")
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatalf("planting the symbolic link: %v", err)
+			}
+
+			_, err := executor.Execute(context.Background(),
+				scriptRequest("run-planted", "step-1", "echo hello\n"), &collector{})
+			if err == nil {
+				t.Fatal("a step whose run directory was a symbolic link ran, so this runner created a working directory and an executable file somewhere it did not choose")
+			}
+
+			entries, readErr := os.ReadDir(target)
+			if readErr != nil {
+				t.Fatalf("reading the link's target: %v", readErr)
+			}
+			if len(entries) != 1 {
+				t.Errorf("the runner created %d entries through the symbolic link: %v", len(entries)-1, entries)
+			}
+
+			// The cleanup half. Creating through a link is one failure;
+			// a best-effort RemoveAll following the same link is the
+			// one that deletes somebody's directory.
+			executor.cleanupStep("run-planted", "step-1")
+			if _, err := os.Stat(precious); err != nil {
+				t.Errorf("the cleanup removed %s through the symbolic link: %v", precious, err)
+			}
+		})
+	}
+}
+
+// TestExecute_EscalatesToSIGKILLWhenAChildOutlivesTheTERM is the runaway
+// this runner exists to prevent, in the one shape the signalling order
+// makes easy to miss.
+//
+// The hook itself dies on SIGTERM and is reaped. The group is not empty:
+// the hook left a child that IGNORES SIGTERM, which is not exotic -- any
+// daemon that traps it to finish work first behaves this way, and so does
+// a `trap ” TERM` in somebody's careful cleanup wrapper. A runner that
+// probed, saw the group, reported "unconfirmed" and stopped would leave
+// that child running on the host for as long as the machine is up, with
+// nothing anywhere that still knows its process group id.
+//
+// The grace period here is deliberately LONGER than the test takes, so
+// the SIGKILL under assertion can only have come from the probe failing
+// rather than from the grace window expiring.
+func TestExecute_EscalatesToSIGKILLWhenAChildOutlivesTheTERM(t *testing.T) {
+	executor := testExecutor(t)
+	executor.Grace = 30 * time.Second
+	evidence := t.TempDir()
+
+	// `sh -c` rather than a `( … )` subshell: $$ inside a subshell is
+	// the PARENT shell's pid, and $BASHPID does not exist in the bash
+	// 3.2 macOS ships. This is one process, its own pid is $$, and it
+	// ignores SIGTERM the way a daemon that traps it to finish work
+	// first does.
+	body := fmt.Sprintf(`sh -c 'trap "" TERM; echo $$ > "$0"/child-pid; while :; do sleep 0.05; done' %[1]s >/dev/null 2>&1 &
+touch %[1]s/started
+sleep 30
+`, evidence)
+
+	req := scriptRequest("run-kill", "step-kill", body)
+	req.TimeoutMS = 500
+
+	result, err := executor.Execute(context.Background(), req, &collector{})
+	if err != nil {
+		t.Fatalf("running the hook: %v", err)
+	}
+
+	child := childPID(t, filepath.Join(evidence, "child-pid"))
+	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+
+	if result.State != StateTimedOut {
+		t.Fatalf("the hook was reported as %q rather than timed out", result.State)
+	}
+	if result.TerminationCertainty != CertaintyConfirmed {
+		t.Errorf("the runner reported %q. A group it could not confirm gone is a group it has to try harder on, not one to file a report about", result.TerminationCertainty)
+	}
+	if err := syscall.Kill(child, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("the SIGTERM-ignoring child (pid %d) is still alive after the step finished: %v. It will now run until the host is rebooted", child, err)
+	}
+	if !result.WorkDirRemoved {
+		t.Errorf("the result says the working directory was kept, which is the answer for a termination that could not be proved")
+	}
+	assertNothingLeftBehind(t, executor.Layout, "run-kill", "step-kill")
+}
+
+// TestExecute_KeepsTheWorkingDirectoryWhenTerminationCannotBeProved is
+// the other side of the same invariant, on the path that used to ignore
+// it: the one where Execute returns an ERROR.
+//
+// The engine's connection dying mid-stream produces a populated result
+// AND a failure -- the hook's output did not arrive, so the step cannot
+// be reported as clean. That path still went through a kill, and if the
+// kill could not be proved then something may still be writing in the
+// working directory. Removing it there turns "a hook survived its own
+// kill" into "half a dump, in a directory nobody can find", which is
+// precisely the forensic case the unconfirmed answer exists for.
+//
+// The unprovable group is made rather than waited for: a zombie is a
+// member of its process group until it is reaped, and this one's parent
+// has left the group and will never reap it.
+func TestExecute_KeepsTheWorkingDirectoryWhenTerminationCannotBeProved(t *testing.T) {
+	executor := testExecutor(t)
+	evidence := t.TempDir()
+	ready := filepath.Join(evidence, "helper-ready")
+
+	body := fmt.Sprintf(`echo streaming
+%s >/dev/null 2>&1 &
+touch %s/started
+sleep 30
+`, zombieHelperCommand(ready), evidence)
+
+	// A sink that fails is the engine's connection going away between
+	// two chunks.
+	sink := SinkFunc(func(Chunk) error { return errors.New("the engine is no longer reading") })
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	go func() {
+		waitForFileEventually(ready, 30*time.Second)
+		cancel(errLeaseExpired)
+	}()
+
+	_, err := executor.Execute(ctx, scriptRequest("run-keep", "step-keep", body), sink)
+	t.Cleanup(func() { _ = syscall.Kill(childPID(t, ready), syscall.SIGKILL) })
+	if err == nil {
+		t.Fatal("a step whose output never reached the engine was reported as a clean run")
+	}
+
+	workDir, dirErr := executor.Layout.StepWorkDir("run-keep", "step-keep")
+	if dirErr != nil {
+		t.Fatalf("deriving the working directory: %v", dirErr)
+	}
+	if _, statErr := os.Stat(workDir); statErr != nil {
+		t.Errorf("%s was removed after a termination this runner could not prove: %v. Something may still be writing in there, and the operator has nothing left to look at", workDir, statErr)
+	}
+}
+
+// TestExecute_RemovesTheWorkingDirectoryWhenOnlyTheStreamWasLost is the
+// contrast that keeps the test above honest.
+//
+// A lost stream is not by itself a reason to keep a directory: the hook
+// ran to completion and nothing was signalled, so there is nothing that
+// could still be writing. A "keep it whenever anything failed" rule would
+// pass the test above and accumulate a working directory per failed
+// connection forever.
+func TestExecute_RemovesTheWorkingDirectoryWhenOnlyTheStreamWasLost(t *testing.T) {
+	executor := testExecutor(t)
+	sink := SinkFunc(func(Chunk) error { return errors.New("the engine is no longer reading") })
+
+	_, err := executor.Execute(context.Background(),
+		scriptRequest("run-lost", "step-lost", "echo streaming\n"), sink)
+	if err == nil {
+		t.Fatal("a step whose output never reached the engine was reported as a clean run")
+	}
+	assertNothingLeftBehind(t, executor.Layout, "run-lost", "step-lost")
+}
+
+// TestExecute_DeliversValuesToTheHookByteForByte is the environment's
+// central claim, asserted from inside the hook rather than about the
+// block this package builds.
+//
+// The values below are the ones a shell would mangle: a command
+// substitution, a semicolon and quotes, an embedded newline, and UTF-8.
+// If any of them ever reached bash as part of a rendered `export` line --
+// which is how every "run this remotely" implementation eventually gets
+// written -- the substitution would EXECUTE, and the marker file it
+// creates would exist. cmd.Env is an execve argument instead, so what the
+// hook reads is what the engine sent, byte for byte, and the hash is what
+// says so: a comparison of the text would be a comparison of two things
+// this test wrote, while a sha256 taken inside the child cannot be
+// accidentally right.
+func TestExecute_DeliversValuesToTheHookByteForByte(t *testing.T) {
+	executor := testExecutor(t)
+	marker := filepath.Join(t.TempDir(), "substitution-ran")
+
+	values := map[string]string{
+		"BACKUPD_TEST_SUBSTITUTION": "$(touch " + marker + ")`touch " + marker + "`",
+		"BACKUPD_TEST_QUOTES":       `he said "hi"; rm -rf /; '\''`,
+		"BACKUPD_TEST_NEWLINE":      "first\nsecond\ttab\\",
+		"BACKUPD_TEST_UTF8":         "café — 日本語 — Ω — 🔒",
+	}
+	names := make([]string, 0, len(values))
+	vars := make([]EnvVar, 0, len(values))
+	for _, name := range []string{"BACKUPD_TEST_SUBSTITUTION", "BACKUPD_TEST_QUOTES", "BACKUPD_TEST_NEWLINE", "BACKUPD_TEST_UTF8"} {
+		names = append(names, name)
+		vars = append(vars, EnvVar{Name: name, Value: values[name]})
+	}
+
+	// sha256sum on Linux, shasum on macOS: one of the two is on every
+	// platform this product supports, and a hook that could find
+	// neither would be asserting about the test host rather than about
+	// the runner, so it says so.
+	body := `sha() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d' ' -f1
+  else echo "no sha256 tool on this host" >&2; exit 3
+  fi
+}
+for name in ` + strings.Join(names, " ") + `; do
+  printf '%s=%s\n' "$name" "$(printf '%s' "${!name}" | sha)"
+done
+`
+	req := scriptRequest("run-env", "step-env", body)
+	req.Env = EnvSet{Vars: vars}
+
+	out := &collector{}
+	result, err := executor.Execute(context.Background(), req, out)
+	if err != nil {
+		t.Fatalf("running the hook: %v", err)
+	}
+	if result.ExitCode == nil || *result.ExitCode != 0 {
+		t.Fatalf("the hook did not succeed: %+v, stderr %q", result, out.text(StreamStderr))
+	}
+
+	stdout := out.text(StreamStdout)
+	for _, name := range names {
+		sum := sha256.Sum256([]byte(values[name]))
+		want := name + "=" + hex.EncodeToString(sum[:]) + "\n"
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the hook read a different %s than the engine sent.\nwant %s got:\n%s", name, want, stdout)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Errorf("%s exists: a value was interpreted by a shell somewhere between the request and the hook, so the environment is being rendered as text rather than handed to execve", marker)
+	}
+}
+
+// TestSyntaxCheck_ACancelledCheckIsNotASyntaxRefusal separates "bash read
+// these bytes and refused them" from "this runner stopped waiting".
+//
+// exec.CommandContext kills the process when the context is done, and a
+// killed process exits non-zero with nothing on stderr -- which looks
+// exactly like a refusal to the branch that maps an exit status to
+// CodeSyntax. The runner shutting down, or an engine hanging up
+// mid-validation, would therefore tell an operator that a perfectly valid
+// hook "does not parse", and that is a sentence they will act on by
+// editing a correct script.
+func TestSyntaxCheck_ACancelledCheckIsNotASyntaxRefusal(t *testing.T) {
+	// A stand-in interpreter that is still running when the context is
+	// cancelled, which the real bash finishes far too quickly to be.
+	slow := filepath.Join(t.TempDir(), "slow-bash")
+	if err := os.WriteFile(slow, []byte("#!/bin/sh\nexec sleep 5\n"), 0o700); err != nil {
+		t.Fatalf("writing the stand-in interpreter: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+	}()
+
+	err := Bash{Path: slow, Version: "stand-in"}.SyntaxCheck(ctx, []byte("echo hello\n"))
+	if err == nil {
+		t.Fatal("a check that never completed was reported as a script that parses")
+	}
+	if IsCode(err, CodeSyntax) {
+		t.Fatalf("a cancelled check was reported as a syntax error, so a valid hook is refused because the runner was stopping: %v", err)
+	}
+	if !IsCode(err, CodeInternal) {
+		t.Fatalf("the failure is neither a syntax refusal nor an internal one, so nothing downstream can branch on it: %v", err)
+	}
+}
+
+// zombieHelperEnv turns this test binary into the process
+// TestExecute_KeepsTheWorkingDirectoryWhenTerminationCannotBeProved needs
+// inside a hook's process group, and names the file it reports its pid
+// in.
+const zombieHelperEnv = "BACKUPD_HOSTRUNNER_ZOMBIE_HELPER"
+
+// zombieHelperCommand is the shell word that starts it. Re-executing this
+// test binary is the same trick cmd/backupd's daemon tests use: it needs
+// to be a real process in the hook's real process group, and it needs to
+// call setpgid, which no shell exposes.
+func zombieHelperCommand(ready string) string {
+	return fmt.Sprintf("%s='%s' '%s' -test.run='^TestZombieHelperProcess$'", zombieHelperEnv, ready, os.Args[0])
+}
+
+// TestZombieHelperProcess is not a test. It is the entry point of the
+// child process above, and it skips itself in an ordinary run.
+func TestZombieHelperProcess(t *testing.T) {
+	ready := os.Getenv(zombieHelperEnv)
+	if ready == "" {
+		t.Skip("child-process entry point: only runs when a test re-executes this binary inside a hook's process group")
+	}
+
+	// A child that exits at once and is never waited for. It stays a
+	// member of this process group until somebody reaps it.
+	child := osexec.Command("/bin/sh", "-c", "exit 0")
+	if err := child.Start(); err != nil {
+		os.Exit(2)
+	}
+	// And then this process leaves the group, so a group-wide kill
+	// cannot reach the only process that could ever reap it.
+	if err := syscall.Setpgid(0, 0); err != nil {
+		os.Exit(3)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if err := os.WriteFile(ready, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		os.Exit(4)
+	}
+	time.Sleep(2 * time.Minute)
+}
+
+// childPID reads a pid a hook or helper wrote into a file.
+func childPID(t *testing.T, path string) int {
+	t.Helper()
+	waitForFile(t, path, 10*time.Second)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatalf("%s does not hold a pid: %q", path, raw)
+	}
+	return pid
 }

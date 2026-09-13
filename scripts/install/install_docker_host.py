@@ -1282,8 +1282,11 @@ def render_env(args) -> str:
         "# scripts and is mounted into the engine READ-ONLY: the engine reads",
         "# each script once, hashes it and copies it into its own spool, and",
         "# never opens the original again. RUNTIME_DIR holds the host runner's",
-        "# socket and its per-step working directories, and is the only other",
-        "# thing the engine can reach on this host.",
+        "# SOCKET and nothing else, and is the only other thing the engine can",
+        "# reach on this host. The runner's per-step working directories are",
+        "# deliberately NOT in it: they live in <prefix>/workspace, which no",
+        "# container mounts, so nothing the engine can write is on a path the",
+        "# runner creates files in and later removes.",
         f"WORKFLOWS_DIR={args.workflows_dir}",
         f"RUNTIME_DIR={args.runtime_dir}",
         "",
@@ -2872,6 +2875,16 @@ services:
       # beyond this one directory; docs/runtime-contract.md states the
       # same thing in the contract's own words.
       #
+      # And that directory holds the socket and NOTHING else. This mount
+      # is read-write, so everything under it is writable by whatever
+      # this container runs as -- while the runner's per-step working
+      # directories and its private copies of hook scripts are the paths
+      # it CREATES and later REMOVES RECURSIVELY. Those live in
+      # <prefix>/workspace, which no mount here names: a symbolic link
+      # planted at a run directory would otherwise let a compromised
+      # engine choose which host path the runner writes an executable
+      # file into, and which one it then deletes.
+      #
       # Both default rather than using `:?`, so a deployment whose .env
       # predates EPIC L still starts. `./` resolves beside this file,
       # which is the installation prefix, and is where the installer
@@ -3091,7 +3104,7 @@ services:
 """
 
 # Written by scripts/install/embed_compose.py alongside the blob above.
-EMBEDDED_COMPOSE_SHA256 = "11119bfcce3f6fe8db6eb76b7ee02e6c9e22ddf308c29c443c8e1ba3c336c65f"
+EMBEDDED_COMPOSE_SHA256 = "ca7be24885a8369c868af2812a4e6a9f51f245ff44af64745b88a71be1326565"
 
 
 def embedded_compose_bytes() -> bytes:
@@ -3221,8 +3234,10 @@ def warn_about_writable_ancestors(path: Path, stop_at: Path) -> list:
 # So the runner is a HOST process beside the container: the same
 # `backupd` binary, extracted from the same image, run by the host's own
 # service manager as an unprivileged account, reachable only over a Unix
-# socket in <prefix>/run. This section is everything the installer does
-# about it, and what it deliberately does not do:
+# socket in <prefix>/run -- which holds that socket and nothing else, so
+# that the one directory the engine can write is not also the directory
+# the runner creates and removes trees in. This section is everything the
+# installer does about it, and what it deliberately does not do:
 #
 #   * it never adds a capability, a mount or a privilege to the engine.
 #     The engine gains exactly two bind mounts, one of them read-only,
@@ -3353,9 +3368,10 @@ def render_workflow_runner_unit(args) -> str:
     the host-side echo of what the container contract gives the engine.
     They are not theatre: this process executes scripts an operator drops
     into a directory, which is the one process on the host most worth
-    confining. ReadWritePaths names the runtime directory alone, so the
-    runner can create a hook's working directory and can write nothing
-    else on the system.
+    confining. ReadWritePaths names two directories and no others -- the
+    socket's and the runner-private workspace the per-step working
+    directories live in -- so the runner can give a hook somewhere to
+    write and can write nothing else on the system.
 
     Restart=on-failure rather than always: a runner that refused to start
     because its credential is world-readable, or because the engine is a
@@ -3396,6 +3412,7 @@ def render_workflow_runner_unit(args) -> str:
         f"Group={args.pgid}",
         f"ExecStart={binary} workflow-runner serve"
         f" --runtime-dir {args.runtime_dir}"
+        f" --workspace-dir {args.workspace_dir}"
         f" --secrets-dir {args.prefix / 'secrets'}"
         f" --config {args.host_dirs['--config-dir']}",
         "Restart=on-failure",
@@ -3407,7 +3424,7 @@ def render_workflow_runner_unit(args) -> str:
         "ProtectControlGroups=yes",
         "ProtectKernelModules=yes",
         "ProtectKernelTunables=yes",
-        f"ReadWritePaths={args.runtime_dir}",
+        f"ReadWritePaths={args.runtime_dir} {args.workspace_dir}",
         "",
         "[Install]",
         "WantedBy=multi-user.target",
@@ -3521,6 +3538,7 @@ def provision_workflow_runner(args) -> str:
     """
     make_secure_dir(args.workflows_dir)
     make_secure_dir(args.runtime_dir)
+    make_secure_dir(args.workspace_dir)
     ensure_workflow_runner_credential(args)
 
     if int(args.puid) == 0:
@@ -3578,7 +3596,10 @@ def remove_workflow_runner(args) -> None:
         say(f"removed {staged}")
     if args.runtime_dir.exists():
         shutil.rmtree(args.runtime_dir, ignore_errors=True)
-        say(f"removed {args.runtime_dir} (the runner socket and any per-step working directories)")
+        say(f"removed {args.runtime_dir} (the runner socket)")
+    if args.workspace_dir.exists():
+        shutil.rmtree(args.workspace_dir, ignore_errors=True)
+        say(f"removed {args.workspace_dir} (any per-step working directories)")
 
 
 def ensure_credentials(args) -> None:
@@ -3700,6 +3721,15 @@ def stage_payload(args) -> None:
     # the mount lands on a directory this installer owns.
     make_secure_dir(args.workflows_dir)
     make_secure_dir(args.runtime_dir)
+    # The workspace is NOT mounted, and that is the point of it being a
+    # separate directory: the runtime directory is bound into the engine
+    # read-write because connecting to a socket is a write, so anything
+    # else in it is engine-writable too -- and what the runner keeps are
+    # the directories it creates, chmods and later removes recursively.
+    # It is created here, 0700, for the same reason as the others: the
+    # runner's first act must not be inventing a directory whose mode
+    # came from a umask.
+    make_secure_dir(args.workspace_dir)
     ensure_workflow_runner_credential(args)
 
     # Copy, never rewrite. distribution/compose holds this exact file to
@@ -6418,6 +6448,7 @@ def resolve(args):
     # prefix, created 0700 by stage_payload and never anywhere else.
     args.workflows_dir = args.prefix / "workflows"
     args.runtime_dir = args.prefix / "run"
+    args.workspace_dir = args.prefix / "workspace"
     args.host_dirs = {
         "--prefix": args.prefix,
         "--state-dir": args.state_dir,

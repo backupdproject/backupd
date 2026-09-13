@@ -6141,19 +6141,52 @@ class TestTheHostWorkflowRunner(unittest.TestCase):
             installer.stage_payload(args)
         return args
 
-    def test_staging_creates_the_two_directories_the_engine_mounts(self):
+    def test_staging_creates_the_runners_directories(self):
         """Created by the installer, 0700, before any `docker compose up`.
 
         Docker creates a missing bind-mount source itself, as root, with
         a mode nobody chose. A hook's working directory and the socket
-        the engine authenticates against are the last two paths on the
-        host that should be born that way.
+        the engine authenticates against are the last paths on the host
+        that should be born that way.
         """
         args = self.staged()
-        for path in (args.workflows_dir, args.runtime_dir):
+        for path in (args.workflows_dir, args.runtime_dir, args.workspace_dir):
             self.assertTrue(path.is_dir(), f"{path} was not created by staging")
             self.assertEqual(path.stat().st_mode & 0o777, 0o700,
                              f"{path} is not owner-only, and it holds hook scripts and a socket")
+
+    def test_the_runners_workspace_is_outside_every_directory_the_engine_mounts(self):
+        """The whole reason the workspace is a directory of its own.
+
+        The runtime directory is bound into the engine READ-WRITE -- it
+        has to be, because connecting to a Unix socket is a write -- so
+        anything underneath it is writable by whatever that container
+        runs as. The per-step working directories and the runner's
+        private copies of hook scripts are the paths the runner creates,
+        chmods and later removes recursively, and a symbolic link planted
+        at one of them would choose a host path for the runner to write
+        an executable file into and then delete. Keeping them out of
+        every mount is what makes that unreachable rather than merely
+        guarded against.
+        """
+        args = self.staged()
+        mounted = (args.runtime_dir.resolve(), args.workflows_dir.resolve())
+        workspace = args.workspace_dir.resolve()
+        for mount in mounted:
+            self.assertNotEqual(workspace, mount,
+                                f"the runner's workspace IS {mount}, which the engine container mounts")
+            self.assertNotIn(mount, workspace.parents,
+                             f"the runner's workspace {workspace} is inside {mount}, which the engine "
+                             "container mounts read-write")
+        # The MOUNT lines, not the file: the comments beside them explain
+        # the workspace at length and saying its name is the point of
+        # them.
+        mounts = [line.strip()[2:] for line in CANONICAL_COMPOSE.read_text().splitlines()
+                  if line.strip().startswith("- ") and ":" in line]
+        for mount in mounts:
+            self.assertNotIn("workspace", mount,
+                             f"the canonical runtime mounts {mount!r}, so the runner's private "
+                             "workspace is reachable from a container after all")
 
     def test_staging_writes_an_installation_credential_and_never_rotates_it(self):
         """The second lock on the runner's door, and the reason it is
@@ -6294,10 +6327,14 @@ class TestTheHostWorkflowRunner(unittest.TestCase):
         self.assertNotIn("User=root", unit)
         self.assertIn("NoNewPrivileges=yes", unit)
         self.assertIn("ProtectSystem=strict", unit)
-        self.assertIn(f"ReadWritePaths={args.runtime_dir}", unit,
-                      "the runner may write its own runtime directory and nothing else on the host")
+        self.assertIn(f"ReadWritePaths={args.runtime_dir} {args.workspace_dir}", unit,
+                      "the runner may write its socket directory and its own workspace, and nothing "
+                      "else on the host")
         self.assertIn("workflow-runner serve", unit)
         self.assertIn(f"--runtime-dir {args.runtime_dir}", unit)
+        self.assertIn(f"--workspace-dir {args.workspace_dir}", unit,
+                      "the unit does not tell the runner where its private workspace is, so it would "
+                      "refuse to start")
         self.assertIn(f"--secrets-dir {args.prefix / 'secrets'}", unit)
         self.assertIn("Restart=on-failure", unit)
         self.assertNotIn("Restart=always", unit,
@@ -6406,12 +6443,15 @@ class TestTheHostWorkflowRunner(unittest.TestCase):
         args = self.staged()
         (args.workflows_dir / "hook.local.sh").write_text("#!/bin/bash\n")
         (args.runtime_dir / "workflow-runner.sock").write_text("")
+        (args.workspace_dir / "workflow").mkdir(parents=True, exist_ok=True)
 
         with unittest.mock.patch.object(installer.shutil, "which", lambda _n: None):
             with contextlib.redirect_stdout(io.StringIO()):
                 installer.remove_workflow_runner(args)
 
-        self.assertFalse(args.runtime_dir.exists(), "the runner socket and run spools were left behind")
+        self.assertFalse(args.runtime_dir.exists(), "the runner socket was left behind")
+        self.assertFalse(args.workspace_dir.exists(),
+                         "the per-step working directories were left behind")
         self.assertTrue((args.workflows_dir / "hook.local.sh").is_file(),
                         "uninstall deleted an operator's hook script")
 

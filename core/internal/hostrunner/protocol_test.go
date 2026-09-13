@@ -96,6 +96,48 @@ func TestReadMessage_RefusesTwoValuesInOneFrame(t *testing.T) {
 	}
 }
 
+// TestReadMessage_RefusesAFrameThatIsTwoThingsAtOnce is the tagged-union
+// invariant, which DisallowUnknownFields does not cover.
+//
+// Every arm named below is a field this envelope really has, so a
+// request frame that also carries a failure decodes without complaint
+// and the extra arm is dropped by whichever branch reads only what its
+// kind told it to expect. Two readers of one frame then disagree about
+// what arrived, which is the shape every parser-differential bug has.
+func TestReadMessage_RefusesAFrameThatIsTwoThingsAtOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{
+			"a request smuggling a second arm",
+			`{"kind":"request","request":{"op":"status"},"failure":{"code":"refused","message":"x"}}`,
+		},
+		{
+			"a hello smuggling a result",
+			`{"kind":"hello","hello":{"protocol":"` + Protocol + `","version":"v","token":"t"},"result":{"state":"exited"}}`,
+		},
+		{
+			"a kind that does not match the arm it carries",
+			`{"kind":"request","failure":{"code":"refused","message":"x"}}`,
+		},
+		{
+			"a kind with no arm at all",
+			`{"kind":"request"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg, err := ReadMessage(bytes.NewReader(frameOf(t, tc.body)))
+			if err == nil {
+				t.Fatalf("a frame the protocol has no single meaning for was accepted as %+v", msg)
+			}
+			if !errors.Is(err, ErrProtocol) {
+				t.Errorf("the refusal is not an ErrProtocol, so a caller cannot tell it from a transport failure: %v", err)
+			}
+		})
+	}
+}
+
 func frameOf(t *testing.T, body string) []byte {
 	t.Helper()
 	var out bytes.Buffer

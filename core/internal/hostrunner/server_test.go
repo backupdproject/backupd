@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -62,7 +63,7 @@ func TestListen_RefusesASocketPathTheKernelCannotHold(t *testing.T) {
 	deep := filepath.Join("/tmp", strings.Repeat("d", 40), strings.Repeat("e", 40), strings.Repeat("f", 40))
 
 	server, err := NewServer(Config{
-		Layout:   Layout{RuntimeDir: deep, SecretsDir: "/tmp"},
+		Layout:   Layout{RuntimeDir: deep, WorkspaceDir: "/tmp/ws", SecretsDir: "/tmp"},
 		Version:  "test-1.2.3",
 		Token:    []byte(testToken),
 		Bash:     Bash{Path: "/bin/bash", Version: "test"},
@@ -171,7 +172,7 @@ func TestRefuseRoot_IsNotConfigurable(t *testing.T) {
 	}
 
 	_, err := NewServer(Config{
-		Layout:  Layout{RuntimeDir: "/tmp/x", SecretsDir: "/tmp/y"},
+		Layout:  Layout{RuntimeDir: "/tmp/x", WorkspaceDir: "/tmp/w", SecretsDir: "/tmp/y"},
 		Version: "test-1.2.3",
 		Token:   []byte(testToken),
 		Bash:    Bash{Path: "/bin/bash"},
@@ -441,4 +442,189 @@ func TestClient_ExecuteStreamsOutputAndReportsTheHooksOwnExitStatus(t *testing.T
 	if !result.WorkDirRemoved {
 		t.Error("the per-step working directory was not removed after a step that ended normally")
 	}
+}
+
+// TestServer_ConcurrentExecutesOfOneStepLeaveTheWinnerAlone is the race
+// the registry exists to lose safely.
+//
+// Two executes for the same step arriving at once is not exotic: an
+// engine that retried after deciding a timeout locally produces it, and
+// so does a deployment that has pointed two engines at one runner. The
+// question is not whether the second one is refused -- it is what the
+// refusal COSTS the first. A check and an insert in two separate lock
+// sections let both callers past the check; the one that then fails on
+// the script file's O_EXCL runs the same cleanup every failed step runs,
+// which removes the working directory and the script of the hook that is
+// still executing, and its deferred release deletes the registry entry
+// holding the winner's cancel function -- leaving a live process group
+// that `cancel` can no longer reach.
+//
+// Sixteen racers rather than two, because the window is small and a test
+// that only sometimes enters it is a test that only sometimes means
+// anything.
+func TestServer_ConcurrentExecutesOfOneStepLeaveTheWinnerAlone(t *testing.T) {
+	client, layout := serveTestRunner(t, nil)
+	evidence := t.TempDir()
+
+	// The hook proves its own working directory outlived it: a cleanup
+	// run by somebody else's failed execute takes this file with it.
+	body := fmt.Sprintf(`echo mine > "$BACKUPD_WORK_DIR/mine"
+touch %s/started
+sleep 2
+test -f "$BACKUPD_WORK_DIR/mine" || exit 9
+echo survived
+`, evidence)
+
+	const racers = 16
+	type outcome struct {
+		result Result
+		err    error
+	}
+	outcomes := make(chan outcome, racers)
+	start := make(chan struct{})
+	for range racers {
+		go func() {
+			<-start
+			result, err := client.Execute(context.Background(), ExecuteRequest{
+				RunID:   "run-race",
+				StepID:  "step-race",
+				Script:  []byte(body),
+				Timeout: 30 * time.Second,
+			}, &collector{})
+			outcomes <- outcome{result, err}
+		}()
+	}
+	close(start)
+
+	// While the winner is still running, the registry must hold exactly
+	// one entry for it. A loser that registered and then released on its
+	// way out would have deleted the winner's cancel function, and this
+	// is where that is visible from outside.
+	waitForFile(t, filepath.Join(evidence, "started"), 15*time.Second)
+	status, err := client.Status(context.Background())
+	if err != nil {
+		t.Fatalf("asking the runner what it is running: %v", err)
+	}
+	running := 0
+	for _, key := range status.Active {
+		if key == "run-race/step-race" {
+			running++
+		}
+	}
+	if running != 1 {
+		t.Errorf("the runner reports %v as running. A step whose cancel function has been dropped from the registry is a hook nothing can stop", status.Active)
+	}
+
+	var winners, refusals int
+	for range racers {
+		got := <-outcomes
+		switch {
+		case got.err == nil && got.result.ExitCode != nil && *got.result.ExitCode == 0:
+			winners++
+		case got.err == nil:
+			t.Errorf("an execute finished with exit code %v: the winner's own working directory was removed out from under it by somebody else's cleanup", got.result.ExitCode)
+		case IsCode(got.err, CodeBusy):
+			refusals++
+		default:
+			t.Errorf("a second execute of a running step failed with something other than a legible refusal: %v", got.err)
+		}
+	}
+	if winners != 1 {
+		t.Errorf("%d of %d concurrent executes of one step ran it, rather than exactly one", winners, racers)
+	}
+	if refusals != racers-1 {
+		t.Errorf("%d of the %d losers were refused as busy", refusals, racers-1)
+	}
+	assertNothingLeftBehind(t, layout, "run-race", "step-race")
+}
+
+// TestServe_ACancelledContextStopsTheRunnerAndTheHooksItOwns is what
+// makes SIGTERM a shutdown rather than a hang.
+//
+// Two connections are open when the context is cancelled, and the first
+// is the one that used to wedge the whole process: a client that
+// connected and said nothing leaves handleConn blocked in a read with no
+// deadline, and a Serve that only stopped ACCEPTING would sit in its
+// final Wait until systemd's stop timeout turned into SIGKILL. SIGKILL
+// on this process is the worst possible ending, because every hook it
+// was supervising is in a session of its own and simply carries on,
+// orphaned, with nothing left on the host that knows the process group
+// ids.
+func TestServe_ACancelledContextStopsTheRunnerAndTheHooksItOwns(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("this suite cannot run as root, because the runner refuses to: see RefuseRoot")
+	}
+	layout := testLayout(t)
+	if err := os.WriteFile(layout.TokenPath(), []byte(testToken), TokenFileMode); err != nil {
+		t.Fatalf("writing the credential: %v", err)
+	}
+
+	server, err := NewServer(Config{
+		Layout:   layout,
+		Version:  "test-1.2.3",
+		Token:    []byte(testToken),
+		Bash:     testBash(t),
+		Grace:    200 * time.Millisecond,
+		EUID:     os.Geteuid(),
+		Username: CurrentUsername(os.Geteuid()),
+	})
+	if err != nil {
+		t.Fatalf("preparing the runner: %v", err)
+	}
+	if err := server.Listen(); err != nil {
+		t.Fatalf("listening: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(ctx) }()
+
+	client := Client{SocketPath: layout.SocketPath(), Version: "test-1.2.3", Token: testToken}
+	evidence := t.TempDir()
+
+	// A hook that would outlive any stop timeout, reporting the pid of
+	// the shell that leads its process group.
+	body := fmt.Sprintf("echo $$ > %[1]s/hook-pid\ntouch %[1]s/started\nsleep 300\n", evidence)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = client.Execute(context.Background(), ExecuteRequest{
+			RunID:   "run-stop",
+			StepID:  "step-stop",
+			Script:  []byte(body),
+			Timeout: 300 * time.Second,
+		}, &collector{})
+	}()
+	waitForFile(t, filepath.Join(evidence, "started"), 15*time.Second)
+	hook := childPID(t, filepath.Join(evidence, "hook-pid"))
+	t.Cleanup(func() { _ = syscall.Kill(-hook, syscall.SIGKILL) })
+
+	// And a connection that says nothing at all, which is where the
+	// handshake read blocks forever.
+	silent := rawConn(t, client.SocketPath)
+	defer silent.Close()
+
+	cancel()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Errorf("a cancelled Serve returned an error: %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("Serve did not return twenty seconds after its context was cancelled. Under a service manager this is the window that ends in SIGKILL, and a SIGKILLed runner orphans every hook it was supervising")
+	}
+
+	// And the hook it owned went with it, rather than being orphaned.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if err := syscall.Kill(-hook, 0); errors.Is(err, syscall.ESRCH) {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("the hook's process group (%d) is still alive after the runner stopped: it is now an orphan nothing on this host can account for", hook)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	<-done
 }
