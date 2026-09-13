@@ -2677,3 +2677,207 @@ function headersOfCall(fetchMock: ReturnType<typeof mockFetchOk>): Record<string
   const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
   return (init.headers ?? {}) as Record<string, string>;
 }
+
+/**
+ * EPIC L's wire mapping (issue #814).
+ *
+ * Every field on the generated workflow shapes is optional, so what is
+ * asserted here is the ABSENCES and the narrowings — the choices no type
+ * can hold and that a page cannot recover from if they are wrong. Each
+ * case is one of them:
+ *
+ *   - a state this build does not recognise must not become a confident
+ *     verdict, in either the step or the run vocabulary;
+ *   - an absent exit code must stay null, because 0 is a success;
+ *   - a secret must arrive as a LOCATION, rebuilt field by field, so a
+ *     field added to the generated type cannot reach a surface
+ *     unreviewed;
+ *   - a PATCH must carry only the keys the caller named, because an
+ *     absent key means "leave this alone" and an empty string means
+ *     "clear this" — and clearing a stage directory disables that stage;
+ *   - the log follower must ask for the wait the service is willing to
+ *     hold for, since the service only ever clamps DOWN.
+ */
+describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("narrows a state this build does not know onto the one that says 'look at this'", async () => {
+    const fetchMock = mockFetchOk({
+      run_id: "wfr_1",
+      backup_set_id: "src/set-1",
+      state: "quantum_superposition",
+      backup_status: "transcendent",
+      steps: [{ step_id: "s1", script_name: "a.local.sh", state: "vibing", exit_code: 0 }]
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const run = await httpApi.workflowRun("wfr_1");
+
+    // Not "success", and not a cast straight through: an engine newer
+    // than this build must not be able to make a screen claim a pass.
+    expect(run.state).toBe("interrupted");
+    expect(run.backupStatus).toBe("unknown");
+    expect(run.steps[0].state).toBe("interrupted");
+  });
+
+  it("keeps a run-only state that the step vocabulary has no word for", async () => {
+    const fetchMock = mockFetchOk({ run_id: "wfr_1", state: "recovery_required" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect((await httpApi.workflowRun("wfr_1")).state).toBe("recovery_required");
+  });
+
+  it("tells exit code 0 from no exit code at all", async () => {
+    const fetchMock = mockFetchOk({
+      run_id: "wfr_1",
+      steps: [
+        { step_id: "ok", script_name: "a.local.sh", state: "success", exit_code: 0 },
+        // A step that was signalled and whose channel closed reports no
+        // code. Normalising this to 0 would turn "nobody knows what this
+        // did" into "it succeeded".
+        { step_id: "killed", script_name: "b.remote.sh", state: "timed_out" }
+      ]
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const steps = (await httpApi.workflowRun("wfr_1")).steps;
+    expect(steps[0].exitCode).toBe(0);
+    expect(steps[1].exitCode).toBeNull();
+    // And a running run has no duration rather than a zero one.
+    expect((await httpApi.workflowRun("wfr_1")).durationMs).toBeNull();
+  });
+
+  it("reports a step's confirmation as absent rather than as confirmed", async () => {
+    const fetchMock = mockFetchOk({
+      run_id: "wfr_1",
+      steps: [{ step_id: "s1", script_name: "a.local.sh", state: "timed_out" }]
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // An engine that reported nothing is NOT an engine that confirmed the
+    // process stopped, and the surfaces that raise a warning key on
+    // `=== false` for exactly this reason.
+    expect((await httpApi.workflowRun("wfr_1")).steps[0].terminationConfirmed).toBeUndefined();
+  });
+
+  it("asks the log route for the wait the service is willing to hold for", async () => {
+    const fetchMock = mockFetchOk({ records: [], cursor: 12 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await httpApi.workflowStepLogs("wfr_1", "s1", { after: 12, wait: true });
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    // 5 seconds: core/service/workflowinspect.go clamps DOWN to its own
+    // ceiling and never raises a smaller value, so a smaller number here
+    // is a faster poll for the same output.
+    expect(url).toContain("wait=5");
+    expect(url).toContain("after=12");
+  });
+
+  it("omits a cursor that names no position rather than sending a zero", async () => {
+    const fetchMock = mockFetchOk({ records: [], cursor: 0 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await httpApi.workflowStepLogs("wfr_1", "s1");
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).not.toContain("after=");
+    expect(url).not.toContain("wait=");
+  });
+
+  it("reads a truncated page as truncated, and an absent flag as complete-unknown", async () => {
+    const fetchMock = mockFetchOk({
+      records: [{ seq: 4, stream: "stderr", at: "2026-09-12T02:15:40Z", text: "dropped", kind: "truncated" }],
+      cursor: 4,
+      truncated: true
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const page = await httpApi.workflowStepLogs("wfr_1", "s1");
+    expect(page.truncated).toBe(true);
+    // False from an absent field, in that direction: a follower reading
+    // `complete` as true would stop following a live step.
+    expect(page.complete).toBe(false);
+    expect(page.records[0].kind).toBe("truncated");
+    expect(page.records[0].stream).toBe("stderr");
+  });
+
+  it("rebuilds a secret reference field by field, and never as a value", async () => {
+    const fetchMock = mockFetchOk({
+      backup_set_id: "",
+      variables: [
+        { name: "PGPASSWORD", has_value: false, secret: { file: "/etc/backupd/secrets/pg" } },
+        // An empty literal is a real configuration and must not collapse
+        // into "no literal".
+        { name: "DUMP_LEVEL", has_value: true, value: "" },
+        // An empty secret block is not a reference at all.
+        { name: "PGHOST", has_value: true, value: "db.internal", secret: { file: "", env: "", command: [] } }
+      ]
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const env = await httpApi.listWorkflowEnvironment();
+
+    expect(env.variables[0].secret).toEqual({ file: "/etc/backupd/secrets/pg" });
+    expect(env.variables[0].value).toBeUndefined();
+    expect(env.variables[1].value).toBe("");
+    expect(env.variables[1].hasValue).toBe(true);
+    expect(env.variables[2].secret).toBeUndefined();
+  });
+
+  it("sends only the keys a workflow patch named, and an empty string as a clear", async () => {
+    const fetchMock = mockFetchOk({ configured: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await httpApi.patchWorkflowSettings({ beforeDir: "" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // Exactly one key: clearing the before directory disables that stage
+    // and must not carry the after directory or the timeout with it.
+    expect(JSON.parse(String(init.body))).toEqual({ before_dir: "" });
+  });
+
+  it("sends a per-set patch the same way, keeping an unnamed field absent", async () => {
+    const fetchMock = mockFetchOk({ backup_set_id: "src/set-1" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await httpApi.patchBackupSetWorkflow("src", "set-1", { remoteExecConnectionRef: "src/set-1" });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/backup-sets/src/set-1/workflow");
+    // The "source/set" spelling reaches the wire intact: remoteexec
+    // resolves it to the set's own source connection, and it is a real
+    // configuration rather than a malformed reference.
+    expect(JSON.parse(String(init.body))).toEqual({ remote_exec_connection_ref: "src/set-1" });
+  });
+
+  it("reads a runner block the service omitted as an address that is not configured", async () => {
+    const fetchMock = mockFetchOk({ configured: true, script_timeout_seconds: 300 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const settings = await httpApi.getWorkflowSettings();
+
+    // Never null: a settings screen has to be able to say "this
+    // deployment has not been told how to reach a runner", and an absent
+    // block is exactly that answer rather than a missing card.
+    expect(settings.runner).toEqual({ configured: false, socket: "", tokenFile: "" });
+    // And a timeout the service did not mark as configured is the
+    // product's own default, not a pinned value.
+    expect(settings.scriptTimeoutConfigured).toBe(false);
+  });
+
+  it("reads both validation verdicts as false when the service reported neither", async () => {
+    const fetchMock = mockFetchOk({ backup_set_id: "src/set-1", findings: [{ check: "x", severity: "surprise" }] });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const report = await httpApi.getBackupSetWorkflowValidation("src", "set-1");
+
+    expect(report.validForBackup).toBe(false);
+    expect(report.workflowValid).toBe(false);
+    // A severity this build cannot read is a warning and never an "ok":
+    // a check whose verdict is unreadable has not passed.
+    expect(report.findings[0].severity).toBe("warning");
+  });
+});

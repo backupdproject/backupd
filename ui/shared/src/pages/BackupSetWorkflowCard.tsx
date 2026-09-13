@@ -148,6 +148,12 @@ export function BackupSetWorkflowCard({
     );
   }
 
+  // The deployment's globals are only knowable once that read lands. A
+  // page that treated "loading" or "failed" as "none configured" would
+  // tell an operator this set runs no hooks at a moment when it has no
+  // idea, which is the one sentence on this card that must never be a
+  // guess.
+  const globalsKnown = settings.data !== null;
   const globalStages = (settings.data?.beforeDir || settings.data?.afterDir)
     ? [
         ...(settings.data?.beforeDir
@@ -158,6 +164,27 @@ export function BackupSetWorkflowCard({
           : [])
       ]
     : [];
+
+  if (!globalsKnown && !workflow.data.configured && workflow.data.stages.length === 0) {
+    return (
+      <section className="card">
+        <div className="card__header">{heading}</div>
+        <div className="card__body">
+          {settings.error ? (
+            <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", maxWidth: "76ch" }}>
+              {"This set configures no hooks of its own. Whether this deployment configures any " +
+                "globally could not be read (" + settings.error.message + "), so whether anything " +
+                "runs around this set's backups is unknown."}
+            </p>
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: "var(--text-3)" }}>
+              Reading this deployment's workflow configuration…
+            </p>
+          )}
+        </div>
+      </section>
+    );
+  }
 
   // The quiet path. One sentence, no table, no findings, no history.
   if (!hasWorkflowSurface(workflow.data, globalStages)) {
@@ -223,6 +250,7 @@ export function BackupSetWorkflowCard({
         </CellGrid>
 
         <ExecConnectionPicker
+          ownSourceRef={setId}
           chosen={workflow.data.remoteExecConnectionRef}
           available={settings.data?.execConnections ?? []}
           readOnly={readOnly}
@@ -279,10 +307,23 @@ export function BackupSetWorkflowCard({
               Environment
             </div>
           </InfoTooltip>
+          {setEnv.error || globalEnv.error ? (
+            <Banner tone="danger" dismissKey={(setEnv.error ?? globalEnv.error)?.message}>
+              <span style={{ fontSize: "var(--text-sm)" }}>
+                {"This set's workflow environment could not be read (" +
+                  (setEnv.error ?? globalEnv.error)?.message +
+                  "), so what a hook will see cannot be shown."}
+              </span>
+            </Banner>
+          ) : setEnv.data === null || globalEnv.data === null ? (
+            <p style={{ margin: 0, fontSize: 13, color: "var(--text-3)" }}>
+              Reading the environment a hook will see…
+            </p>
+          ) : (
           <WorkflowEnvironmentEditor
             scope="set"
-            global={globalEnv.data?.variables ?? []}
-            set={setEnv.data?.variables ?? []}
+            global={globalEnv.data.variables}
+            set={setEnv.data.variables}
             readOnly={readOnly}
             onSet={(name, entry) =>
               api.setBackupSetWorkflowEnvironment(source, set, name, entry).then((next) => {
@@ -297,6 +338,7 @@ export function BackupSetWorkflowCard({
               })
             }
           />
+          )}
         </div>
 
         <div>
@@ -346,10 +388,17 @@ export function BackupSetWorkflowCard({
                       point: a green backup beside a failed workflow is
                       the state this history exists to surface. */}
                   <span style={{ fontSize: "var(--text-xs)", color: "var(--text-2)" }}>
+                    {/* All THREE verdicts, because a history row that
+                        showed two would hide the one an operator is
+                        scanning for: a run whose cleanup failed is the
+                        row that means a machine may still be
+                        quiesced. */}
                     {"backup " +
                       STATUS_PRESENTATION[run.backupStatus].label.toLowerCase() +
                       " \u00b7 workflow " +
-                      STATUS_PRESENTATION[run.workflowStatus].label.toLowerCase()}
+                      STATUS_PRESENTATION[run.workflowStatus].label.toLowerCase() +
+                      " \u00b7 cleanup " +
+                      STATUS_PRESENTATION[run.cleanupStatus].label.toLowerCase()}
                   </span>
                   <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
                     {run.startedAt ? stamp(run.startedAt) : "not started"}
@@ -382,11 +431,20 @@ export function BackupSetWorkflowCard({
  * a fault when it is not one.
  */
 function ExecConnectionPicker({
+  ownSourceRef,
   chosen,
   available,
   readOnly,
   onChoose
 }: {
+  /** This set's own id, which is also the reference that names its own
+   *  source connection: remoteexec.Resolve accepts a "source/set" ref and
+   *  resolves it to the set's own remote, and `backup-set workflow patch
+   *  --exec-connection source/set` is the CLI spelling of exactly that.
+   *  A picker without it would be a parity gap, and one that dropped a
+   *  ref it did not recognise would PATCH an operator's choice away on
+   *  the next save. */
+  ownSourceRef: string;
   chosen: string;
   available: string[];
   readOnly: boolean;
@@ -429,17 +487,40 @@ function ExecConnectionPicker({
         }}
       >
         <option value="">None — remote hooks cannot run for this set</option>
+        <option value={ownSourceRef}>
+          {"This set's own source connection (only if it can execute) — " + ownSourceRef}
+        </option>
         {available.map((ref) => (
           <option key={ref} value={ref}>
             {ref}
           </option>
         ))}
+        {/* The currently chosen reference, ALWAYS, even when this
+            deployment no longer declares it. A <select> whose value
+            matches no option renders as the first one, so a set pointed
+            at a connection somebody has since removed would read as
+            "None" — and the next save would send that, silently throwing
+            away the configuration an operator is trying to fix. */}
+        {chosen !== "" && chosen !== ownSourceRef && !available.includes(chosen) ? (
+          <option value={chosen}>{chosen + " — not declared in this deployment"}</option>
+        ) : null}
       </select>
-      <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-3)", maxWidth: "76ch" }}>
+      <p
+        data-tip="workflow.set.exec-own-source"
+        style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-3)", maxWidth: "76ch" }}
+      >
         {"A backup set's own source connection is used only when it can execute a command. An " +
           "SFTP-only source can move bytes and cannot run a hook, which is a supported setup and " +
-          "not a fault: name another connection here, and the check below proves whether it works."}
+          "not a fault: the hook check below reports that as a capability failure, and naming a " +
+          "declared execution connection instead is the way out of it."}
       </p>
+      {chosen !== "" && chosen !== ownSourceRef && !available.includes(chosen) ? (
+        <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--warn)", maxWidth: "76ch" }}>
+          {"This set names " + chosen + ", which this deployment no longer declares. Its remote " +
+            "hooks cannot run until that connection is declared again or another one is chosen " +
+            "here."}
+        </p>
+      ) : null}
       {failure ? (
         <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--danger)" }}>{failure}</p>
       ) : null}

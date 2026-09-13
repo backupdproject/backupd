@@ -84,9 +84,25 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
   const save = useCallback(
     (box: Box) => {
       if (!draft) return;
+      // The timeout is the one box that is a NUMBER, and both of its bad
+      // inputs are silent: Number("abc") is NaN, which serialises as
+      // `null` and reads as "clear this", and an empty box would send 0,
+      // which on this field means "no bound at all". Neither is what an
+      // operator typing in a text input meant, so both are refused here
+      // rather than sent.
+      const seconds = Number(draft.scriptTimeoutSeconds.trim());
+      if (box === "scriptTimeoutSeconds") {
+        if (draft.scriptTimeoutSeconds.trim() === "" || !Number.isFinite(seconds) || seconds <= 0) {
+          setFailure(
+            "A script timeout is a whole number of seconds greater than zero. Clearing it is not " +
+              "a way to remove the bound: every hook gets one."
+          );
+          return;
+        }
+      }
       const patch: WorkflowSettingsPatch =
         box === "scriptTimeoutSeconds"
-          ? { scriptTimeoutSeconds: Number(draft.scriptTimeoutSeconds) }
+          ? { scriptTimeoutSeconds: Math.floor(seconds) }
           : box === "beforeDir"
             ? { beforeDir: draft.beforeDir }
             : { afterDir: draft.afterDir };
@@ -185,13 +201,13 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
           <WarningBanner
             tone="warn"
             eyebrow="Host Workflow Runner"
-            title="The Host Workflow Runner is not answering"
+            title="This deployment has not been told how to reach the Host Workflow Runner"
             tip="workflow.settings.runner"
             dismissible={false}
           >
-            {"This is the component that executes a .local.sh hook on the machine Backupd is " +
-              "installed on. Until it answers, every local hook fails and every check that needs " +
-              "it reports as not examined rather than as passing. Its socket and token path are " +
+            {"The runner is the component that executes a .local.sh hook on the machine Backupd " +
+              "is installed on, and reaching it needs both a socket path and a credential file. " +
+              "One or both is missing here, so a .local.sh hook has nothing to run on. Both are " +
               "written by the installer and are not editable here."}
           </WarningBanner>
         )}
@@ -230,15 +246,21 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
             to compare against their own host is the one string that
             must not be split arbitrarily. */}
         <CellGrid min={280}>
-          {/* The verdict and the path are two cells, not one string: a
-              status joined to a socket path is long enough that the path
-              wraps mid-token, and a path an operator compares against
-              their own host is the one value that must not be split
-              arbitrarily. */}
+          {/* CONFIGURED, and never "answering".
+              
+              `runner.configured` is the presence of both halves of the
+              address — socket and credential (config.WorkflowRunner's
+              own Configured()) — and nothing on this read contacts the
+              runner at all. A cell that said "Answering" would report a
+              configured-but-dead runner as healthy, which is the one
+              claim this card must not make. Liveness, the runner's build
+              and the account it executes as come from the per-set hook
+              check's runner_health finding, because that is the read
+              that actually opens the socket. */}
           <Cell
             label="Host Workflow Runner"
             tip="workflow.settings.runner-status"
-            value={runner.configured ? "Answering" : "Not answering"}
+            value={runner.configured ? "Configured" : "Not configured"}
           />
           <Cell
             label="Runner socket"
@@ -253,9 +275,9 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
             mono
           />
           <Cell
-            label="Runner version and execution user"
+            label="Runner liveness, version and execution user"
             tip="workflow.settings.execution-user"
-            value="Not on this API"
+            value="Not on this read"
           />
           <Cell
             label="Maximum script size"
@@ -273,12 +295,15 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
         <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-3)", maxWidth: "78ch" }}>
           {"The runner's socket and its token file are reported and not editable: they differ " +
             "between a container and a bare-metal install of the same deployment, so the installer " +
-            "writes them. Its build version and the account it executes a hook as are not on this " +
-            "API at all \u2014 "}
+            "writes them. Nothing on this card contacts the runner, so it reports whether an " +
+            "address is CONFIGURED and never whether the runner is alive. Whether it actually " +
+            "answers \u2014 and its build version, its bash and the account it executes a hook as " +
+            "\u2014 comes from a backup set's own Workflow panel, under "}
+          <strong>Check this set&rsquo;s hooks</strong>
+          {", which opens the socket, or from "}
           <code className="mono">backupd workflow-runner status</code>
-          {" reports both, on the machine the runner is installed on. There is no control here " +
-            "that raises a hook's privileges, and there is not one to add: this product has no " +
-            "elevation switch."}
+          {" on the machine the runner is installed on. There is no control here that raises a " +
+            "hook's privileges, and there is not one to add: this product has no elevation switch."}
         </p>
 
         <div>
@@ -287,8 +312,21 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
               Global environment
             </div>
           </InfoTooltip>
+          {globalEnv.error ? (
+            <Banner tone="danger" dismissKey={globalEnv.error.message}>
+              <span style={{ fontSize: "var(--text-sm)" }}>
+                {"The deployment's workflow environment could not be read (" +
+                  globalEnv.error.message +
+                  "), so what a hook will see cannot be shown."}
+              </span>
+            </Banner>
+          ) : (
           <WorkflowEnvironmentEditor
             scope="global"
+            // The settings read's own copy is the fallback rather than an
+            // empty list: both come from the service, and an empty list
+            // here would state that nothing is configured on the strength
+            // of a read that has not landed.
             global={globalEnv.data?.variables ?? loaded.environment}
             set={null}
             readOnly={readOnly}
@@ -305,6 +343,7 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
               })
             }
           />
+          )}
         </div>
       </div>
     </section>

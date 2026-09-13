@@ -57,9 +57,11 @@
   runner socket and an SSH connection to the source; a check that could not
   run reports "not examined" rather than a green tick, and the two verdicts
   (`valid_for_backup`, `workflow_valid`) stay apart. Settings reports the
-  runner's socket and credential path as read-only deployment facts, says
-  outright that its build version and execution user are not on this API and
-  which command reports them, and offers no elevation control of any kind.
+  runner's socket and credential path as read-only deployment facts and says
+  whether that address is CONFIGURED — never that the runner is answering,
+  because nothing on that read contacts it; liveness, its build and the
+  account it executes a hook as come from a set's own hook check, which opens
+  the socket. There is no elevation control of any kind.
 
 - **A repository domain can be declared from the UI, the API and a terminal**
   (#862). `POST /repositories` persists a new `repository_domains:` entry —

@@ -165,7 +165,7 @@ tr.ro td{color:var(--text-3)}
     <div>
       <div class="k">Workflow</div>
       <div class="v"><span class="pill pill--err"><span class="dot"></span>FAILED</span></div>
-      <span class="why">Cause: <code>20-freeze-db.sh</code> (set / before, Local Host) exited 1.</span>
+      <span class="why">Cause: <code>20-freeze-db.local.sh</code> (set / before, Local Host) exited 1.</span>
     </div>
     <div>
       <div class="k">Cleanup</div>
@@ -177,7 +177,7 @@ tr.ro td{color:var(--text-3)}
   <div class="banner banner--warn">
     <span class="glyph">&#9650;</span>
     <span><strong>One step was killed on its timeout and this product cannot confirm it stopped.</strong>
-      <span class="body"><code>40-quiesce-remote.sh</code> ran on <code>api-server.example.net</code> and was
+      <span class="body"><code>40-quiesce-remote.remote.sh</code> ran on <code>api-server.example.net</code> and was
       signalled at its 120s bound. The remote exec channel closed before the process reported its own exit,
       so the script may still be running on that host. Nothing here can end it.</span></span>
   </div>
@@ -210,7 +210,7 @@ tr.ro td{color:var(--text-3)}
       <span class="pill pill--err" style="margin-left:auto"><span class="dot"></span>failed at step 2</span></div>
     <div class="step">
       <span class="g">&#10003;</span>
-      <span class="name">10-flush-cache.sh</span>
+      <span class="name">10-flush-cache.remote.sh</span>
       <span><span class="tag tag--remote">Remote</span></span>
       <span class="who">api-server.example.net &middot; conn <code>api-server-exec</code></span>
       <span><span class="pill pill--ok"><span class="dot"></span>Success</span></span>
@@ -218,7 +218,7 @@ tr.ro td{color:var(--text-3)}
     </div>
     <div class="step step--sel">
       <span class="g">&#10007;</span>
-      <span class="name">20-freeze-db.sh</span>
+      <span class="name">20-freeze-db.local.sh</span>
       <span><span class="tag tag--local">Local Host</span></span>
       <span class="who">Host Workflow Runner &middot; backupd-hooks</span>
       <span><span class="pill pill--err"><span class="dot"></span>Failed</span></span>
@@ -226,7 +226,7 @@ tr.ro td{color:var(--text-3)}
     </div>
     <div class="step">
       <span class="g">&ndash;</span>
-      <span class="name">30-tag-snapshot.sh</span>
+      <span class="name">30-tag-snapshot.remote.sh</span>
       <span><span class="tag tag--remote">Remote</span></span>
       <span class="who">api-server.example.net &middot; conn <code>api-server-exec</code></span>
       <span><span class="pill pill--none">Skipped</span></span>
@@ -235,7 +235,7 @@ tr.ro td{color:var(--text-3)}
   </div>
 
   <div class="slot">
-    <div class="t">&#9656; Step output &mdash; 20-freeze-db.sh</div>
+    <div class="t">&#9656; Step output &mdash; 20-freeze-db.local.sh</div>
     <div class="b">The selected step's log terminal mounts here, and only here: one terminal on the page,
       created when a step is selected and torn down when the selection moves. The slot is a component
       boundary with a fixed shape &mdash; <code>{ runId, stepId, step, api }</code> &mdash; so the hardened
@@ -252,6 +252,12 @@ tr.ro td{color:var(--text-3)}
     Never "engine container", never "inside backupd": the runner is a component on the machine backupd is
     installed on, and a row that implied the engine container grew a shell would be describing a deployment
     shape this product does not have.<br><br>
+    <strong>Every script name states where it runs.</strong> A hook is
+    <code>NAME.local.sh</code> or <code>NAME.remote.sh</code> and nothing else:
+    <code>core/internal/workflow/script.go</code> refuses a plain <code>*.sh</code> outright, because
+    "a hook that quiesces a database has to run on the machine holding the database, and guessing
+    wrong is silent". So the rows here carry the suffix, and the Local/Remote badge agrees with
+    it by construction rather than by convention.<br><br>
     <strong>The short SHA column is an em dash on purpose.</strong> L6's run-step shape carries no
     <code>sha256</code> &mdash; only the validation report does, for scripts as they are on disk right now.
     Printing today's hash in a row describing a run from last night would be a lie about what executed, so
@@ -290,7 +296,7 @@ tr.ro td{color:var(--text-3)}
       <span class="pill pill--run" style="margin-left:auto"><span class="dot dot--pulse"></span>running now</span></div>
     <div class="step">
       <span class="g">&#8226;</span>
-      <span class="name">10-thaw-db.sh</span>
+      <span class="name">10-thaw-db.local.sh</span>
       <span><span class="tag tag--local">Local Host</span></span>
       <span class="who">Host Workflow Runner &middot; backupd-hooks</span>
       <span><span class="pill pill--run"><span class="dot dot--pulse"></span>Running</span></span>
@@ -351,19 +357,19 @@ tr.ro td{color:var(--text-3)}
     <thead><tr><th>Order</th><th>Script</th><th>Where</th><th>Runs on</th><th>Bash -n</th>
       <th class="mono">size</th><th class="mono">sha256</th></tr></thead>
     <tbody>
-      <tr><td class="mono">1</td><td class="mono">before/10-flush-cache.sh</td>
+      <tr><td class="mono">1</td><td class="mono">before/10-flush-cache.remote.sh</td>
         <td><span class="tag tag--remote">Remote</span></td><td>api-server-exec &mdash; exec capable</td>
         <td><span class="pill pill--ok"><span class="dot"></span>parses</span></td>
         <td class="mono">1.4 KiB</td><td class="mono">4f21ab9c</td></tr>
-      <tr><td class="mono">2</td><td class="mono">before/20-freeze-db.sh</td>
+      <tr><td class="mono">2</td><td class="mono">before/20-freeze-db.local.sh</td>
         <td><span class="tag tag--local">Local Host</span></td><td>Host Workflow Runner</td>
         <td><span class="pill pill--ok"><span class="dot"></span>parses</span></td>
         <td class="mono">2.9 KiB</td><td class="mono">b70c1d55</td></tr>
-      <tr><td class="mono">3</td><td class="mono">before/30-tag-snapshot.sh</td>
+      <tr><td class="mono">3</td><td class="mono">before/30-tag-snapshot.remote.sh</td>
         <td><span class="tag tag--remote">Remote</span></td><td>api-server-exec &mdash; exec capable</td>
         <td><span class="pill pill--err"><span class="dot"></span>syntax error line 12</span></td>
         <td class="mono">880 B</td><td class="mono">0ce41f7a</td></tr>
-      <tr><td class="mono">4</td><td class="mono">after/10-thaw-db.sh</td>
+      <tr><td class="mono">4</td><td class="mono">after/10-thaw-db.local.sh</td>
         <td><span class="tag tag--local">Local Host</span></td><td>Host Workflow Runner</td>
         <td><span class="pill pill--ok"><span class="dot"></span>parses</span></td>
         <td class="mono">2.2 KiB</td><td class="mono">99b2e0c3</td></tr>
@@ -375,11 +381,13 @@ tr.ro td{color:var(--text-3)}
   </table>
   <div class="findings">
     <div class="finding"><span class="pill pill--err"><span class="dot"></span>error</span>
-      <span class="c">remote_bash_syntax</span><span class="d">30-tag-snapshot.sh: line 12: unexpected end of file</span></div>
+      <span class="c">remote_bash_syntax</span><span class="d">30-tag-snapshot.remote.sh: line 12: unexpected end of file</span></div>
     <div class="finding"><span class="pill pill--ok"><span class="dot"></span>ok</span>
-      <span class="c">exec_capability</span><span class="d">api-server-exec: the capability probe ran and returned 0</span></div>
-    <div class="finding"><span class="pill pill--none">skipped</span>
-      <span class="c">exec_connection</span><span class="d">not examined: the set's source connection is SFTP-only and is not used for execution</span></div>
+      <span class="c">exec_connection</span><span class="d">api-server-exec resolved: hooks@api-server.example.net:22</span></div>
+    <div class="finding"><span class="pill pill--ok"><span class="dot"></span>ok</span>
+      <span class="c">exec_capability</span><span class="d">api-server-exec accepted an exec channel and proved it runs the bytes it is sent</span></div>
+    <div class="finding"><span class="pill pill--none">note</span>
+      <span class="c">exec_connection</span><span class="d">a set whose OWN source connection is SFTP-only resolves it and fails <code>exec_capability</code> instead — the connection is fine, the account cannot execute</span></div>
     <div class="finding"><span class="pill pill--ok"><span class="dot"></span>ok</span>
       <span class="c">runner_health</span><span class="d">Host Workflow Runner answered on /run/backupd/hooks.sock (version 0.4.1)</span></div>
   </div>
@@ -481,12 +489,14 @@ tr.ro td{color:var(--text-3)}
     </div>
     <div>
       <div class="field"><label>Host Workflow Runner</label>
-        <div class="in">not answering &middot; /run/backupd/hooks.sock</div>
+        <div class="in">not configured &middot; credential file missing</div>
         <span class="hint">Reported, not configured: the two paths differ between a container and a
           bare-metal install of the same deployment.</span></div>
-      <div class="field"><label>Execution user</label><div class="in">backupd-hooks</div>
-        <span class="hint">The account the runner executes a local hook as. There is no elevation control
-          here and there will not be one.</span></div>
+      <div class="field"><label>Runner liveness, version and execution user</label>
+        <div class="in">not on this read</div>
+        <span class="hint">Reported by a backup set's own hook check, which opens the socket, and by
+          <code>backupd workflow-runner status</code>. There is no elevation control here and there will
+          not be one.</span></div>
       <div class="field"><label>Maximum script size</label><div class="in">65536 bytes</div>
         <span class="hint">A hook larger than this is refused by validation rather than executed.</span></div>
     </div>

@@ -1917,19 +1917,19 @@
   },
   "workflow.settings.runner": {
     "label": "Host Workflow Runner",
-    "html": "The component that executes a <code>*.local.sh</code> hook <strong>on the machine Backupd is installed on</strong>. While it is not answering, every local hook fails and every check that needs it reports as <em>not examined</em> rather than as passing."
+    "html": "The component that executes a <code>*.local.sh</code> hook <strong>on the machine Backupd is installed on</strong>. Reaching it needs both a socket path and a credential file; with either missing, a local hook has nothing to run on."
   },
   "workflow.settings.runner-status": {
     "label": "Runner status",
-    "html": "Whether this process can reach the Host Workflow Runner, and over which socket. Reported and not editable: the path differs between a container and a bare-metal install of the same deployment, so the installer writes it."
+    "html": "Whether this deployment has been told <strong>how</strong> to reach the runner — a socket path and a credential file, both present. Nothing on this card contacts it, so this is not a statement that it is alive: a backup set's own <em>Check this set's hooks</em> is the read that opens the socket."
   },
   "workflow.settings.runner-token": {
     "label": "Runner credential",
     "html": "The file this process reads its runner credential from. Reported and not editable, like the socket beside it, and never its contents."
   },
   "workflow.settings.execution-user": {
-    "label": "Runner version and execution user",
-    "html": "Not carried on this API. <code>backupd workflow-runner status</code> reports the runner's build and the account it executes a hook as, on the machine the runner is installed on. There is <strong>no</strong> control anywhere in this product that raises a hook's privileges."
+    "label": "Runner liveness, version and execution user",
+    "html": "Not carried by this read. A backup set's <em>Check this set's hooks</em> reports the runner's version, its bash and the account it executes a hook as, because that check actually opens the socket; <code>backupd workflow-runner status</code> reports the same from a shell on the machine the runner is installed on. There is <strong>no</strong> control anywhere in this product that raises a hook's privileges."
   },
   "workflow.settings.max-size": {
     "label": "Maximum script size",
@@ -1942,5 +1942,9 @@
   "workflow.settings.runner-socket": {
     "label": "Runner socket",
     "html": "The unix socket this process reaches the Host Workflow Runner over. Reported and not editable: the path differs between a container and a bare-metal install of the same deployment, so the installer writes it."
+  },
+  "workflow.set.exec-own-source": {
+    "label": "This set's own source connection",
+    "html": "A backup set may execute its remote hooks over the connection it already backs up from, named as <code>source/set</code>. It is used <strong>only if that connection can execute a command</strong>: an SFTP-only account moves bytes and runs nothing, which the hook check reports as a capability failure rather than as a broken backup set."
   }
 }

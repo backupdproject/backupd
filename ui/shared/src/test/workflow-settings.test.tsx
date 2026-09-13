@@ -95,38 +95,59 @@ describe("the deployment-wide workflow card", () => {
     expect(onCard(/There is no control here\s+that raises a hook's privileges/).length).toBe(1);
   });
 
-  it("does not invent the runner's version or execution user, and names what reports them", async () => {
+  it("does not invent the runner's liveness, version or execution user, and names what reports them", async () => {
     renderCard(createMockApi());
     await loaded();
 
-    expect(onCard("Not on this API").length).toBe(1);
+    expect(onCard("Not on this read").length).toBe(1);
     expect(onCard("backupd workflow-runner status").length).toBe(1);
+    // And it points at the read that DOES open the socket, rather than
+    // leaving the CLI as the only answer.
+    expect(onCard(/Check this set/).length).toBeGreaterThan(0);
   });
 
-  it("reports the runner as answering, with the socket it answered on", async () => {
+  /**
+   * The semantic this card must not overstate.
+   *
+   * `runner.configured` is the PRESENCE of both halves of the runner's
+   * address — a socket path and a credential file (config.WorkflowRunner's
+   * own Configured()) — and nothing on this read contacts the runner. A
+   * card that said "Answering" would therefore report a
+   * configured-but-dead runner as healthy, which is the one claim about
+   * this component that matters and the one it cannot make.
+   */
+  it("reports the runner address as configured, and never claims it is answering", async () => {
     renderCard(createMockApi());
     await loaded();
 
-    expect(onCard("Answering").length).toBe(1);
+    // Two cells legitimately read "Configured": the runner address and
+    // the timeout source. What matters is that neither says "Answering".
+    expect(onCard("Configured").length).toBe(2);
     expect(onCard("/run/backupd/hooks.sock").length).toBe(1);
-    expect(onCard(/The Host Workflow Runner is not answering/).length).toBe(0);
+    expect(onCard(/Answering/i).length).toBe(0);
+    expect(onCard(/is not answering/i).length).toBe(0);
+    // And it says outright that nothing here contacted it.
+    expect(onCard(/Nothing on this card contacts the runner/).length).toBe(1);
   });
 
-  it("says the runner is not answering, and what that costs, when it is not", async () => {
+  it("says a MISSING runner address is missing, and what that costs", async () => {
     const api = createMockApi();
     const settings = await createMockApi().getWorkflowSettings();
     vi.spyOn(api, "getWorkflowSettings").mockResolvedValue({
       ...settings,
-      runner: { ...settings.runner, configured: false }
+      // Both halves are required, so this is the shape of a deployment
+      // that never told the engine how to reach a runner.
+      runner: { configured: false, socket: "", tokenFile: "" }
     });
 
     renderCard(api);
-
     await loaded();
-    expect(onCard("The Host Workflow Runner is not answering").length).toBe(1);
-    // The half that matters: a check that could not run reports as not
-    // examined rather than as passing.
-    expect(onCard(/reports as not examined rather than as passing/).length).toBe(1);
+
+    expect(
+      onCard("This deployment has not been told how to reach the Host Workflow Runner").length
+    ).toBe(1);
+    expect(onCard(/a .local.sh hook has nothing to run on/).length).toBe(1);
+    expect(onCard("Not configured").length).toBeGreaterThan(0);
   });
 
   it("tells a configured timeout from the product's own default", async () => {

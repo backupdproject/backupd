@@ -468,7 +468,13 @@ export function mergeWorkflowEnvironment(
     });
   }
 
-  const configured = [...rows.values()].sort((a, b) => a.name.localeCompare(b.name));
+  // A configured name inside the reserved namespace is dropped from the
+  // configured half rather than listed twice: the built-in below carries
+  // the collision, and two rows with the same NAME would be two React
+  // children with the same key in every table that renders this.
+  const configured = [...rows.values()]
+    .filter((row) => !isReservedEnvName(row.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const builtins: MergedEnvVariable[] = BUILTIN_ENV_NAMES.map((name) => {
     // A built-in cannot be shadowed, and the reverse is what is recorded:

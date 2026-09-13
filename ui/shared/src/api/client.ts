@@ -2663,6 +2663,15 @@ function wireBackupSetWorkflowPatch(patch: BackupSetWorkflowPatch): WireUpdateBa
   return body;
 }
 
+/**
+ * How long a log follower asks the service to hold for new output.
+ *
+ * The service's own ceiling (core/service/workflowinspect.go's
+ * workflowLogWaitCeiling), because it clamps DOWN and never up: asking
+ * for less is asking for a faster poll and nothing else.
+ */
+const WORKFLOW_LOG_WAIT_SECONDS = 5;
+
 /** /workflow-runs/{run}, and the two paths under it. The run id is
  *  opaque and single-segment (the engine mints it), so one encode is the
  *  whole of it — unlike a backup set id, which is composite. */
@@ -3367,15 +3376,22 @@ export const httpApi: BackupdApi = {
       (r.steps ?? []).map(fromWireWorkflowStep)
     ),
   // `wait` is sent in SECONDS because that is what the route parses, and
-  // it is a boolean on this side deliberately: the service clamps the
-  // value to its own ceiling, so a caller choosing a number would be
-  // choosing one the service may ignore, and a follower only ever wants
-  // "hold briefly rather than answering empty". The one second sent here
-  // is a floor the route's own clamp raises to whatever it allows.
+  // it is a boolean on this side deliberately: a follower only ever wants
+  // "hold briefly rather than answering empty", and the service decides
+  // how long that is.
+  //
+  // The number matters, though, and getting it wrong is silent. The
+  // service only ever CLAMPS DOWN (workflowLogWaitCeiling, 5s, in
+  // core/service/workflowinspect.go): it never raises a smaller value. A
+  // client that sent 1 would therefore turn a terminal following a quiet
+  // step into a one-second poll against a service willing to hold for
+  // five, which is five times the requests for the same output. So the
+  // ceiling itself is what is asked for, and the clamp is what keeps that
+  // honest if the service's own limit ever drops.
   workflowStepLogs: (runId, stepId, options) => {
     const params = new URLSearchParams();
     if (options?.after !== undefined && options.after > 0) params.set("after", String(options.after));
-    if (options?.wait) params.set("wait", "1");
+    if (options?.wait) params.set("wait", String(WORKFLOW_LOG_WAIT_SECONDS));
     if (options?.limit !== undefined && options.limit > 0) params.set("limit", String(options.limit));
     const search = params.toString();
     return request<WireWorkflowStepLogPage>(

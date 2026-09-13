@@ -22,7 +22,7 @@
  *     the engine container grew a shell.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -42,6 +42,14 @@ const FAILED_RUN = "wfr_2f91a4";
 const BYPASSED_RUN = "wfr_5c40b2";
 /** The live one: canceled, with its after hooks still running. */
 const LIVE_RUN = "wfr_a91f07";
+/** A before-stage failure: the backup is SKIPPED, never failed. */
+const BEFORE_FAILED_RUN = "wfr_7b03d9";
+/** A failed backup whose hooks all did their job. */
+const BACKUP_FAILED_RUN = "wfr_c17e88";
+/** A hold settled by resuming the cleanup, and one settled by taking
+ *  responsibility for it. */
+const RESUMED_RUN = "wfr_9a1c40";
+const ACKNOWLEDGED_RUN = "wfr_44b2e1";
 
 /** A running step, for the elapsed-time rule. Spelled here rather than
  *  read off a fixture because what is being checked is the rule's edges,
@@ -111,7 +119,12 @@ describe("the three verdicts stay three", () => {
     expect(within(verdict("Workflow")).getByText("Failed")).toBeTruthy();
     // The cause, in the same cell, because "Failed" alone sends an
     // operator to the step list to run a search this page can do.
-    expect(within(verdict("Workflow")).getByText(/20-freeze-db\.sh/)).toBeTruthy();
+    expect(within(verdict("Workflow")).getByText(/40-quiesce-remote\.remote\.sh/)).toBeTruthy();
+    // And the pair this whole feature exists to be able to say: the
+    // archive landed and the cleanup did not, so a machine may be sitting
+    // quiesced with a good backup beside it.
+    expect(within(verdict("Cleanup")).getByText("Failed")).toBeTruthy();
+    expect(within(verdict("Cleanup")).getByText(/may still be quiesced/)).toBeTruthy();
   });
 
   it("does not let a failed workflow contaminate the backup verdict, or the reverse", async () => {
@@ -157,6 +170,114 @@ describe("the three verdicts stay three", () => {
   });
 });
 
+describe("the status combinations the engine can actually produce", () => {
+  afterEach(() => {
+    cleanup();
+    resetGraphForTests();
+    vi.restoreAllMocks();
+  });
+
+  it("reports a before-stage failure as a SKIPPED backup, never a failed one", async () => {
+    // core/internal/workflowrun/engine.go's skipBackup: nothing was
+    // attempted, so the backup is skipped. A page rendering "failed"
+    // there would be reporting a backup that was never tried as one that
+    // broke — and the set scope was still entered, so its after hooks ran
+    // and the cleanup verdict is a success on a run whose workflow
+    // failed.
+    renderRun(createMockApi(), BEFORE_FAILED_RUN);
+    await screen.findByRole("group", { name: "Workflow run verdicts" });
+
+    expect(within(verdict("Backup")).getByText("Skipped")).toBeTruthy();
+    expect(within(verdict("Workflow")).getByText("Failed")).toBeTruthy();
+    expect(within(verdict("Cleanup")).getByText("Success")).toBeTruthy();
+  });
+
+  it("reports a failed backup whose hooks all did their job", async () => {
+    // The flagship inverted, and the reason both fixtures exist: a
+    // surface that derived one verdict from another cannot draw both.
+    renderRun(createMockApi(), BACKUP_FAILED_RUN);
+    await screen.findByRole("group", { name: "Workflow run verdicts" });
+
+    expect(within(verdict("Backup")).getByText("Failed")).toBeTruthy();
+    expect(within(verdict("Cleanup")).getByText("Success")).toBeTruthy();
+  });
+
+  it("tells a hold settled by resuming the cleanup from one settled by acknowledgement", async () => {
+    // The two are the same run state and differ in the CLEANUP verdict,
+    // which is the whole record of which way it was settled: a resume
+    // runs the owed hooks, so cleanup succeeds; an acknowledgement
+    // executes nothing and leaves it failed.
+    renderRun(createMockApi(), RESUMED_RUN);
+    await screen.findByRole("group", { name: "Workflow run verdicts" });
+    expect(screen.getAllByText("Recovered").length).toBeGreaterThan(0);
+    expect(within(verdict("Cleanup")).getByText("Success")).toBeTruthy();
+
+    cleanup();
+
+    renderRun(createMockApi(), ACKNOWLEDGED_RUN);
+    await screen.findByRole("group", { name: "Workflow run verdicts" });
+    expect(screen.getAllByText("Recovered").length).toBeGreaterThan(0);
+    expect(within(verdict("Cleanup")).getByText("Failed")).toBeTruthy();
+  });
+
+  it("names every script the way the engine requires one to be named", async () => {
+    // core/internal/workflow/script.go refuses a plain *.sh outright, so
+    // a row named without a target is a row describing a run that could
+    // not have been planned. Asserted over every row rather than one,
+    // because what is being checked is true of all of them.
+    renderRun(createMockApi(), FAILED_RUN);
+    await screen.findByRole("group", { name: "Workflow run verdicts" });
+
+    const names = screen
+      .getAllByRole("button")
+      .map((node) => node.textContent ?? "")
+      .flatMap((text) => text.match(/[\w.-]+\.sh/g) ?? []);
+    expect(names.length).toBeGreaterThan(3);
+    for (const name of names) {
+      expect(name, name).toMatch(/\.(local|remote)\.sh$/);
+    }
+  });
+
+  it("keeps a live run polling its steps, and keeps the page when a poll fails", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = createMockApi();
+    const steps = vi.spyOn(api, "workflowSteps");
+
+    renderRun(api, LIVE_RUN);
+    await screen.findByRole("group", { name: "Workflow run verdicts" });
+    const first = steps.mock.calls.length;
+
+    // The poll's own callback has to be stable for this to advance at
+    // all: an identity that changes each render re-arms the interval
+    // every render and it never elapses.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_500);
+    });
+    expect(steps.mock.calls.length).toBeGreaterThan(first);
+
+    vi.useRealTimers();
+  });
+
+  it("keeps the run on screen when a later read fails, and says the read failed", async () => {
+    const api = createMockApi();
+    renderRun(api, FAILED_RUN);
+    await screen.findByRole("group", { name: "Workflow run verdicts" });
+
+    vi.spyOn(api, "workflowRun").mockRejectedValue(
+      new BackupdError({
+        code: "WORKFLOW_ENGINE_UNAVAILABLE",
+        message: "the workflow engine is not answering",
+        correlationId: "cid_poll503"
+      })
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Re-read" }));
+
+    await waitFor(() => expect(screen.getByText(/This run could not be re-read/)).toBeTruthy());
+    // The page an operator was reading is still there.
+    expect(within(verdict("Backup")).getByText("Success")).toBeTruthy();
+  });
+});
+
 describe("a step whose termination was never confirmed", () => {
   afterEach(() => {
     cleanup();
@@ -175,7 +296,7 @@ describe("a step whose termination was never confirmed", () => {
     // on the page: it also appears as a step row, and an operator reading
     // the warning needs to know which script it is about without hunting.
     const body = screen.getByText(/may still be running on the machine it was sent to/);
-    expect(body.textContent).toMatch(/40-quiesce-remote\.sh/);
+    expect(body.textContent).toMatch(/40-quiesce-remote\.remote\.sh/);
     expect(body.textContent).toMatch(/Nothing here can end it/);
   });
 
@@ -298,7 +419,7 @@ describe("the step rows and the terminal slot", () => {
     renderRun(createMockApi(), FAILED_RUN);
     await screen.findByRole("group", { name: "Workflow run verdicts" });
 
-    const local = screen.getByRole("button", { name: /20-freeze-db\.sh/ });
+    const local = screen.getByRole("button", { name: /20-freeze-db\.local\.sh/ });
     expect(within(local).getByText("Local Host")).toBeTruthy();
     expect(within(local).getByText(/Host Workflow Runner/)).toBeTruthy();
 
@@ -312,7 +433,7 @@ describe("the step rows and the terminal slot", () => {
     renderRun(createMockApi(), FAILED_RUN);
     await screen.findByRole("group", { name: "Workflow run verdicts" });
 
-    const remote = screen.getByRole("button", { name: /10-flush-cache\.sh/ });
+    const remote = screen.getByRole("button", { name: /10-flush-cache\.remote\.sh/ });
     expect(within(remote).getByText("Remote")).toBeTruthy();
     expect(within(remote).getByText("postgres-exec")).toBeTruthy();
   });
@@ -323,11 +444,14 @@ describe("the step rows and the terminal slot", () => {
 
     // The skipped step never ran. "exit 0" here would read as a clean
     // success, which is the one reading this cell must never produce.
-    const skipped = screen.getByRole("button", { name: /30-tag-snapshot\.sh/ });
+    const skipped = screen.getByRole("button", { name: /50-release-lock\.remote\.sh/ });
     expect(within(skipped).getByText("exit \u2014")).toBeTruthy();
-    // While the failure carries its real code.
-    const failed = screen.getByRole("button", { name: /20-freeze-db\.sh/ });
-    expect(within(failed).getByText("exit 1")).toBeTruthy();
+    // Nor does a step that was signalled and never confirmed its exit.
+    const timedOut = screen.getByRole("button", { name: /40-quiesce-remote\.remote\.sh/ });
+    expect(within(timedOut).getByText("exit \u2014")).toBeTruthy();
+    // While a step that really exited non-zero carries its code.
+    const succeeded = screen.getByRole("button", { name: /20-freeze-db\.local\.sh/ });
+    expect(within(succeeded).getByText("exit 0")).toBeTruthy();
   });
 
   it("opens the selected step's terminal, and only one at a time", async () => {
@@ -340,22 +464,22 @@ describe("the step rows and the terminal slot", () => {
     // dozens.
     expect(screen.getByText("No step is selected")).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: /20-freeze-db\.sh/ }));
+    await user.click(screen.getByRole("button", { name: /20-freeze-db\.local\.sh/ }));
 
     await waitFor(() =>
-      expect(screen.getByRole("region", { name: "Output of 20-freeze-db.sh" })).toBeTruthy()
+      expect(screen.getByRole("region", { name: "Output of 20-freeze-db.local.sh" })).toBeTruthy()
     );
-    expect(screen.getByRole("button", { name: /20-freeze-db\.sh/ }).getAttribute("aria-pressed")).toBe(
+    expect(screen.getByRole("button", { name: /20-freeze-db\.local\.sh/ }).getAttribute("aria-pressed")).toBe(
       "true"
     );
 
-    await user.click(screen.getByRole("button", { name: /10-flush-cache\.sh/ }));
+    await user.click(screen.getByRole("button", { name: /10-flush-cache\.remote\.sh/ }));
 
     await waitFor(() =>
-      expect(screen.getByRole("region", { name: "Output of 10-flush-cache.sh" })).toBeTruthy()
+      expect(screen.getByRole("region", { name: "Output of 10-flush-cache.remote.sh" })).toBeTruthy()
     );
     // The previous one is gone, not merely hidden.
-    expect(screen.queryByRole("region", { name: "Output of 20-freeze-db.sh" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Output of 20-freeze-db.local.sh" })).toBeNull();
   });
 
   it("hands the slot the step it is about, with the run and step ids it needs to follow", async () => {
@@ -363,9 +487,9 @@ describe("the step rows and the terminal slot", () => {
     renderRun(createMockApi(), FAILED_RUN);
     await screen.findByRole("group", { name: "Workflow run verdicts" });
 
-    await user.click(screen.getByRole("button", { name: /40-quiesce-remote\.sh/ }));
+    await user.click(screen.getByRole("button", { name: /40-quiesce-remote\.remote\.sh/ }));
 
-    const slot = within(await screen.findByRole("region", { name: "Output of 40-quiesce-remote.sh" }));
+    const slot = within(await screen.findByRole("region", { name: "Output of 40-quiesce-remote.remote.sh" }));
     expect(slot.getByText(new RegExp("run " + FAILED_RUN + " . step step_quiesce"))).toBeTruthy();
     // The step's own facts, from the prop rather than a second fetch.
     expect(slot.getByText("Timed out")).toBeTruthy();
@@ -378,8 +502,8 @@ describe("the step rows and the terminal slot", () => {
     renderRun(api, FAILED_RUN);
     await screen.findByRole("group", { name: "Workflow run verdicts" });
 
-    await user.click(screen.getByRole("button", { name: /20-freeze-db\.sh/ }));
-    await screen.findByRole("region", { name: "Output of 20-freeze-db.sh" });
+    await user.click(screen.getByRole("button", { name: /20-freeze-db\.local\.sh/ }));
+    await screen.findByRole("region", { name: "Output of 20-freeze-db.local.sh" });
 
     // A re-planned run mints new step ids. A slot left pointing at the
     // old one would poll a log route that answers

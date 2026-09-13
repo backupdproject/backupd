@@ -34,11 +34,19 @@ import { act } from "@testing-library/react";
 import { backupSetPath } from "@shared/utilities/routes";
 import type { VersionInfo } from "@shared/types/operation";
 
-/** The set that configures hooks and is not held. */
-const HOOKED = { source: "production", set: "postgres-primary" };
 /** The set whose cleanup could not be finished, so it is refusing to
- *  run, and whose source connection is SFTP-only. */
-const HELD = { source: "production", set: "billing-mysql" };
+ *  run at all. It is also the set with the richest hook configuration,
+ *  which is deliberate: a held set must keep every read on its page,
+ *  because an operator diagnosing a hold needs the configuration, the
+ *  validation and the run that caused it. */
+const HELD = { source: "production", set: "postgres-primary" };
+/** A set that configures hooks, is not held, and whose own source
+ *  connection is SFTP-only — named as its execution connection by the
+ *  "source/set" spelling the engine resolves. */
+const SFTP_ONLY = { source: "production", set: "billing-mysql" };
+/** A set whose hooks are all local, against a runner that is not
+ *  answering. */
+const LOCAL_ONLY = { source: "production", set: "auth-config" };
 /** A set that configures no hooks of its own. */
 const QUIET = { source: "media", set: "weekly-archive" };
 
@@ -83,6 +91,14 @@ function renderDetail(api: BackupdApi, target: { source: string; set: string }) 
   );
 }
 
+/** One finding's row, by the check id in it, so a claim about a check is
+ *  scoped to that check rather than to the report. */
+function findingRow(check: string): HTMLElement {
+  const row = screen.getByText(check).closest("div");
+  if (row === null) throw new Error("no finding row for " + check);
+  return row;
+}
+
 afterEach(() => {
   cleanup();
   resetGraphForTests();
@@ -123,21 +139,21 @@ describe("a backup set with no hooks", () => {
 
 describe("the configuration a set pins", () => {
   it("tells a pinned script timeout from an inherited one", async () => {
-    renderCard(createMockApi(), HOOKED);
+    renderCard(createMockApi(), HELD);
     await screen.findByText("Discovered scripts");
 
     expect(screen.getByText("120s (pinned on this set)")).toBeTruthy();
   });
 
   it("says a set that pins nothing follows the deployment's value", async () => {
-    renderCard(createMockApi(), HELD);
+    renderCard(createMockApi(), SFTP_ONLY);
     await screen.findByText("Discovered scripts");
 
     expect(screen.getByText("300s (inherited)")).toBeTruthy();
   });
 
   it("offers the deployment's execution connections, and says what an SFTP-only source means", async () => {
-    renderCard(createMockApi(), HELD);
+    renderCard(createMockApi(), SFTP_ONLY);
     const picker = await screen.findByLabelText("Execute remote hooks over");
 
     expect(
@@ -152,7 +168,7 @@ describe("the configuration a set pins", () => {
     const api = createMockApi();
     const patch = vi.spyOn(api, "patchBackupSetWorkflow");
 
-    renderCard(api, HELD);
+    renderCard(api, SFTP_ONLY);
     const picker = await screen.findByLabelText("Execute remote hooks over");
     await user.selectOptions(picker, "billing-exec");
 
@@ -166,7 +182,7 @@ describe("the hook check", () => {
     const api = createMockApi();
     const validation = vi.spyOn(api, "getBackupSetWorkflowValidation");
 
-    renderCard(api, HOOKED);
+    renderCard(api, HELD);
     await screen.findByText("Discovered scripts");
 
     expect(validation).not.toHaveBeenCalled();
@@ -175,13 +191,13 @@ describe("the hook check", () => {
 
   it("reports a discovered script's order, target, size and hash once asked", async () => {
     const user = userEvent.setup();
-    renderCard(createMockApi(), HOOKED);
+    renderCard(createMockApi(), HELD);
     await screen.findByText("Discovered scripts");
 
     await user.click(screen.getByRole("button", { name: /Check this set's hooks/ }));
 
-    expect(await screen.findByText("before/20-freeze-db.sh")).toBeTruthy();
-    const row = screen.getByText("before/20-freeze-db.sh").closest("tr");
+    expect(await screen.findByText("before/20-freeze-db.local.sh")).toBeTruthy();
+    const row = screen.getByText("before/20-freeze-db.local.sh").closest("tr");
     if (row === null) throw new Error("no row for the local script");
     expect(within(row).getByText("Local Host")).toBeTruthy();
     expect(within(row).getByText("Host Workflow Runner")).toBeTruthy();
@@ -189,24 +205,85 @@ describe("the hook check", () => {
     expect(within(row).getByText("b70c1d5")).toBeTruthy();
   });
 
-  it("reports an SFTP-only source as an error with its capability checks NOT EXAMINED", async () => {
+  it("reports an SFTP-only source the way the validator does: the connection resolves and the capability fails", async () => {
     const user = userEvent.setup();
-    renderCard(createMockApi(), HELD);
+    renderCard(createMockApi(), SFTP_ONLY);
     await screen.findByText("Discovered scripts");
 
     await user.click(screen.getByRole("button", { name: /Check this set's hooks/ }));
 
-    expect(await screen.findByText(/this set's source connection is SFTP-only/)).toBeTruthy();
-    // The half that matters: a skipped check is drawn as "not examined"
-    // and never as a pass, because nothing looked.
-    const skipped = screen.getByText("exec_capability").closest("div");
-    if (skipped === null) throw new Error("no finding row for exec_capability");
-    expect(within(skipped).getByText("not examined")).toBeTruthy();
-    expect(within(skipped).queryByText("ok")).toBeNull();
+    expect(await screen.findByText(/restricted to SFTP/)).toBeTruthy();
+    // Which check carries which verdict is the half that matters, and it
+    // is the validator's own shape: the connection RESOLVES (a
+    // "source/set" reference is a real spelling), the CAPABILITY probe is
+    // what discovers the far side will not open an exec channel, and the
+    // syntax check is then skipped with the validator's own sentence.
+    expect(within(findingRow("exec_connection")).getByText("ok")).toBeTruthy();
+    expect(within(findingRow("exec_capability")).getByText("error")).toBeTruthy();
+    const syntax = findingRow("remote_bash_syntax");
+    expect(within(syntax).getByText("not examined")).toBeTruthy();
+    expect(within(syntax).queryByText("ok")).toBeNull();
     // Two verdicts, kept apart: the backups are fine and the hooks are
     // not.
     expect(screen.getByText("Valid for backup")).toBeTruthy();
     expect(screen.getByText("Hooks not valid")).toBeTruthy();
+  });
+});
+
+describe("the runner-unavailable report", () => {
+  it("reports a runner that did not answer, with its local syntax check NOT EXAMINED", async () => {
+    const user = userEvent.setup();
+    renderCard(createMockApi(), LOCAL_ONLY);
+    await screen.findByText("Discovered scripts");
+
+    await user.click(screen.getByRole("button", { name: /Check this set's hooks/ }));
+
+    // Liveness is reported HERE and not on the Settings card, because
+    // this is the read that opens the socket.
+    expect(await screen.findByText(/did not answer on \/run\/backupd\/hooks\.sock/)).toBeTruthy();
+    expect(within(findingRow("runner_health")).getByText("error")).toBeTruthy();
+    const local = findingRow("local_bash_syntax");
+    expect(within(local).getByText("not examined")).toBeTruthy();
+    expect(within(local).queryByText("ok")).toBeNull();
+    // And a source that could not be reached at all, which is a
+    // different sentence from an SFTP-only account refusing exec.
+    expect(screen.getByText(/did not open a connection: dial tcp/)).toBeTruthy();
+  });
+});
+
+describe("the exec-connection picker's own-source option", () => {
+  it("offers this set's own source connection, by the reference the engine resolves", async () => {
+    renderCard(createMockApi(), SFTP_ONLY);
+    const picker = await screen.findByLabelText("Execute remote hooks over");
+
+    // `backup-set workflow patch --exec-connection source/set` is the CLI
+    // spelling of this, so a picker without it is a parity gap.
+    const own = within(picker).getByRole("option", {
+      name: /This set's own source connection \(only if it can execute\)/
+    }) as HTMLOptionElement;
+    expect(own.value).toBe("production/billing-mysql");
+    // And it is what this set currently names, so the picker shows the
+    // real configuration rather than "None".
+    expect((picker as HTMLSelectElement).value).toBe("production/billing-mysql");
+  });
+
+  it("keeps a chosen connection this deployment no longer declares, rather than reading as None", async () => {
+    const api = createMockApi();
+    const workflow = await createMockApi().getBackupSetWorkflow("production", "postgres-primary");
+    vi.spyOn(api, "getBackupSetWorkflow").mockResolvedValue({
+      ...workflow,
+      remoteExecConnectionRef: "retired-exec"
+    });
+
+    renderCard(api, HELD);
+    const picker = (await screen.findByLabelText("Execute remote hooks over")) as HTMLSelectElement;
+
+    // A select whose value matches no option renders as the first one, so
+    // this set would read as "None" and the next save would PATCH the
+    // operator's configuration away.
+    expect(picker.value).toBe("retired-exec");
+    expect(within(picker).getByRole("option", { name: /retired-exec — not declared/ })).toBeTruthy();
+    expect(screen.getByText(/which this deployment no longer declares/)).toBeTruthy();
   });
 });
 
@@ -227,7 +304,7 @@ describe("an unresolved recovery hold", () => {
     // The positive control. Without it, the assertion above would pass
     // against a page that disabled Run for every set.
     seedVersion();
-    renderDetail(createMockApi(), HOOKED);
+    renderDetail(createMockApi(), SFTP_ONLY);
 
     const runControl = await screen.findByRole("button", { name: "Run this backup set" });
     await waitFor(() => expect(runControl).toBeEnabled());
@@ -246,7 +323,7 @@ describe("an unresolved recovery hold", () => {
 
     await user.click(screen.getByRole("button", { name: "Resume cleanup" }));
 
-    await waitFor(() => expect(resume).toHaveBeenCalledWith("wfr_7b03d9"));
+    await waitFor(() => expect(resume).toHaveBeenCalledWith("wfr_2f91a4"));
     await waitFor(() => expect(runControl).toBeEnabled(), { timeout: 3_000 });
     expect(screen.queryByText(/will not run until a workflow run is accounted for/)).toBeNull();
   });
@@ -274,7 +351,7 @@ describe("an unresolved recovery hold", () => {
     await user.click(confirm);
 
     await waitFor(() =>
-      expect(acknowledge).toHaveBeenCalledWith("wfr_7b03d9", "thawed the database by hand")
+      expect(acknowledge).toHaveBeenCalledWith("wfr_2f91a4", "thawed the database by hand")
     );
   });
 
@@ -289,7 +366,7 @@ describe("an unresolved recovery hold", () => {
       })
     );
 
-    renderDetail(api, HOOKED);
+    renderDetail(api, SFTP_ONLY);
 
     const runControl = await screen.findByRole("button", { name: "Run this backup set" });
     // An unreadable hold list treated as "no holds" would offer a run the

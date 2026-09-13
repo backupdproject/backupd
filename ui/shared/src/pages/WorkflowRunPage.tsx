@@ -39,7 +39,7 @@
  * between. Nothing here polls the validation route, which hashes every
  * script and opens two connections in a real deployment.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { useApi } from "@shared/api/ApiContext";
@@ -104,10 +104,23 @@ export function WorkflowRunPage({ readOnly }: { readOnly: boolean }) {
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
 
   const live = run.data !== null && isRunLive(run.data);
-  const reloadLive = useCallback(() => {
-    steps.reload();
-    run.reload();
+
+  // The poll's callback has to be STABLE, and this is not a style
+  // preference: usePolling takes `reload` as an effect dependency, so an
+  // identity that changes every render clears and re-arms the interval
+  // every render and it never elapses. useAsync hands out a fresh
+  // `reload` closure per render, so the two are kept behind a ref and the
+  // callback the interval holds is created once. The failure this
+  // prevents is silent in exactly the way that matters here: a live run
+  // that simply stops updating.
+  const latest = useRef({ run, steps });
+  useEffect(() => {
+    latest.current = { run, steps };
   }, [run, steps]);
+  const reloadLive = useCallback(() => {
+    latest.current.steps.reload();
+    latest.current.run.reload();
+  }, []);
   usePolling(STEP_POLL_MS, reloadLive, live);
 
   const hold = useWorkflowHold(run.data?.backupSetId ?? "");
@@ -197,7 +210,12 @@ export function WorkflowRunPage({ readOnly }: { readOnly: boolean }) {
     />
   );
 
-  if (run.error) {
+  // Only when there is nothing to show. A run already on screen whose
+  // NEXT poll failed must not be replaced by an error page: the failure
+  // is transient by construction (a two-second poll), and blanking the
+  // page an operator is reading in order to report it is worse than
+  // reporting it beside what they were reading.
+  if (run.error && run.data === null) {
     return (
       <>
         {header}
@@ -223,6 +241,15 @@ export function WorkflowRunPage({ readOnly }: { readOnly: boolean }) {
   return (
     <>
       {header}
+
+      {run.error ? (
+        <Banner tone="danger" dismissKey={run.error.message}>
+          <span style={{ fontSize: "var(--text-sm)" }}>
+            {"This run could not be re-read (" + run.error.message +
+              "), so what is below is the last answer that arrived."}
+          </span>
+        </Banner>
+      ) : null}
 
       {hold.hold ? (
         <div style={{ marginBottom: 14 }}>
