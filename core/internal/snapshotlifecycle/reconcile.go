@@ -278,6 +278,15 @@ type Reconciler struct {
 	// Observer hears each phase move, so the same feed that carries a
 	// run's progress carries its recovery. Nil is silent.
 	Observer Observer
+
+	// Verification is the sample size and the drill directory a recovery
+	// verification uses. The CADENCE fields on it are deliberately not
+	// read: a reconciliation pass proves an interrupted run's snapshot to
+	// the level its own row was configured for, and nothing more. A
+	// recovery pass that also decided a periodic drill was due would turn
+	// one crash into a full restore of every unfinished run on the way
+	// back up, which is the moment a deployment can least afford it.
+	Verification VerificationOptions
 }
 
 // Reconcile decides every open question about one backup set's snapshots
@@ -565,7 +574,14 @@ func (r *Reconciler) resolveUnverified(
 		return verdicts, err
 	}
 
-	achieved, report, verifyErr := verify(ctx, req.Repository, backupengine.SnapshotID(run.SnapshotID))
+	// The level comes off the ROW, not off today's configuration: this
+	// run was admitted under the level its set was configured for when
+	// it started, and proving it against a level somebody has changed
+	// since would either fail a good snapshot or advertise it on a
+	// shallower check than the run promised.
+	plan := r.recoveryVerification(run)
+
+	achieved, report, verifyErr := plan.run(ctx, req.Repository, backupengine.SnapshotID(run.SnapshotID))
 	if verifyErr != nil {
 		// finish records the failed verification status on the same row
 		// as the phase, in one write, because they are one fact.
@@ -585,6 +601,8 @@ func (r *Reconciler) resolveUnverified(
 		return verdicts, err
 	}
 
+	_ = plan.discardDrillOutput() //nolint:errcheck // a leftover scratch directory is housekeeping, not a reason to un-prove a snapshot; see discardDrillOutput.
+
 	return append(verdicts, Verdict{
 		Kind:       VerdictVerified,
 		RunID:      run.RunID,
@@ -593,6 +611,39 @@ func (r *Reconciler) resolveUnverified(
 		To:         state.PhaseSuccess,
 		Reason:     "this run's snapshot was verified after an interrupted pass and is now a restore point",
 	}), nil
+}
+
+// recoveryVerification is what a reconciliation pass proves about one
+// interrupted run: the level on its own row, with this Reconciler's
+// sample size and a FRESH drill directory, and no cadence escalation.
+//
+// A row carrying no configured level at all is the one case that has to
+// be decided rather than crashed on, and it is decided the safe way: the
+// weakest rung is not assumed, the strongest is not invented, and the
+// level is left empty so that verification.run refuses it. A run whose
+// row does not say what it was supposed to prove is a row nothing can
+// honestly turn into a restore point.
+//
+// The drill directory is a fresh attempt beside the crashed one rather
+// than the crashed one itself, which is drillTarget's whole subject: a
+// run that died mid-restore left partial files, and retrying into them
+// with Overwrite=false failed an intact snapshot.
+func (r *Reconciler) recoveryVerification(run state.SnapshotRun) verification {
+	level := model.VerificationLevel(run.VerificationLevel)
+
+	v := verification{
+		requested: level,
+		required:  level,
+		sample:    r.Verification.SamplePercent,
+		drillDir:  r.Verification.DrillDir,
+		runID:     run.RunID,
+	}
+
+	if level == model.LevelRestoreDrill && r.Verification.DrillDir != "" {
+		v.target = drillTarget(r.Verification.DrillDir, run.RunID)
+	}
+
+	return v
 }
 
 // completeCommit finishes a run that was verified and died before the

@@ -34,14 +34,14 @@ func TestVerifyReportsCancellationNotJustFindings(t *testing.T) {
 	ctx := context.Background()
 	rep, _, snap := singleSnapshotRepository(t, 8<<20)
 
-	if _, err := rep.Verify(ctx, snap.ID); err != nil {
+	if _, err := rep.Verify(ctx, snap.ID, fullContentVerification); err != nil {
 		t.Fatalf("warm-up Verify of an undamaged snapshot: %v", err)
 	}
 
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 
-	report, err := rep.Verify(cancelled, snap.ID)
+	report, err := rep.Verify(cancelled, snap.ID, fullContentVerification)
 	if err == nil {
 		t.Fatalf("Verify returned a nil error for a cancelled verification that read %d of %d bytes "+
 			"and recorded %d finding(s); a cancelled walk is not a completed one",
@@ -75,7 +75,7 @@ func TestVerifyReportsDamageAsBothErrorAndFindings(t *testing.T) {
 	ctx := context.Background()
 	rep, loc, snap := singleSnapshotRepository(t, 8<<20)
 
-	if _, err := rep.Verify(ctx, snap.ID); err != nil {
+	if _, err := rep.Verify(ctx, snap.ID, fullContentVerification); err != nil {
 		t.Fatalf("Verify before damage: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestVerifyReportsDamageAsBothErrorAndFindings(t *testing.T) {
 		}
 	})
 
-	report, err := damaged.Verify(ctx, snap.ID)
+	report, err := damaged.Verify(ctx, snap.ID, fullContentVerification)
 	if err == nil {
 		t.Fatal("Verify passed a snapshot whose data blob was deleted")
 	}

@@ -627,8 +627,14 @@ func (i *treeDirIterator) Close() {
 // hole in a backup gets hidden behind a plausible-looking restore. A name
 // carrying a separator is storable as a nested path, which lets a
 // source's own directory listing decide where in the snapshot its content
-// lands -- and "." or ".." decide it lands somewhere else entirely. They
-// are refusals with sentences instead.
+// lands -- and "." or ".." decide it lands somewhere else entirely. A name
+// with a NUL byte in it is storable too, and is the quietest of the four:
+// the snapshot is well-formed, the manifest resolves, every content hash
+// checks out, and no filesystem on earth can create the file, so the
+// repository advertises a restore point that no restore will ever
+// produce. #784's restore drill finds that one; this refuses it before it
+// is stored, which is the only point at which it costs nothing. They are
+// refusals with sentences instead.
 func checkTreeEntry(e backupengine.SourceEntry) error {
 	switch {
 	case e.Name == "":
@@ -638,6 +644,9 @@ func checkTreeEntry(e backupengine.SourceEntry) error {
 			"source entry name %q contains a path separator; an entry name is one path element and may not choose where in the snapshot it lands", e.Name)
 	case e.Name == "." || e.Name == "..":
 		return fmt.Errorf("source entry name %q is a directory traversal, not the name of an entry", e.Name)
+	case strings.ContainsRune(e.Name, '\x00'):
+		return fmt.Errorf(
+			"source entry name %q contains a NUL byte; it would store cleanly and then be unrestorable, which is a restore point this engine must not advertise", e.Name)
 	}
 
 	switch {
@@ -737,7 +746,7 @@ func (e *treeFileEntry) GetReader(ctx context.Context) (io.ReadCloser, error) {
 	// bytes that actually reached the uploader, and the guard still gets
 	// to convert a torn-down read into the caller's own cancellation
 	// error rather than "use of closed network connection".
-	g := &guardedReader{ctx: ctx, rc: rc}
+	g := &guardedReader{ctx: ctx, rc: rc, track: &e.run.streams}
 	e.run.streams.add(g)
 
 	return &countingReader{rc: g, read: &e.run.read}, nil

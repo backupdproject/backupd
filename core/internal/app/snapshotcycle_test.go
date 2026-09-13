@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/backupdproject/backupd/core/internal/backupengine"
 	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
@@ -422,6 +423,13 @@ func TestRunCycle_TheScannedEntryCountSurvivesToEveryReport(t *testing.T) {
 	if err := os.Symlink(filepath.Join(sourceDir, "index.txt"), filepath.Join(sourceDir, "latest.txt")); err != nil {
 		t.Fatalf("seeding a symlink: %v", err)
 	}
+
+	// A weekly full read this set has never had. #784's cadence
+	// escalates THIS run above the structural level the set is
+	// configured for, which is what makes the two verification columns
+	// on the row demonstrably different facts rather than one value
+	// written down twice.
+	cfg.Sources[0].BackupSets[0].VerificationFullEvery = config.Duration(7 * 24 * time.Hour)
 
 	svc, journal := incrementalService(t, cfg)
 	ctx := context.Background()

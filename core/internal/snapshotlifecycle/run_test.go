@@ -3,6 +3,7 @@ package snapshotlifecycle_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -66,10 +67,23 @@ type fakeRepository struct {
 	verifyErr error
 	listErr   error
 
+	// achieved is the level this fake CLAIMS to have proved, whatever it
+	// was asked for. Empty means "what was asked for", which is what a
+	// healthy engine does; setting it is how a test reaches the one
+	// outcome a real engine should never produce and the lifecycle must
+	// still refuse -- a verification shallower than the set requires.
+	achieved model.VerificationLevel
+
 	treeCalls   int
 	verifyCalls int
-	tags        map[string]string
-	source      backupengine.Source
+
+	// verifyRequests is every request this fake was handed, in order, so
+	// a test can assert what depth was ASKED for rather than only what
+	// was recorded afterwards.
+	verifyRequests []backupengine.VerifyRequest
+
+	tags   map[string]string
+	source backupengine.Source
 }
 
 func newFakeRepository() *fakeRepository {
@@ -114,8 +128,9 @@ func (f *fakeRepository) SnapshotTree(_ context.Context, req backupengine.TreeSn
 	return info, nil
 }
 
-func (f *fakeRepository) Verify(_ context.Context, id backupengine.SnapshotID) (backupengine.VerifyReport, error) {
+func (f *fakeRepository) Verify(_ context.Context, id backupengine.SnapshotID, req backupengine.VerifyRequest) (backupengine.VerifyReport, error) {
 	f.verifyCalls++
+	f.verifyRequests = append(f.verifyRequests, req)
 
 	if f.verifyErr != nil {
 		return backupengine.VerifyReport{Errors: []string{"object " + string(id) + " is damaged"}}, f.verifyErr
@@ -123,7 +138,30 @@ func (f *fakeRepository) Verify(_ context.Context, id backupengine.SnapshotID) (
 
 	info := f.snapshots[string(id)]
 
-	return backupengine.VerifyReport{FilesVerified: info.Files, BytesVerified: info.Bytes}, nil
+	achieved := req.Level
+	if f.achieved != "" {
+		achieved = f.achieved
+	}
+
+	// A drill's output is what the caller told it to write, so the fake
+	// writes something there: the rule that a passing drill's scratch
+	// tree is removed and a failing one's is kept cannot be tested
+	// against a directory nothing ever created.
+	if req.Level == model.LevelRestoreDrill && req.RestoreTarget != "" {
+		if err := os.MkdirAll(req.RestoreTarget, 0o750); err != nil {
+			return backupengine.VerifyReport{}, err
+		}
+
+		if err := os.WriteFile(filepath.Join(req.RestoreTarget, "restored.bin"), []byte("restored"), 0o600); err != nil {
+			return backupengine.VerifyReport{}, err
+		}
+	}
+
+	return backupengine.VerifyReport{
+		Level:         achieved,
+		FilesVerified: info.Files,
+		BytesVerified: info.Bytes,
+	}, nil
 }
 
 func (f *fakeRepository) LookupSnapshot(_ context.Context, id backupengine.SnapshotID) (backupengine.SnapshotInfo, error) {
@@ -478,6 +516,16 @@ func TestRun_AFailedVerificationIsNotARestorePoint(t *testing.T) {
 	}
 }
 
+// TestRun_TheConfiguredVerificationLevelAndTheProvenOneAreRecordedSeparately
+// is the two-column rule: what the set asked for and what this run
+// proved are different facts, and a row carrying only the first would
+// assert a verification nobody performed.
+//
+// The case that makes the distinction visible is a run that proved MORE
+// than its set requires, because a periodic full read was due. The
+// configured column must still say what the set is configured for --
+// tomorrow's run, with no escalation due, is back to structural -- and
+// the achieved column must say what actually happened.
 func TestRun_TheConfiguredVerificationLevelAndTheProvenOneAreRecordedSeparately(t *testing.T) {
 	t.Parallel()
 
@@ -485,23 +533,21 @@ func TestRun_TheConfiguredVerificationLevelAndTheProvenOneAreRecordedSeparately(
 	set := setID(t, "postgres")
 
 	req := request(set, newFakeRepository(), &fakeTree{report: completeScan()})
-	req.VerificationLevel = model.LevelRestoreDrill
+	req.VerificationLevel = model.LevelStructural
+	req.Verification = snapshotlifecycle.VerificationOptions{FullEvery: 7 * 24 * time.Hour}
 
 	res, err := runner(t, j).Run(context.Background(), req)
 	if err != nil {
 		t.Fatalf("running: %v", err)
 	}
 
-	if res.VerificationLevel != model.LevelRestoreDrill {
-		t.Errorf("configured level %q, want %q", res.VerificationLevel, model.LevelRestoreDrill)
-	}
-
-	if res.VerificationAchieved == model.LevelRestoreDrill {
-		t.Error("the run claims to have performed the restore drill its set asked for; only what the repository actually verified may be recorded as achieved")
+	if res.VerificationLevel != model.LevelStructural {
+		t.Errorf("configured level %q, want %q", res.VerificationLevel, model.LevelStructural)
 	}
 
 	if res.VerificationAchieved != model.LevelContentFull {
-		t.Errorf("achieved level %q, want %q (the verification the repository port performs reads every byte)", res.VerificationAchieved, model.LevelContentFull)
+		t.Errorf("achieved level %q, want %q: this set had never had a full content read, so one was due",
+			res.VerificationAchieved, model.LevelContentFull)
 	}
 }
 

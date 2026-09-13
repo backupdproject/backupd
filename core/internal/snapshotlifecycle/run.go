@@ -100,9 +100,15 @@ type Catalog interface {
 // port that offered it those would be a port through which a
 // reconciliation bug could delete a restore point. The one write it can
 // perform is storing a snapshot.
+//
+// A restore drill is the apparent exception and is not one. The drill
+// happens INSIDE Verify, against a directory the caller names, so this
+// package still cannot ask a repository to write anywhere of its own
+// choosing: it can ask for a snapshot to be proven, and the proof for
+// the top rung happens to involve a restore.
 type Repository interface {
 	SnapshotTree(ctx context.Context, req backupengine.TreeSnapshotRequest) (backupengine.TreeSnapshotInfo, error)
-	Verify(ctx context.Context, id backupengine.SnapshotID) (backupengine.VerifyReport, error)
+	Verify(ctx context.Context, id backupengine.SnapshotID, req backupengine.VerifyRequest) (backupengine.VerifyReport, error)
 	LookupSnapshot(ctx context.Context, id backupengine.SnapshotID) (backupengine.SnapshotInfo, error)
 	ListSnapshots(ctx context.Context, src backupengine.Source) ([]backupengine.SnapshotInfo, error)
 }
@@ -226,9 +232,17 @@ type RunRequest struct {
 	SourceIdentity model.SourceIdentity
 	Consistency    model.ConsistencyMode
 
-	// VerificationLevel is the level this set is CONFIGURED for. What a
-	// run actually proves is recorded separately; see verify.
+	// VerificationLevel is the level this set is CONFIGURED for, and the
+	// floor this run must actually prove before its snapshot becomes a
+	// restore point. What the run proved is recorded separately; see
+	// verification.
 	VerificationLevel model.VerificationLevel
+
+	// Verification is the cadence and the cost of proving it: the sample
+	// size, how often the deeper rungs come round, and where a restore
+	// drill may write. The zero value asks for the engine's default
+	// sample and no periodic escalation.
+	Verification VerificationOptions
 
 	// Source is the set's identity in the repository's own namespace: one
 	// SourceInfo per backup set, never one per object.
@@ -527,7 +541,8 @@ func (r *Runner) drive(ctx context.Context, req RunRequest, run state.SnapshotRu
 }
 
 // verifyAndCommit is the half of a run that happens after the engine is
-// done: prove the snapshot, then say so durably.
+// done: prove the snapshot to the depth this set requires, then say so
+// durably.
 func (r *Runner) verifyAndCommit(ctx context.Context, req RunRequest, run *state.SnapshotRun) (RunResult, error) {
 	if err := r.advance(ctx, run, state.PhaseVerification, state.SnapshotRunUpdate{
 		VerificationStatus: new(verificationPending),
@@ -535,7 +550,9 @@ func (r *Runner) verifyAndCommit(ctx context.Context, req RunRequest, run *state
 		return r.result(ctx, run.RunID, false), err
 	}
 
-	achieved, report, verifyErr := verify(ctx, req.Repository, backupengine.SnapshotID(run.SnapshotID))
+	plan := planVerification(req.VerificationLevel, req.Verification, run.RunID, r.verificationHistory(ctx, req.SetUUID), r.now())
+
+	achieved, report, verifyErr := plan.run(ctx, req.Repository, backupengine.SnapshotID(run.SnapshotID))
 	if verifyErr != nil {
 		reason := verificationFailureReason(verifyErr, report)
 
@@ -545,6 +562,9 @@ func (r *Runner) verifyAndCommit(ctx context.Context, req RunRequest, run *state
 			// The achieved level is written back to empty, explicitly.
 			// A run that entered verification carrying a level from an
 			// earlier attempt and then failed must not keep claiming it.
+			// A verification that proved something real but shallower
+			// than the set requires is one of these failures, and it
+			// must not leave the shallower claim on the row either.
 			VerificationLevelAchieved: new(""),
 			Reason:                    &reason,
 		})
@@ -566,35 +586,35 @@ func (r *Runner) verifyAndCommit(ctx context.Context, req RunRequest, run *state
 		return r.result(ctx, run.RunID, false), err
 	}
 
+	// The drill's restored tree is only discarded once the run it proved
+	// has succeeded; every failure above keeps it (see
+	// discardDrillOutput). A removal that fails is not a reason to fail a
+	// backup that is proven and recorded: the directory is under the
+	// caller's own scratch root, named for this run, and the next drill
+	// writes beside it rather than into it.
+	_ = plan.discardDrillOutput() //nolint:errcheck // see above.
+
 	res := r.result(ctx, run.RunID, false)
 	r.observeRun(res)
 
 	return res, nil
 }
 
-// verify runs the verification the repository offers and reports what it
-// actually proved.
+// verificationHistory is what this set has actually proved recently, for
+// the cadence to read.
 //
-// The repository port offers exactly ONE verification today, and it reads
-// every byte the snapshot references (see the adapter's Verify), so what
-// it proves is model.LevelContentFull. The level the SET asked for is
-// recorded separately and neither value is derived from the other, which
-// is the whole point: a set configured for restore_drill must not have a
-// content verification written down as the drill it asked for, and a set
-// configured for structural must not have its row read as though only the
-// indexes were checked.
-//
-// The level ladder itself -- selecting depth per set, sampling, the
-// restore drill -- is #784's, and this is the seam it hooks into: a
-// level-parameterised verification on the port, and an achieved level
-// this function returns from what that verification actually did.
-func verify(ctx context.Context, repo Repository, id backupengine.SnapshotID) (model.VerificationLevel, backupengine.VerifyReport, error) {
-	report, err := repo.Verify(ctx, id)
+// A history that cannot be read produces no history rather than an error,
+// and the consequence is deliberately the safe direction: with nothing to
+// show that a deep check has happened recently, every cadence reads as
+// due, so an unreadable catalog makes this run verify MORE rather than
+// less.
+func (r *Runner) verificationHistory(ctx context.Context, setUUID string) []state.SnapshotRun {
+	history, err := r.Catalog.ListSnapshotRuns(ctx, setUUID, verificationHistory)
 	if err != nil {
-		return "", report, err //nolint:wrapcheck // the caller renders this into the row's reason with the report beside it.
+		return nil
 	}
 
-	return model.LevelContentFull, report, nil
+	return history
 }
 
 // advance is the one place a phase is written, so the graph is consulted
@@ -848,6 +868,16 @@ func (r *Runner) validate(req RunRequest) error {
 
 	if req.VerificationLevel == "" {
 		return errors.New("snapshotlifecycle: a snapshot run needs the verification level its set is configured for")
+	}
+
+	// A set configured for restore drills is an operator instruction, and
+	// a drill needs somewhere to restore to. Refusing here, before the
+	// run's first durable write, is the difference between a
+	// configuration mistake an operator can fix and a nightly backup that
+	// reads its whole source and then fails its verification for a reason
+	// that has nothing to do with the data.
+	if req.VerificationLevel == model.LevelRestoreDrill && req.Verification.DrillDir == "" {
+		return errors.New("snapshotlifecycle: this set is configured for restore-drill verification and no directory was given for the drill to restore into")
 	}
 
 	return nil

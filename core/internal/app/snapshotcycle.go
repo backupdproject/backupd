@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -216,6 +217,12 @@ func (s *Service) reconcileSnapshots(
 		Catalog:  catalog,
 		Now:      s.now,
 		Observer: s.snapshotObserver(ctx),
+
+		// The sample size and the drill directory, but no cadence: a
+		// recovery pass proves an interrupted run's own configured
+		// level and never decides that a periodic deep check is due
+		// (see Reconciler.Verification).
+		Verification: s.verificationOptions(bs),
 	}
 
 	report, err := rec.Reconcile(ctx, snapshotlifecycle.ReconcileRequest{
@@ -282,6 +289,7 @@ func (s *Service) runSnapshot(
 		SourceIdentity:    bs.SourceIdentity,
 		Consistency:       bs.Consistency,
 		VerificationLevel: bs.VerificationLevel,
+		Verification:      s.verificationOptions(bs),
 		Source:            identity,
 		Description:       "backupd " + bs.ID.String(),
 		Repository:        repo,
@@ -406,6 +414,37 @@ func (s *Service) repositoryPassphrase(domain model.RepositoryDomainID) (secretr
 	}
 
 	return secretref.Ref{}, false
+}
+
+// verificationOptions is one set's verification budget: the sample size
+// and the two cadences it configured, plus where a restore drill is
+// allowed to write.
+//
+// The drill directory is inside the reserved namespace under the backup
+// root, for the reason the namespace exists (backupengine/reserved.go):
+// a drill writes a whole restored tree of somebody's data into a
+// directory that artifact discovery, retention and prune all walk, and
+// an unreserved scratch directory would be a restored copy of a backup
+// presented to the pruner as a few thousand unrecognised artifacts.
+//
+// A backup root that cannot produce one leaves the directory empty,
+// which is not a silent downgrade: a set CONFIGURED for restore drills
+// is refused by the run driver before its first durable write, and a
+// drill CADENCE is dropped. That is the same asymmetry
+// snapshotlifecycle.VerificationOptions argues for, decided where the
+// path is known.
+func (s *Service) verificationOptions(bs config.BackupSet) snapshotlifecycle.VerificationOptions {
+	opts := snapshotlifecycle.VerificationOptions{
+		SamplePercent: bs.VerificationSamplePercentConfig,
+		FullEvery:     bs.VerificationFullEvery.Duration(),
+		DrillEvery:    bs.VerificationRestoreDrillEvery.Duration(),
+	}
+
+	if dir, err := backupengine.ReservedLocalStateDir(s.Config.EffectiveBackupRoot()); err == nil {
+		opts.DrillDir = filepath.Join(dir, "verification-drills")
+	}
+
+	return opts
 }
 
 // maintenanceRecord is the last recorded maintenance state for a

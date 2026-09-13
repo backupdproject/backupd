@@ -117,7 +117,7 @@ const infraMarker = "INFRA:"
 //
 // On a machine that simply has no docker, skipping is honest: the machine
 // tier is evidence for the gate, not a requirement on every developer's
-// laptop. Inside the gate it is the opposite. Docker is a declared
+// laptop. Inside a gate it is the opposite. Docker is a declared
 // prerequisite there, so the same condition means the gate's own machine is
 // broken, and a skip quietly deletes the machine tier from the run while
 // the run goes on printing ok.
@@ -129,9 +129,9 @@ const infraMarker = "INFRA:"
 // `ok ... 0.08s` against a dead daemon, and one cell happened to refuse,
 // which is the only reason anybody noticed.
 //
-// So under the gate this is a failure carrying infraMarker. The one way
-// past it is CI_LOCAL_SKIP_DOCKER=1, the gate's own documented opt-out for
-// a run with the daemon down, which already ledgers that run as INCOMPLETE.
+// So inside a gate this is a failure carrying infraMarker. The one way
+// past it is CI_LOCAL_SKIP_DOCKER=1, the documented opt-out for a run with
+// the daemon down, which already ledgers that run as INCOMPLETE.
 //
 // Until #450 this was four copies, one per fixture, kept word for word the
 // same so a reader comparing them found no differences to explain. It is
@@ -139,35 +139,70 @@ const infraMarker = "INFRA:"
 func dockerUnavailable(t *testing.T, reason string, args ...any) {
 	t.Helper()
 	detail := fmt.Sprintf(reason, args...)
-	if gateRequiresDocker() {
-		t.Fatalf("%s machines: %s\nDocker is a declared prerequisite of this gate (CI_LOCAL=1), so this is an INFRASTRUCTURE failure and not a product one: the machine could not offer a docker daemon. Skipping here would take the whole machine tier out of the run while the gate still printed ok, which is #456.", infraMarker, detail)
+	if dockerIsRequired() {
+		t.Fatalf("%s machines: %s\nDocker is a declared prerequisite of this run (%s), so this is an INFRASTRUCTURE failure and not a product one: the machine could not offer a docker daemon. Skipping here would take the whole machine tier out of the run while the run still printed ok, which is #456.", infraMarker, detail, whichGate())
 	}
 	t.Skipf("machines: SKIPPING (missing capability: %s)", detail)
 }
 
 // capabilityUnavailable is dockerUnavailable for a capability that is not
-// docker itself, and it makes the same decision for the same reason.
+// docker itself, and it makes the same decision on the LOCAL gate only.
 //
-// It shares gateRequiresDocker, which is right rather than convenient:
-// everything reached through this package needs a live daemon first, so a
-// run that opted out of docker never gets here to be asked.
+// The asymmetry with dockerUnavailable is deliberate and it is about what
+// each run has declared. Both gates declare a docker daemon: ci-local.sh
+// probes for one before it starts, and the GitHub job has a preflight step
+// that fails without one. Neither declares anything about the kernel
+// underneath a hosted runner, and the one capability reached through here
+// is an iptables connlimit rule installed INSIDE a container (see
+// source.go). Refusing that on a hosted runner would turn a property of
+// somebody else's kernel into a red build on every pull request, which is
+// the fastest way to get a fail-closed rule deleted.
 func capabilityUnavailable(t *testing.T, reason string, args ...any) {
 	t.Helper()
 	detail := fmt.Sprintf(reason, args...)
-	if gateRequiresDocker() {
-		t.Fatalf("%s machines: %s\nThe gate's own machine is expected to be able to do this (CI_LOCAL=1), so this is an INFRASTRUCTURE failure and not a product one. Skipping here would take the proof out of the run while the gate still printed ok, which is #456.", infraMarker, detail)
+	if localGateRequiresDocker() {
+		t.Fatalf("%s machines: %s\nThe gate's own machine is expected to be able to do this (CI_LOCAL=1), so this is an INFRASTRUCTURE failure and not a product one. Skipping here would take the proof out of the run while the gate still printed ok.", infraMarker, detail)
 	}
 	t.Skipf("machines: SKIPPING (missing capability: %s)", detail)
 }
 
-// gateRequiresDocker reports whether this process is inside the local gate,
-// which declares docker a prerequisite. scripts/ci-local.sh exports
-// CI_LOCAL=1. CI_LOCAL_SKIP_DOCKER=1 is that same gate's documented opt-out
-// for a run with the daemon down, and it already ends the run INCOMPLETE,
-// so it is honoured here rather than overruled: a fixture that refused
-// anyway would make that flag a lie.
-func gateRequiresDocker() bool {
+// dockerIsRequired reports whether this process is inside a run that
+// declared a docker daemon a prerequisite: the local gate
+// (scripts/ci-local.sh, which exports CI_LOCAL=1) or any automated CI run
+// (CI=true, which GitHub Actions and every other provider set).
+//
+// Automated CI is here because keying only on CI_LOCAL left the hole open
+// in the run that actually gates merging: .github/workflows/ci.yml's
+// core-build-vet-test job runs `go test -race ./...` with no CI_LOCAL, so
+// every suite reached through this package could skip there while the job
+// reported success. A skip in an automated run is a claim nobody makes and
+// nobody reads.
+//
+// CI_LOCAL_SKIP_DOCKER=1 is honoured in both, because it is how a run says
+// out loud that it is proceeding without a daemon and it already ends that
+// run INCOMPLETE: a fixture that refused anyway would make that flag a lie.
+func dockerIsRequired() bool {
+	if os.Getenv("CI_LOCAL_SKIP_DOCKER") == "1" {
+		return false
+	}
+
+	return os.Getenv("CI_LOCAL") == "1" || os.Getenv("CI") == "true"
+}
+
+// localGateRequiresDocker is dockerIsRequired for the local gate alone.
+// See capabilityUnavailable for why one caller needs the narrower question.
+func localGateRequiresDocker() bool {
 	return os.Getenv("CI_LOCAL") == "1" && os.Getenv("CI_LOCAL_SKIP_DOCKER") != "1"
+}
+
+// whichGate names the run a refusal is happening in, so a log says which
+// environment made this a failure rather than a skip.
+func whichGate() string {
+	if os.Getenv("CI_LOCAL") == "1" {
+		return "CI_LOCAL=1"
+	}
+
+	return "CI=true"
 }
 
 // Start probes the daemon, reclaims what a killed run left behind and
@@ -175,12 +210,13 @@ func gateRequiresDocker() bool {
 // that, on demand, so a test pays only for what it asks for.
 //
 // On a developer machine it SKIPS when docker is genuinely absent, since
-// the machine tier is evidence for the gate rather than a requirement on
-// every laptop. Inside the gate, where docker is a declared prerequisite,
+// the machine tier is evidence for a gate rather than a requirement on
+// every laptop. Inside a gate -- the local one (CI_LOCAL=1) or any
+// automated CI run (CI=true) -- where docker is a declared prerequisite,
 // the same condition FAILS and says INFRA:, because a skip there deletes
 // the machine tier from a run that goes on reporting ok (#160, #456). A
 // wedged daemon fails either way. dockerUnavailable is where that verdict
-// is made.
+// is made, and dockerIsRequired is the rule it applies.
 func Start(t *testing.T) *Machines {
 	t.Helper()
 

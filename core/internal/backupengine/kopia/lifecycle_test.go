@@ -222,7 +222,7 @@ func TestInProcessLifecycle(t *testing.T) {
 
 	// --- verify ------------------------------------------------------------
 
-	report, err := rep.Verify(ctx, second.ID)
+	report, err := rep.Verify(ctx, second.ID, fullContentVerification)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestInProcessLifecycle(t *testing.T) {
 		t.Errorf("Verify read %d bytes, snapshot holds %d", report.BytesVerified, wantBytes2)
 	}
 
-	if _, err := rep.Verify(ctx, backupengine.SnapshotID("nonexistent")); !errors.Is(err, backupengine.ErrSnapshotNotFound) {
+	if _, err := rep.Verify(ctx, backupengine.SnapshotID("nonexistent"), fullContentVerification); !errors.Is(err, backupengine.ErrSnapshotNotFound) {
 		t.Errorf("Verify of unknown snapshot: got %v, want ErrSnapshotNotFound", err)
 	}
 
@@ -320,7 +320,7 @@ func TestInProcessLifecycle(t *testing.T) {
 	// The dangerous half of maintenance is that it deletes content. Prove it
 	// did not delete content the surviving snapshot still needs, which is the
 	// failure this whole product exists to not have.
-	after, err := rep.Verify(ctx, second.ID)
+	after, err := rep.Verify(ctx, second.ID, fullContentVerification)
 	if err != nil {
 		t.Fatalf("Verify after maintenance: %v", err)
 	}

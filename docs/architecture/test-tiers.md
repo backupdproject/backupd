@@ -68,6 +68,18 @@ The source machine is built from `scripts/e2e/source-machine.Dockerfile`,
 which `two-machine-backup.sh` builds too. One definition of "the simulated
 VPS", read by both, rather than two that agree until they do not.
 
+A missing daemon is a SKIP on a laptop and a FAILURE in a gate, and the
+gate is both the local one (`scripts/ci-local.sh`, `CI_LOCAL=1`) and any
+automated CI run (`CI=true`, which `.github/workflows/ci.yml` sets and
+whose `core-build-vet-test` job probes `docker info` before the tests).
+The refusal says `INFRA:` and `machines.dockerIsRequired` is the rule.
+Keying that only on `CI_LOCAL` was a hole for exactly as long as it
+existed: the remote job runs `go test -race ./...` without it, so this
+whole tier — the MinIO S3 suites included — could skip while the job that
+gates merging printed ok, which is #456 in the run that matters most.
+`CI_LOCAL_SKIP_DOCKER=1` remains the one out-loud opt-out, in both, and
+it already ledgers the run as INCOMPLETE.
+
 The manager is the test process. On Docker Desktop for macOS a host process
 cannot sit on a bridge network, so by default the source publishes a port on
 127.0.0.1 and the test reaches it there, exactly as the fixtures always
