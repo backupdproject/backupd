@@ -482,6 +482,56 @@ cd distribution && go test ./packaging/ -run TestCrossProviderConformance -v
 
 ---
 
+## Step 12 — Local workflow hooks, and the Docker prerequisite
+
+A workflow step whose target is `local` does not run in the engine container, and since
+issue #865 it does not run on a host shell either: it runs in an **ephemeral Docker
+container** launched by the **Host Workflow Runner**, a small version-pinned process
+systemd supervises as `backupd-workflow-runner.service`
+(`docs/adr/0020-host-workflow-runner.md`, `docs/runtime-contract.md`).
+
+Local hooks are **available**, and the runner belongs **inside the container-host guest**
+this procedure deploys — never on the PVE host. The guest is an ordinary Linux machine
+you administer, so it can carry a systemd unit and a group grant; the PVE host cannot,
+and step 9's rule that its management plane stays untouched applies to the runner
+exactly as it does to the stack. A hook that needs something on the PVE host is a
+remote step against it, not a local one.
+
+Three prerequisites, all three re-proved by the runner's own startup probe, and any one
+of them missing is a refusal rather than a hook that quietly does not run:
+
+- **a daemon the runner's account can reach.** That is one supplementary group:
+  `sudo usermod -aG docker <the runner's account>`, or whatever group owns the socket
+  here — the installer reads the group off the socket rather than assuming `docker`. The
+  unit gets `SupplementaryGroups=` and that socket in `ReadWritePaths`; nothing else
+  does. The membership is root-equivalent on this host, which is exactly why it belongs
+  to the runner and to nothing else: **the engine container gains nothing** — no socket,
+  no `group_add`, no `DOCKER_HOST`, and `distribution/packaging`'s preflight fails the
+  build if any shipped package asks for one;
+- **the hook image, already on the host.** `--hook-image` defaults to the pinned
+  `bash:5.2.37-alpine3.21`, `install` fetches it, and `WORKFLOW_RUNNER_HOOK_IMAGE` in the
+  deployment's `.env` names a different one. The runner never pulls: an image that is not
+  there is a refusal, not a download;
+- **a non-root account.** The runner refuses to run as root, so a root deployment gets no
+  runner and is told so.
+
+`python3 scripts/install/install_docker_host.py preflight` refuses with exit 12, and the
+refusal carries the `usermod -aG` line, when this deployment has hook scripts and the
+runner's account cannot reach the daemon. A deployment with an empty workflows
+directory is held to none of it, and `WORKFLOW_RUNNER=off` in the `.env` says so
+explicitly.
+
+- [ ] `systemctl is-active backupd-workflow-runner.service` reports `active`, and the
+      account it runs as is recorded in the evidence table
+- [ ] That account is in the Docker socket's group (`id <account>`), and the engine
+      container is **not**: `docker inspect` shows no socket mount, no `group_add` and no
+      `DOCKER_HOST` on either shipped service
+- [ ] The hook image is present on the host (`docker image inspect <the reference>`), and
+      the reference the unit was installed with is recorded
+- [ ] A workflow with one `local` hook runs, and its container is gone afterwards
+      (`docker ps -a --filter label=backupd.workflow-hook=1` is empty)
+
+
 ## Evidence (§68)
 
 Fill this in in the same commit that flips Proxmox VE from uncertified to

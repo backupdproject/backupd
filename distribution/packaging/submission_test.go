@@ -389,6 +389,18 @@ func checkArtifactProvenance(t targetUnderTest) (bool, string) {
 	return true, fmt.Sprintf("the release manifest is reachable and every one of this target's %d declared packaged path(s) is in the tree", len(t.sub.ArtifactFiles))
 }
 
+// permissionRationaleClaims are the claims docs/submission/permission-rationale.md
+// has to actually make, rather than the topics it has to mention.
+//
+// "Docker socket" joined the set with issue #865. A store reviewer
+// reading this material has to be told the one privilege question a
+// backup tool on a NAS now raises, and told the answer: the shipped
+// package asks for none of it, because the component that needs a daemon
+// is a host-side unit the administrator installs themselves. This is the
+// documentary half of that promise; no-container-docker-access is the
+// structural half, and the material names it.
+var permissionRationaleClaims = []string{"cap_drop", "read-only", "non-root", "Docker socket"}
+
 // submissionChecks maps a preflight capability id to the rule that
 // decides it. TestEverySubmissionCapabilityHasACheck pins this map's key
 // set to submission.json's capability list in both directions.
@@ -396,13 +408,14 @@ var submissionChecks = map[string]func(targetUnderTest) (bool, string){
 	"no-self-update":                   hardRule(CheckNoSelfUpdate),
 	"no-floating-tag":                  hardRule(CheckNoFloatingTag),
 	"no-privileged-mode":               hardRule(CheckNoPrivilegedMode),
+	"no-container-docker-access":       hardRule(CheckNoContainerDockerAccess),
 	"no-mandatory-telemetry":           hardRule(CheckNoMandatoryTelemetry),
 	"materials-description":            materialRule("materials-description", 400, []string{"backup", "sftp", "retention"}),
 	"materials-icon":                   checkStoreIcon,
 	"materials-screenshots":            checkScreenshots,
 	"materials-release-notes":          materialRule("materials-release-notes", 400, []string{"1.0.0"}),
 	"materials-privacy-disclosure":     materialRule("materials-privacy-disclosure", 400, []string{"telemetry", "personal data"}),
-	"materials-permission-rationale":   materialRule("materials-permission-rationale", 400, []string{"cap_drop", "read-only", "non-root"}),
+	"materials-permission-rationale":   materialRule("materials-permission-rationale", 400, permissionRationaleClaims),
 	"materials-support-source-license": checkSupportSourceLicense,
 	"materials-submission-checklist":   checkSubmissionChecklist,
 	"proactive-alert-delivery":         checkProactiveAlertDelivery,

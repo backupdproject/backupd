@@ -436,6 +436,42 @@ that check lives here.
 
 ---
 
+## Step 9 — Local workflow hooks are unavailable on TrueNAS
+
+A workflow step whose target is `local` does not run in the engine container, and since
+issue #865 it does not run on a host shell either: it runs in an **ephemeral Docker
+container** launched by the **Host Workflow Runner**, a small version-pinned process
+systemd supervises as `backupd-workflow-runner.service`
+(`docs/adr/0020-host-workflow-runner.md`, `docs/runtime-contract.md`).
+
+TrueNAS's host is vendor-managed: applications run under the middleware's own container
+runtime, a third-party systemd unit is unsupported and does not survive a system
+update, and there is no supported way to add an account to the Docker socket's group.
+Provisioning the runner anyway would be exactly the host-management-plane modification
+§4A/§75 forbids this product — the same rule this procedure's removal step already
+holds the app to.
+
+**Local workflow hooks are unavailable on this platform.** That is a refusal, not a
+gap: the installer's preflight refuses to provision a runner here, and a runner that
+somehow started would refuse to serve at its own startup probe rather than fall back
+to a host shell. Nothing degrades silently, and nothing in this procedure installs a
+`backupd-workflow-runner.service`, grants a docker group or fetches a hook image.
+
+**What works instead:** a remote workflow step. A step with a remote target runs over
+SSH (`docs/adr/0021-remote-workflow-execution.md`) against a machine you do
+administer, and needs no Docker and no host unit on this NAS. The engine's own side
+of this is unchanged either way: the shipped package asks for no Docker socket, no
+`group_add` and no `DOCKER_HOST`.
+
+- [ ] No `backupd-workflow-runner.service` exists on this host, and nothing in this
+      procedure created one
+- [ ] No account was added to a Docker socket group for this product, and the shipped
+      containers mount no socket and declare no `group_add`
+- [ ] A workflow configured with a `local` hook is refused with a message naming the
+      missing container runtime, and the refusal text is recorded — not a run that
+      reported success with the hook skipped
+
+
 ## Evidence (§68)
 
 Fill this in in the same commit that flips TrueNAS from uncertified to certified.

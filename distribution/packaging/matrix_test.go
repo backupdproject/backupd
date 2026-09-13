@@ -217,6 +217,7 @@ var capabilityChecks = map[string]func(providerUnderTest) (bool, string){
 	"embedded-window":                 bridgeFlag("embeddedWindow"),
 	"app-store-packaging":             checkAppStorePackaging,
 	"storage-picker":                  bridgeFlag("storagePicker"),
+	"local-workflow-hooks":            checkLocalWorkflowHooks,
 }
 
 func checkProviderIdentity(p providerUnderTest) (bool, string) {

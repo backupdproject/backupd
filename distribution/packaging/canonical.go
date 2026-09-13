@@ -300,8 +300,13 @@ type Canonical struct {
 	// mode nobody decided ends up read-only in production and writable in
 	// every test fixture, which is exactly the shape #196 was filed
 	// about.
-	WritableContainerPaths []string            `json:"writableContainerPaths"`
-	Platforms              map[string]Platform `json:"platforms"`
+	WritableContainerPaths []string `json:"writableContainerPaths"`
+	// WorkflowRunner is the host-side Host Workflow Runner contract
+	// (issue #877): a prerequisite no packaged artifact carries, pinned
+	// here so the manifests are part of the same pin as the runner and
+	// the installer rather than a fifth independent copy of it.
+	WorkflowRunner WorkflowRunnerContract `json:"workflowRunner"`
+	Platforms      map[string]Platform    `json:"platforms"`
 }
 
 // ConfigFilePath is where config.yaml lands inside the container: the

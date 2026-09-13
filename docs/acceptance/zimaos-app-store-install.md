@@ -314,6 +314,42 @@ cd distribution && GOWORK=off go test ./packaging/ -count=1 -run TestCrossProvid
 
 ---
 
+## Step 11 — Local workflow hooks are unavailable on ZimaOS
+
+A workflow step whose target is `local` does not run in the engine container, and since
+issue #865 it does not run on a host shell either: it runs in an **ephemeral Docker
+container** launched by the **Host Workflow Runner**, a small version-pinned process
+systemd supervises as `backupd-workflow-runner.service`
+(`docs/adr/0020-host-workflow-runner.md`, `docs/runtime-contract.md`).
+
+ZimaOS ships as a complete appliance operating system rather than as a layer over a
+distribution you administer, so there is no host session in which to install a systemd
+unit or add an account to the Docker socket's group. This is the one place the CasaOS
+and ZimaOS answers genuinely differ even though the stack is byte-for-byte the same
+compose file, and the running product cannot tell them apart: both select the generic
+runtime profile, so this document is the only place the difference is stated.
+
+**Local workflow hooks are unavailable on this platform.** That is a refusal, not a
+gap: the installer's preflight refuses to provision a runner here, and a runner that
+somehow started would refuse to serve at its own startup probe rather than fall back
+to a host shell. Nothing degrades silently, and nothing in this procedure installs a
+`backupd-workflow-runner.service`, grants a docker group or fetches a hook image.
+
+**What works instead:** a remote workflow step. A step with a remote target runs over
+SSH (`docs/adr/0021-remote-workflow-execution.md`) against a machine you do
+administer, and needs no Docker and no host unit on this NAS. The engine's own side
+of this is unchanged either way: the shipped package asks for no Docker socket, no
+`group_add` and no `DOCKER_HOST`.
+
+- [ ] No `backupd-workflow-runner.service` exists on this host, and nothing in this
+      procedure created one
+- [ ] No account was added to a Docker socket group for this product, and the shipped
+      containers mount no socket and declare no `group_add`
+- [ ] A workflow configured with a `local` hook is refused with a message naming the
+      missing container runtime, and the refusal text is recorded — not a run that
+      reported success with the hook skipped
+
+
 ## Evidence (section 68)
 
 Fill this in in the same commit that flips ZimaOS from build-supported and
