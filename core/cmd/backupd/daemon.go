@@ -76,7 +76,12 @@ func cmdDaemon(args []string) int {
 	}
 	defer func() { _ = stopServing() }()
 
-	svc, _, cleanup, err := openService(ctx, *cfgPath, true)
+	// openServingDataPlane, not openService: this process has just
+	// announced that it serves this deployment, so it is the process that
+	// must install EPIC L's lifecycle before it runs a single cycle
+	// (dataplane.go). It does not probe for a serving engine, because the
+	// announcement above is its own.
+	svc, _, cleanup, err := openServingDataPlane(ctx, *cfgPath)
 	if err != nil {
 		return fail(err)
 	}

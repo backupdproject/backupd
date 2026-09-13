@@ -203,8 +203,52 @@ var contractBindings = map[string]contractBinding{
 	"listRepositories":              {nil, listRepositoriesResponse{}, "/api/v1/repositories"},
 	"getRepositoryMaintenance":      {nil, repositoryMaintenanceResponse{}, "/api/v1/repositories/vault/maintenance"},
 	"createRepositoryDomain":        {createRepositoryDomainRequest{}, repositoryHealthResponse{}, "/api/v1/repositories"},
-	"getRetentionErrorEnvelope":     {nil, errorResponse{}, ""},
-	"getConfigRevisionStale":        {nil, configRevisionStaleResponse{}, ""},
+
+	// EPIC L's workflow surface (#813). Two shapes are shared by more
+	// than one operation on purpose, and both are worth reading as
+	// claims rather than as convenience: the env list is the answer to a
+	// read AND to both writes at either scope, because a set or an unset
+	// is only meaningful against what else is there; and the run detail
+	// is what a resume answers with, because what an operator needs
+	// after resuming is the row the next backup will be refused against
+	// rather than a bespoke "ok".
+	"getWorkflowSettings":    {nil, workflowSettingsResponse{}, "/api/v1/settings/workflow"},
+	"updateWorkflowSettings": {updateWorkflowSettingsRequest{}, workflowSettingsResponse{}, "/api/v1/settings/workflow"},
+	"listWorkflowEnvironment": {nil, listWorkflowEnvironmentResponse{},
+		"/api/v1/settings/workflow/environment"},
+	"setWorkflowEnvironment": {workflowEnvironmentVariableRequest{}, listWorkflowEnvironmentResponse{},
+		"/api/v1/settings/workflow/environment/PGPASSWORD"},
+	"unsetWorkflowEnvironment": {nil, listWorkflowEnvironmentResponse{},
+		"/api/v1/settings/workflow/environment/PGPASSWORD"},
+	"getBackupSetWorkflow": {nil, backupSetWorkflowResponse{}, "/api/v1/backup-sets/src/set-1/workflow"},
+	"updateBackupSetWorkflow": {updateBackupSetWorkflowRequest{}, backupSetWorkflowResponse{},
+		"/api/v1/backup-sets/src/set-1/workflow"},
+	"listBackupSetWorkflowEnvironment": {nil, listWorkflowEnvironmentResponse{},
+		"/api/v1/backup-sets/src/set-1/workflow/environment"},
+	"setBackupSetWorkflowEnvironment": {workflowEnvironmentVariableRequest{}, listWorkflowEnvironmentResponse{},
+		"/api/v1/backup-sets/src/set-1/workflow/environment/PGPASSWORD"},
+	"unsetBackupSetWorkflowEnvironment": {nil, listWorkflowEnvironmentResponse{},
+		"/api/v1/backup-sets/src/set-1/workflow/environment/PGPASSWORD"},
+	"getBackupSetWorkflowValidation": {nil, workflowValidationResponse{},
+		"/api/v1/backup-sets/src/set-1/workflow/validation"},
+	// Every parameter the list takes is a query parameter, so the url
+	// carries none: the route is reached at its bare path and a client
+	// that sends nothing gets this deployment's whole history, which is
+	// the reading an operator asking "what is stuck here" makes.
+	"listWorkflowRuns":     {nil, listWorkflowRunsResponse{}, "/api/v1/workflow-runs"},
+	"getWorkflowRun":       {nil, workflowRunResponse{}, "/api/v1/workflow-runs/run_1"},
+	"listWorkflowRunSteps": {nil, listWorkflowStepsResponse{}, "/api/v1/workflow-runs/run_1/steps"},
+	"getWorkflowStepLogs":  {nil, workflowStepLogPageResponse{}, "/api/v1/workflow-runs/run_1/steps/step_1/logs"},
+	"listWorkflowRecovery": {nil, workflowRecoveryResponse{}, "/api/v1/workflow-recovery"},
+	"resumeWorkflowCleanup": {nil, workflowRunResponse{},
+		"/api/v1/workflow-recovery/run_1/resume-cleanup"},
+	// The acknowledgement binds a request type and no response type: the
+	// reason is the only thing a caller can send, and a 204 leaves no
+	// resource to describe.
+	"acknowledgeWorkflowRecovery": {workflowAcknowledgementRequest{}, nil,
+		"/api/v1/workflow-recovery/run_1/acknowledge"},
+	"getRetentionErrorEnvelope": {nil, errorResponse{}, ""},
+	"getConfigRevisionStale":    {nil, configRevisionStaleResponse{}, ""},
 }
 
 // nonRoutedBindings are the two entries above that describe a body shape
@@ -1368,6 +1412,49 @@ func TestContract_APathBuiltFromTheContractReachesTheResourceItNames(t *testing.
 			reached: func(t *testing.T, b *backupSetFakeBackend, rec *httptest.ResponseRecorder) {
 				if got := b.lastReinstated; got != artifactID {
 					t.Errorf("the reinstatement reached the backend for %q, want %q (response %d %q)", got, artifactID, rec.Code, rec.Body.String())
+				}
+			},
+		},
+		{
+			// EPIC L's per-set environment write (#813): three
+			// parameters, and the third is not part of the resource's
+			// hierarchy the way a run id is -- it is the variable's own
+			// name, which arrives on the path precisely so a body cannot
+			// disagree with it. A handler that read the name out of the
+			// body, or one that glued the third segment onto the set's
+			// id, is what this drives.
+			operation: "setBackupSetWorkflowEnvironment",
+			identity:  "production/postgres/PGPASSWORD",
+			body:      `{"secret":{"file":"/etc/backupd/pg.pass"}}`,
+			csrf:      true,
+			arrange:   func(*backupSetFakeBackend) {},
+			reached: func(t *testing.T, b *backupSetFakeBackend, rec *httptest.ResponseRecorder) {
+				fx := workflowOf(b.syncFakeBackend)
+				if fx.lastEnvScope != setID || fx.lastEnvSet.Name != "PGPASSWORD" {
+					t.Errorf("the write reached the backend for scope %q variable %q, want %q and \"PGPASSWORD\" (response %d %q)",
+						fx.lastEnvScope, fx.lastEnvSet.Name, setID, rec.Code, rec.Body.String())
+				}
+				if fx.lastEnvSet.Secret.File != "/etc/backupd/pg.pass" {
+					t.Errorf("the secret reference reached the backend as %+v, want the file the request named", fx.lastEnvSet.Secret)
+				}
+			},
+		},
+		{
+			operation: "unsetBackupSetWorkflowEnvironment",
+			identity:  "production/postgres/PGPASSWORD",
+			csrf:      true,
+			arrange: func(b *backupSetFakeBackend) {
+				// Seeded, because the real service refuses an unset of a
+				// variable that is not there: without this the handler
+				// would be reached and answer 404, which is a pass for
+				// the wrong reason.
+				workflowOf(b.syncFakeBackend).env[setID] = []service.WorkflowEnvVar{{Name: "PGPASSWORD", Secret: service.WorkflowSecretRef{Env: "PGPASSWORD"}}}
+			},
+			reached: func(t *testing.T, b *backupSetFakeBackend, rec *httptest.ResponseRecorder) {
+				fx := workflowOf(b.syncFakeBackend)
+				if fx.lastEnvScope != setID || fx.lastEnvUnset != "PGPASSWORD" {
+					t.Errorf("the unset reached the backend for scope %q variable %q, want %q and \"PGPASSWORD\" (response %d %q)",
+						fx.lastEnvScope, fx.lastEnvUnset, setID, rec.Code, rec.Body.String())
 				}
 			},
 		},

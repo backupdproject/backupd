@@ -1346,6 +1346,15 @@ def render_env(args) -> str:
         f"WORKFLOWS_DIR={args.workflows_dir}",
         f"RUNTIME_DIR={args.runtime_dir}",
         "",
+        "# The runner's installation-scoped CREDENTIAL, bound into the engine",
+        "# read-only as a single file at the fixed container path",
+        "# /etc/backupd/workflow-runner.token. It is a path, not a secret:",
+        "# the token itself stays in <prefix>/secrets, 0600, and only this one",
+        "# file of that directory is ever mounted. The engine reads it from the",
+        "# path workflows.runner.token_file names AS THE ENGINE SEES IT, so that",
+        "# setting has to be the container path above and never this host one.",
+        f"{WORKFLOW_RUNNER_TOKEN_ENV_KEY}={args.prefix / 'secrets' / WORKFLOW_RUNNER_TOKEN}",
+        "",
         "# Whether this deployment supervises the host workflow runner:",
         "# auto starts it once there are hook scripts, on starts it",
         "# regardless, off leaves the directories and the credential in place",
@@ -2927,9 +2936,9 @@ services:
       - ${SSH_KEY_FILE:?set SSH_KEY_FILE in .env to the SFTP private key}:/etc/backupd/id_ed25519:ro
       - ${KNOWN_HOSTS_FILE:?set KNOWN_HOSTS_FILE in .env to the pinned known_hosts file}:/etc/backupd/known_hosts:ro
 
-      # EPIC L (#808, #809): the hook scripts, and the door to the host
-      # runner. Two mounts, and the difference between them is the whole
-      # security argument.
+      # EPIC L (#808, #809): the hook scripts, the door to the host
+      # runner, and the credential that door requires. Three mounts, and
+      # the differences between them are the whole security argument.
       #
       # The scripts are READ-ONLY. This container plans a workflow — it
       # reads each script once, hashes it and copies it into its own
@@ -2957,12 +2966,37 @@ services:
       # engine choose which host path the runner writes an executable
       # file into, and which one it then deletes.
       #
-      # Both default rather than using `:?`, so a deployment whose .env
-      # predates EPIC L still starts. `./` resolves beside this file,
-      # which is the installation prefix, and is where the installer
-      # creates them.
+      # The CREDENTIAL is the third mount, and without it the other two
+      # buy nothing: the runner authenticates every connection against an
+      # installation-scoped token, and the engine reads it from the path
+      # workflows.runner.token_file names AS THIS PROCESS SEES IT. The
+      # installer writes that token into <prefix>/secrets, which no mount
+      # here names, so every in-container token_file an operator could
+      # write named a file that does not exist and every .local.sh hook
+      # failed authentication. So it is bound at a fixed container path,
+      # and the configuration this deployment documents points at that
+      # path:
+      #
+      #   workflows:
+      #     runner:
+      #       socket: /data/run/workflow-runner.sock
+      #       token_file: /etc/backupd/workflow-runner.token
+      #
+      # A single FILE and read-only, exactly like the SSH key and
+      # known_hosts above and for the same two reasons: nothing in this
+      # container writes it, and the whole secrets directory is not this
+      # container's business -- the repository passphrase and every
+      # medium credential live there too. It changes nothing about this
+      # container's privilege posture: no capability, no group, no
+      # socket, no host root, and the rootfs stays read-only.
+      #
+      # All three default rather than using `:?`, so a deployment whose
+      # .env predates EPIC L still starts. `./` resolves beside this
+      # file, which is the installation prefix, and is where the
+      # installer creates them.
       - ${WORKFLOWS_DIR:-./workflows}:/workflows:ro
       - ${RUNTIME_DIR:-./run}:/data/run
+      - ${RUNNER_TOKEN_FILE:-./secrets/workflow-runner.token}:/etc/backupd/workflow-runner.token:ro
 
     # `unless-stopped`: restart across crashes and NAS reboots, but stay
     # down if an operator deliberately stops it — the right policy now that
@@ -3176,7 +3210,7 @@ services:
 """
 
 # Written by scripts/install/embed_compose.py alongside the blob above.
-EMBEDDED_COMPOSE_SHA256 = "ca7be24885a8369c868af2812a4e6a9f51f245ff44af64745b88a71be1326565"
+EMBEDDED_COMPOSE_SHA256 = "b79bf2a920f2c44b922f5174b3a45808c7506d237f58751bf927528536bed56c"
 
 
 def embedded_compose_bytes() -> bytes:
@@ -3329,6 +3363,24 @@ def warn_about_writable_ancestors(path: Path, stop_at: Path) -> list:
 CONTAINER_WORKFLOWS_DIR = "/workflows"
 CONTAINER_RUNTIME_DIR = "/data/run"
 
+# CONTAINER_RUNNER_TOKEN is where the runner's credential is bound inside
+# the engine, and it is a FIXED path rather than a derived one for the
+# reason every other container path here is: the two ends of that mount
+# see different filesystems, and only one of them can be written into
+# config.yaml.
+#
+# It exists because the engine could not reach the credential at all.
+# The installer writes the token into <prefix>/secrets, beside the SSH
+# key and the repository passphrase, and the compose file mounted the
+# socket directory and the hook scripts and nothing else -- so every
+# in-container workflows.runner.token_file an operator could write named
+# a file that was not there, and every .local.sh hook failed
+# authentication against a perfectly healthy runner. A single read-only
+# FILE, exactly like the SSH key mount, rather than the secrets
+# directory: the repository passphrase and every medium credential live
+# in there too, and none of them is the engine's business.
+CONTAINER_RUNNER_TOKEN = "/etc/backupd/workflow-runner.token"
+
 # WORKFLOW_RUNNER_UNIT is the systemd unit's name, and the name of the
 # file staged under the prefix on a host with no systemd.
 WORKFLOW_RUNNER_UNIT = "backupd-workflow-runner.service"
@@ -3337,6 +3389,12 @@ WORKFLOW_RUNNER_UNIT = "backupd-workflow-runner.service"
 # name, inside the secrets directory beside the SSH key. It matches
 # core/internal/hostrunner's TokenName.
 WORKFLOW_RUNNER_TOKEN = "workflow-runner.token"
+
+# WORKFLOW_RUNNER_TOKEN_ENV_KEY is how the .env this installer authors
+# points the compose mount at that file on THIS host. The container side
+# of the same mount is CONTAINER_RUNNER_TOKEN above, and the engine's
+# config.yaml names the container side.
+WORKFLOW_RUNNER_TOKEN_ENV_KEY = "RUNNER_TOKEN_FILE"
 
 # WORKFLOW_RUNNER_ENV_KEY is how an operator opts in or out, in the .env
 # this installer authors.

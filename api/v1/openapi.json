@@ -120,7 +120,13 @@
           "BACKUP_SET_NOT_INCREMENTAL",
           "INCREMENTAL_ENGINE_DISABLED",
           "REPOSITORY_DOMAIN_EXISTS",
-          "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE"
+          "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
+          "WORKFLOWS_NOT_CONFIGURED",
+          "WORKFLOW_ENV_NOT_FOUND",
+          "WORKFLOW_RUN_NOT_FOUND",
+          "WORKFLOW_STEP_NOT_FOUND",
+          "WORKFLOW_ACKNOWLEDGEMENT_REASON_REQUIRED",
+          "WORKFLOW_ENGINE_UNAVAILABLE"
         ],
         "x-code-origins": {
           "authentication-failed": "ui",
@@ -188,7 +194,13 @@
           "BACKUP_SET_NOT_INCREMENTAL": "wire",
           "INCREMENTAL_ENGINE_DISABLED": "wire",
           "REPOSITORY_DOMAIN_EXISTS": "wire",
-          "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE": "wire"
+          "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE": "wire",
+          "WORKFLOWS_NOT_CONFIGURED": "wire",
+          "WORKFLOW_ENV_NOT_FOUND": "wire",
+          "WORKFLOW_RUN_NOT_FOUND": "wire",
+          "WORKFLOW_STEP_NOT_FOUND": "wire",
+          "WORKFLOW_ACKNOWLEDGEMENT_REASON_REQUIRED": "wire",
+          "WORKFLOW_ENGINE_UNAVAILABLE": "wire"
         },
         "x-error-classes": {
           "authentication": [
@@ -209,7 +221,8 @@
             "SSH_KEY_NOT_FOUND",
             "HOST_KEY_PROBE_FAILED",
             "MEDIUM_DISCLOSURE_REQUIRED",
-            "BACKUP_SET_NOT_INCREMENTAL"
+            "BACKUP_SET_NOT_INCREMENTAL",
+            "WORKFLOW_ACKNOWLEDGEMENT_REASON_REQUIRED"
           ],
           "conflict": [
             "RETENTION_PLAN_STALE",
@@ -233,7 +246,8 @@
             "SNAPSHOT_NOT_HOLDABLE",
             "INCREMENTAL_ENGINE_DISABLED",
             "REPOSITORY_DOMAIN_EXISTS",
-            "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE"
+            "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
+            "WORKFLOWS_NOT_CONFIGURED"
           ],
           "not-found": [
             "BACKUP_SET_NOT_FOUND",
@@ -243,7 +257,10 @@
             "MEDIUM_NOT_FOUND",
             "SNAPSHOT_NOT_FOUND",
             "SNAPSHOT_HOLD_NOT_FOUND",
-            "REPOSITORY_DOMAIN_NOT_FOUND"
+            "REPOSITORY_DOMAIN_NOT_FOUND",
+            "WORKFLOW_ENV_NOT_FOUND",
+            "WORKFLOW_RUN_NOT_FOUND",
+            "WORKFLOW_STEP_NOT_FOUND"
           ],
           "throttling": [
             "RATE_LIMITED"
@@ -254,7 +271,8 @@
           ],
           "unavailable": [
             "NOT_CONFIGURED",
-            "SMTP_SEND_FAILED"
+            "SMTP_SEND_FAILED",
+            "WORKFLOW_ENGINE_UNAVAILABLE"
           ]
         }
       },
@@ -713,6 +731,11 @@
             "description": "Read by release_snapshot_hold and refused for any other action.",
             "x-go-omitempty": true,
             "x-go-pointer": true
+          },
+          "skip_workflow_scripts": {
+            "type": "boolean",
+            "description": "Take the backup and run NONE of this backup set's workflow hook scripts. run_backup_set's parameter, and refused when any other action carries it, exactly as backup_set_id is. It exists for one situation and is shaped for it: a hook is broken at three in the morning and somebody needs tonight's backup. Three things keep it from being taken by habit. It is an ADMINISTRATOR action, and on this API the administrator boundary is the destructive gate this route already sits behind -- a deployment that has not turned destructive operations on cannot submit one at all, and the refusal it gets is DESTRUCTIVE_OPERATIONS_DISABLED. A scheduled run can never carry it, which is not a rule this route enforces because no schedule submits through it. And a backup set with an unresolved workflow interruption refuses the run outright, before the flag is even looked at, because that set may have a machine sitting quiesced and skipping the cleanup is the last thing anybody should do to it. Every bypassed run is recorded twice: on the durable operation row, so a bypass that was asked for and refused is still visible, and as a warn-level event naming the actor. This field is a plain boolean, so `false` is indistinguishable from absent and is accepted by any action: what refuseForeignParameters refuses is an action other than run_backup_set that CARRIES IT AS TRUE, which is the only spelling that asks for anything.",
+            "x-go-omitempty": true
           }
         },
         "required": [
@@ -802,7 +825,7 @@
       },
       "OperationProgress": {
         "type": "object",
-        "description": "Live progress for an operation that is running in THIS process right now (docs/EPIC-B-multi-nas.md \u00a752). It is sampled from the transfer engine while a run cycle executes and is never written to the operations table: an operation record is durable and crash-safe, and progress is neither, so persisting it would put a tick-rate write path on the one record whose durability guarantees exist to avoid exactly that, and would resurrect a dead cycle's last reading after a restart as though it were live. So this field is present only while the cycle producing it is executing here. A finished operation, and one that was running before a restart, both carry no progress object at all, which is not the same answer as zero and must not be rendered as one. Nothing here is a percentage of the whole operation: a run cycle is a pass over every enabled backup set, and the artifacts it will find are not known when it starts, so no honest denominator for the whole exists. The byte counters describe the ONE artifact being copied at observed_at; the counters beside them say where in the cycle that artifact sits.",
+        "description": "Live progress for an operation that is running in THIS process right now (docs/EPIC-B-multi-nas.md §52). It is sampled from the transfer engine while a run cycle executes and is never written to the operations table: an operation record is durable and crash-safe, and progress is neither, so persisting it would put a tick-rate write path on the one record whose durability guarantees exist to avoid exactly that, and would resurrect a dead cycle's last reading after a restart as though it were live. So this field is present only while the cycle producing it is executing here. A finished operation, and one that was running before a restart, both carry no progress object at all, which is not the same answer as zero and must not be rendered as one. Nothing here is a percentage of the whole operation: a run cycle is a pass over every enabled backup set, and the artifacts it will find are not known when it starts, so no honest denominator for the whole exists. The byte counters describe the ONE artifact being copied at observed_at; the counters beside them say where in the cycle that artifact sits.",
         "additionalProperties": false,
         "properties": {
           "observed_at": {
@@ -5393,6 +5416,844 @@
         "required": [
           "backup_set_id",
           "hold_id"
+        ]
+      },
+      "WorkflowSecretReference": {
+        "type": "object",
+        "description": "Where a workflow environment variable's value comes from, when it is not a literal. It is a LOCATION and never a value, on every surface and in both directions: exactly one of the three is set, and there is no field here -- and deliberately no field anywhere on this contract -- that a resolved secret could be written into or read out of. The engine resolves a reference at the moment a hook is about to run and nothing carries the result back. The consequence is worth stating because it looks like a gap: no read on this API can show an operator the value of a secret variable, ever. It shows the name and where the value comes from, because a surface that could print it would be a surface an attacker holding one session could read every credential in the deployment from. It is the same file/env/command triple a repository passphrase and a storage destination's credentials already use, spelled the same way.",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "A path on the deployment's own host whose contents are the value. The path, never the contents."
+          },
+          "env": {
+            "type": "string",
+            "description": "The NAME of an environment variable in the engine's own process, never its value."
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "A program and its arguments, executed by the engine to print the value, as an argv rather than a shell string so nothing re-splits it. It is the caller's own words, so a client that renders this as a runnable command line is rendering something that may itself be a credential (`printf %s hunter2` is a valid secret command): `backupd` prints the flag with a placeholder and never the words."
+          }
+        }
+      },
+      "WorkflowEnvironmentVariable": {
+        "type": "object",
+        "description": "One configured workflow environment entry, as every read of either scope reports it.",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The variable name a hook will see. Held to the engine's own name rule, which refuses this product's reserved BACKUPD_ prefix: a hook cannot be given a variable that would shadow the run facts the engine injects."
+          },
+          "value": {
+            "type": "string",
+            "description": "The literal, when this variable has one. A literal is the operator's own plain text as it stands in config.yaml and is not a secret reference, so it is reported as configured; a variable whose value comes from a secret reference has no literal here and never will (see WorkflowSecretReference). Empty on its own does not mean \"no literal\": read has_value beside it."
+          },
+          "has_value": {
+            "type": "boolean",
+            "description": "Whether a literal is configured at all, which is what tells a deliberately empty variable (`value: \"\"`, which operators write on purpose) apart from a variable with no literal. Two fields rather than a nullable one because the wire shape is read by a UI that has to render the difference, and \"absent\" and \"empty string\" are different configurations."
+          },
+          "secret": {
+            "$ref": "#/components/schemas/WorkflowSecretReference",
+            "description": "Where the value comes from when it is not a literal. Every field empty means this variable is a literal."
+          }
+        }
+      },
+      "ListWorkflowEnvironmentResponse": {
+        "type": "object",
+        "description": "One scope's configured workflow environment, after a read or a write. The write operations answer with the whole list rather than with the one entry they touched, because a set/unset is only meaningful against what else is there: an operator clearing a credential needs to see what is left, and the entry they just wrote is in the answer either way.",
+        "additionalProperties": false,
+        "properties": {
+          "backup_set_id": {
+            "type": "string",
+            "description": "Which scope this list belongs to, as a source/backup-set id. Empty means the deployment-wide layer, which is the layer every backup set inherits from; one field rather than two routes' worth of separate shapes, because the two are the same list at two levels and a second shape would be a second place the secret-reference rule has to be kept."
+          },
+          "variables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEnvironmentVariable"
+            },
+            "description": "The entries configured at this scope, sorted by name. Sorted because this list is re-marshalled into config.yaml on every save, and an operator diffing two revisions of that file should see their own change rather than a reordering."
+          }
+        }
+      },
+      "WorkflowEnvironmentVariableRequest": {
+        "type": "object",
+        "description": "PUT one workflow environment entry, at the deployment scope or at one backup set's. The variable's NAME is the last path segment and is deliberately not a field here: a body that could name a second variable would be a request whose path and body can disagree, and the engine would then have to decide which one the operator meant. Exactly one of `value` and one spelling of `secret` must be present. A write REPLACES the entry of that name rather than merging with it, because a merge would make \"change this from a literal to a secret\" inexpressible: the literal would survive beside the reference, which the configuration validator then refuses as a contradiction.",
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "type": "string",
+            "description": "The literal to configure. Present with an empty string is a deliberately empty variable, which is a real configuration an operator writes; absent means this variable's value comes from `secret` instead. The two are different requests, which is why this field is nullable rather than a plain string.",
+            "x-go-pointer": true
+          },
+          "secret": {
+            "$ref": "#/components/schemas/WorkflowSecretReference",
+            "description": "Where the engine should read the value from at hook time. Every field empty means no secret reference was named, in which case `value` must be."
+          }
+        }
+      },
+      "WorkflowRunnerSettings": {
+        "type": "object",
+        "description": "How THIS PROCESS reaches the Host Workflow Runner, the component that executes a `.local.sh` hook on the machine backupd is installed on. Reported and not writable here: the two paths differ between a container and a bare-metal install of the same deployment, so they are a deployment-shape fact the installer writes rather than a policy an operator tunes, exactly like the SSH key, the known_hosts file and the state database.",
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Whether this process has a runner socket to talk to at all. False means a local hook cannot run here, which is a deployment that was installed without the runner rather than a deployment that has none configured."
+          },
+          "socket": {
+            "type": "string",
+            "description": "The Unix socket path this process will connect to."
+          },
+          "token_file": {
+            "type": "string",
+            "description": "The path this process reads the runner's shared token from. A path, never the token."
+          }
+        }
+      },
+      "WorkflowSettingsResponse": {
+        "type": "object",
+        "description": "The deployment-wide workflow configuration, RESOLVED: the timeout a hook will actually get, the stages that will actually run, the environment a hook will actually see. That is why this read exists rather than a client re-reading config.yaml: the file's whole point is that it omits what is inherited or defaulted, so a re-serialization of it cannot answer what a run will do.",
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Whether this deployment runs workflows at all, which is exactly \"is a workflow root set\". A deployment with no root has no approved tree for hook scripts to live in, so every per-set workflow write is refused until one is."
+          },
+          "root": {
+            "type": "string",
+            "description": "The one directory hook scripts may live under. Every stage directory is resolved inside it and a path that escapes it is refused, which is the containment the whole feature rests on: a hook is arbitrary code, and the root is the operator's statement of where code they approved lives."
+          },
+          "before_dir": {
+            "type": "string",
+            "description": "The deployment-wide \"before\" stage directory, relative to the root. Empty disables that stage."
+          },
+          "after_dir": {
+            "type": "string",
+            "description": "The deployment-wide \"after\" stage directory, relative to the root. Empty disables that stage."
+          },
+          "script_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The bound one hook gets when its backup set does not pin one of its own. RESOLVED: a deployment that configures none reports the engine's own default rather than a zero an operator would read as \"no bound\". Read script_timeout_configured beside it to tell the two apart."
+          },
+          "script_timeout_configured": {
+            "type": "boolean",
+            "description": "Whether the resolved bound above came from the file rather than from the default, which is the difference between \"we chose five minutes\" and \"nobody has chosen\"."
+          },
+          "max_script_size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The largest hook script this deployment will capture and execute. It bounds the spool a run keeps for its own recovery, which is why it is a deployment setting rather than a per-set one."
+          },
+          "environment": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEnvironmentVariable"
+            },
+            "description": "The deployment-wide environment layer, which every backup set's hooks inherit and any set may override by name."
+          },
+          "exec_connections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names of the declared remote execution connections a backup set's remote_exec_connection_ref may point at. NAMES ONLY: each declaration carries a whole remote, credentials included, and this is a read surface."
+          },
+          "runner": {
+            "$ref": "#/components/schemas/WorkflowRunnerSettings",
+            "description": "The host runner this process will try to reach for a local hook."
+          }
+        }
+      },
+      "UpdateWorkflowSettingsRequest": {
+        "type": "object",
+        "description": "PATCH the deployment-wide workflow block. Every field is nullable because this is a PATCH: \"the caller did not mention this\" and \"the caller wants this cleared\" are different requests, and a plain string can only say one of them. Clearing a stage directory is a real operation -- it disables that stage -- so it has to be expressible. A body that names nothing at all is refused rather than answered 200 for a write that changed nothing.",
+        "additionalProperties": false,
+        "properties": {
+          "root": {
+            "type": "string",
+            "description": "The approved tree hook scripts must live under. Setting it is what makes this deployment one that runs workflows.",
+            "x-go-pointer": true
+          },
+          "before_dir": {
+            "type": "string",
+            "description": "The deployment-wide \"before\" stage directory, relative to the root. An empty string clears it, which disables that stage.",
+            "x-go-pointer": true
+          },
+          "after_dir": {
+            "type": "string",
+            "description": "The deployment-wide \"after\" stage directory, relative to the root. An empty string clears it, which disables that stage.",
+            "x-go-pointer": true
+          },
+          "script_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The default bound for one hook. Zero clears the deployment's own bound, after which hooks fall back to the engine's default; a negative value is refused by the configuration validator rather than here, so there is no second copy of that rule on this boundary.",
+            "x-go-pointer": true
+          },
+          "max_script_size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The largest hook script this deployment will capture. Zero clears it back to the engine's own bound.",
+            "x-go-pointer": true
+          }
+        }
+      },
+      "WorkflowStage": {
+        "type": "object",
+        "description": "One scope-and-phase pair that has a directory. A run executes five stages in a fixed order, and these are the ones this configuration actually gives a directory to.",
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "set"
+            ],
+            "description": "Whose hooks these are. It is durable rather than cosmetic: a deployment-wide \"after\" hook and a per-set \"after\" hook are two different operator decisions that may both name a script the same thing, and the scope is what keeps them apart in a plan, in a spool path and in an audit."
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "before",
+              "after"
+            ],
+            "description": "Which side of the backup these hooks run on."
+          },
+          "dir": {
+            "type": "string",
+            "description": "The directory, as configured, resolved inside the workflow root."
+          }
+        }
+      },
+      "BackupSetWorkflowResponse": {
+        "type": "object",
+        "description": "One backup set's workflow configuration, resolved against the deployment's. Both halves of every inherited value are reported -- what this set pins and what a hook will actually get -- because an operator changing the deployment default needs to know which sets are pinned and which will follow.",
+        "additionalProperties": false,
+        "properties": {
+          "backup_set_id": {
+            "type": "string",
+            "description": "The set this describes, as its source/backup-set id."
+          },
+          "configured": {
+            "type": "boolean",
+            "description": "Whether this set has a workflow block of its own. A set that says nothing still runs the deployment's hooks, which is why this is not the same question as \"does this set run hooks\": read `stages` for that."
+          },
+          "before_dir": {
+            "type": "string",
+            "description": "This set's own \"before\" stage directory. Empty means it declares none, not that none runs: the deployment's may still."
+          },
+          "after_dir": {
+            "type": "string",
+            "description": "This set's own \"after\" stage directory."
+          },
+          "script_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "This set's OWN bound, and zero means it inherits. Reported beside the effective value below rather than instead of it, because a set pinning thirty seconds while the deployment allows five minutes is a hook that will be killed, and the only place that is visible is a read that says which value won."
+          },
+          "effective_script_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What a hook of this set will actually get, after inheritance and the engine's own default."
+          },
+          "remote_exec_connection_ref": {
+            "type": "string",
+            "description": "The declared remote execution connection this set's `.remote.sh` hooks run over, by name. Empty means this set has none, in which case a remote hook cannot run and validation says so rather than the run finding out. The wire spells it as config.yaml's own key so an operator greps for one word; `backupd` spells the same thing --exec-connection."
+          },
+          "environment": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEnvironmentVariable"
+            },
+            "description": "This set's OWN environment entries, which win over the deployment's layer by name."
+          },
+          "resolved_environment_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every variable a hook of this set will have, sorted, NAMES ONLY. Names only for the standing reason this API never carries a resolved secret, and it is not a limitation here: the question this answers is which of an operator's variables win, and a name answers it."
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStage"
+            },
+            "description": "The hook directories this set will actually run, in execution order, resolved from the deployment's configuration and this set's. An empty list is a set that runs no hooks at all."
+          }
+        }
+      },
+      "UpdateBackupSetWorkflowRequest": {
+        "type": "object",
+        "description": "PATCH one backup set's workflow block. Every field is nullable for the reason the deployment-wide patch's are: an absent field and a cleared one are different requests. A patch against a set that has no workflow block creates one, carrying only the fields the request named -- so a set given a before_dir does not silently acquire a pinned timeout copied from today's deployment value, which would make it stop following a later change to that value.",
+        "additionalProperties": false,
+        "properties": {
+          "before_dir": {
+            "type": "string",
+            "description": "This set's \"before\" stage directory, relative to the workflow root. An empty string clears it.",
+            "x-go-pointer": true
+          },
+          "after_dir": {
+            "type": "string",
+            "description": "This set's \"after\" stage directory, relative to the workflow root. An empty string clears it.",
+            "x-go-pointer": true
+          },
+          "script_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The bound this set pins for its own hooks. Zero clears the pin, after which the set follows the deployment's value again.",
+            "x-go-pointer": true
+          },
+          "remote_exec_connection_ref": {
+            "type": "string",
+            "description": "The declared remote execution connection this set's remote hooks run over, by name. An empty string clears it, which leaves the set unable to run a remote hook.",
+            "x-go-pointer": true
+          }
+        }
+      },
+      "WorkflowFinding": {
+        "type": "object",
+        "description": "One validation check's answer about one backup set's hooks.",
+        "additionalProperties": false,
+        "properties": {
+          "check": {
+            "type": "string",
+            "description": "Which check this is, from a closed vocabulary rather than free text: a client that groups by check, or an operator who greps for one, needs the id to be a value. The SENTENCE is `detail` and is free to be rewritten; this is not."
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "skipped",
+              "warning",
+              "error"
+            ],
+            "description": "How bad it is. `skipped` is the one that earns its place: a deployment with no remote hooks has nothing to say about its remote exec capability, and reporting that as `ok` would be this product claiming it proved something it never looked at."
+          },
+          "detail": {
+            "type": "string",
+            "description": "The operator-facing sentence. It may name a script by basename, a stage directory as configured, a variable NAME and a secret's LOCATION -- and never a secret's value, because nothing on the path that produces it resolves one."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Which scope's hook this finding is about, empty for a finding about the set as a whole."
+          },
+          "phase": {
+            "type": "string",
+            "description": "Which phase's hook this finding is about, empty for a finding about the set as a whole."
+          },
+          "target": {
+            "type": "string",
+            "description": "Where the hook this finding is about would run, empty for a finding about the set as a whole."
+          },
+          "script": {
+            "type": "string",
+            "description": "The script this finding is about, by BASENAME, empty for a finding about the set as a whole."
+          }
+        }
+      },
+      "WorkflowValidatedScript": {
+        "type": "object",
+        "description": "One hook this backup set would run, as validation found it on disk. Nothing here was executed: the only things validation ever hands an interpreter are `bash -n`, which parses and never runs, and this product's own fixed remote capability probe.",
+        "additionalProperties": false,
+        "properties": {
+          "step_id": {
+            "type": "string",
+            "description": "The id this script's step would carry in a run, which is what makes a finding and a later run row line up."
+          },
+          "order": {
+            "type": "integer",
+            "description": "Its position in the plan. The plan is ordered bytewise by name within a stage, so the order is reproducible rather than filesystem-dependent."
+          },
+          "script_name": {
+            "type": "string",
+            "description": "The script's basename, which is also where its target comes from: a target that were configurable would mean the same bytes could be moved and then run somewhere else, so it is a property of the filename and is mandatory."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "set"
+            ],
+            "description": "Whose configuration declared it."
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "before",
+              "after"
+            ],
+            "description": "Which side of the backup it runs on."
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote"
+            ],
+            "description": "Where it runs: on the machine this daemon is installed on, or on the host the backup set pulls from."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "The hash of the bytes as they are on disk right now. It is what a run would record and what a recovery would re-verify against, so two deployments meant to be configured alike can be compared on it."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The script's size in bytes, which is what the deployment's max_script_size_bytes bounds."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The resolved bound this script would get, in milliseconds. Milliseconds because this is the value the engine will actually enforce, and a 300ms bound rendered as \"0 seconds\" would be a lie; the CONFIGURED policy it is derived from is reported in seconds, which is the unit an operator sets."
+          },
+          "execution_connection_ref": {
+            "type": "string",
+            "description": "The connection a remote script would run over, empty for a local one."
+          }
+        }
+      },
+      "WorkflowValidationResponse": {
+        "type": "object",
+        "description": "Everything this product can establish about one backup set's hooks WITHOUT running any of them. Two verdicts rather than one, and that is the shape rather than an oversight: a backup set whose source connects, whose destination is writable and whose retention is sound, with a hook directory somebody has not created yet, is valid for backup and invalid for workflows -- which is the normal case during setup, and reporting it as a broken backup set would tell an operator their backups are failing when they are not.",
+        "additionalProperties": false,
+        "properties": {
+          "backup_set_id": {
+            "type": "string",
+            "description": "The set this report is about."
+          },
+          "valid_for_backup": {
+            "type": "boolean",
+            "description": "Whether anything is wrong with the backup set ITSELF."
+          },
+          "workflow_valid": {
+            "type": "boolean",
+            "description": "Whether anything is wrong with its hooks. A set with no stages reports true with every check skipped, which is the honest answer: there is nothing to be wrong."
+          },
+          "configured": {
+            "type": "boolean",
+            "description": "Whether this set runs hooks at all."
+          },
+          "root": {
+            "type": "string",
+            "description": "The approved tree the stages below were resolved inside."
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStage"
+            },
+            "description": "The stages this set would run, in execution order."
+          },
+          "scripts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowValidatedScript"
+            },
+            "description": "Every hook this set would run, in plan order."
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowFinding"
+            },
+            "description": "One entry per check, sorted into check order so two runs of this read over an unchanged deployment produce identical output: a report an operator cannot diff is one they cannot use to find out what they just changed."
+          }
+        }
+      },
+      "WorkflowStep": {
+        "type": "object",
+        "description": "One step of one workflow run: one hook script, executed once.",
+        "additionalProperties": false,
+        "properties": {
+          "step_id": {
+            "type": "string",
+            "description": "The step's own id, stable for the life of the run. It is what a log read is scoped to."
+          },
+          "order": {
+            "type": "integer",
+            "description": "The step's position in the plan it came from."
+          },
+          "script_name": {
+            "type": "string",
+            "description": "The hook's basename."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "set"
+            ],
+            "description": "Whose configuration declared this step."
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "before",
+              "after"
+            ],
+            "description": "Which side of the backup it ran on."
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote"
+            ],
+            "description": "Where it ran."
+          },
+          "execution_connection_ref": {
+            "type": "string",
+            "description": "The connection a remote step ran over, empty for a local one."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "success",
+              "failed",
+              "timed_out",
+              "canceled",
+              "skipped",
+              "interrupted"
+            ],
+            "description": "What became of this step. A step holds one of the EIGHT step states and never one of the four a RUN adds (recovery_required, cleanup_running, cleanup_failed, recovered): those describe what became of a run as a whole, and internal/workflow's StepStates() is the vocabulary this field is validated against."
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The process's exit status, and null unless a process exited and this product OBSERVED the status. Null and 0 are not the same answer, which is this feature's standing rule: transport loss is never reported as a known exit code, because \"the hook said it was fine\" and \"we never found out\" are the two answers an operator most needs to tell apart."
+          },
+          "termination_confirmed": {
+            "type": "boolean",
+            "description": "Whether this product PROVED the process was gone after asking it to stop. False on a step that ended by itself, and the field matters on the ones that did not: a timed-out hook whose termination was never confirmed may still be holding whatever it was holding."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The bound this step was run under, in milliseconds. See WorkflowValidatedScript.timeout_ms for why run-time facts are milliseconds here and configured policy is seconds."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this step began, empty for a step that never started."
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it ended, empty while it is still running or if it never started."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long it took, or how long it has been running when finished_at is empty."
+          }
+        }
+      },
+      "WorkflowRun": {
+        "type": "object",
+        "description": "One workflow run: one backup set's pass, wrapped in the five-stage hook lifecycle. The three statuses stay three, and none of them is derived from the others. That is the whole reason the journal has three columns: \"the backup succeeded and the cleanup did not\" is the single most operationally important thing this feature can report -- it means a machine may be sitting quiesced with a good backup beside it -- and any surface that collapsed the three into one verdict would make exactly that case unsayable.",
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "The run's own id, which every other workflow read is addressed by."
+          },
+          "backup_set_id": {
+            "type": "string",
+            "description": "The backup set this run belongs to."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "success",
+              "failed",
+              "timed_out",
+              "canceled",
+              "skipped",
+              "interrupted",
+              "recovery_required",
+              "cleanup_running",
+              "cleanup_failed",
+              "recovered"
+            ],
+            "description": "The run's own lifecycle state."
+          },
+          "backup_status": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "running",
+              "success",
+              "failed",
+              "skipped"
+            ],
+            "description": "What happened to the BACKUP. `unknown` is a real value rather than an absence: it is the honest answer while the backup has not run, and an unset field and a field saying \"nobody knows yet\" read identically to a client that treats empty as false."
+          },
+          "cleanup_status": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "running",
+              "success",
+              "failed",
+              "skipped"
+            ],
+            "description": "What happened to the \"after\" hooks, which is a separate fact from the backup's outcome in both directions."
+          },
+          "workflow_status": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "running",
+              "success",
+              "failed",
+              "skipped"
+            ],
+            "description": "What happened to the workflow as a whole."
+          },
+          "recovery_state": {
+            "type": "string",
+            "enum": [
+              "none",
+              "required",
+              "in_progress",
+              "resolved"
+            ],
+            "description": "Whether this run is blocking its backup set. `required` means an interruption nobody has dealt with, and the set will refuse to run until somebody resumes the cleanup or acknowledges it by hand."
+          },
+          "bypassed": {
+            "type": "boolean",
+            "description": "Whether this run's hooks were deliberately skipped. Recorded durably on the row, so \"the hooks stopped running some time last month\" is a question with an answer."
+          },
+          "failed_step": {
+            "type": "string",
+            "description": "The step that broke the run -- the FIRST one, because everything after it is a consequence -- and empty for a run that did not fail."
+          },
+          "failed_script": {
+            "type": "string",
+            "description": "That step's script, by BASENAME rather than by path, because this value also reaches a notification that leaves the deployment."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the run began."
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it ended, empty while it is still running."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long the run took, or how long it has been running when finished_at is empty."
+          },
+          "script_count": {
+            "type": "integer",
+            "description": "How many hook scripts the plan declared. Zero is a run of a set with no hooks, which still exists as a row because the recovery check is asked of every run."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStep"
+            },
+            "description": "Every step in plan order. It is EMPTY on a list read and populated on a detail read: a list of thirty runs each carrying its steps is thirty journal queries for a page nobody reads the steps from."
+          }
+        }
+      },
+      "ListWorkflowRunsResponse": {
+        "type": "object",
+        "description": "A page of workflow runs, newest first.",
+        "additionalProperties": false,
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRun"
+            },
+            "description": "The runs, each without its steps. Read one run, or its steps, to get those."
+          }
+        }
+      },
+      "ListWorkflowStepsResponse": {
+        "type": "object",
+        "description": "One run's steps, in plan order. Its own operation rather than a field on the run detail because a client following a running workflow polls the steps and not the run: the run's own row moves once at the start and once at the end, and the steps are what change in between.",
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "The run these steps belong to, echoed so a client holding a page has the identity beside it."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStep"
+            },
+            "description": "Every step of the run, in plan order."
+          }
+        }
+      },
+      "WorkflowStepLogRecord": {
+        "type": "object",
+        "description": "One captured record of one step's output.",
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The run-monotonic cursor. It never repeats within a run and never starts at zero, so a follower's \"everything after N\" is exact. It is per RUN and not per step, which is why a page filtered to one step can be empty while the counter has moved."
+          },
+          "step_id": {
+            "type": "string",
+            "description": "The step that produced it."
+          },
+          "stream": {
+            "type": "string",
+            "enum": [
+              "stdout",
+              "stderr"
+            ],
+            "description": "Which of the hook's two output streams this came from. They are kept apart end to end: a hook that writes progress to one and errors to the other is telling an operator something, and a merged log throws it away."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "output",
+              "truncated"
+            ],
+            "description": "Whether this record carries the hook's own output or this product's truncation marker. A client that rendered the marker as though the hook had printed it would be attributing this product's sentence to somebody's script."
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was captured."
+          },
+          "text": {
+            "type": "string",
+            "description": "The payload, already redacted. Every value resolved from a secret reference for the step that produced it was layered onto the deployment's redactor before a byte of this was written down, and the redaction is STREAMING, so a credential straddling two reads off the pipe is still caught."
+          }
+        }
+      },
+      "WorkflowStepLogPage": {
+        "type": "object",
+        "description": "One page of one step's captured output. It is a cursor read and not a stream, and that decision is about where this product runs: a held-open response is at the mercy of every buffering proxy and idle timeout between here and the client, and a design that only works when nothing in the path buffers is not a design. The follower sends the last sequence it PROCESSED and gets what is newer, so resume after a dropped connection is not a special case at all -- it is the ordinary read, with the cursor the follower already had. Each page is one ordinary authenticated request, which is also what makes authorization on replay structural rather than something somebody has to remember.",
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "The run this page belongs to."
+          },
+          "step_id": {
+            "type": "string",
+            "description": "The step this page is scoped to. A log read names one run AND one step; there is no read of a whole run's interleaved output, because a follower of one hook must not have to filter somebody else's."
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepLogRecord"
+            },
+            "description": "The records above the caller's cursor, oldest first, bounded by the limit."
+          },
+          "cursor": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The sequence to send as `after` next time: the last record in this page, or the caller's own `after` when the page is empty. Echoed rather than left to the client to compute, so an empty page does not make a follower forget where it was. It advances past records belonging to OTHER steps of the same run, which is why it can move while this page is empty -- a follower that only advanced past its own step's records would re-read the same window forever on a run whose later steps are noisy."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether this step's recording stopped at the persisted-output bound at some point up to the cursor. It is a property of the LOG rather than of this page, so it stays true on every page after the marker: a follower that joined late must still be told the record is incomplete."
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "Whether the step has finished AND this page reached the end of its output, so a follower may stop. It is the only thing that distinguishes \"nothing new yet\" from \"there will never be anything new\", and without it a follow of a finished step never exits."
+          },
+          "step_state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "success",
+              "failed",
+              "timed_out",
+              "canceled",
+              "skipped",
+              "interrupted"
+            ],
+            "description": "The step's state at the moment the page was read, which is what a client renders beside the tail. The eight STEP states, for WorkflowStep.state's reason: this is the state of the step whose output this page carries, so a run-only state could never appear here."
+          }
+        }
+      },
+      "WorkflowRecoveryHold": {
+        "type": "object",
+        "description": "One reason a backup set is refusing to run: a workflow run whose cleanup this product could not finish, and whose \"after\" hooks may therefore never have run.",
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "The run holding the set. It is what a resume or an acknowledgement is addressed to."
+          },
+          "backup_set_id": {
+            "type": "string",
+            "description": "The set that will refuse to run until this is settled."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "set"
+            ],
+            "description": "Which nesting level's cleanup is outstanding: the deployment's own hooks, or this backup set's."
+          },
+          "entered_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When that scope was entered, which is the answer to the first question an operator asks: how long has this machine been left like this."
+          },
+          "spool_ref": {
+            "type": "string",
+            "description": "The run's retained copy of the scripts a resume would execute. It is reported deliberately: an operator deciding between resuming and acknowledging wants to read the hooks first, and this is where they are. It is a path this product created under its own state directory, not a credential."
+          }
+        }
+      },
+      "WorkflowRecoveryResponse": {
+        "type": "object",
+        "description": "Every outstanding recovery hold in this deployment, sorted. An empty list is a deployment where no backup set is being held, which is the ordinary state.",
+        "additionalProperties": false,
+        "properties": {
+          "holds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRecoveryHold"
+            },
+            "description": "The holds, one per outstanding cleanup scope."
+          }
+        }
+      },
+      "WorkflowAcknowledgementRequest": {
+        "type": "object",
+        "description": "Take responsibility, by hand, for a workflow run this product could not account for, and unblock its backup set. There is deliberately no \"clear this\" and no \"ignore this\": a run in recovery may have left a source machine quiesced, mounted or paused right now, so the only two honest exits are to RUN the cleanup that is owed (resume-cleanup) or for a person to state, in words that are recorded, that they have dealt with it themselves.",
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "What the operator did, or why it does not matter. REQUIRED and refused when blank, because the whole value of the record is answering, six months later, why a backup set was unblocked without its cleanup ever running -- and an acknowledgement with no reason is a button somebody presses to make a warning go away, which is precisely the outcome the recovery axis exists to prevent."
+          }
+        },
+        "required": [
+          "reason"
         ]
       }
     },
@@ -12855,6 +13716,1975 @@
         "x-idempotency-key": "none",
         "x-optimistic-concurrency": null,
         "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/settings/workflow": {
+      "get": {
+        "operationId": "getWorkflowSettings",
+        "summary": "The deployment-wide workflow configuration as this process is actually running it: the approved root, the two stage directories, the resolved default script timeout, the inherited environment layer and the host runner this process will reach for a local hook. Read-only.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowSettingsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      },
+      "patch": {
+        "operationId": "updateWorkflowSettings",
+        "summary": "Patch the deployment-wide workflow configuration. A patch through this API is hot-reloaded into the process that served it, which an edit to config.yaml is not, because nothing watches that file: on the one deployment where this matters -- a NAS with a daemon serving -- \"edit the file\" is advice that leaves the change unread until somebody restarts.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWorkflowSettingsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success. The whole deployment-wide configuration as it now stands, resolved, rather than an echo of the patch: a caller that had to re-read to find out what its own write resolved to would be a caller that renders the wrong timeout for one round trip.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowSettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST. A body that names no setting at all, a root that is not an absolute path, a negative timeout, or any other shape the configuration validator refuses. Nothing is written when it does: the write is refused whole rather than applied partially.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": true
+      }
+    },
+    "/settings/workflow/environment": {
+      "get": {
+        "operationId": "listWorkflowEnvironment",
+        "summary": "The deployment-wide workflow environment layer, which every backup set's hooks inherit. Read-only, and it reports where each value comes from rather than what it is: a secret is a location on this API and never a value.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWorkflowEnvironmentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/settings/workflow/environment/{name}": {
+      "put": {
+        "operationId": "setWorkflowEnvironment",
+        "summary": "Configure one deployment-wide workflow environment variable, creating it or replacing it. PUT rather than PATCH because an entry is a name and one source: a merge would make \"change this from a literal to a secret\" inexpressible, since the literal would survive beside the reference and the configuration validator then refuses the pair as a contradiction.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The environment variable's name. It is the resource's identity, which is why a write addresses it here rather than in the body: a body that could name a second variable would be a request whose path and body can disagree."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowEnvironmentVariableRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success. The whole scope's entries after the write. A secret variable comes back carrying its LOCATION and no value, which is the same answer every read of this list gives and is the property that makes this surface safe to hold a credential reference at all.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWorkflowEnvironmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST. A name this product reserves for its own run facts, a name that is not a legal environment variable name, or a body naming neither a literal nor exactly one secret location.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": true
+      },
+      "delete": {
+        "operationId": "unsetWorkflowEnvironment",
+        "summary": "Remove one deployment-wide workflow environment variable. A variable that is not configured is refused rather than reported as a silent success: \"unset PGPASSWORD\" that quietly does nothing is indistinguishable, from a script, from one that worked -- and the case it hides is the one that matters, an operator clearing a credential from the wrong scope and believing they have cleared it.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The environment variable's name. It is the resource's identity, which is why a write addresses it here rather than in the body: a body that could name a second variable would be a request whose path and body can disagree."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. The entries that remain.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWorkflowEnvironmentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "404": {
+            "description": "Refused: WORKFLOW_ENV_NOT_FOUND. No variable of that name is configured at this scope. A variable configured at the OTHER scope is still not found here, which is the refusal that catches an operator clearing a credential from the wrong layer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "WORKFLOW_ENV_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": true
+      }
+    },
+    "/backup-sets/{source}/{set}/workflow": {
+      "get": {
+        "operationId": "getBackupSetWorkflow",
+        "summary": "One backup set's workflow configuration, resolved against the deployment's: what this set pins, what it inherits, the stages it will actually run and the names of every variable its hooks will see. Read-only.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's source name, the first segment of its source/backup-set id. One parameter per segment because a path parameter matches exactly one segment everywhere it is consumed, so a single parameter spelling a two-part identity is a path no client can build."
+          },
+          {
+            "name": "set",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's own name, the second segment of its source/backup-set id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupSetWorkflowResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "404": {
+            "description": "Refused: BACKUP_SET_NOT_FOUND. This deployment configures no backup set with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      },
+      "patch": {
+        "operationId": "updateBackupSetWorkflow",
+        "summary": "Patch one backup set's workflow block, creating one if the set has none. It writes configuration and hot-reloads the serving process, exactly as the deployment-wide patch does.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's source name, the first segment of its source/backup-set id. One parameter per segment because a path parameter matches exactly one segment everywhere it is consumed, so a single parameter spelling a two-part identity is a path no client can build."
+          },
+          {
+            "name": "set",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's own name, the second segment of its source/backup-set id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBackupSetWorkflowRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success. This set's configuration as it now stands, resolved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupSetWorkflowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST. A body that names nothing, a stage directory that escapes the approved root, a negative timeout, or a connection reference this deployment does not declare.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "404": {
+            "description": "Refused: BACKUP_SET_NOT_FOUND. This deployment configures no backup set with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_FOUND"
+            ]
+          },
+          "409": {
+            "description": "Refused: WORKFLOWS_NOT_CONFIGURED. This deployment configures no workflow root, so there is no approved tree for hook scripts to live in and a per-set workflow block would name directories inside nothing. It is its own code rather than INVALID_REQUEST because the request is fine and the deployment is not ready: the remedy is a deployment-wide PATCH /settings/workflow naming a root, which is a different action from correcting a field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "WORKFLOWS_NOT_CONFIGURED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": true
+      }
+    },
+    "/backup-sets/{source}/{set}/workflow/environment": {
+      "get": {
+        "operationId": "listBackupSetWorkflowEnvironment",
+        "summary": "One backup set's OWN workflow environment entries, which win over the deployment's layer by name. Read-only. The merged view a hook will actually see is on the set's workflow read, as names.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's source name, the first segment of its source/backup-set id. One parameter per segment because a path parameter matches exactly one segment everywhere it is consumed, so a single parameter spelling a two-part identity is a path no client can build."
+          },
+          {
+            "name": "set",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's own name, the second segment of its source/backup-set id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWorkflowEnvironmentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "404": {
+            "description": "Refused: BACKUP_SET_NOT_FOUND. This deployment configures no backup set with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/backup-sets/{source}/{set}/workflow/environment/{name}": {
+      "put": {
+        "operationId": "setBackupSetWorkflowEnvironment",
+        "summary": "Configure one workflow environment variable on one backup set, creating it or replacing it. Same shape and same rules as the deployment-wide write, one scope down, because the two are the same operation on two lists.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's source name, the first segment of its source/backup-set id. One parameter per segment because a path parameter matches exactly one segment everywhere it is consumed, so a single parameter spelling a two-part identity is a path no client can build."
+          },
+          {
+            "name": "set",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's own name, the second segment of its source/backup-set id."
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The environment variable's name. It is the resource's identity, which is why a write addresses it here rather than in the body: a body that could name a second variable would be a request whose path and body can disagree."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowEnvironmentVariableRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success. This set's entries after the write, each carrying a location where it carries a secret and never a value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWorkflowEnvironmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST. The same shapes the deployment-wide write refuses.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "404": {
+            "description": "Refused: BACKUP_SET_NOT_FOUND. This deployment configures no backup set with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": true
+      },
+      "delete": {
+        "operationId": "unsetBackupSetWorkflowEnvironment",
+        "summary": "Remove one workflow environment variable from one backup set. The deployment-wide entry of the same name, if there is one, is untouched and the set goes back to inheriting it.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's source name, the first segment of its source/backup-set id. One parameter per segment because a path parameter matches exactly one segment everywhere it is consumed, so a single parameter spelling a two-part identity is a path no client can build."
+          },
+          {
+            "name": "set",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's own name, the second segment of its source/backup-set id."
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The environment variable's name. It is the resource's identity, which is why a write addresses it here rather than in the body: a body that could name a second variable would be a request whose path and body can disagree."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. The entries that remain on this set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWorkflowEnvironmentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "404": {
+            "description": "Refused: BACKUP_SET_NOT_FOUND, WORKFLOW_ENV_NOT_FOUND. Separate codes because the remedies differ: one is an id this deployment does not configure, the other is a variable this set does not carry -- which is what an operator clearing a credential from the wrong scope is looking at.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_FOUND",
+              "WORKFLOW_ENV_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": true
+      }
+    },
+    "/backup-sets/{source}/{set}/workflow/validation": {
+      "get": {
+        "operationId": "getBackupSetWorkflowValidation",
+        "summary": "Everything this product can establish about one backup set's hooks without running any of them: the resolved directories, every script's name, order, target and sha256, the permission ancestry of the tree they live in, the bound each one gets, environment conflicts, reserved names, secret references that name nothing, the host runner's health, a `bash -n` of every local script, and the remote connection's ability to run a command at all. A validation never executes a script body -- not once, not behind a flag -- because a hook is arbitrary code an operator wrote to quiesce a database, and a validation that ran it would be a read that stops production.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's source name, the first segment of its source/backup-set id. One parameter per segment because a path parameter matches exactly one segment everywhere it is consumed, so a single parameter spelling a two-part identity is a path no client can build."
+          },
+          {
+            "name": "set",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's own name, the second segment of its source/backup-set id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Two verdicts and one finding per check. A 200 does not mean the hooks are valid: read workflow_valid and the findings, because a report of fifteen failed checks is a successful validation of a broken configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowValidationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "404": {
+            "description": "Refused: BACKUP_SET_NOT_FOUND. This deployment configures no backup set with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED, WORKFLOW_ENGINE_UNAVAILABLE. The second is this process saying it cannot validate at all -- it has no state directory to spool the captured script bytes into, and capturing is what hashing means -- rather than reporting an unexamined configuration as sound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED",
+              "WORKFLOW_ENGINE_UNAVAILABLE"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/workflow-runs": {
+      "get": {
+        "operationId": "listWorkflowRuns",
+        "summary": "The workflow runs this deployment's journal holds, newest first, optionally narrowed to one backup set. Read-only. Steps are not included: a page of thirty runs each carrying its steps is thirty journal queries for a page nobody reads the steps from.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "backup_set",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Narrow the listing to one backup set, by its source/backup-set id. Omitted means every set, which is the reading an operator wants when the question is \"what has this deployment been doing to its sources\" rather than \"what happened to this one set\"."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "How many runs to return. Omitted, unparseable or non-positive means the engine's own default, and anything above its maximum is clamped rather than refused, exactly as GET /activity already does: a client asking for a page should get a page rather than an argument about a number."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWorkflowRunsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED, WORKFLOW_ENGINE_UNAVAILABLE. The second means this process has no workflow journal to read, which is a fact about the process rather than an empty history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED",
+              "WORKFLOW_ENGINE_UNAVAILABLE"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/workflow-runs/{run}": {
+      "get": {
+        "operationId": "getWorkflowRun",
+        "summary": "One workflow run and every step of it. Read-only. The three statuses -- backup, cleanup and workflow -- are separate fields here and nothing derives one from another.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The workflow run's id. One segment, so a malformed id is answered by the router with a 404 rather than by a handler having to interpret one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "404": {
+            "description": "Refused: WORKFLOW_RUN_NOT_FOUND. This deployment's journal holds no run with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "WORKFLOW_RUN_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED, WORKFLOW_ENGINE_UNAVAILABLE.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED",
+              "WORKFLOW_ENGINE_UNAVAILABLE"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/workflow-runs/{run}/steps": {
+      "get": {
+        "operationId": "listWorkflowRunSteps",
+        "summary": "One run's steps, in plan order. Read-only. Its own operation rather than a field a client re-reads the whole run for, because a client following a workflow polls the steps: the run's own row moves twice and the steps are what change in between.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The workflow run's id. One segment, so a malformed id is answered by the router with a 404 rather than by a handler having to interpret one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWorkflowStepsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "404": {
+            "description": "Refused: WORKFLOW_RUN_NOT_FOUND. This deployment's journal holds no run with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "WORKFLOW_RUN_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED, WORKFLOW_ENGINE_UNAVAILABLE.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED",
+              "WORKFLOW_ENGINE_UNAVAILABLE"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/workflow-runs/{run}/steps/{step}/logs": {
+      "get": {
+        "operationId": "getWorkflowStepLogs",
+        "summary": "One page of one step's captured output, from a cursor, optionally waiting briefly for more. Read-only and scoped to one run and one step. It is a cursor poll rather than an event stream for the reason GET /activity/live is: a held-open response has to survive every buffering proxy and idle timeout an operator already had in front of their NAS, and a design that only works when nothing in the path buffers is not a design. That choice has a security consequence worth stating, because it is the reason this route needs no authorization machinery of its own: every page, INCLUDING every resume after a dropped connection, is one ordinary authenticated request, so a session that has since expired or been signed out is refused on the next page. A long-lived stream is the shape that makes replay-time authorization a separate thing somebody has to remember.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The workflow run's id. One segment, so a malformed id is answered by the router with a 404 rather than by a handler having to interpret one."
+          },
+          {
+            "name": "step",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The step's id, within that run. A log read is scoped to both, because the sequence counter is per run and a page filtered to one step is the only read a follower of one hook can use."
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "uint64"
+            },
+            "description": "The last sequence the caller PROCESSED. Only records above it come back. Omitted, zero or unparseable reads from the beginning, which is the historical read: a sequence never starts at zero, so no such value can name a position, and re-reading from the start is the only honest answer to a cursor that names none. The subscriber owns its cursor because only the subscriber knows what it handled, which is what makes resume after a drop the ordinary read rather than a special case."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "How many records to return. Omitted, unparseable or non-positive means the engine's default; above its maximum is clamped rather than refused."
+          },
+          {
+            "name": "wait",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "How many seconds to wait for output newer than `after` before answering with what there is. Omitted, unparseable or non-positive never blocks. It exists so that tailing a hook which prints a line every thirty seconds is not a poll loop choosing between latency and load, and it is BOUNDED and clamped to the engine's ceiling: an unbounded wait is a held-open response wearing a different name. The wait is served from the engine's own non-blocking fan-out and can never slow a hook down."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. A page that may be empty: read `complete` to tell \"nothing new yet\" from \"there will never be anything new\", and carry `cursor` into the next request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowStepLogPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST. A read that does not name both a run and a step.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED. Answered to an establishment request and to a cursor resume alike: a page carrying `after` is not a continuation of an earlier authorization, it is a new request, and it is authenticated as one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "404": {
+            "description": "Refused: WORKFLOW_RUN_NOT_FOUND, WORKFLOW_STEP_NOT_FOUND. The two are separate codes because the remedies differ: one means the run id is wrong or the row has been pruned, the other means the run is there and has no such step, which is what a client holding a stale step list is looking at.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "WORKFLOW_RUN_NOT_FOUND",
+              "WORKFLOW_STEP_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED, WORKFLOW_ENGINE_UNAVAILABLE. This process holds no workflow engine, so it has no log to read and no broker to wait on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED",
+              "WORKFLOW_ENGINE_UNAVAILABLE"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/workflow-recovery": {
+      "get": {
+        "operationId": "listWorkflowRecovery",
+        "summary": "Every workflow run whose cleanup this product could not finish, and which is therefore holding its backup set. Read-only, and it is the read an operator makes when a set has stopped backing up: each hold says which run, which nesting scope, how long the source has been left like that, and where the hooks a resume would execute are.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRecoveryResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED, WORKFLOW_ENGINE_UNAVAILABLE. Deliberately not an empty list: \"no backup set is being held\" and \"this process cannot tell you whether one is\" are different answers, and reporting the first for the second would tell an operator their interrupted run does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED",
+              "WORKFLOW_ENGINE_UNAVAILABLE"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/workflow-recovery/{run}/resume-cleanup": {
+      "post": {
+        "operationId": "resumeWorkflowCleanup",
+        "summary": "Run the eligible \"after\" stages of an interrupted workflow run, out of that run's OWN captured bytes. Everything it executes comes from the journal and the spool, never from today's configuration: every script is re-verified against the sha256 recorded when the run was planned, so an operator who edited the workflow tree while the daemon was down has changed nothing about what this executes. Synchronous rather than a durable operation, because of what it is for: somebody is sitting in front of a dialog having just been told a machine may be left quiesced, and the answer they need is whether the cleanup worked. The work is bounded by the cleanup timeout, so there is no long-running job to survive a disconnect.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The workflow run's id. One segment, so a malformed id is answered by the router with a 404 rather than by a handler having to interpret one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. The run as the journal now holds it, read back rather than composed from the resume's own result: a resume that left the run still blocked has to say so from the row the next backup will be refused against. Check recovery_state -- a 200 means the cleanup was attempted and the row was re-read, not that the obligation is settled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST. A resume that does not name a run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "404": {
+            "description": "Refused: WORKFLOW_RUN_NOT_FOUND. This deployment's journal holds no run with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "WORKFLOW_RUN_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED, WORKFLOW_ENGINE_UNAVAILABLE. This process holds no workflow engine, so it cannot execute a cleanup. Nothing was run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED",
+              "WORKFLOW_ENGINE_UNAVAILABLE"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": true
+      }
+    },
+    "/workflow-recovery/{run}/acknowledge": {
+      "post": {
+        "operationId": "acknowledgeWorkflowRecovery",
+        "summary": "Record that an operator has dealt with an interrupted workflow run by hand, and unblock its backup set. The actor is taken from the authenticated session and is deliberately not a body field: an acknowledgement records who took responsibility, and a caller-supplied name would be a claim rather than an answer. The engine refuses while any cleanup obligation is still unsettled, so this is an acknowledgement of work somebody did, never a way to dismiss work nobody did.",
+        "tags": [
+          "workflows"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The workflow run's id. One segment, so a malformed id is answered by the router with a 404 rather than by a handler having to interpret one."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowAcknowledgementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Success. Nothing to describe: the backup set is unblocked and the reason is on the run's own record, which GET /workflow-runs/{run} reports."
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST, WORKFLOW_ACKNOWLEDGEMENT_REASON_REQUIRED. The reason is its own code rather than a validation failure, because the request was not malformed: it was complete and it was refused, and the remedy is a sentence rather than a different field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST",
+              "WORKFLOW_ACKNOWLEDGEMENT_REASON_REQUIRED"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "404": {
+            "description": "Refused: WORKFLOW_RUN_NOT_FOUND. This deployment's journal holds no run with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "WORKFLOW_RUN_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED, WORKFLOW_ENGINE_UNAVAILABLE. This process holds no workflow engine, so it cannot settle a recovery. Nothing was recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED",
+              "WORKFLOW_ENGINE_UNAVAILABLE"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
         "x-authenticated": true
       }
     }

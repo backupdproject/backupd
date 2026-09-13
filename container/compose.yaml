@@ -369,9 +369,9 @@ services:
       - ${SSH_KEY_FILE:?set SSH_KEY_FILE in .env to the SFTP private key}:/etc/backupd/id_ed25519:ro
       - ${KNOWN_HOSTS_FILE:?set KNOWN_HOSTS_FILE in .env to the pinned known_hosts file}:/etc/backupd/known_hosts:ro
 
-      # EPIC L (#808, #809): the hook scripts, and the door to the host
-      # runner. Two mounts, and the difference between them is the whole
-      # security argument.
+      # EPIC L (#808, #809): the hook scripts, the door to the host
+      # runner, and the credential that door requires. Three mounts, and
+      # the differences between them are the whole security argument.
       #
       # The scripts are READ-ONLY. This container plans a workflow — it
       # reads each script once, hashes it and copies it into its own
@@ -399,12 +399,37 @@ services:
       # engine choose which host path the runner writes an executable
       # file into, and which one it then deletes.
       #
-      # Both default rather than using `:?`, so a deployment whose .env
-      # predates EPIC L still starts. `./` resolves beside this file,
-      # which is the installation prefix, and is where the installer
-      # creates them.
+      # The CREDENTIAL is the third mount, and without it the other two
+      # buy nothing: the runner authenticates every connection against an
+      # installation-scoped token, and the engine reads it from the path
+      # workflows.runner.token_file names AS THIS PROCESS SEES IT. The
+      # installer writes that token into <prefix>/secrets, which no mount
+      # here names, so every in-container token_file an operator could
+      # write named a file that does not exist and every .local.sh hook
+      # failed authentication. So it is bound at a fixed container path,
+      # and the configuration this deployment documents points at that
+      # path:
+      #
+      #   workflows:
+      #     runner:
+      #       socket: /data/run/workflow-runner.sock
+      #       token_file: /etc/backupd/workflow-runner.token
+      #
+      # A single FILE and read-only, exactly like the SSH key and
+      # known_hosts above and for the same two reasons: nothing in this
+      # container writes it, and the whole secrets directory is not this
+      # container's business -- the repository passphrase and every
+      # medium credential live there too. It changes nothing about this
+      # container's privilege posture: no capability, no group, no
+      # socket, no host root, and the rootfs stays read-only.
+      #
+      # All three default rather than using `:?`, so a deployment whose
+      # .env predates EPIC L still starts. `./` resolves beside this
+      # file, which is the installation prefix, and is where the
+      # installer creates them.
       - ${WORKFLOWS_DIR:-./workflows}:/workflows:ro
       - ${RUNTIME_DIR:-./run}:/data/run
+      - ${RUNNER_TOKEN_FILE:-./secrets/workflow-runner.token}:/etc/backupd/workflow-runner.token:ro
 
     # `unless-stopped`: restart across crashes and NAS reboots, but stay
     # down if an operator deliberately stops it — the right policy now that

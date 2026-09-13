@@ -214,6 +214,28 @@ var flagsThatEchoWhatTheRequestSaid = map[string]string{
 	"--owner":           "this or another-instance, which decides whether the declaration may be a maintenance claim (ADR 0017)",
 	"--passphrase-file": "a PATH to the file holding a repository's passphrase, never its contents",
 	"--passphrase-env":  "the NAME of an environment variable the passphrase is read from, never its value",
+
+	// EPIC L's workflow configuration (#813). Every one of these is a
+	// PATH the operator chose, a NAME they published, or a sentence they
+	// wrote, and each is something the line is useless without: a
+	// workflow patch echoed without its directories is a command that
+	// disables nothing and changes nothing.
+	//
+	// The two fields on this surface that carry a VALUE rather than a
+	// location -- --value, the literal an environment variable is set
+	// to, and --secret-command, whose words are the caller's -- are
+	// deliberately NOT here. Both are printed as placeholders instead,
+	// for the reason --credentials-command is: nothing this package can
+	// inspect tells `--value production` from `--value hunter2`, and the
+	// whole point of configuring a credential as a REFERENCE is that it
+	// does not belong in that field. See workflowEnvSetFlags.
+	"--root":            "the approved tree hook scripts live under, which is a directory on the operator's own deployment and the one thing workflows cannot be configured without",
+	"--before-dir":      "the stage directory that runs before a backup, relative to that root; an empty value is a real request and clears it, which is why it is printed rather than skipped",
+	"--after-dir":       "the stage directory that runs after a backup, on the same terms as --before-dir",
+	"--exec-connection": "the NAME of a declared remote execution connection, never its host, user or credentials -- the declaration those live in is not on this surface at all",
+	"--secret-file":     "a PATH to a file holding a workflow variable's value, never its contents",
+	"--secret-env":      "the NAME of an environment variable the value is read from, never its value",
+	"--reason":          "the operator's own sentence about how they dealt with an interrupted workflow run; it is the whole point of the record, and it reaches a durable audit row either way",
 }
 
 // operandsThatNameTheSubject is the same list for the positional argument

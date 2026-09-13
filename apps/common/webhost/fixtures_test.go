@@ -148,6 +148,15 @@ type syncFakeBackend struct {
 	errOnRestore error
 	lastRestore  service.RestorePlacementRequest
 
+	// lastRunBackupSet is the same witness for a per-set run (#813).
+	// Neither of the two fields EPIC L adds to that request has any
+	// effect a response can be read for -- a bypass is authorized and
+	// then recorded deep in the engine -- so a handler test that could
+	// only see the 202 could not tell a handler that passed
+	// skip_workflow_scripts through from one that dropped it, which is
+	// exactly the kind of quiet omission this field exists to catch.
+	lastRunBackupSet service.RunBackupSetRequest
+
 	// The G2.2 storage-destination surface's own state (#594): what has
 	// been declared, what the next write should refuse with, and what the
 	// last candidate probe and the last import were handed.
@@ -392,6 +401,14 @@ func (f *syncFakeBackend) SubmitRunCycle(_ context.Context, req service.RunCycle
 // stale screen naming a set that has since been removed is told the
 // screen moved rather than sent hunting a set they can still see.
 func (f *syncFakeBackend) SubmitRunBackupSet(_ context.Context, req service.RunBackupSetRequest) (service.Operation, error) {
+	// Recorded before any refusal, and under the lock the reader takes:
+	// what the handler BUILT is worth seeing even for a request the fake
+	// then refuses, because a bypass that was asked for is a fact the
+	// real service records too.
+	f.mu.Lock()
+	f.lastRunBackupSet = req
+	f.mu.Unlock()
+
 	if f.errOnSubmit != nil {
 		return service.Operation{}, f.errOnSubmit
 	}

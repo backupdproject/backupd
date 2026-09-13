@@ -539,6 +539,97 @@ func (j *Journal) WorkflowRun(ctx context.Context, runID string) (WorkflowRun, e
 	return r, nil
 }
 
+// WorkflowRunHistory reads a backup set's workflow runs, newest first,
+// bounded by limit. An empty backupSetID reads the deployment's.
+//
+// Newest first, because every surface that shows a history shows the last
+// run at the top: an operator asking "what happened last night" should
+// not have to page to the end. Bounded, because a deployment that has run
+// nightly for two years has seven hundred rows and nobody reads them; the
+// bound is the caller's and is clamped rather than refused, exactly as
+// RecentActivityBefore's is, so a client asking for a feed gets a feed
+// rather than an argument about a number.
+//
+// A run whose backup set no longer exists in the configuration is still
+// returned. The row is history: it records that this deployment ran hooks
+// against that set, and hiding it because somebody has since deleted the
+// set would erase the only record of a cleanup that may still be owed.
+func (j *Journal) WorkflowRunHistory(ctx context.Context, backupSetID string, limit int) ([]WorkflowRun, error) {
+	if limit <= 0 || limit > maxWorkflowRunHistory {
+		limit = maxWorkflowRunHistory
+	}
+
+	// Two statements rather than one carrying a "(? = '' OR backup_set_id
+	// = ?)" predicate. That predicate is opaque to the query planner --
+	// an OR one of whose arms compares two parameters cannot be turned
+	// into a range scan -- so the one-statement version would be a full
+	// scan in BOTH cases rather than in neither, and it would go on being
+	// a full scan after somebody adds the index this table does not have
+	// yet. There is deliberately no index added here: 0013's schema
+	// carries three, each for a query on the hot path, and this one runs
+	// when a person opens a history page over a table that gains one row
+	// per backup set per night.
+	query := `SELECT run_id, backup_set_id, state, started_at, finished_at,
+	                 backup_status, cleanup_status, workflow_status, recovery_state,
+	                 resolved_plan_hash, script_spool_ref, bypassed
+	            FROM workflow_runs ORDER BY started_at DESC, run_id DESC LIMIT ?`
+	args := []any{limit}
+
+	if backupSetID != "" {
+		query = `SELECT run_id, backup_set_id, state, started_at, finished_at,
+		                 backup_status, cleanup_status, workflow_status, recovery_state,
+		                 resolved_plan_hash, script_spool_ref, bypassed
+		            FROM workflow_runs WHERE backup_set_id = ?
+		           ORDER BY started_at DESC, run_id DESC LIMIT ?`
+		args = []any{backupSetID, limit}
+	}
+
+	rows, err := j.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("state: reading workflow run history: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only
+
+	var out []WorkflowRun
+
+	for rows.Next() {
+		var (
+			r          WorkflowRun
+			startedAt  string
+			finishedAt sql.NullString
+		)
+
+		if err := rows.Scan(&r.RunID, &r.BackupSetID, &r.State, &startedAt, &finishedAt,
+			&r.BackupStatus, &r.CleanupStatus, &r.WorkflowStatus, &r.RecoveryState,
+			&r.ResolvedPlanHash, &r.ScriptSpoolRef, &r.Bypassed); err != nil {
+			return nil, fmt.Errorf("state: reading workflow run history: %w", err)
+		}
+
+		if r.StartedAt, err = parseTime(startedAt); err != nil {
+			return nil, fmt.Errorf("state: workflow run %q has an unreadable start time %q: %w", r.RunID, startedAt, err)
+		}
+		if r.FinishedAt, err = parseTimePtr(finishedAt); err != nil {
+			return nil, fmt.Errorf("state: workflow run %q has an unreadable finish time: %w", r.RunID, err)
+		}
+
+		out = append(out, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: reading workflow run history: %w", err)
+	}
+
+	return out, nil
+}
+
+// maxWorkflowRunHistory bounds one history read.
+//
+// A hundred is more runs than an operator scrolls through and more than a
+// month of nightly backups for one set, which is the window anybody
+// actually investigates. The durable record is the table; this is a page
+// of it.
+const maxWorkflowRunHistory = 100
+
 // WorkflowSteps reads one run's steps back IN PLAN ORDER.
 //
 // The ordering is the whole contract: the order is the plan, and a read

@@ -94,6 +94,28 @@ var ErrEnvName = errors.New("workflow: this is not a valid workflow environment 
 // literal and a secret reference declared at once.
 var ErrEnvValue = errors.New("workflow: this workflow environment value cannot be used")
 
+// The three built-ins whose values this package cannot know, named as
+// constants because a CALLER has to spell them.
+//
+// Everything else in builtinEnvNames is set from a fact the run itself
+// holds -- its id, its phase, the step's name, the three statuses -- and
+// is written by internal/workflowrun from the run in front of it. These
+// three are answers only the deployment's configuration has: which host
+// the source is on, which path is being backed up, and where the bytes
+// land. They arrive through workflowrun.RunRequest.Facts, keyed by name,
+// and a key that is not one of these is refused rather than passed
+// through.
+//
+// Constants rather than three string literals at the one call site that
+// fills them in, because a typo there is silent: the fact is dropped, the
+// variable is exported empty, and `umount "$BACKUPD_SOURCE_PATH"`
+// unmounts nothing and exits 0.
+const (
+	EnvSourceHost  = "BACKUPD_SOURCE_HOST"
+	EnvSourcePath  = "BACKUPD_SOURCE_PATH"
+	EnvDestination = "BACKUPD_DESTINATION"
+)
+
 // builtinEnvNames is the full set of variables this product injects, in
 // the order they are documented.
 //
@@ -112,9 +134,9 @@ var builtinEnvNames = []string{
 	"BACKUPD_STEP_ID",
 	"BACKUPD_STEP_NAME",
 	"BACKUPD_STEP_TARGET",
-	"BACKUPD_SOURCE_HOST",
-	"BACKUPD_SOURCE_PATH",
-	"BACKUPD_DESTINATION",
+	EnvSourceHost,
+	EnvSourcePath,
+	EnvDestination,
 	"BACKUPD_WORK_DIR",
 	"BACKUPD_BACKUP_STATUS",
 	"BACKUPD_WORKFLOW_STATUS",

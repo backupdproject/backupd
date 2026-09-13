@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "7c2ee42ab6e3fd3d8d592ed9a24feb1aaa5bef978007e72be8d8972f07ccbb7a";
+export const CONTRACT_SHA256 = "9e6886ce7138cc17275fd2d92a9ada0cc5c793b5faa3241f3dc05da018b13770";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -76,6 +76,12 @@ export const WIRE_ERROR_CODES = [
   "INCREMENTAL_ENGINE_DISABLED",
   "REPOSITORY_DOMAIN_EXISTS",
   "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
+  "WORKFLOWS_NOT_CONFIGURED",
+  "WORKFLOW_ENV_NOT_FOUND",
+  "WORKFLOW_RUN_NOT_FOUND",
+  "WORKFLOW_STEP_NOT_FOUND",
+  "WORKFLOW_ACKNOWLEDGEMENT_REASON_REQUIRED",
+  "WORKFLOW_ENGINE_UNAVAILABLE",
 ] as const;
 
 /** This UI's own presentation vocabulary. No endpoint emits these;
@@ -164,6 +170,12 @@ export const API_ERROR_CODES = [
   "INCREMENTAL_ENGINE_DISABLED",
   "REPOSITORY_DOMAIN_EXISTS",
   "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
+  "WORKFLOWS_NOT_CONFIGURED",
+  "WORKFLOW_ENV_NOT_FOUND",
+  "WORKFLOW_RUN_NOT_FOUND",
+  "WORKFLOW_STEP_NOT_FOUND",
+  "WORKFLOW_ACKNOWLEDGEMENT_REASON_REQUIRED",
+  "WORKFLOW_ENGINE_UNAVAILABLE",
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
@@ -173,12 +185,12 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 export const API_ERROR_CLASSES = {
   "authentication": ["UNAUTHENTICATED", "BOOTSTRAP_TOKEN_INVALID", "RESET_TOKEN_INVALID", "VERIFY_TOKEN_INVALID"],
   "authorization": ["ENROLLMENT_CLOSED", "DESTRUCTIVE_OPERATIONS_DISABLED", "CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
-  "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN", "SNAPSHOT_NOT_HOLDABLE", "INCREMENTAL_ENGINE_DISABLED", "REPOSITORY_DOMAIN_EXISTS", "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE"],
+  "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN", "SNAPSHOT_NOT_HOLDABLE", "INCREMENTAL_ENGINE_DISABLED", "REPOSITORY_DOMAIN_EXISTS", "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE", "WORKFLOWS_NOT_CONFIGURED"],
   "internal": ["INTERNAL", "INTERNAL_ERROR"],
-  "not-found": ["BACKUP_SET_NOT_FOUND", "OPERATION_NOT_FOUND", "RETENTION_PLAN_NOT_FOUND", "ARTIFACT_NOT_FOUND", "MEDIUM_NOT_FOUND", "SNAPSHOT_NOT_FOUND", "SNAPSHOT_HOLD_NOT_FOUND", "REPOSITORY_DOMAIN_NOT_FOUND"],
+  "not-found": ["BACKUP_SET_NOT_FOUND", "OPERATION_NOT_FOUND", "RETENTION_PLAN_NOT_FOUND", "ARTIFACT_NOT_FOUND", "MEDIUM_NOT_FOUND", "SNAPSHOT_NOT_FOUND", "SNAPSHOT_HOLD_NOT_FOUND", "REPOSITORY_DOMAIN_NOT_FOUND", "WORKFLOW_ENV_NOT_FOUND", "WORKFLOW_RUN_NOT_FOUND", "WORKFLOW_STEP_NOT_FOUND"],
   "throttling": ["RATE_LIMITED"],
-  "unavailable": ["NOT_CONFIGURED", "SMTP_SEND_FAILED"],
-  "validation": ["INVALID_REQUEST", "INVALID_EMAIL", "SSH_KEY_NOT_FOUND", "HOST_KEY_PROBE_FAILED", "MEDIUM_DISCLOSURE_REQUIRED", "BACKUP_SET_NOT_INCREMENTAL"],
+  "unavailable": ["NOT_CONFIGURED", "SMTP_SEND_FAILED", "WORKFLOW_ENGINE_UNAVAILABLE"],
+  "validation": ["INVALID_REQUEST", "INVALID_EMAIL", "SSH_KEY_NOT_FOUND", "HOST_KEY_PROBE_FAILED", "MEDIUM_DISCLOSURE_REQUIRED", "BACKUP_SET_NOT_INCREMENTAL", "WORKFLOW_ACKNOWLEDGEMENT_REASON_REQUIRED"],
 } as const satisfies Record<string, readonly ApiErrorCode[]>;
 
 /** The platform-capability set GET /system/capabilities reports, as wire
@@ -897,6 +909,126 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
     }
   },
   {
+    id: "getBackupSetWorkflow",
+    method: "GET",
+    path: "/backup-sets/{source}/{set}/workflow",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "BackupSetWorkflowResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      404: ["BACKUP_SET_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "updateBackupSetWorkflow",
+    method: "PATCH",
+    path: "/backup-sets/{source}/{set}/workflow",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "UpdateBackupSetWorkflowRequest",
+    responseSchema: "BackupSetWorkflowResponse",
+    successStatus: 200,
+    errorCodes: {
+      400: ["INVALID_REQUEST"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      404: ["BACKUP_SET_NOT_FOUND"],
+      409: ["WORKFLOWS_NOT_CONFIGURED"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "listBackupSetWorkflowEnvironment",
+    method: "GET",
+    path: "/backup-sets/{source}/{set}/workflow/environment",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "ListWorkflowEnvironmentResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      404: ["BACKUP_SET_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "unsetBackupSetWorkflowEnvironment",
+    method: "DELETE",
+    path: "/backup-sets/{source}/{set}/workflow/environment/{name}",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "ListWorkflowEnvironmentResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      404: ["BACKUP_SET_NOT_FOUND", "WORKFLOW_ENV_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "setBackupSetWorkflowEnvironment",
+    method: "PUT",
+    path: "/backup-sets/{source}/{set}/workflow/environment/{name}",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "WorkflowEnvironmentVariableRequest",
+    responseSchema: "ListWorkflowEnvironmentResponse",
+    successStatus: 200,
+    errorCodes: {
+      400: ["INVALID_REQUEST"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      404: ["BACKUP_SET_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "getBackupSetWorkflowValidation",
+    method: "GET",
+    path: "/backup-sets/{source}/{set}/workflow/validation",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "WorkflowValidationResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      404: ["BACKUP_SET_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED", "WORKFLOW_ENGINE_UNAVAILABLE"],
+    }
+  },
+  {
     id: "listArtifacts",
     method: "GET",
     path: "/backups",
@@ -1214,6 +1346,102 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
     successStatus: 200,
     errorCodes: {
       400: ["INVALID_REQUEST", "MEDIUM_DISCLOSURE_REQUIRED"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "getWorkflowSettings",
+    method: "GET",
+    path: "/settings/workflow",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "WorkflowSettingsResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "updateWorkflowSettings",
+    method: "PATCH",
+    path: "/settings/workflow",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "UpdateWorkflowSettingsRequest",
+    responseSchema: "WorkflowSettingsResponse",
+    successStatus: 200,
+    errorCodes: {
+      400: ["INVALID_REQUEST"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "listWorkflowEnvironment",
+    method: "GET",
+    path: "/settings/workflow/environment",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "ListWorkflowEnvironmentResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "unsetWorkflowEnvironment",
+    method: "DELETE",
+    path: "/settings/workflow/environment/{name}",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "ListWorkflowEnvironmentResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      404: ["WORKFLOW_ENV_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "setWorkflowEnvironment",
+    method: "PUT",
+    path: "/settings/workflow/environment/{name}",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "WorkflowEnvironmentVariableRequest",
+    responseSchema: "ListWorkflowEnvironmentResponse",
+    successStatus: 200,
+    errorCodes: {
+      400: ["INVALID_REQUEST"],
       401: ["UNAUTHENTICATED"],
       403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
       500: ["INTERNAL"],
@@ -1680,6 +1908,142 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
       500: ["INTERNAL"],
     }
   },
+  {
+    id: "listWorkflowRecovery",
+    method: "GET",
+    path: "/workflow-recovery",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "WorkflowRecoveryResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED", "WORKFLOW_ENGINE_UNAVAILABLE"],
+    }
+  },
+  {
+    id: "acknowledgeWorkflowRecovery",
+    method: "POST",
+    path: "/workflow-recovery/{run}/acknowledge",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "WorkflowAcknowledgementRequest",
+    responseSchema: "",
+    successStatus: 204,
+    errorCodes: {
+      400: ["INVALID_REQUEST", "WORKFLOW_ACKNOWLEDGEMENT_REASON_REQUIRED"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      404: ["WORKFLOW_RUN_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED", "WORKFLOW_ENGINE_UNAVAILABLE"],
+    }
+  },
+  {
+    id: "resumeWorkflowCleanup",
+    method: "POST",
+    path: "/workflow-recovery/{run}/resume-cleanup",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "WorkflowRun",
+    successStatus: 200,
+    errorCodes: {
+      400: ["INVALID_REQUEST"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      404: ["WORKFLOW_RUN_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED", "WORKFLOW_ENGINE_UNAVAILABLE"],
+    }
+  },
+  {
+    id: "listWorkflowRuns",
+    method: "GET",
+    path: "/workflow-runs",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "ListWorkflowRunsResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED", "WORKFLOW_ENGINE_UNAVAILABLE"],
+    }
+  },
+  {
+    id: "getWorkflowRun",
+    method: "GET",
+    path: "/workflow-runs/{run}",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "WorkflowRun",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      404: ["WORKFLOW_RUN_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED", "WORKFLOW_ENGINE_UNAVAILABLE"],
+    }
+  },
+  {
+    id: "listWorkflowRunSteps",
+    method: "GET",
+    path: "/workflow-runs/{run}/steps",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "ListWorkflowStepsResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      404: ["WORKFLOW_RUN_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED", "WORKFLOW_ENGINE_UNAVAILABLE"],
+    }
+  },
+  {
+    id: "getWorkflowStepLogs",
+    method: "GET",
+    path: "/workflow-runs/{run}/steps/{step}/logs",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "WorkflowStepLogPage",
+    successStatus: 200,
+    errorCodes: {
+      400: ["INVALID_REQUEST"],
+      401: ["UNAUTHENTICATED"],
+      404: ["WORKFLOW_RUN_NOT_FOUND", "WORKFLOW_STEP_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED", "WORKFLOW_ENGINE_UNAVAILABLE"],
+    }
+  },
 ];
 
 /** One recorded lifecycle moment: a backup moved from one state to
@@ -1975,6 +2339,24 @@ export interface WireBackupSetSpec {
   verification_level?: "structural" | "content_sample" | "content_full" | "restore_drill";
   verification_restore_drill_every_seconds?: number;
   verification_sample_percent?: number;
+}
+
+/** One backup set's workflow configuration, resolved against the
+ *  deployment's. Both halves of every inherited value are reported --
+ *  what this set pins and what a hook will actually get -- because an
+ *  operator changing the deployment default needs to know which sets
+ *  are pinned and which will follow. */
+export interface WireBackupSetWorkflowResponse {
+  after_dir?: string;
+  backup_set_id?: string;
+  before_dir?: string;
+  configured?: boolean;
+  effective_script_timeout_seconds?: number;
+  environment?: WireWorkflowEnvironmentVariable[];
+  remote_exec_connection_ref?: string;
+  resolved_environment_names?: string[];
+  script_timeout_seconds?: number;
+  stages?: WireWorkflowStage[];
 }
 
 /** GET /system/capabilities. The API expression of the
@@ -2357,6 +2739,32 @@ export interface WireListStorageStatusResponse {
  *  would be an arbitrary-command surface. */
 export interface WireListValidatorsResponse {
   validators: WireValidator[];
+}
+
+/** One scope's configured workflow environment, after a read or a
+ *  write. The write operations answer with the whole list rather than
+ *  with the one entry they touched, because a set/unset is only
+ *  meaningful against what else is there: an operator clearing a
+ *  credential needs to see what is left, and the entry they just
+ *  wrote is in the answer either way. */
+export interface WireListWorkflowEnvironmentResponse {
+  backup_set_id?: string;
+  variables?: WireWorkflowEnvironmentVariable[];
+}
+
+/** A page of workflow runs, newest first. */
+export interface WireListWorkflowRunsResponse {
+  runs?: WireWorkflowRun[];
+}
+
+/** One run's steps, in plan order. Its own operation rather than a
+ *  field on the run detail because a client following a running
+ *  workflow polls the steps and not the run: the run's own row moves
+ *  once at the start and once at the end, and the steps are what
+ *  change in between. */
+export interface WireListWorkflowStepsResponse {
+  run_id?: string;
+  steps?: WireWorkflowStep[];
 }
 
 /** One action that started and has not reported an outcome. It is
@@ -3369,6 +3777,7 @@ export interface WireSubmitOperationRequest {
   backup_set_id?: string;
   config_revision: string;
   restore?: WireRestoreOperationRequest;
+  skip_workflow_scripts?: boolean;
   snapshot_hold?: WireSnapshotHoldRequest;
   snapshot_hold_release?: WireSnapshotHoldReleaseRequest;
   snapshot_restore?: WireSnapshotRestoreRequest;
@@ -3469,6 +3878,20 @@ export interface WireUpdateBackupSetRequest {
   verification_sample_percent?: number;
 }
 
+/** PATCH one backup set's workflow block. Every field is nullable for
+ *  the reason the deployment-wide patch's are: an absent field and a
+ *  cleared one are different requests. A patch against a set that has
+ *  no workflow block creates one, carrying only the fields the
+ *  request named -- so a set given a before_dir does not silently
+ *  acquire a pinned timeout copied from today's deployment value,
+ *  which would make it stop following a later change to that value. */
+export interface WireUpdateBackupSetWorkflowRequest {
+  after_dir?: string;
+  before_dir?: string;
+  remote_exec_connection_ref?: string;
+  script_timeout_seconds?: number;
+}
+
 /** A PARTIAL capacity update. An omitted field is left exactly as the
  *  running configuration has it. An explicit 0 is a request, not an
  *  omission: on this block zero means "no cap" and "no warning line",
@@ -3503,6 +3926,21 @@ export interface WireUpdateSettingsRequest {
   capacity?: WireUpdateCapacitySettings;
   retention?: WireUpdateRetentionSettings;
   service?: WireUpdateServiceSettings;
+}
+
+/** PATCH the deployment-wide workflow block. Every field is nullable
+ *  because this is a PATCH: "the caller did not mention this" and
+ *  "the caller wants this cleared" are different requests, and a
+ *  plain string can only say one of them. Clearing a stage directory
+ *  is a real operation -- it disables that stage -- so it has to be
+ *  expressible. A body that names nothing at all is refused rather
+ *  than answered 200 for a write that changed nothing. */
+export interface WireUpdateWorkflowSettingsRequest {
+  after_dir?: string;
+  before_dir?: string;
+  max_script_size_bytes?: number;
+  root?: string;
+  script_timeout_seconds?: number;
 }
 
 /** One registered application validator. An id and a sentence, and
@@ -3547,5 +3985,243 @@ export interface WireVersionResponse {
   engine_version: string;
   go_version: string;
   ready: boolean;
+}
+
+/** Take responsibility, by hand, for a workflow run this product
+ *  could not account for, and unblock its backup set. There is
+ *  deliberately no "clear this" and no "ignore this": a run in
+ *  recovery may have left a source machine quiesced, mounted or
+ *  paused right now, so the only two honest exits are to RUN the
+ *  cleanup that is owed (resume-cleanup) or for a person to state, in
+ *  words that are recorded, that they have dealt with it themselves. */
+export interface WireWorkflowAcknowledgementRequest {
+  reason: string;
+}
+
+/** One configured workflow environment entry, as every read of either
+ *  scope reports it. */
+export interface WireWorkflowEnvironmentVariable {
+  has_value?: boolean;
+  name?: string;
+  secret?: WireWorkflowSecretReference;
+  value?: string;
+}
+
+/** PUT one workflow environment entry, at the deployment scope or at
+ *  one backup set's. The variable's NAME is the last path segment and
+ *  is deliberately not a field here: a body that could name a second
+ *  variable would be a request whose path and body can disagree, and
+ *  the engine would then have to decide which one the operator meant.
+ *  Exactly one of `value` and one spelling of `secret` must be
+ *  present. A write REPLACES the entry of that name rather than
+ *  merging with it, because a merge would make "change this from a
+ *  literal to a secret" inexpressible: the literal would survive
+ *  beside the reference, which the configuration validator then
+ *  refuses as a contradiction. */
+export interface WireWorkflowEnvironmentVariableRequest {
+  secret?: WireWorkflowSecretReference;
+  value?: string;
+}
+
+/** One validation check's answer about one backup set's hooks. */
+export interface WireWorkflowFinding {
+  check?: string;
+  detail?: string;
+  phase?: string;
+  scope?: string;
+  script?: string;
+  severity?: "ok" | "skipped" | "warning" | "error";
+  target?: string;
+}
+
+/** One reason a backup set is refusing to run: a workflow run whose
+ *  cleanup this product could not finish, and whose "after" hooks may
+ *  therefore never have run. */
+export interface WireWorkflowRecoveryHold {
+  backup_set_id?: string;
+  entered_at?: string;
+  run_id?: string;
+  scope?: "global" | "set";
+  spool_ref?: string;
+}
+
+/** Every outstanding recovery hold in this deployment, sorted. An
+ *  empty list is a deployment where no backup set is being held,
+ *  which is the ordinary state. */
+export interface WireWorkflowRecoveryResponse {
+  holds?: WireWorkflowRecoveryHold[];
+}
+
+/** One workflow run: one backup set's pass, wrapped in the five-stage
+ *  hook lifecycle. The three statuses stay three, and none of them is
+ *  derived from the others. That is the whole reason the journal has
+ *  three columns: "the backup succeeded and the cleanup did not" is
+ *  the single most operationally important thing this feature can
+ *  report -- it means a machine may be sitting quiesced with a good
+ *  backup beside it -- and any surface that collapsed the three into
+ *  one verdict would make exactly that case unsayable. */
+export interface WireWorkflowRun {
+  backup_set_id?: string;
+  backup_status?: "unknown" | "running" | "success" | "failed" | "skipped";
+  bypassed?: boolean;
+  cleanup_status?: "unknown" | "running" | "success" | "failed" | "skipped";
+  duration_ms?: number;
+  failed_script?: string;
+  failed_step?: string;
+  finished_at?: string;
+  recovery_state?: "none" | "required" | "in_progress" | "resolved";
+  run_id?: string;
+  script_count?: number;
+  started_at?: string;
+  state?: "pending" | "running" | "success" | "failed" | "timed_out" | "canceled" | "skipped" | "interrupted" | "recovery_required" | "cleanup_running" | "cleanup_failed" | "recovered";
+  steps?: WireWorkflowStep[];
+  workflow_status?: "unknown" | "running" | "success" | "failed" | "skipped";
+}
+
+/** How THIS PROCESS reaches the Host Workflow Runner, the component
+ *  that executes a `.local.sh` hook on the machine backupd is
+ *  installed on. Reported and not writable here: the two paths differ
+ *  between a container and a bare-metal install of the same
+ *  deployment, so they are a deployment-shape fact the installer
+ *  writes rather than a policy an operator tunes, exactly like the
+ *  SSH key, the known_hosts file and the state database. */
+export interface WireWorkflowRunnerSettings {
+  configured?: boolean;
+  socket?: string;
+  token_file?: string;
+}
+
+/** Where a workflow environment variable's value comes from, when it
+ *  is not a literal. It is a LOCATION and never a value, on every
+ *  surface and in both directions: exactly one of the three is set,
+ *  and there is no field here -- and deliberately no field anywhere
+ *  on this contract -- that a resolved secret could be written into
+ *  or read out of. The engine resolves a reference at the moment a
+ *  hook is about to run and nothing carries the result back. The
+ *  consequence is worth stating because it looks like a gap: no read
+ *  on this API can show an operator the value of a secret variable,
+ *  ever. It shows the name and where the value comes from, because a
+ *  surface that could print it would be a surface an attacker holding
+ *  one session could read every credential in the deployment from. It
+ *  is the same file/env/command triple a repository passphrase and a
+ *  storage destination's credentials already use, spelled the same
+ *  way. */
+export interface WireWorkflowSecretReference {
+  command?: string[];
+  env?: string;
+  file?: string;
+}
+
+/** The deployment-wide workflow configuration, RESOLVED: the timeout
+ *  a hook will actually get, the stages that will actually run, the
+ *  environment a hook will actually see. That is why this read exists
+ *  rather than a client re-reading config.yaml: the file's whole
+ *  point is that it omits what is inherited or defaulted, so a
+ *  re-serialization of it cannot answer what a run will do. */
+export interface WireWorkflowSettingsResponse {
+  after_dir?: string;
+  before_dir?: string;
+  configured?: boolean;
+  environment?: WireWorkflowEnvironmentVariable[];
+  exec_connections?: string[];
+  max_script_size_bytes?: number;
+  root?: string;
+  runner?: WireWorkflowRunnerSettings;
+  script_timeout_configured?: boolean;
+  script_timeout_seconds?: number;
+}
+
+/** One scope-and-phase pair that has a directory. A run executes five
+ *  stages in a fixed order, and these are the ones this configuration
+ *  actually gives a directory to. */
+export interface WireWorkflowStage {
+  dir?: string;
+  phase?: "before" | "after";
+  scope?: "global" | "set";
+}
+
+/** One step of one workflow run: one hook script, executed once. */
+export interface WireWorkflowStep {
+  duration_ms?: number;
+  execution_connection_ref?: string;
+  exit_code?: number | null;
+  finished_at?: string;
+  order?: number;
+  phase?: "before" | "after";
+  scope?: "global" | "set";
+  script_name?: string;
+  started_at?: string;
+  state?: "pending" | "running" | "success" | "failed" | "timed_out" | "canceled" | "skipped" | "interrupted";
+  step_id?: string;
+  target?: "local" | "remote";
+  termination_confirmed?: boolean;
+  timeout_ms?: number;
+}
+
+/** One page of one step's captured output. It is a cursor read and
+ *  not a stream, and that decision is about where this product runs:
+ *  a held-open response is at the mercy of every buffering proxy and
+ *  idle timeout between here and the client, and a design that only
+ *  works when nothing in the path buffers is not a design. The
+ *  follower sends the last sequence it PROCESSED and gets what is
+ *  newer, so resume after a dropped connection is not a special case
+ *  at all -- it is the ordinary read, with the cursor the follower
+ *  already had. Each page is one ordinary authenticated request,
+ *  which is also what makes authorization on replay structural rather
+ *  than something somebody has to remember. */
+export interface WireWorkflowStepLogPage {
+  complete?: boolean;
+  cursor?: number;
+  records?: WireWorkflowStepLogRecord[];
+  run_id?: string;
+  step_id?: string;
+  step_state?: "pending" | "running" | "success" | "failed" | "timed_out" | "canceled" | "skipped" | "interrupted";
+  truncated?: boolean;
+}
+
+/** One captured record of one step's output. */
+export interface WireWorkflowStepLogRecord {
+  at?: string;
+  kind?: "output" | "truncated";
+  seq?: number;
+  step_id?: string;
+  stream?: "stdout" | "stderr";
+  text?: string;
+}
+
+/** One hook this backup set would run, as validation found it on
+ *  disk. Nothing here was executed: the only things validation ever
+ *  hands an interpreter are `bash -n`, which parses and never runs,
+ *  and this product's own fixed remote capability probe. */
+export interface WireWorkflowValidatedScript {
+  execution_connection_ref?: string;
+  order?: number;
+  phase?: "before" | "after";
+  scope?: "global" | "set";
+  script_name?: string;
+  sha256?: string;
+  size_bytes?: number;
+  step_id?: string;
+  target?: "local" | "remote";
+  timeout_ms?: number;
+}
+
+/** Everything this product can establish about one backup set's hooks
+ *  WITHOUT running any of them. Two verdicts rather than one, and
+ *  that is the shape rather than an oversight: a backup set whose
+ *  source connects, whose destination is writable and whose retention
+ *  is sound, with a hook directory somebody has not created yet, is
+ *  valid for backup and invalid for workflows -- which is the normal
+ *  case during setup, and reporting it as a broken backup set would
+ *  tell an operator their backups are failing when they are not. */
+export interface WireWorkflowValidationResponse {
+  backup_set_id?: string;
+  configured?: boolean;
+  findings?: WireWorkflowFinding[];
+  root?: string;
+  scripts?: WireWorkflowValidatedScript[];
+  stages?: WireWorkflowStage[];
+  valid_for_backup?: boolean;
+  workflow_valid?: boolean;
 }
 

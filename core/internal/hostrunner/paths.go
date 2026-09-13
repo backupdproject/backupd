@@ -226,6 +226,23 @@ const MaxIDLength = 128
 // refused, including the empty string, "." and "..", a leading dash (which
 // argv-adjacent code elsewhere would read as a flag), and any byte outside
 // the alphabet below.
+//
+// # Why the tilde is in the alphabet
+//
+// Because it is in the shapes. internal/workflow.StepID joins an order,
+// a scope, a phase and a script name with "~" -- deliberately, because
+// the script-name rule reserves it, so the id cannot be ambiguous -- and
+// every step this product mints therefore carries three of them. An
+// alphabet without it refused every real step, so no `.local.sh` hook
+// could execute at all: the runner answered every execute with "this
+// runner runtime layout cannot be used", the engine recorded the step as
+// not attempted, and the deployment ran backups with its hooks silently
+// failing. That is the defect this character closes, and the rule this
+// function states -- accept what internal/workflow mints, refuse
+// everything else -- is unchanged by it. A tilde cannot move a path: it
+// is not a separator, not a directory reference and not a flag, and it
+// is one byte in a name this process joins onto a directory it created
+// itself.
 func ValidID(what, id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: an empty %s cannot name a directory", ErrLayout, what)
@@ -242,9 +259,9 @@ func ValidID(what, id string) error {
 	for _, r := range id {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '-', r == '_', r == '.':
+		case r == '-', r == '_', r == '.', r == '~':
 		default:
-			return fmt.Errorf("%w: the %s %q contains %q, and only letters, digits, dot, dash and underscore may become a path component under the runtime directory", ErrLayout, what, id, string(r))
+			return fmt.Errorf("%w: the %s %q contains %q, and only letters, digits, dot, dash, underscore and tilde may become a path component under the runtime directory", ErrLayout, what, id, string(r))
 		}
 	}
 	return nil

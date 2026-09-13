@@ -93,6 +93,7 @@ var commands = map[string]func([]string) int{
 	"snapshot":        cmdSnapshot,
 	"repository":      cmdRepository,
 	"settings":        cmdSettings,
+	"workflow":        cmdWorkflow,
 	"workflow-runner": cmdWorkflowRunner,
 	"version":         cmdVersion,
 }
@@ -476,6 +477,107 @@ commands:
                                                   is running now. The same question the engine asks before it will
                                                   validate a .local.sh hook, so an answer here is the answer a
                                                   backup would get
+  workflow run list [--backup-set S] [--limit N] [--json]
+                                                  every hook run this deployment has on record, newest first: each run's
+                                                  three statuses side by side (the backup's, the cleanup's and the
+                                                  workflow's), because "the backup succeeded and the cleanup did not" means
+                                                  a machine may be sitting quiesced with a good backup beside it, and a
+                                                  surface that folded the three into one verdict would make exactly that
+                                                  case unsayable (#813)
+  workflow run show <run-id> [--json]            one run in full: the three statuses, whether its hooks were deliberately
+                                                  bypassed, the first step that failed and the script it ran, how long it
+                                                  took, and every step in execution order
+  workflow run steps <run-id> [--json]           that run's steps alone, in plan order: where each sits in the five
+                                                  stages, where it ran, its exit code where a process status was observed
+                                                  at all, and whether this product proved the process was gone
+  workflow run log <run-id> --step <step-id> [--follow] [--cursor N] [--limit N] [--json]
+                                                  one step's captured output, with stdout and stderr kept apart, and this
+                                                  product's own truncation marker rendered as its own rather than as
+                                                  something the hook printed. Every read prints the cursor it reached, so
+                                                  --cursor resumes an interrupted one with nothing printed twice and
+                                                  nothing skipped; --follow waits for more until the step ends
+  workflow recovery show [--json]                every run still waiting for a cleanup or for a person, oldest first,
+                                                  because the question is how long a machine has been left like that.
+                                                  Beside a serving engine it asks THAT process, which holds the refusals
+                                                  a run will really be met with, when $BACKUP_MANAGER_API_URL says where
+                                                  it is; otherwise it reads the journal's own rows, because this process
+                                                  has no reconciled engine and a reconciliation pass from a terminal
+                                                  would mark a serving engine's in-flight run interrupted
+  workflow recovery resume-cleanup <run-id> [--json]
+                                                  run the "after" hooks an interrupted run still owes, out of that run's
+                                                  own captured bytes, re-verified against the hashes recorded when the plan
+                                                  was taken, so an edit to the hook directory since the interruption
+                                                  changes nothing about what runs. Exits non-zero when the run is still not
+                                                  settled afterwards, because the backup set stays blocked. Beside a
+                                                  serving engine it is handed to that process, or refused when nothing
+                                                  says how to reach one: recovery state lives in that process's memory as
+                                                  well as in the journal, so a resume performed here would unblock a set
+                                                  it would go on refusing
+  workflow recovery acknowledge <run-id> --reason "..."
+                                                  record that a person dealt with an interrupted run by hand, and unblock
+                                                  the backup set. --reason is required and a blank one is refused: the
+                                                  whole value of the record is answering, six months later, why a set was
+                                                  unblocked without its cleanup ever running. Nothing is executed. Routed
+                                                  to a serving engine, or refused beside one this command cannot reach,
+                                                  for resume-cleanup's reason
+  settings workflow [--json]                     report the resolved deployment-wide hook configuration: the approved
+                                                  root, the two global stages, the timeout a hook gets and whether that
+                                                  came from the file or from the built-in default, the declared execution
+                                                  connections, the host runner this process will try to reach, and the
+                                                  deployment-wide environment
+  settings workflow patch [--root P] [--before-dir D] [--after-dir D] [--script-timeout D]
+                        [--max-script-size-bytes N]
+                                                  change one of them in place. An explicitly empty value clears:
+                                                  --before-dir "" disables that stage and --script-timeout 0 returns hooks
+                                                  to the built-in bound, so a flag passed as its zero value is a request
+                                                  rather than an omission. This write has no route to a serving engine in
+                                                  this build, so it is refused beside one with the file untouched
+  settings workflow env list [--json]            the deployment-wide hook environment: each variable's name, and either
+                                                  its literal value or WHERE its value is read from. A secret is a location
+                                                  on this surface and never a value, in both directions: no flag takes
+                                                  material and no output here can print any
+  settings workflow env set NAME (--value V | --secret-file P | --secret-env VAR | --secret-command W ...)
+                                                  configure one variable, naming exactly one source. Repeat
+                                                  --secret-command once per argv word, so no quoting mistake can re-split a
+                                                  program's path. --value "" configures an empty string, which is a
+                                                  different thing from configuring nothing
+  settings workflow env unset NAME               remove one variable. A name that is not configured is refused rather than
+                                                  quietly succeeding: an "unset the credential" that did nothing is
+                                                  indistinguishable from one that worked
+  backup-set workflow <source/backup-set> [--json]
+                                                  one backup set's hook configuration, resolved against the deployment's:
+                                                  the stages it will actually run in execution order, which timeout wins
+                                                  and whether this set pinned it, the connection its remote hooks run over,
+                                                  and the name of every variable a hook of this set will be handed once
+                                                  both layers are merged
+  backup-set workflow patch <source/backup-set> [--before-dir D] [--after-dir D]
+                          [--script-timeout D] [--exec-connection REF]
+                                                  change that set's own block. An explicitly empty value clears, the same
+                                                  rule the deployment-wide patch follows, and clearing the last field
+                                                  removes the block rather than leaving one that configures nothing.
+                                                  Refused beside a serving engine, with the file untouched
+  backup-set workflow env <source/backup-set> list|set NAME ...|unset NAME
+                                                  the same three env verbs against one set's own layer, which wins over the
+                                                  deployment's for a variable both configure. validate workflow is what
+                                                  reports that a variable is configured in both
+  validate workflow <source/backup-set> [--json] everything this product can establish about a backup set's hooks without
+                                                  running one: the resolved stage directories, the script names and their
+                                                  ordering, each script's sha256 and the timeout it gets, the permissions
+                                                  of every ancestor of a stage directory, the host runner, a bash -n parse
+                                                  of every local and remote script, the execution connection and whether it
+                                                  can really run a command, name conflicts and reserved names in the
+                                                  environment, and whether each secret reference names something that
+                                                  exists. Every check reports, skipped ones included, because a check
+                                                  nobody ran is not a check that passed. Exits 1 when the hooks are
+                                                  unsound, and says so in a line of its own when the SET is sound and its
+                                                  hooks are not. No hook body is ever executed
+  fetch --skip-workflow-scripts                  refused, deliberately, rather than ignored. This pass DOES run the set's
+                                                  hooks -- it goes through the same reconciled five-stage lifecycle the
+                                                  serving engine uses -- and a bypass is an administrator action recorded
+                                                  against a session the engine minted, which this command cannot
+                                                  establish. A bypass recorded against nobody is the audit trail #813
+                                                  exists to prevent, so it is refused with the alternative named rather
+                                                  than accepted and ignored
   version                                        report version information
 
 every command except version accepts --config (default /etc/backupd/config/config.yaml;

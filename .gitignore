@@ -6,6 +6,16 @@
 /dist/
 /bin/
 
+# The two binaries `go build` drops beside their own main package, which
+# is what an ordinary `go build ./...` in core/ or apps/generic/ produces.
+# They are 64 MB each, they trip the large-file push warning, and a
+# committed one also breaks the image-size gate, because the Docker build
+# context carries it into the image. Named explicitly rather than caught
+# by a pattern: /backupd above only covers the repository root, and these
+# land one directory down.
+/core/backupd
+/apps/backupd-web
+
 # SQLite journals produced by local runs
 *.db
 *.db-shm

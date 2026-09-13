@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -1249,14 +1248,4 @@ func (r *runner) liveWorkflowStatus() workflow.Status {
 	}
 
 	return workflow.StatusRunning
-}
-
-// obsAttrs is the attribute set every run-level log line carries, kept in
-// one place so a run id is spelled one way across the correlation model.
-func obsAttrs(runID, set string, scripts int) []slog.Attr {
-	return []slog.Attr{
-		slog.String("run_id", runID),
-		slog.String("backup_set", set),
-		slog.Int("scripts", scripts),
-	}
 }

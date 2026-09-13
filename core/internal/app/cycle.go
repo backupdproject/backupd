@@ -345,7 +345,7 @@ sourcesLoop:
 				continue
 			}
 			s.recordPollAttempt(bs.ID, s.now())
-			report.Sets = append(report.Sets, s.processBackupSet(ctx, src, bs))
+			report.Sets = append(report.Sets, s.runBackupSetInWorkflow(ctx, src, bs))
 		}
 	}
 

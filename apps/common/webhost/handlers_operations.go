@@ -61,6 +61,17 @@ type submitOperationRequest struct {
 	// has confused two operations.
 	BackupSetID string `json:"backup_set_id,omitempty"`
 
+	// SkipWorkflowScripts is EPIC L's --skip-workflow-scripts (#813):
+	// take the backup and run none of this set's workflow hooks. It is
+	// run_backup_set's parameter, so refuseForeignParameters refuses it
+	// on every other action exactly as it refuses BackupSetID above.
+	//
+	// A flat bool rather than an object for BackupSetID's reason: it is
+	// one field, and the durable operation row records it beside the set
+	// id as what was ASKED FOR, which is how a bypass that was requested
+	// and then refused stays visible at all.
+	SkipWorkflowScripts bool `json:"skip_workflow_scripts,omitempty"`
+
 	// Restore carries the restore_placement action's own parameters, and
 	// is nil for every other action.
 	//
@@ -505,10 +516,39 @@ func (h *handlers) submitRunBackupSet(w http.ResponseWriter, r *http.Request, id
 	}
 
 	op, err := h.backend.SubmitRunBackupSet(r.Context(), service.RunBackupSetRequest{
-		IdempotencyKey: idempotencyKey,
-		Actor:          actorFromContext(r.Context()),
-		ConfigRevision: body.ConfigRevision,
-		BackupSetID:    body.BackupSetID,
+		IdempotencyKey:      idempotencyKey,
+		Actor:               actorFromContext(r.Context()),
+		ConfigRevision:      body.ConfigRevision,
+		BackupSetID:         body.BackupSetID,
+		SkipWorkflowScripts: body.SkipWorkflowScripts,
+
+		// Administrator is this surface's statement that the caller may
+		// take an administrator action, and over HTTP that statement has
+		// exactly one honest basis: this route is behind
+		// requireDestructiveGate, which is middleware, so the only way
+		// this handler body runs at all is that the gate PASSED
+		// (router.go, gate.go). The gate is a deployment-wide
+		// attestation that this instance's trusted-proxy identity check
+		// is real (§13.3, #789), which is the same boundary
+		// core/service's workflowRunOptions names as the HTTP
+		// administrator boundary.
+		//
+		// So it is true rather than derived from the body, and it is
+		// derived from the FACT of having reached here rather than from
+		// asking the gate again: a second read would be a second answer
+		// that can disagree with the one the middleware acted on, and
+		// this handler cannot run under a gate that did not pass.
+		// gate_redteam_test.go walks the route table and proves that
+		// middleware is still there, which is what keeps this claim
+		// honest; without the gate in front of this route the sentence
+		// above would be false and a bypass would be authorized by
+		// nothing.
+		//
+		// The consequence is that ErrWorkflowBypassNotAuthorized is
+		// unreachable through this route today. It is still mapped
+		// (writeRunBackupSetError), because a 500 for it would be the
+		// wrong answer the day this stops being true.
+		Administrator: true,
 	})
 	if err != nil {
 		h.writeRunBackupSetError(w, r, err, h.backend.ConfigRevision())
@@ -539,6 +579,22 @@ func (h *handlers) writeRunBackupSetError(w http.ResponseWriter, r *http.Request
 		// "leave edit mode", and an operator sent to the wrong one waits
 		// forever.
 		writeError(w, http.StatusConflict, "BACKUP_SET_HELD_FOR_EDITING", err.Error())
+	case errors.Is(err, service.ErrWorkflowBypassNotAuthorized):
+		// 403 DESTRUCTIVE_OPERATIONS_DISABLED, which is the code this
+		// operation already declares for that status, and it is the
+		// precise answer rather than a convenient reuse: over HTTP the
+		// administrator boundary a bypass needs IS the destructive gate
+		// (core/service's workflowRunOptions says so), so "this caller
+		// is not established as an administrator" and "this deployment
+		// has not turned destructive operations on" are one fact with
+		// one remedy. A code of its own would tell an operator to go
+		// looking for a permission model this product does not have.
+		//
+		// Unreachable today, because reaching this handler at all means
+		// the gate passed (submitRunBackupSet's Administrator field).
+		// Mapped anyway, so the day that stops being true the refusal is
+		// a 403 an operator can act on rather than a 500.
+		writeError(w, http.StatusForbidden, "DESTRUCTIVE_OPERATIONS_DISABLED", err.Error())
 	case errors.Is(err, service.ErrBackupSetNotFound):
 		writeError(w, http.StatusNotFound, "BACKUP_SET_NOT_FOUND", "no such backup set")
 	case errors.Is(err, service.ErrInvalidRequest):

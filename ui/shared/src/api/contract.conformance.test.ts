@@ -600,7 +600,7 @@ describe("every request the shared client makes is a declared operation", () => 
    * Asserted EXACTLY, like its counterpart, so the list can only shrink.
    */
   const UNREACHED_SERVER_OPERATIONS = [
-    // Two left, and both are read by something that is not this client:
+    // Two of these are read by something that is not this client:
     // getSession is the platform bridge's own call
     // (platform/localSession.ts, which reads the envelope itself rather
     // than going through httpApi), and getSystemCapabilities is answered
@@ -612,8 +612,36 @@ describe("every request the shared client makes is a declared operation", () => 
     // read. Each was pinned rather than exempted precisely so that
     // wiring it FORCED an edit here — which is what makes this list a
     // gate that can only shrink.
+    //
+    // The eighteen below are EPIC L's workflow surface (#813), whose API
+    // and CLI halves landed ahead of its UI wave. They are pinned here
+    // for exactly the reason #788's seven were, and the entry is the
+    // mechanism working rather than an exemption: adding a contract
+    // operation forces a line here on the commit that adds it, and
+    // wiring a screen to one forces that line back out. They are not a
+    // standing permission — nothing in ui/shared may call them without
+    // this list shrinking, which is the property the exact assertion
+    // below enforces in both directions.
+    "acknowledgeWorkflowRecovery",
+    "getBackupSetWorkflow",
+    "getBackupSetWorkflowValidation",
     "getSession",
-    "getSystemCapabilities"
+    "getSystemCapabilities",
+    "getWorkflowRun",
+    "getWorkflowSettings",
+    "getWorkflowStepLogs",
+    "listBackupSetWorkflowEnvironment",
+    "listWorkflowEnvironment",
+    "listWorkflowRecovery",
+    "listWorkflowRunSteps",
+    "listWorkflowRuns",
+    "resumeWorkflowCleanup",
+    "setBackupSetWorkflowEnvironment",
+    "setWorkflowEnvironment",
+    "unsetBackupSetWorkflowEnvironment",
+    "unsetWorkflowEnvironment",
+    "updateBackupSetWorkflow",
+    "updateWorkflowSettings"
   ];
 
   it("pins the contract operations no client call reaches", () => {

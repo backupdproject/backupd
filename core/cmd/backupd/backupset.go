@@ -45,6 +45,15 @@ var backupSetVerbs = map[string]func([]string) int{
 	// change only the thing it was not asked about.
 	"enabled":   cmdBackupSetEnabled,
 	"read-only": cmdBackupSetReadOnly,
+	// The hook configuration (EPIC L, #813, backupsetworkflow.go). Its
+	// own flag set for the same reason the two toggles above have theirs:
+	// --before-dir, --script-timeout, --exec-connection and the four env
+	// flags are nothing declareBackupSetFlags has ever heard of, so
+	// parsing them against that set would fail before any dispatcher ran.
+	// It is also the one entry here with a level of its own below it
+	// (`workflow env <source/backup-set> list|set|unset`), which is why
+	// its refusals name the whole form rather than the verb.
+	"workflow": cmdBackupSetWorkflow,
 }
 
 // backupSetSharedFlagVerbs are the verbs that share declareBackupSetFlags

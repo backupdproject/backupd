@@ -624,7 +624,19 @@ func cmdServe(args []string) int {
 			}
 			fmt.Fprintln(os.Stderr, cliecho.WebBinary+": shutdown complete, the backup service is closed")
 		}()
-		enableAlerts(backend, platformAdapter)
+		if err := openWorkflowEngineOn(ctx, backend, platformAdapter); err != nil {
+			// Serving continues, and the guard does NOT. core/service's
+			// WorkflowReconcileGate now refuses every run this process
+			// could start -- the scheduler's ticks and both durable
+			// submissions -- until a reconciliation succeeds, so what a
+			// failure costs is backups rather than the recovery state of
+			// a deployment nobody can inspect. See that function's own
+			// doc for why reading stays available: the runs, the holds
+			// and the resume/acknowledge actions are how an operator
+			// lifts the gate, and refusing to serve at all would take
+			// away the surface they would lift it from.
+			fmt.Fprintln(os.Stderr, cliecho.WebBinary+": workflow runs could not be reconciled, so this process refuses to START a backup until they can be; reading, recovery and the rest of the API are unaffected:", err)
+		}
 		engineConfig.Backend = backend
 		handler = serve.NewEngine(engineConfig)
 		scheduler = backend
@@ -675,12 +687,33 @@ func cmdServe(args []string) int {
 			if openErr != nil {
 				return nil, nil, openErr
 			}
-			// Alerting is decided from the configuration setup just
-			// wrote, exactly as it is for a process that started with
-			// one, so a first-run instance is not silently the one
-			// deployment shape where the alerts block does nothing until
-			// a restart.
-			enableAlerts(opened, platformAdapter)
+			// The identical sequence the configured start performs, and
+			// through the same function so it cannot diverge (#813): the
+			// build version, EPIC L's reconciliation and the alerts
+			// block. This branch used to do only the last of those, so a
+			// FRESH install served and scheduled for the whole life of
+			// the process with no workflow lifecycle installed at all --
+			// the one deployment shape where a configured set's hooks
+			// never ran and its recovery holds were never consulted, and
+			// the shape every app-store install starts in.
+			//
+			// A reconciliation failure does NOT publish this backend. It
+			// is the one moment where refusing is strictly better than
+			// serving with the gate closed: nothing is running yet, the
+			// configuration setup just wrote is durable, and
+			// FirstRunEngine.activate turns this error into
+			// restart_required, so the operator is told to restart into a
+			// process that will reconcile at startup rather than left
+			// with an engine that refuses every backup for reasons the
+			// setup flow cannot explain.
+			if wfErr := openWorkflowEngineOn(ctx, opened, platformAdapter); wfErr != nil {
+				if closeErr := closeFn(); closeErr != nil {
+					fmt.Fprintln(os.Stderr, cliecho.WebBinary+": closing the backup service that could not be activated:", closeErr)
+				}
+
+				return nil, nil, wfErr
+			}
+
 			return opened, closeFn, nil
 		}
 
@@ -742,6 +775,53 @@ func enableAlerts(backend *service.BackupService, platformAdapter capabilities.P
 	}
 }
 
+// openWorkflowEngineOn brings a freshly opened backend all the way up:
+// the build version, EPIC L's startup reconciliation, and the alerts
+// block (#813).
+//
+// # Why it is one function and not three lines in two places
+//
+// Because it was three lines in one place. A process that STARTS with a
+// configuration did all three; the first-run activation path did only
+// the alerts, so a fresh install served and scheduled for the whole life
+// of the process with no workflow lifecycle installed -- no hooks, and
+// no recovery check -- and every app-store install begins in exactly
+// that shape. Two call sites that must perform the same sequence and one
+// that quietly did not is the defect, so there is one sequence now and
+// both branches call it.
+//
+// It is here rather than in core/service for the reason
+// ReconcileWorkflows' own doc gives: the reconciliation belongs to the
+// process that is about to serve, before it serves, and core/service's
+// constructor is what every test in that package builds. What this
+// function adds is the ORDER -- version before reconciliation, because
+// the reconciliation is the first thing that can reach the host workflow
+// runner and the runner refuses a hello whose version is not its own.
+//
+// The reconciliation's own error is returned and the caller decides,
+// because the two callers genuinely differ: a configured start keeps
+// serving with core/service's run gate closed (reading and recovery are
+// how the gate gets lifted), and an activation refuses to publish the
+// backend at all, which the setup flow reports as restart_required.
+// Outstanding holds are NOT an error -- they are the normal answer after
+// an interrupted run -- so they are announced and nothing else.
+func openWorkflowEngineOn(ctx context.Context, backend *service.BackupService, platformAdapter capabilities.PlatformAdapter) error {
+	enableAlerts(backend, platformAdapter)
+	backend.SetBuildVersion(version)
+
+	report, err := backend.ReconcileWorkflows(ctx)
+	if err != nil {
+		return err
+	}
+
+	if len(report.Holds) > 0 {
+		fmt.Fprintf(os.Stderr, cliecho.WebBinary+": %d workflow cleanup(s) from an interrupted run are outstanding; the affected backup sets refuse to run until each is resumed or acknowledged (`%s workflow recovery show`)\n",
+			len(report.Holds), cliecho.Binary)
+	}
+
+	return nil
+}
+
 // cmdServeUI runs the UI-host container's whole job: serve the shared
 // static UI and reverse-proxy /api/v1 and /health requests to the
 // engine. Deliberately much simpler than cmdServe - no BackupService, no
@@ -755,6 +835,7 @@ func cmdServeUI(args []string) int {
 	profileName := fset.String("profile", envOrDefault("RUNTIME_PROFILE", defaultProfile), "runtime profile (generic or ugos)")
 	trustedGateway := fset.String("trusted-gateway", envOrDefault("TRUSTED_GATEWAY_CIDRS", ""),
 		"comma-separated CIDR ranges this LAN-facing container may believe a provider-native identity header from; required by a gateway profile")
+
 	uiRoot := fset.String("ui-root", envOrDefault("UI_ROOT", ""), "a directory of per-profile UI bundles; the bundle served is <ui-root>/<profile>")
 	uiDir := fset.String("ui-dir", envOrDefault("UI_DIR", ""), "one explicit UI bundle directory, which wins over --ui-root")
 	if err := fset.Parse(args); err != nil {

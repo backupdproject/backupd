@@ -107,14 +107,17 @@ import (
 // Kind is one alertable condition. Four of them are the ones §71's Work
 // Package 3.5 names; the fifth and sixth are EPIC K's, a repository whose
 // maintenance is failing (#786) and a repository that cannot take a
-// backup at all (#789).
+// backup at all (#789); the seventh, eighth and ninth are EPIC L's
+// workflow hooks (#813), where one run can go wrong in two unrelated
+// ways at once and a third way nobody watched.
 //
 // mechanism_test.go pins the whole list, and that pin is the point: a new
 // kind is how "one proactive mechanism for a few specific conditions"
 // quietly becomes the notification framework §71 rules out, so adding one
 // is a deliberate edit with a test to update rather than something that
 // drifts in. What justified the fifth and sixth is in MaintenanceFailed's
-// and RepositoryUnavailable's own docs.
+// and RepositoryUnavailable's own docs; what justified EPIC L's three is
+// in WorkflowFailed's.
 type Kind string
 
 const (
@@ -217,12 +220,96 @@ const (
 	// Detail an operator reads, and four kinds would quadruple this
 	// vocabulary to say what one sentence already says.
 	RepositoryUnavailable Kind = "REPOSITORY_UNAVAILABLE"
+
+	// WorkflowFailed is EPIC L's failed workflow run (#813): a run in
+	// which the BACKUP did not happen, either because a "before" hook
+	// refused it or because the backup itself failed.
+	//
+	// # Why EPIC L is three kinds and not one
+	//
+	// MaintenanceFailed's doc sets the bar for a new kind: it must need
+	// a human, it must be able to resolve, and it must name the right
+	// subject. All three of EPIC L's clear it. What forces three rather
+	// than one is that their REMEDIES are not the same work done with
+	// more or less urgency; they are different jobs, and folding them
+	// together loses one of them entirely.
+	//
+	// This kind says "you have no backup from tonight". The remedy is
+	// to read why the hook or the backup refused and re-run it, and
+	// nothing is left waiting on the source machine.
+	//
+	// WorkflowCleanupFailed says "a machine may still be quiesced", and
+	// it is true whether or not the backup succeeded. Folding it into
+	// this kind is exactly how the run that backed up perfectly and
+	// left a production database frozen in backup mode becomes silent:
+	// nothing "failed", so nothing would be reported. That is the
+	// failure mode this split exists to prevent.
+	//
+	// WorkflowRecoveryRequired says "nobody knows which of the two
+	// above is true", because this process never saw the run end. It
+	// also differs in a way neither of the others does: it is BLOCKING,
+	// so it is a notification about a backup set that will not try
+	// again until a person acts.
+	//
+	// Scope for all three is a model.BackupSetID, so they share the
+	// namespace StaleBackup and RepeatedFailure already use, and one
+	// backup set's workflow conditions de-duplicate against themselves
+	// rather than against another set's.
+	WorkflowFailed Kind = "WORKFLOW_FAILED"
+
+	// WorkflowCleanupFailed is EPIC L's cleanup failure (#813): a run
+	// whose "after" hooks did not succeed, so whatever a "before" hook
+	// did to the source machine may still be in force -- a database
+	// still quiesced, a snapshot still held, a filesystem still
+	// mounted.
+	//
+	// It is deliberately independent of whether the backup worked. The
+	// operator's question here is not "do I have a restore point", it
+	// is "is somebody else's production server still in the state my
+	// backup put it in", and the answer does not change because the
+	// dump completed. See WorkflowFailed's doc for the full argument.
+	//
+	// It resolves the way this package needs a condition to resolve: a
+	// later run of the same set whose cleanup succeeds stops producing
+	// it, so the next failure alerts again.
+	WorkflowCleanupFailed Kind = "WORKFLOW_CLEANUP_FAILED"
+
+	// WorkflowRecoveryRequired is EPIC L's blocked backup set (#813): a
+	// run this process never saw the end of, whose cleanup scope cannot
+	// be accounted for, and which is holding the backup set closed
+	// until an operator resumes the cleanup or acknowledges it.
+	//
+	// It is not WorkflowCleanupFailed with a different word. A failed
+	// cleanup is a finished run with a known verdict; this is the
+	// absence of a verdict, and the two remedies differ accordingly --
+	// one is "go and check that machine", the other is "run the
+	// outstanding cleanup, or tell the manager you have dealt with it,
+	// because until you do this set takes no further backups". Reading
+	// the second as the first would tell an operator to inspect a
+	// machine while quietly not mentioning that their backups have
+	// stopped.
+	//
+	// It is also the one condition here that is not about a single
+	// finished run: internal/workflowrun holds one per interrupted
+	// scope, and an operator acts per backup set, so
+	// WorkflowRecoveryConditions folds a set's holds into one.
+	WorkflowRecoveryRequired Kind = "WORKFLOW_RECOVERY_REQUIRED"
 )
 
 // Kinds is every Kind this package can produce: §71's four in the order
-// it lists them, then EPIC K's two. It exists so a test (and a reader)
-// can see the whole vocabulary in one place.
-var Kinds = []Kind{StaleBackup, RepeatedFailure, HostKeyChanged, CriticalStoragePressure, MaintenanceFailed, RepositoryUnavailable}
+// it lists them, then EPIC K's two, then EPIC L's three. It exists so a
+// test (and a reader) can see the whole vocabulary in one place.
+var Kinds = []Kind{
+	StaleBackup,
+	RepeatedFailure,
+	HostKeyChanged,
+	CriticalStoragePressure,
+	MaintenanceFailed,
+	RepositoryUnavailable,
+	WorkflowFailed,
+	WorkflowCleanupFailed,
+	WorkflowRecoveryRequired,
+}
 
 func (k Kind) String() string { return string(k) }
 
@@ -242,6 +329,12 @@ func (k Kind) title() string {
 		return "Repository maintenance is failing"
 	case RepositoryUnavailable:
 		return "Repository is unavailable"
+	case WorkflowFailed:
+		return "Backup did not run"
+	case WorkflowCleanupFailed:
+		return "Workflow cleanup failed"
+	case WorkflowRecoveryRequired:
+		return "Backup set is blocked pending recovery"
 	default:
 		return "Backup manager alert"
 	}

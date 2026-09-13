@@ -417,11 +417,21 @@ func mintToken() (string, error) {
 // space is left after the prefix and the token. See mintContainerIdentity
 // for why it is that way round.
 //
-// The ids are already held to ValidID by Verify, whose alphabet
-// (letters, digits, dot, dash, underscore) is a subset of what docker
-// accepts in a name.
+// The ids are already held to ValidID by Verify, and every id this
+// product mints is within its alphabet -- but that alphabet is NOT a
+// subset of docker's, which is what this function has to reconcile.
+// internal/workflow.StepID joins an order, a scope, a phase and a script
+// name with "~" (it is the one character the script-name rule reserves),
+// so every real step id carries three of them, and docker accepts only
+// [a-zA-Z0-9][a-zA-Z0-9_.-]* in a name: passing one through verbatim is
+// a `docker create` refused for a name the operator never chose, which
+// is every `.local.sh` hook failing. So the id portion is transliterated
+// here, at the one place a name is composed, rather than by narrowing
+// what a step may be called -- the step id is the journal's, the API's
+// and the CLI's spelling of that step, and docker's naming rule has no
+// business deciding it.
 func containerName(runID, stepID, token string) string {
-	ids := runID + "-" + stepID
+	ids := dockerNameSafe(runID + "-" + stepID)
 	budget := maxContainerNameLength - len(containerNamePrefix) - len("-") - len(token)
 	if len(ids) > budget {
 		// A hash of the WHOLE pair rather than a cut, so that the
@@ -437,6 +447,32 @@ func containerName(runID, stepID, token string) string {
 		ids = ids[:keep] + "-" + digest
 	}
 	return containerNamePrefix + ids + "-" + token
+}
+
+// dockerNameSafe transliterates an id into docker's name alphabet.
+//
+// Every byte docker will not accept becomes an underscore, which keeps
+// the result the same LENGTH -- the budget arithmetic above is about
+// bytes, and a substitution that changed the length would make that
+// bound wrong -- and keeps the name legible: an operator reading
+// `docker ps` sees backupd-hook-wfr_...-0000_global_before_10-quiesce...
+// rather than a hash. Uniqueness does not rest on this at all: the token
+// appended after it is eight bytes of randomness per launch, and the
+// labels carry the exact run and step ids untransliterated, which is
+// what a sweep and a termination select on.
+func dockerNameSafe(ids string) string {
+	safe := []byte(ids)
+	for i := 0; i < len(safe); i++ {
+		c := safe[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '_', c == '.', c == '-':
+		default:
+			safe[i] = '_'
+		}
+	}
+
+	return string(safe)
 }
 
 // runSpec is one container's inputs, gathered so run's signature does not

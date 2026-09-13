@@ -109,14 +109,37 @@ are this contract deleted:
 - run a **separate, version-matched, unprivileged process on the host** and let
   the engine ask it, over one Unix-domain socket, with a narrow vocabulary.
 
-backupd does the fourth. The engine gains exactly two bind mounts and nothing
+backupd does the fourth. The engine gains exactly three bind mounts and nothing
 else:
 
 ```text
 ${WORKFLOWS_DIR:-./workflows}:/workflows:ro    the hook scripts, READ-ONLY
 ${RUNTIME_DIR:-./run}:/data/run                the runner's socket directory,
                                                and nothing but the socket
+${RUNNER_TOKEN_FILE:-./secrets/workflow-runner.token}:/etc/backupd/workflow-runner.token:ro
+                                               the runner's credential, ONE
+                                               read-only FILE
 ```
+
+The credential mount is the third, and without it the other two buy nothing:
+the runner authenticates every connection, and the engine reads the token from
+the path `workflows.runner.token_file` names **as the engine sees it**. The
+installer writes that token into `<prefix>/secrets`, which nothing else here
+mounts, so the configuration a Docker Compose deployment documents is:
+
+```yaml
+workflows:
+  runner:
+    socket: /data/run/workflow-runner.sock
+    token_file: /etc/backupd/workflow-runner.token
+```
+
+It is a single **file**, mounted read-only, exactly like the SSH key and
+`known_hosts` and for the same two reasons: nothing in this container writes
+it, and the rest of the secrets area — the repository passphrase, every
+storage-medium credential — is not this container's business. It adds no
+capability, no group, no socket and no host-root path, and the rootfs stays
+read-only, so the prohibition list below is unaffected.
 
 The scripts are read-only because the engine reads each one once, hashes it and
 copies it into its own private spool under `/data/state`, and never opens the

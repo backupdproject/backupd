@@ -529,6 +529,44 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		r.Get("/backup-sets/{source}/{set}/snapshots/{run}", h.getBackupSetSnapshot)
 		r.Get("/backup-sets/{source}/{set}/holds", h.listBackupSetSnapshotHolds)
 		r.Get("/backup-sets/{source}/{set}/snapshot-retention", h.getBackupSetSnapshotRetention)
+		// EPIC L's per-set workflow surface (#813), registered ahead of
+		// the catch-all below in exactly the shape the snapshot reads
+		// above are: two named segments plus a static tail, which chi's
+		// trie matches before a wildcard sibling, and a third named
+		// segment for the environment variable's own name rather than a
+		// wildcard, so a name carrying a slash is answered by the router
+		// with a 404 instead of by a handler having to interpret one.
+		//
+		// The reads carry neither CSRF nor the gate. The writes carry
+		// CSRF and not the destructive gate, which is the tier PATCH
+		// /settings and PATCH /backup-sets/{source}/{set} sit in: each
+		// one rewrites a block of config.yaml and hot-reloads, and
+		// nothing reachable from any of them touches, moves or deletes a
+		// byte of backup data. The claims are recorded on
+		// destructiveGateExemptRoutes (router_test.go) with the rest.
+		//
+		// The environment is a sub-resource with three methods rather
+		// than a field on the workflow block, for issue #333's reason
+		// one noun over: "take this variable away" cannot be spelled as
+		// a value on a PATCH where an absent field already means "leave
+		// this alone". PUT rather than PATCH on the entry itself,
+		// because a variable is a name and ONE source and a merge would
+		// make changing a literal into a secret reference inexpressible.
+		//
+		// The validation read is separate from the configuration read
+		// beside it on purpose. It captures and hashes every hook script
+		// and opens a socket to the host runner and an SSH connection to
+		// the source, so folding it into the configuration read would
+		// mean a dashboard polling a workflow block was probing an
+		// operator's source host on a timer. It executes no hook body,
+		// which is what makes it safe to expose as a read at all (see
+		// handlers_workflowconfig.go).
+		r.Get("/backup-sets/{source}/{set}/workflow", h.getBackupSetWorkflow)
+		r.With(requireCSRF).Patch("/backup-sets/{source}/{set}/workflow", h.updateBackupSetWorkflow)
+		r.Get("/backup-sets/{source}/{set}/workflow/environment", h.listBackupSetWorkflowEnvironment)
+		r.With(requireCSRF).Put("/backup-sets/{source}/{set}/workflow/environment/{name}", h.setBackupSetWorkflowEnvironment)
+		r.With(requireCSRF).Delete("/backup-sets/{source}/{set}/workflow/environment/{name}", h.unsetBackupSetWorkflowEnvironment)
+		r.Get("/backup-sets/{source}/{set}/workflow/validation", h.getBackupSetWorkflowValidation)
 		r.Get("/backup-sets/*", h.getBackupSet)
 
 		// Issue #211: the backups this deployment actually holds, and the
@@ -765,6 +803,73 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		// "/backup-sets/*" catch-all above.
 		r.Get("/settings", h.getSettings)
 		r.With(requireCSRF).Patch("/settings", h.updateSettings)
+
+		// EPIC L's deployment-wide workflow configuration (#813), as a
+		// sub-resource of /settings rather than a block on the shape
+		// above. Two reasons, and the first is structural: the
+		// environment is a COLLECTION with its own identities, and a
+		// PATCH cannot express "remove this entry" where an absent field
+		// already means "leave this alone". Once the environment is a
+		// sub-resource the rest of the block belongs beside it, so a
+		// client reads one path to find out how this deployment runs
+		// hooks instead of filtering a settings response. The second is
+		// cost: nothing here is wanted by the settings page's own poll.
+		//
+		// Same tier as PATCH /settings immediately above, on the same
+		// argument: these writes edit configuration and hot-reload, and
+		// no branch of any of them reaches a backup datum. The one worth
+		// naming out loud is that clearing a stage directory DISABLES
+		// hooks an operator may believe are running -- which is a
+		// configuration change with a visible answer in the response,
+		// the same class as disabling a backup set, and not a deletion.
+		//
+		// Static paths, so the "/backup-sets/*" catch-all above cannot
+		// shadow them, and the variable's name is a named segment rather
+		// than a wildcard for the reason the per-set routes' is.
+		r.Get("/settings/workflow", h.getWorkflowSettings)
+		r.With(requireCSRF).Patch("/settings/workflow", h.updateWorkflowSettings)
+		r.Get("/settings/workflow/environment", h.listWorkflowEnvironment)
+		r.With(requireCSRF).Put("/settings/workflow/environment/{name}", h.setWorkflowEnvironment)
+		r.With(requireCSRF).Delete("/settings/workflow/environment/{name}", h.unsetWorkflowEnvironment)
+
+		// EPIC L's workflow runs and recovery (#813).
+		//
+		// Top-level rather than under /backup-sets, because of the reads
+		// an operator actually makes: a run that is holding a set is
+		// found by asking what is stuck in this DEPLOYMENT, and a run
+		// outlives the configuration that produced it, so a set whose
+		// configuration has been removed still has runs worth seeing.
+		// Hanging them off a set would make both unspellable. The
+		// per-set question is the `backup_set` filter on the list.
+		//
+		// The four reads are read-only (§50). The log read is the one
+		// with a protocol rather than just a path: it is a cursor poll,
+		// for the transport reason GET /activity/live is, and that shape
+		// is also what makes its authorization airtight -- every page,
+		// including every resume after a dropped connection, is one
+		// ordinary request through this group's authMiddleware, so there
+		// is no long-lived subscription holding an authorization
+		// decision taken minutes ago. handlers_workflowruns.go carries
+		// the full argument and the test that drives both halves of it.
+		//
+		// The two recovery writes carry CSRF and not the destructive
+		// gate. The resume is the one that deserves the argument, since
+		// it EXECUTES operator-written code: what it runs comes out of
+		// the run's own spool and is re-verified against the sha256
+		// recorded when that run was planned, it is the cleanup that is
+		// already owed to a source machine that may be sitting quiesced,
+		// and it deletes no artifact, snapshot or remote object. Gating
+		// it would mean an operator who has not turned destructive
+		// operations on cannot unwind a hook that stopped their
+		// database. Both claims are on destructiveGateExemptRoutes
+		// (router_test.go) and in the handlers' own docs.
+		r.Get("/workflow-runs", h.listWorkflowRuns)
+		r.Get("/workflow-runs/{run}", h.getWorkflowRun)
+		r.Get("/workflow-runs/{run}/steps", h.listWorkflowRunSteps)
+		r.Get("/workflow-runs/{run}/steps/{step}/logs", h.getWorkflowStepLogs)
+		r.Get("/workflow-recovery", h.listWorkflowRecovery)
+		r.With(requireCSRF).Post("/workflow-recovery/{run}/resume-cleanup", h.resumeWorkflowCleanup)
+		r.With(requireCSRF).Post("/workflow-recovery/{run}/acknowledge", h.acknowledgeWorkflowRecovery)
 	})
 
 	return r

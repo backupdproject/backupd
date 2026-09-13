@@ -144,6 +144,20 @@ const (
 	// ActionCycle brackets one discovery-through-retention processing
 	// cycle, which is CycleStart and CycleEnd's pair.
 	ActionCycle = "cycle"
+
+	// ActionWorkflowRun brackets one EPIC L workflow run, which is
+	// WorkflowRunStart and WorkflowRunEnd's pair.
+	ActionWorkflowRun = "workflow_run"
+
+	// ActionWorkflowStep brackets one hook script inside such a run,
+	// which is WorkflowStepStart and WorkflowStepEnd's pair.
+	//
+	// A step is bracketed in its own right, nested inside the run's
+	// bracket, because a step is the thing that hangs: the run's pair
+	// says a workflow is in flight and this pair says which hook it is
+	// in flight ON, which is the fact an operator needs from a backup
+	// window that has not closed.
+	ActionWorkflowStep = "workflow_step"
 )
 
 // The three attribute keys the record's own marks are written into the

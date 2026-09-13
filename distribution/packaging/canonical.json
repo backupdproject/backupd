@@ -196,7 +196,8 @@
   ],
   "readOnlyContainerPaths": [
     "/etc/backupd/id_ed25519",
-    "/etc/backupd/known_hosts"
+    "/etc/backupd/known_hosts",
+    "/etc/backupd/workflow-runner.token"
   ],
   "writableContainerPaths": [
     "/data/state",

@@ -224,6 +224,16 @@ type Service struct {
 	// this unset is always safe, just silent.
 	Logger *obs.Logger
 
+	// Workflow wraps one backup set's pass in EPIC L's five-stage
+	// lifecycle (workflow.go). Nil is every deployment that configures
+	// no hook scripts, and every use of this package written before EPIC
+	// L: the pass runs exactly as it always has.
+	//
+	// It is set by core/service, which is the layer that has the journal,
+	// the host-runner client, the remote-exec dialer and the
+	// deployment-wide lock table the real lifecycle needs.
+	Workflow WorkflowLifecycle
+
 	// Now is injectable so a test can control every clock reading this
 	// package makes (cycle timestamps, retention's "as of" instant, health's
 	// "as of" instant). Nil means time.Now.

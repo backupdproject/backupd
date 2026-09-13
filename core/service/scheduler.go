@@ -251,6 +251,20 @@ func (b *BackupService) sleepUntilDue(ctx context.Context) bool {
 // operator watching logs needs to see that this happened, not just that
 // the scheduler loop kept ticking as if nothing had.
 func (b *BackupService) runScheduledCycle(ctx context.Context) {
+	// Fail closed on EPIC L's reconciliation (#813), and before the
+	// single-flight lock is taken rather than after it: a tick is the
+	// path that runs unattended, so it is the one that would quietly
+	// back up over a machine a previous run left quiesced if this
+	// process never worked out which sets are blocked. There is no
+	// operation row to fail here, so the log line is the record, and the
+	// next tick tries again -- a later successful reconciliation opens
+	// the gate without a restart.
+	if err := b.WorkflowReconcileGate(); err != nil {
+		b.logger.Error(ctx, "scheduled-cycle-workflow-gate", err)
+
+		return
+	}
+
 	if !b.runOnce.TryLock() {
 		b.logger.Event(ctx, obs.LevelInfo, "scheduled_cycle_skipped",
 			"skipped scheduled run_cycle: an API-submitted operation is already in progress")
@@ -298,11 +312,18 @@ func (b *BackupService) runScheduledCycle(ctx context.Context) {
 	// interval has elapsed on a cycle marked this way, and every enabled
 	// set on one that is not. An operator-submitted run (executeRunCycle,
 	// operations.go) deliberately carries no such mark.
+	// withWorkflowRunOptions marks the pass as SCHEDULED, which is what
+	// makes #813's "never applied to scheduled runs" structural rather
+	// than a rule somebody has to remember: the lifecycle refuses a
+	// bypass on a run carrying this mark, so there is no combination of
+	// configuration and request that could produce one here.
 	runCycle(b.state.Load().inner,
-		app.WithScheduledCycle(
-			app.WithBackupSetHolds(
-				app.WithProgressObserver(ctx, progressFanout{b.cycleWatch, b.activity}),
-				b.holds)))
+		withWorkflowRunOptions(
+			app.WithScheduledCycle(
+				app.WithBackupSetHolds(
+					app.WithProgressObserver(ctx, progressFanout{b.cycleWatch, b.activity}),
+					b.holds)),
+			workflowRunOptions{Scheduled: true}))
 }
 
 // runAlertTicks repeats one out-of-cycle alerting pass at interval until
