@@ -170,12 +170,35 @@ const (
 	// own: the two share one call and neither has a timing that is only
 	// about itself.
 	StepList Step = "list"
+
+	// StepWriteProbe is whether these credentials may WRITE and REMOVE
+	// under the configured remote path, proven by creating a uniquely
+	// named probe file there and deleting it again (issue #852).
+	//
+	// It is the only step here that changes anything on the far side,
+	// and it is the only one whose answer is not a verdict. FR-16's
+	// delete-from-source is the one thing this product does to somebody
+	// else's machine, and a read-only source account is an ordinary,
+	// supported and often recommended posture rather than a
+	// misconfiguration. So both answers PASS: what the answer decides is
+	// Report.Writable, which is what the create/edit gate refuses a
+	// delete-enabling write on and what the UI disables its
+	// delete-from-source control on. A step that FAILED here would
+	// refuse a source that works perfectly for everything this manager
+	// is being asked to do with it.
+	//
+	// It runs last, after the path has been listed, because a write is
+	// the one thing that must not be attempted against a path this check
+	// has not established: a probe file created under a mistyped path is
+	// litter on a directory nobody meant to name.
+	StepWriteProbe Step = "write_probe"
 )
 
 // Steps is every step, in the order Run performs them.
 var Steps = []Step{
 	StepCredentials, StepResolve, StepConnect,
 	StepHostKey, StepAuthenticate, StepList,
+	StepWriteProbe,
 }
 
 // Outcome is what one step produced.
@@ -260,6 +283,26 @@ type Report struct {
 
 	// Checks is one entry per Step, in Steps order.
 	Checks []Check
+
+	// Writable is issue #852's answer: true only when StepWriteProbe
+	// completed a real write-and-remove round trip under the configured
+	// remote path.
+	//
+	// It is a field rather than something read off the write_probe
+	// check's outcome, because that step passes either way (see
+	// StepWriteProbe) and because every consumer of this answer is
+	// making a DECISION with it rather than rendering it: the service
+	// refuses a create or an edit that enables delete-from-source
+	// against a source proven non-writable, and the UI disables that
+	// control. A surface that had to parse a sentence to find this out
+	// would be one release away from getting it wrong in the permissive
+	// direction.
+	//
+	// False is therefore the honest default in every case where nothing
+	// was proven: a probe that was skipped, a check that stopped early,
+	// and a local source that has no write probe at all. Nothing may
+	// enable a delete on an absence of evidence.
+	Writable bool
 }
 
 // StoppedAt returns the first failed check, and whether there was one. A
@@ -349,6 +392,21 @@ type Deps struct {
 	// both StepAuthenticate and StepList, split by transport.CategoryOf.
 	List func(context.Context) (entries int, err error)
 
+	// ProbeWrite proves the credentials may write AND remove under the
+	// configured remote path, by doing it: the production wiring is
+	// transport.SourceWriteProbe over the SAME transport.Source the List
+	// above uses, so what is proven is the access a real
+	// delete-from-source would need rather than something adjacent to it
+	// (issue #852).
+	//
+	// Nil means this deployment cannot ask the question at all — a
+	// transport that does not implement the capability, or a source
+	// whose type has no write probe — and StepWriteProbe is then
+	// SKIPPED with that reason and Report.Writable stays false. That is
+	// the conservative direction on purpose: an absent probe must read
+	// as "not proven writable", never as "writable".
+	ProbeWrite func(context.Context) error
+
 	// Observe, when set, is called once per failed step with the
 	// underlying cause, so an operator's log keeps the diagnostic the
 	// Report deliberately does not carry. Nil discards it. This mirrors
@@ -390,6 +448,12 @@ const maxIdentificationBytes = 512
 type builder struct {
 	target Target
 	byStep map[Step]Check
+
+	// writable is set by the write-probe step alone, and only by a round
+	// trip that completed. Everything else leaves it false, which is
+	// what makes "nothing was proven" and "proven not writable" the same
+	// answer to the one question anybody asks it (see Report.Writable).
+	writable bool
 }
 
 func newBuilder(t Target) *builder {
@@ -446,7 +510,7 @@ func (b *builder) skipRest(from Step, reason string) {
 }
 
 func (b *builder) report() Report {
-	out := Report{BackupSetID: b.target.BackupSetID, OK: true}
+	out := Report{BackupSetID: b.target.BackupSetID, OK: true, Writable: b.writable}
 	for _, s := range Steps {
 		c, ok := b.byStep[s]
 		if !ok {
@@ -461,7 +525,7 @@ func (b *builder) report() Report {
 }
 
 // Run performs one connection test against target and reports what it
-// found, one Check per Step, always in Steps order and always all six.
+// found, one Check per Step, always in Steps order and always all of them.
 //
 // It never returns an error. Every way this can go wrong is a fact about
 // the operator's configuration or about the far side, which is an
@@ -569,6 +633,7 @@ func Run(ctx context.Context, target Target, deps Deps) Report {
 	if listErr == nil {
 		b.pass(StepAuthenticate, "the server accepted publickey for "+target.User)
 		b.pass(StepList, remotePathOf(target)+" listed, "+plural(entries, "entry", "entries"))
+		b.writeProbe(ctx, deps)
 		return b.report()
 	}
 
@@ -612,6 +677,89 @@ func Run(ctx context.Context, target Target, deps Deps) Report {
 		b.fail(StepList, CategoryRemotePath, listProblem(category, target, remotePathOf(target)))
 	}
 	return b.report()
+}
+
+// writeProbe is issue #852's step: it asks the transport to write a probe
+// file under the configured remote path and remove it again, and turns
+// whatever came back into the one answer everything downstream decides on.
+//
+// # Why nothing here fails
+//
+// A source these credentials cannot write to is a source this manager can
+// still back up perfectly. Every other step here is asked because a `no`
+// means no backup; this one is asked because a `no` means no DELETE, and
+// FR-16's delete is an option an operator turns on rather than the
+// product's purpose. So the step records what it found and leaves the
+// verdict alone, and Report.Writable is where the consequence lives.
+//
+// # Why an unclassified refusal is still read as read-only
+//
+// The three shapes are told apart for the SENTENCE (a refusal on
+// permissions, a probe left behind, anything else), and they all produce
+// the same Writable: false. That is the fail-safe direction and it is the
+// only defensible one here: the decision this answer feeds is whether
+// backupd may destroy a producer's file, and "I could not prove I am
+// allowed to" has to be worth exactly as much as "I am not allowed to".
+//
+// The cause goes to Observe, never into the Detail. The underlying error
+// on this path is the one most likely to carry a remote path, a home
+// directory or a key file's location, which is FR-33's whole concern
+// (issue #852's fourth requirement), so every sentence below is built out
+// of this package's own words and the one exported constant an operator
+// needs to find a leftover probe.
+func (b *builder) writeProbe(ctx context.Context, deps Deps) {
+	check, writable := WriteProbeRow(ctx, b.target, deps)
+	b.byStep[StepWriteProbe] = check
+	b.writable = writable
+}
+
+// WriteProbeRow runs the write probe and returns the row it produces plus
+// the one answer read off it, and it is exported for the single caller
+// that has to compose a report by hand.
+//
+// That caller is core/service's local-source check: a backup set whose
+// source is a local path has no host, so five of the steps above are
+// skipped rather than run and the report is built row by row instead of by
+// walking Run. A local path can still be read-only (a read-only mount, a
+// directory this daemon's account does not own), so that check has to be
+// able to ask this question too — and asking it through this function is
+// what keeps ONE set of sentences for it. A second copy over there is
+// exactly how the two modes of this check ended up with two different
+// breakdowns before #596.
+func WriteProbeRow(ctx context.Context, target Target, deps Deps) (check Check, writable bool) {
+	row := func(detail string) Check {
+		return Check{Step: StepWriteProbe, Outcome: Passed, Detail: detail}
+	}
+	if deps.ProbeWrite == nil {
+		return Check{
+			Step: StepWriteProbe, Outcome: Skipped,
+			Detail: "this source has no write probe, so nothing was written and delete-from-source stays unavailable",
+		}, false
+	}
+	err := deps.ProbeWrite(ctx)
+	if err == nil {
+		return row("a probe file was created under " + remotePathOf(target) + " and removed again, so these credentials may write and delete there and delete-from-source can be enabled"), true
+	}
+	deps.observe(StepWriteProbe, err)
+	return row(writeProbeRefusedDetail(target, err)), false
+}
+
+// writeProbeRefusedDetail says which of the three refusals happened, in
+// this package's own words.
+//
+// The leftover case is the one that names something an operator has to go
+// and do, so it names the prefix the object can be found under (a constant
+// of this product's, never a resolved path) rather than leaving them to
+// discover a stray file later and wonder what wrote it.
+func writeProbeRefusedDetail(t Target, err error) string {
+	path := remotePathOf(t)
+	if errors.Is(err, transport.ErrProbeNotRemoved) {
+		return "a probe file was created under " + path + " and could not be removed again, so these credentials cannot delete there: this source is treated as read-only. One file named with the prefix " + transport.ProbeObjectPrefix + " may have been left behind and is safe to delete"
+	}
+	if category, _ := transport.CategoryOf(err); category == transport.PermissionDenied {
+		return "these credentials may read " + path + " but not write to it, so this source is read-only: backupd will never delete from it, and delete-from-source cannot be enabled until the account is granted write permission there"
+	}
+	return "write permission under " + path + " could not be proven, so this source is treated as read-only and backupd will never delete from it"
 }
 
 // exchangeHostKey runs the SSH key exchange over an already-open socket

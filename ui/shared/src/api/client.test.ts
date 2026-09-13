@@ -886,17 +886,23 @@ describe("httpApi issue #146 (B2.7) endpoints", () => {
     // failures, or leaving the key off so a caller has to check for
     // undefined before every read, are both worse answers than an empty
     // list.
-    expect(result).toEqual({ ok: true, checks: [] });
+    // `writable: false` for the same reason `checks` is []: a response
+    // with no such field is an engine that predates issue #852, and
+    // "nobody proved this source can be written to" has to read as
+    // false rather than as undefined, because the control on the other
+    // end of it deletes a producer's files.
+    expect(result).toEqual({ ok: true, writable: false, checks: [] });
   });
 
   // Both modes of the route go through ONE mapper, so this asserts the
   // shape once and then asserts the two entry points agree. Two mappers
   // is what the two branches had, and it is what made a caller remember
   // which request it had sent to know which array it was holding.
-  it("maps the six checks the same way on both modes, and never invents a duration", async () => {
+  it("maps every check the same way on both modes, and never invents a duration", async () => {
     const wire = {
       ok: false,
       message: "the host key did not match",
+      writable: false,
       checks: [
         { step: "credentials", outcome: "passed", detail: "the key is usable", duration_ms: 3 },
         { step: "resolve", outcome: "passed", detail: "resolves", duration_ms: 12 },
@@ -909,6 +915,7 @@ describe("httpApi issue #146 (B2.7) endpoints", () => {
     const expected = {
       ok: false,
       message: "the host key did not match",
+      writable: false,
       checks: [
         { step: "credentials", outcome: "passed", detail: "the key is usable", durationMs: 3 },
         { step: "resolve", outcome: "passed", detail: "resolves", durationMs: 12 },

@@ -451,6 +451,17 @@ func (b *BackupService) UpdateBackupSet(ctx context.Context, id string, req Upda
 			// resultFromReport.
 			return BackupSet{}, fmt.Errorf("%w: %s", ErrConnectionNotProven, result.Message)
 		}
+		// Issue #852, off the same check: an edit that repoints this set
+		// at a source these credentials cannot write to, while the set
+		// still has delete-from-source enabled, is refused rather than
+		// written. target rather than the local `edited` copy on
+		// purpose: it points into the cfg that cfg.Validate has just
+		// resolved, so ReadOnly here is the answer this set would
+		// actually run with (its own override, or its source's default),
+		// not the unresolved field the copy was made with.
+		if err := refuseDeleteOnUnwritableSource(result, target.ReadOnly); err != nil {
+			return BackupSet{}, err
+		}
 	}
 
 	// Everything fallible about validator resolution happens before the

@@ -133,6 +133,17 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
   // timer next fires.
   const activityFeed = useActivityFeed(setId);
   const [testing, setTesting] = useState(false);
+  // Issue #852: what the last connection test said about WRITING to this
+  // source, or null when no test has answered in this session.
+  //
+  // Three states rather than a boolean, because "not proven yet" is not
+  // "read-only": a page that disabled the delete-from-source control
+  // before anything had been checked would hide a control an operator
+  // may well be entitled to use. So null leaves it as it was, false
+  // disables it, and a refusal from the server sets false too (see
+  // toggleReadOnly), which is how an operator who never pressed Test
+  // connection still gets the explanation rather than a silent no-op.
+  const [sourceWritable, setSourceWritable] = useState<boolean | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   // Issue #592. The SSH surface used to be two boxes in the edit list
@@ -321,7 +332,11 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
   const runConnectionTest = async () => {
     setTesting(true);
     try {
-      await api.testConnection(s.id);
+      const result = await api.testConnection(s.id);
+      // The steps are not rendered here (see above); this one field is
+      // KEPT, because it is not a step, it is what the set may be
+      // configured to do next (issue #852).
+      setSourceWritable(result.writable);
       activityFeed.refresh();
     } catch (e) {
       const failure = describeFailure(e, "Backupd could not test this backup set's connection.");
@@ -337,6 +352,42 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
       setTesting(false);
     }
   };
+
+  /**
+   * Turns this set's read-only declaration on or off, and keeps what the
+   * server says about it (issue #852).
+   *
+   * The refusal it can now get is ErrSourceNotWritable, answered as 409
+   * BACKUP_SET_SOURCE_NOT_WRITABLE when withdrawing read-only against a
+   * source these credentials cannot write to. It is recorded on this
+   * set's terminal like every other browser-side outcome AND remembered,
+   * so the control it came from disables itself with the explanation
+   * instead of inviting the same refusal again.
+   */
+  const toggleReadOnly = async () => {
+    try {
+      await api.setReadOnly(s.source, s.set, !s.readOnly);
+      set.reload();
+    } catch (e) {
+      const code = apiErrorOf(e)?.code ?? null;
+      if (code === "BACKUP_SET_SOURCE_NOT_WRITABLE") setSourceWritable(false);
+      const failure = describeFailure(e, "Backupd could not change this backup set's read-only status.");
+      emitBrowserNotice({
+        outcome: code === null ? "unreachable" : "refused",
+        code: code ?? "unknown",
+        message: failure.message,
+        ...(failure.remediation ? { remediation: failure.remediation } : {}),
+        ...(failure.correlationId ? { correlationId: failure.correlationId } : {}),
+        backupSetIds: [s.id]
+      });
+    }
+  };
+
+  // Issue #852: only the direction that ENABLES deleting from the source
+  // is blocked, and only on proof. A set that is not read-only is
+  // already deleting from its source, and taking that control away would
+  // strand it in a posture it could not leave.
+  const deleteFromSourceBlocked = s.readOnly && sourceWritable === false;
 
   // visibleEditFields, not EDIT_FIELDS: a conditional box that is not on
   // screen (the stable-size window, when another completion method is
@@ -1120,15 +1171,34 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                   (core/service.SetBackupSetReadOnly's own doc) — so it
                   sits in the caution tier beside Disable, not the
                   destructive one below. */}
-              <InfoTooltip id="sets.detail.toggle-read-only" block>
+              {/* Issue #852: withdrawing read-only is the direction that
+                  asks this deployment to DELETE from the source, so it
+                  is unavailable when the connection test has proven
+                  these credentials cannot write there. Disabled with the
+                  reason in a tooltip, rather than left pressable to be
+                  refused by the server: a control that answers 409 every
+                  time is a control that reads as broken. Declaring
+                  read-only is never blocked. */}
+              <InfoTooltip
+                id={deleteFromSourceBlocked ? "source.read-only-credentials" : "sets.detail.toggle-read-only"}
+                block
+              >
                 <button
                   className="btn btn--caution"
-                  disabled={readOnly}
-                  onClick={() => api.setReadOnly(s.source, s.set, !s.readOnly).then(set.reload)}
+                  disabled={readOnly || deleteFromSourceBlocked}
+                  aria-describedby={deleteFromSourceBlocked ? "set-read-only-forced" : undefined}
+                  onClick={() => void toggleReadOnly()}
                 >
                   {s.readOnly ? "Allow remote deletion again" : "Declare source read-only"}
                 </button>
               </InfoTooltip>
+              {deleteFromSourceBlocked ? (
+                <p id="set-read-only-forced" style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+                  These SSH credentials are read-only on the source, so Backupd cannot delete
+                  there. Grant the account write permission on the source to enable deleting
+                  the original after backup.
+                </p>
+              ) : null}
               <InfoTooltip id="sets.detail.apply-retention" block>
                 <button className="btn btn--destructive" disabled={readOnly} onClick={() => setPreviewOpen(true)}>
                   Apply retention now…

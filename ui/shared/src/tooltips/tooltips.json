@@ -1495,6 +1495,10 @@
     "label": "Connection test result",
     "html": "Every step of the test with its own verdict, in the order they ran, so a mistyped hostname and an unauthorised key are told apart rather than collapsed into one failure. A step after a failing one was never attempted, which is not a quiet pass."
   },
+  "source.read-only-credentials": {
+    "label": "Source is read-only",
+    "html": "The connection test wrote a temporary file under this source's remote path and the account was <strong>refused</strong>, so these SSH credentials can read this source but not write to it. Backupd therefore cannot delete anything there, and <strong>deleting the original after backup cannot be enabled</strong> for this set: every remote original is kept. Grant the account write permission on the source and test the connection again to enable source deletion."
+  },
   "wizard.set.remote-handling": {
     "label": "Remote source handling",
     "html": "Whether Backupd deletes the original artifact on the source once its own copy has been transferred, verified, committed and recorded as safe. A source protected from deletion keeps every remote original for good."

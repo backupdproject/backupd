@@ -246,6 +246,7 @@ func TestTestConnection_UnreachableHostFailsAtConnectAndAttemptsNothingElse(t *t
 		"host_key=skipped",
 		"authenticate=skipped",
 		"list=skipped",
+		"write_probe=skipped",
 	)
 	if tr.called {
 		t.Error("the transport was opened after the connect stage had already failed")
@@ -290,6 +291,7 @@ func TestTestConnection_HostKeyMismatchStopsBeforeAuthentication(t *testing.T) {
 		"host_key=failed",
 		"authenticate=skipped",
 		"list=skipped",
+		"write_probe=skipped",
 	)
 	if tr.called {
 		t.Error("an sftp session was opened against a host whose key did not match what this set trusts")
@@ -340,6 +342,7 @@ func TestTestConnection_SeparatesAuthenticationFromListing(t *testing.T) {
 			"host_key=passed",
 			"authenticate=failed",
 			"list=skipped",
+			"write_probe=skipped",
 		)
 	})
 
@@ -356,6 +359,7 @@ func TestTestConnection_SeparatesAuthenticationFromListing(t *testing.T) {
 			"host_key=passed",
 			"authenticate=passed",
 			"list=failed",
+			"write_probe=skipped",
 		)
 		if res.OK {
 			t.Error("a check whose listing failed reported OK")
@@ -375,9 +379,18 @@ func TestTestConnection_SeparatesAuthenticationFromListing(t *testing.T) {
 			"host_key=passed",
 			"authenticate=passed",
 			"list=passed",
+			"write_probe=skipped",
 		)
 		if !res.OK {
-			t.Errorf("all six steps passed and OK is false, message %q", res.Message)
+			t.Errorf("every step that could run passed and OK is false, message %q", res.Message)
+		}
+		// The staged transport here implements transport.Transport and
+		// not transport.SourceWriteProbe, which is the one case issue
+		// #852's fail-safe rule is about: nothing was written, so
+		// nothing was proven, so Writable stays false and no surface may
+		// offer delete-from-source off the back of this result.
+		if res.Writable {
+			t.Error("Writable is true off a write probe that never ran")
 		}
 		if res.Message != "" {
 			t.Errorf("Message = %q on a passing check, want empty: #211's callers read OK and only render Message when OK is false", res.Message)

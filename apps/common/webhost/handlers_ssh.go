@@ -316,6 +316,22 @@ type testConnectionResponse struct {
 	// and not one per mode, so a caller never has to remember which
 	// request it sent to know which array it is reading.
 	Checks []connectionCheckResponse `json:"checks,omitempty"`
+
+	// Writable is issue #852's answer: whether the write_probe step
+	// completed a real write-and-remove round trip under the remote
+	// path. It is what the wizard and the per-set form enable or disable
+	// their "delete from source after backup" control on.
+	//
+	// Always sent, never omitted, and that is the point of leaving
+	// `omitempty` off a false boolean here: absent and false would be
+	// indistinguishable to a client, and the two mean opposite things
+	// for a control that destroys a producer's files. A client talking
+	// to an older server sees no field, reads the zero value, and
+	// disables the control, which is the safe direction.
+	//
+	// Independent of `ok`: a read-only source is a perfectly OK
+	// connection that simply cannot be deleted from.
+	Writable bool `json:"writable"`
 }
 
 // connectionCheckResponse is one step of a connection test on the wire.
@@ -411,7 +427,7 @@ func (h *handlers) testConnection(w http.ResponseWriter, r *http.Request) {
 	// the skipped ones. Dropping a skipped step, or filtering to the
 	// interesting ones, is how a client ends up drawing five steps and
 	// letting a reader assume the sixth passed.
-	out := testConnectionResponse{OK: result.OK, Message: result.Message}
+	out := testConnectionResponse{OK: result.OK, Message: result.Message, Writable: result.Writable}
 	for _, c := range result.Checks {
 		out.Checks = append(out.Checks, connectionCheckResponse{
 			Step: c.Step, Outcome: c.Outcome, Category: c.Category, Detail: c.Detail,

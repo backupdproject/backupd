@@ -672,6 +672,27 @@ export interface ConnectionTestOutcome {
    * here depends on which request was sent.
    */
   checks: ConnectionCheck[];
+
+  /**
+   * Issue #852: whether these credentials may WRITE to the source,
+   * proven by the `write_probe` step creating a file under the remote
+   * path and removing it again.
+   *
+   * It is what the wizard and the per-set form enable or disable their
+   * "delete from source after backup" control on, which is why it is
+   * read as a field and never derived from the write_probe row's
+   * sentence.
+   *
+   * Independent of `ok`: a read-only source is a perfectly fine
+   * connection that simply cannot be deleted from, and a surface that
+   * treated this as a failure would be refusing a supported (and often
+   * recommended) posture.
+   *
+   * False against an engine that predates the field, which is the safe
+   * direction: the control stays disabled rather than offering a
+   * deletion nobody proved was possible.
+   */
+  writable: boolean;
 }
 
 /**

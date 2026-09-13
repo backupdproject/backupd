@@ -60,6 +60,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 
@@ -82,6 +83,64 @@ import (
 // the message names the step that failed so the operator has something
 // to fix rather than only something to override.
 var ErrConnectionNotProven = errors.New("service: the connection this backup set declares could not be proven")
+
+// ErrSourceNotWritable is a write that would enable FR-16's
+// delete-from-source on a source the connection check has just PROVEN
+// this deployment cannot write to (issue #852).
+//
+// # Refused rather than silently coerced
+//
+// The issue allows either, and this is the choice, made once here so
+// every path makes it the same way: the request is refused, with a
+// message saying what to do about it. Coercing would mean answering 200
+// to "back this up and delete the originals" having quietly decided not
+// to delete the originals, and the whole point of this feature is that an
+// operator who believes their source is being emptied and is wrong finds
+// out at the moment they ask rather than from a disk that fills up. A
+// refusal is also the only one of the two a CLI can render honestly: a
+// coercion is a notice somebody has to have designed a place for in
+// every surface, and a surface that drops it has silently changed what
+// the operator asked for.
+//
+// The way past it is to ask for read-only (`read_only: true`, the
+// wizard's control cleared, `backupd backup-set read-only <set> on`),
+// which is not an override of this refusal but the honest description of
+// what that source can do. The other way past it is on the source
+// machine: grant the account write permission there and the next check
+// proves it.
+//
+// Its own sentinel rather than ErrInvalidRequest, for
+// ErrConnectionNotProven's reason: the request is not malformed. It is a
+// well-formed request whose one problem is a fact about somebody else's
+// machine, and a client that read it as INVALID_REQUEST would tell an
+// operator their form was wrong when their form was fine and their
+// account was read-only.
+var ErrSourceNotWritable = errors.New("service: this source's credentials cannot write to it, so backupd cannot delete from it")
+
+// refuseDeleteOnUnwritableSource is the one place issue #852's rule is
+// applied, and every write that can turn delete-from-source on goes
+// through it: the create path, the edit path and the read-only verb.
+//
+// readOnly is what the resulting backup set's resolved
+// config.BackupSet.ReadOnly would be, so a request asking for read-only
+// never has to prove anything: a set that never deletes needs no delete
+// permission, which is exactly why read-only is the way past the
+// refusal.
+//
+// A check that did not RUN proves nothing and is not evidence of
+// anything: SkipConnectionCheck (and the first-run surface, which has no
+// transport yet) reach the same writes, and a caller that skipped the
+// check is a caller who took responsibility for the connection. So the
+// gate is "the check ran and said no", never "the check did not say
+// yes" — the alternative would refuse `--no-verify` creates on hosts
+// that are perfectly writable and turn an escape hatch into a dead end.
+func refuseDeleteOnUnwritableSource(result ConnectionTestResult, readOnly bool) error {
+	if readOnly || result.Writable || !result.OK {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrSourceNotWritable,
+		"the connection test proved these credentials can read this source but not write to it, so deleting from the source after backup cannot be enabled for it. Save this backup set as read-only, or grant the account write permission on the source and check the connection again")
+}
 
 // candidateConnectionFor is the check a create runs, built out of the
 // create request itself.

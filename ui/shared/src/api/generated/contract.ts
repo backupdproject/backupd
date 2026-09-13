@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "05d60cf9e86ac71f05897351b16a6ca16d95b00003931c7f1dcedd1faaf3ba09";
+export const CONTRACT_SHA256 = "a413edcc4fd3be66fa75cf4ed880541fa7768ec62ad719241d3e13a551f8bd36";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -66,6 +66,7 @@ export const WIRE_ERROR_CODES = [
   "STORAGE_CREDENTIAL_NOT_FOUND",
   "SSH_KEY_CANDIDATE_NOT_FOUND",
   "BACKUP_SET_CONNECTION_NOT_PROVEN",
+  "BACKUP_SET_SOURCE_NOT_WRITABLE",
   "MEDIUM_CONNECTION_NOT_PROVEN",
 ] as const;
 
@@ -145,6 +146,7 @@ export const API_ERROR_CODES = [
   "STORAGE_CREDENTIAL_NOT_FOUND",
   "SSH_KEY_CANDIDATE_NOT_FOUND",
   "BACKUP_SET_CONNECTION_NOT_PROVEN",
+  "BACKUP_SET_SOURCE_NOT_WRITABLE",
   "MEDIUM_CONNECTION_NOT_PROVEN",
 ] as const;
 
@@ -155,7 +157,7 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 export const API_ERROR_CLASSES = {
   "authentication": ["UNAUTHENTICATED", "BOOTSTRAP_TOKEN_INVALID", "RESET_TOKEN_INVALID", "VERIFY_TOKEN_INVALID"],
   "authorization": ["ENROLLMENT_CLOSED", "DESTRUCTIVE_OPERATIONS_DISABLED", "CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
-  "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN"],
+  "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN"],
   "internal": ["INTERNAL", "INTERNAL_ERROR"],
   "not-found": ["BACKUP_SET_NOT_FOUND", "OPERATION_NOT_FOUND", "RETENTION_PLAN_NOT_FOUND", "ARTIFACT_NOT_FOUND", "MEDIUM_NOT_FOUND"],
   "throttling": ["RATE_LIMITED"],
@@ -510,7 +512,7 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
       400: ["INVALID_REQUEST", "SSH_KEY_NOT_FOUND"],
       401: ["UNAUTHENTICATED"],
       403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH", "DESTRUCTIVE_OPERATIONS_DISABLED"],
-      409: ["BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_CONNECTION_NOT_PROVEN"],
+      409: ["BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE"],
       500: ["INTERNAL"],
       503: ["NOT_CONFIGURED"],
     }
@@ -590,7 +592,7 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
       401: ["UNAUTHENTICATED"],
       403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
       404: ["BACKUP_SET_NOT_FOUND"],
-      409: ["BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "BACKUP_SET_CONNECTION_NOT_PROVEN"],
+      409: ["BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE"],
       500: ["INTERNAL"],
     }
   },
@@ -687,6 +689,7 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
       401: ["UNAUTHENTICATED"],
       403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
       404: ["BACKUP_SET_NOT_FOUND"],
+      409: ["BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE"],
       500: ["INTERNAL"],
     }
   },
@@ -1446,7 +1449,7 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
       400: ["INVALID_REQUEST", "SSH_KEY_NOT_FOUND"],
       401: ["UNAUTHENTICATED"],
       403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
-      409: ["ALREADY_CONFIGURED", "BACKUP_SET_CONNECTION_NOT_PROVEN"],
+      409: ["ALREADY_CONFIGURED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE"],
       500: ["INTERNAL"],
     }
   },
@@ -1881,7 +1884,7 @@ export interface WireConnectionCheck {
   detail: string;
   duration_ms?: number;
   outcome: "passed" | "failed" | "skipped";
-  step: "credentials" | "resolve" | "connect" | "host_key" | "authenticate" | "list";
+  step: "credentials" | "resolve" | "connect" | "host_key" | "authenticate" | "list" | "write_probe";
 }
 
 /** POST /backup-sets. The backup-set spec, plus the two things only a
@@ -2924,17 +2927,19 @@ export interface WireTestConnectionRequest {
   user?: string;
 }
 
-/** The outcome of a connection test, as a verdict and as the six
- *  steps that produced it. `ok` and `message` mean exactly what they
- *  have always meant, so a client reading only those keeps working;
+/** The outcome of a connection test, as a verdict and as the steps
+ *  that produced it. `ok` and `message` mean exactly what they have
+ *  always meant, so a client reading only those keeps working;
  *  `checks` is what the test actually DID, one entry per step and
- *  always all of them, in the order they run. Both modes of this
- *  endpoint answer the same six steps: a caller no longer has to
+ *  always all of them, in the order they run; `writable` is whether
+ *  these credentials may write to the source at all. Both modes of
+ *  this endpoint answer the same steps: a caller no longer has to
  *  remember which request it sent to know what shape comes back. */
 export interface WireTestConnectionResponse {
   checks?: WireConnectionCheck[];
   message?: string;
   ok: boolean;
+  writable: boolean;
 }
 
 /** ONE host key a backup set actually pins, named the way an operator

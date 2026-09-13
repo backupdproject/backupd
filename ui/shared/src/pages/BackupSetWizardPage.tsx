@@ -320,9 +320,34 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
   const connectionProven =
     connectionResult !== null && connectionResult.ok && connectionTestedFor === connectionSubject;
 
+  // Issue #852: the connection test also proves whether these
+  // credentials may WRITE to the source, and a source that refused the
+  // write probe cannot be deleted from, so this set cannot be saved with
+  // delete-from-source on. The service refuses exactly that request
+  // (ErrSourceNotWritable / 409 BACKUP_SET_SOURCE_NOT_WRITABLE), so a
+  // form that let it be submitted would be offering a save it knows will
+  // be refused.
+  //
+  // Read off connectionProven rather than off the result alone: a result
+  // for OTHER values proves nothing about the source on the form now,
+  // which is the same rule Save already applies.
+  const sourceNotWritable = connectionProven && !connectionResult.writable;
+  // readOnlyEffective, not readOnlySource, is what the rest of this page
+  // means by "read-only" from here on. Deriving it rather than pushing
+  // the value into state on a test result keeps one source of truth: an
+  // effect that set the checkbox would leave an operator's own answer
+  // overwritten and unrecoverable when they point the form at a
+  // writable host instead.
+  const readOnlyEffective = readOnlySource || sourceNotWritable;
+  // A stable id so the disabled checkbox can point at the sentence that
+  // explains it (aria-describedby), which is the only way a screen
+  // reader gets the reason: a disabled control announces nothing about
+  // why it is disabled.
+  const readOnlyForcedNoteId = "wizard-read-only-forced";
+
   const saveDisabled =
     !canSave ||
-    (!acknowledged && !readOnlySource) ||
+    (!acknowledged && !readOnlyEffective) ||
     keySource === "generate" ||
     !importedKeyId ||
     !trustedKnownHostsLine ||
@@ -520,7 +545,7 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
         validatorId: validatorId || undefined,
         stableForSeconds: completion === "stable-size" ? 3600 : undefined,
         disabled,
-        readOnly: readOnlySource,
+        readOnly: readOnlyEffective,
         runImmediately: firstRun ? false : runImmediately,
         // Sent only when the operator actually answered the refusal, so
         // an ordinary save is never a pre-acknowledged one.
@@ -581,7 +606,7 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
           : "Import an SSH key on the Authentication step before saving.";
   } else if (!trustedKnownHostsLine) {
     saveHint = "Trust the host's fingerprint on the Verify server step before saving.";
-  } else if (!acknowledged && !readOnlySource && !readOnly) {
+  } else if (!acknowledged && !readOnlyEffective && !readOnly) {
     // The acknowledgement comes before the connection test, and the
     // condition is now that precondition rather than the catch-all
     // saveDisabled it used to be. Both matter.
@@ -1328,12 +1353,22 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                     style={{
                       display: "flex", gap: 10, padding: "13px 14px",
                       border: "1px solid var(--border-strong)", borderRadius: "var(--radius-lg)",
-                      background: "var(--surface-2)", fontSize: 13, cursor: "pointer"
+                      background: "var(--surface-2)", fontSize: 13,
+                      cursor: sourceNotWritable ? "not-allowed" : "pointer"
                     }}
                   >
+                    {/* Issue #852: forced on and DISABLED when the write
+                        probe proved this source non-writable. Disabled
+                        rather than hidden, and checked rather than
+                        cleared, because the state it is in is the answer:
+                        this set will not delete from the source, and an
+                        operator has to be able to see that is the case
+                        and read why. The tooltip beside it is the why. */}
                     <input
                       type="checkbox"
-                      checked={readOnlySource}
+                      checked={readOnlyEffective}
+                      disabled={sourceNotWritable}
+                      aria-describedby={sourceNotWritable ? readOnlyForcedNoteId : undefined}
                       onChange={(e) => setReadOnlySource(e.target.checked)}
                       style={{ marginTop: 2, accentColor: "var(--accent)" }}
                     />
@@ -1343,7 +1378,23 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                     </span>
                   </label>
 
-                  {readOnlySource ? (
+                  {sourceNotWritable ? (
+                    <p
+                      id={readOnlyForcedNoteId}
+                      style={{ margin: 0, fontSize: 13.5, maxWidth: "78ch", display: "flex", gap: 8, alignItems: "baseline" }}
+                    >
+                      <InfoTooltip id="source.read-only-credentials">
+                        <span style={{ fontWeight: 600 }}>These SSH credentials are read-only on the source.</span>
+                      </InfoTooltip>
+                      <span>
+                        The connection test could not create a file under this remote path, so
+                        Backupd cannot delete there. Deleting the original after backup is
+                        unavailable until the account is granted write permission on the source.
+                      </span>
+                    </p>
+                  ) : null}
+
+                  {readOnlyEffective ? (
                     <p style={{ margin: 0, fontSize: 13.5, maxWidth: "78ch" }}>
                       Backupd will keep every backup from this source's remote
                       copy for good, however completely it passes transfer, verification

@@ -92,6 +92,7 @@ describe("the wizard will not save an unproven connection", () => {
     vi.spyOn(api, "testCandidateConnection").mockResolvedValue({
       ok: false,
       message: "the remote path could not be listed",
+      writable: false,
       checks: [
         { step: "list", outcome: "failed", category: "remote_path", detail: "/backups/postgresql/ could not be listed" }
       ]

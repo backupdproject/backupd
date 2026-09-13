@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "05d60cf9e86ac71f05897351b16a6ca16d95b00003931c7f1dcedd1faaf3ba09"
+const ContractSHA256 = "a413edcc4fd3be66fa75cf4ed880541fa7768ec62ad719241d3e13a551f8bd36"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -103,6 +103,7 @@ const (
 	ErrorCodeStorageCredentialNotFound              ErrorCode = "STORAGE_CREDENTIAL_NOT_FOUND"
 	ErrorCodeSSHKeyCandidateNotFound                ErrorCode = "SSH_KEY_CANDIDATE_NOT_FOUND"
 	ErrorCodeBackupSetConnectionNotProven           ErrorCode = "BACKUP_SET_CONNECTION_NOT_PROVEN"
+	ErrorCodeBackupSetSourceNotWritable             ErrorCode = "BACKUP_SET_SOURCE_NOT_WRITABLE"
 	ErrorCodeMediumConnectionNotProven              ErrorCode = "MEDIUM_CONNECTION_NOT_PROVEN"
 )
 
@@ -154,6 +155,7 @@ var WireErrorCodes = []ErrorCode{
 	ErrorCodeStorageCredentialNotFound,
 	ErrorCodeSSHKeyCandidateNotFound,
 	ErrorCodeBackupSetConnectionNotProven,
+	ErrorCodeBackupSetSourceNotWritable,
 	ErrorCodeMediumConnectionNotProven,
 }
 
@@ -229,6 +231,7 @@ var ErrorCodes = []ErrorCode{
 	ErrorCodeStorageCredentialNotFound,
 	ErrorCodeSSHKeyCandidateNotFound,
 	ErrorCodeBackupSetConnectionNotProven,
+	ErrorCodeBackupSetSourceNotWritable,
 	ErrorCodeMediumConnectionNotProven,
 }
 
@@ -237,7 +240,7 @@ var ErrorCodes = []ErrorCode{
 var ErrorClasses = map[string][]ErrorCode{
 	"authentication": {ErrorCodeUnauthenticated, ErrorCodeBootstrapTokenInvalid, ErrorCodeResetTokenInvalid, ErrorCodeVerifyTokenInvalid},
 	"authorization":  {ErrorCodeEnrollmentClosed, ErrorCodeDestructiveOperationsDisabled, ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
-	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven},
+	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven},
 	"internal":       {ErrorCodeInternal, ErrorCodeInternalError},
 	"not-found":      {ErrorCodeBackupSetNotFound, ErrorCodeOperationNotFound, ErrorCodeRetentionPlanNotFound, ErrorCodeArtifactNotFound, ErrorCodeMediumNotFound},
 	"throttling":     {ErrorCodeRateLimited},
@@ -447,7 +450,7 @@ var Endpoints = []Endpoint{
 			400: {ErrorCodeInvalidRequest, ErrorCodeSSHKeyNotFound},
 			401: {ErrorCodeUnauthenticated},
 			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch, ErrorCodeDestructiveOperationsDisabled},
-			409: {ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetConnectionNotProven},
+			409: {ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable},
 			500: {ErrorCodeInternal},
 			503: {ErrorCodeNotConfigured},
 		},
@@ -495,7 +498,7 @@ var Endpoints = []Endpoint{
 			401: {ErrorCodeUnauthenticated},
 			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
 			404: {ErrorCodeBackupSetNotFound},
-			409: {ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeBackupSetConnectionNotProven},
+			409: {ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable},
 			500: {ErrorCodeInternal},
 		},
 	},
@@ -552,6 +555,7 @@ var Endpoints = []Endpoint{
 			401: {ErrorCodeUnauthenticated},
 			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
 			404: {ErrorCodeBackupSetNotFound},
+			409: {ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable},
 			500: {ErrorCodeInternal},
 		},
 	},
@@ -991,7 +995,7 @@ var Endpoints = []Endpoint{
 			400: {ErrorCodeInvalidRequest, ErrorCodeSSHKeyNotFound},
 			401: {ErrorCodeUnauthenticated},
 			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
-			409: {ErrorCodeAlreadyConfigured, ErrorCodeBackupSetConnectionNotProven},
+			409: {ErrorCodeAlreadyConfigured, ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable},
 			500: {ErrorCodeInternal},
 		},
 	},
@@ -2450,17 +2454,19 @@ type TestConnectionRequest struct {
 	User           string `json:"user"`
 }
 
-// TestConnectionResponse is the outcome of a connection test, as a verdict and as the six
-// steps that produced it. `ok` and `message` mean exactly what they
-// have always meant, so a client reading only those keeps working;
+// TestConnectionResponse is the outcome of a connection test, as a verdict and as the steps
+// that produced it. `ok` and `message` mean exactly what they have
+// always meant, so a client reading only those keeps working;
 // `checks` is what the test actually DID, one entry per step and
-// always all of them, in the order they run. Both modes of this
-// endpoint answer the same six steps: a caller no longer has to
+// always all of them, in the order they run; `writable` is whether
+// these credentials may write to the source at all. Both modes of
+// this endpoint answer the same steps: a caller no longer has to
 // remember which request it sent to know what shape comes back.
 type TestConnectionResponse struct {
-	Checks  []ConnectionCheck `json:"checks,omitempty"`
-	Message string            `json:"message,omitempty"`
-	OK      bool              `json:"ok"`
+	Checks   []ConnectionCheck `json:"checks,omitempty"`
+	Message  string            `json:"message,omitempty"`
+	OK       bool              `json:"ok"`
+	Writable bool              `json:"writable"`
 }
 
 // TrustedHostKey is ONE host key a backup set actually pins, named the way an operator

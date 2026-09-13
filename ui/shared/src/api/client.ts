@@ -693,6 +693,11 @@ function fromWireConnectionTestOutcome(r: WireTestConnectionResponse): Connectio
   return {
     ok: r.ok,
     ...(r.message ? { message: r.message } : {}),
+    // `?? false` rather than `r.writable`: an engine that predates issue
+    // #852 sends no field at all, and the safe reading of "nobody
+    // proved this source can be written to" is that the
+    // delete-from-source control stays unavailable.
+    writable: r.writable ?? false,
     checks: (r.checks ?? []).map((c) => ({
       step: c.step,
       outcome: c.outcome,

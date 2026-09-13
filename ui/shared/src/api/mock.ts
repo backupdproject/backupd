@@ -66,7 +66,15 @@ export type Scenario =
   // fails, so the rest of both pages renders normally and what is
   // asserted is what the failing panel says rather than whether the page
   // came up at all.
-  | "activity-unreadable";
+  | "activity-unreadable"
+  // Issue #852: a source whose credentials can READ it and not write to
+  // it, which is a supported posture rather than a failure. The
+  // connection test answers ok:true with writable:false, so both the
+  // wizard and the per-set form have to disable their
+  // delete-from-source control and say why. It is its own scenario
+  // because the interesting state is a PASSING test with one answer
+  // inverted, and no other fixture here can produce that.
+  | "read-only-source";
 
 /** Reads the scenario out of the URL, falling back to the default for
  *  anything unrecognised. A closed allow-list rather than a cast, so a
@@ -76,7 +84,8 @@ export function scenarioFromLocation(): Scenario {
   const s = new URLSearchParams(window.location.search).get("scenario");
   const allowed: Scenario[] = [
     "default", "empty", "storage-critical", "catalog-recovery",
-    "version-mismatch", "first-run", "no-medium", "activity-unreadable"
+    "version-mismatch", "first-run", "no-medium", "activity-unreadable",
+    "read-only-source"
   ];
   return (allowed as string[]).includes(s ?? "") ? (s as Scenario) : "default";
 }
@@ -1127,7 +1136,7 @@ function mockKeyUsage(keyId: string): string[] {
  *  render site that prints "0 ms" beside a green row look correct here
  *  and wrong in production.
  */
-function mockPassingChecks(user: string): ConnectionCheck[] {
+function mockPassingChecks(user: string, writable = true): ConnectionCheck[] {
   const addr = SETS[0].host + ":" + SETS[0].port;
   return [
     {
@@ -1154,7 +1163,27 @@ function mockPassingChecks(user: string): ConnectionCheck[] {
       durationMs: 18
     },
     { step: "authenticate", outcome: "passed", detail: "the server accepted publickey for " + user },
-    { step: "list", outcome: "passed", detail: SETS[0].remoteFolder + " listed, 41 entries" }
+    { step: "list", outcome: "passed", detail: SETS[0].remoteFolder + " listed, 41 entries" },
+    // Issue #852's seventh step, and it PASSES in both directions: the
+    // step ran and answered, and only its answer differs. A fixture that
+    // marked the read-only case as `failed` would let a page that
+    // renders a red row for a perfectly good read-only source look
+    // correct here.
+    writable
+      ? {
+          step: "write_probe",
+          outcome: "passed",
+          detail:
+            "a probe file was created under " + SETS[0].remoteFolder +
+            " and removed again, so these credentials may write and delete there and delete-from-source can be enabled"
+        }
+      : {
+          step: "write_probe",
+          outcome: "passed",
+          detail:
+            "these credentials may read " + SETS[0].remoteFolder +
+            " but not write to it, so this source is read-only: backupd will never delete from it, and delete-from-source cannot be enabled until the account is granted write permission there"
+        }
   ];
 }
 
@@ -1769,6 +1798,10 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
   const noMedium = scenario === "no-medium";
   // Issue #598. One call fails, and it fails the way the NAS did.
   const activityUnreadable = scenario === "activity-unreadable";
+  // Issue #852. One flag, read by both modes of the connection test, so
+  // the wizard's candidate check and the detail page's saved check
+  // cannot disagree about a source in the same fixture.
+  const sourceIsWritable = scenario !== "read-only-source";
   // Every previewRetention call advances this backup set's "inventory" by
   // one tick and issues a plan captured against it. applyRetention only
   // ever honors the plan_id from the LATEST tick — anything older is,
@@ -1972,7 +2005,8 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
     // answered {ok: true} alone would let a surface that renders nothing
     // at all look exactly like one that renders the steps, which is
     // precisely the state 0.3.2 shipped in.
-    testConnection: () => delay({ ok: true, checks: mockPassingChecks(SETS[0].username) }),
+    testConnection: () =>
+      delay({ ok: true, writable: sourceIsWritable, checks: mockPassingChecks(SETS[0].username, sourceIsWritable) }),
     // Both APPLY to the SETS fixture rather than resolving and leaving it
     // alone, for the reason updateBackupSet's own comment below gives:
     // a mock that answers "fine" without changing anything makes every
@@ -2098,7 +2132,7 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
     probeHostKey: (): Promise<HostKeyProbeResult> =>
       delay({ algorithm: "ssh-ed25519", fingerprint: mockProbedFingerprint, knownHostsLine: "mock-host.internal ssh-ed25519 AAAAC3NzaC1lZDI1NTE5mock" }),
     testCandidateConnection: (params): Promise<ConnectionTestOutcome> =>
-      delay({ ok: true, checks: mockPassingChecks(params.user) }),
+      delay({ ok: true, writable: sourceIsWritable, checks: mockPassingChecks(params.user, sourceIsWritable) }),
     // Issue #592's two reads. Both answer the way a packaged install
     // does, which means the scan reports a location it found nothing in:
     // the page has to be exercised against "I looked here and there was

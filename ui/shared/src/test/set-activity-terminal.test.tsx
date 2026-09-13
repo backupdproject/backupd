@@ -249,7 +249,14 @@ describe("Test connection says what it actually did", () => {
       // checks is [] and not absent: the shape is one array on both
       // modes of this route now, so a stub that left it off would be a
       // shape no engine answers with.
-      return { ok: false, message: "the key this server offers is not the one this backup set trusts", checks: [] };
+      return {
+        ok: false,
+        message: "the key this server offers is not the one this backup set trusts",
+        // A check that stopped early proved nothing about writing
+        // (issue #852), which is what false means here.
+        writable: false,
+        checks: []
+      };
     });
 
     renderDetail(target.source, target.set, api);
@@ -285,7 +292,7 @@ describe("Test connection says what it actually did", () => {
     const target = await firstSet();
     const api = createMockApi();
     const live = vi.spyOn(api, "getLiveActivity").mockResolvedValue(reading(target.id));
-    vi.spyOn(api, "testConnection").mockResolvedValue({ ok: true, checks: [] });
+    vi.spyOn(api, "testConnection").mockResolvedValue({ ok: true, writable: true, checks: [] });
 
     renderDetail(target.source, target.set, api);
     await screen.findByLabelText("Activity for " + target.name);
@@ -337,7 +344,7 @@ describe("Test connection says what it actually did", () => {
     const target = await firstSet();
     const api = createMockApi();
     vi.spyOn(api, "getLiveActivity").mockResolvedValue(reading(target.id));
-    vi.spyOn(api, "testConnection").mockResolvedValue({ ok: true, checks: [] });
+    vi.spyOn(api, "testConnection").mockResolvedValue({ ok: true, writable: true, checks: [] });
 
     renderDetail(target.source, target.set, api);
     await screen.findByLabelText("Activity for " + target.name);

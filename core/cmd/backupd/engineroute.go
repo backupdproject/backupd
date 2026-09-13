@@ -276,7 +276,11 @@ func connectionTestFromWire(resp apicontract.TestConnectionResponse, err error) 
 	if err != nil {
 		return service.ConnectionTestResult{}, err
 	}
-	result := service.ConnectionTestResult{OK: resp.OK, Message: resp.Message}
+	// Writable travels with OK and Message rather than being re-derived
+	// from the write_probe row: it is the field the contract carries
+	// (issue #852), and a CLI that computed it from a sentence would be
+	// a second answer to the question the engine already answered.
+	result := service.ConnectionTestResult{OK: resp.OK, Message: resp.Message, Writable: resp.Writable}
 	for _, c := range resp.Checks {
 		result.Checks = append(result.Checks, service.ConnectionCheck{
 			Step:       c.Step,

@@ -111,6 +111,7 @@
           "STORAGE_CREDENTIAL_NOT_FOUND",
           "SSH_KEY_CANDIDATE_NOT_FOUND",
           "BACKUP_SET_CONNECTION_NOT_PROVEN",
+          "BACKUP_SET_SOURCE_NOT_WRITABLE",
           "MEDIUM_CONNECTION_NOT_PROVEN"
         ],
         "x-code-origins": {
@@ -166,6 +167,7 @@
           "STORAGE_CREDENTIAL_NOT_FOUND": "wire",
           "SSH_KEY_CANDIDATE_NOT_FOUND": "wire",
           "BACKUP_SET_CONNECTION_NOT_PROVEN": "wire",
+          "BACKUP_SET_SOURCE_NOT_WRITABLE": "wire",
           "MEDIUM_CONNECTION_NOT_PROVEN": "wire",
           "RESET_TOKEN_INVALID": "wire",
           "INVALID_EMAIL": "wire",
@@ -208,6 +210,7 @@
             "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED",
             "ARTIFACT_NOT_FAILED",
             "BACKUP_SET_CONNECTION_NOT_PROVEN",
+            "BACKUP_SET_SOURCE_NOT_WRITABLE",
             "MEDIUM_IS_DEFAULT",
             "MEDIUM_CONNECTION_NOT_PROVEN"
           ],
@@ -244,9 +247,10 @@
               "connect",
               "host_key",
               "authenticate",
-              "list"
+              "list",
+              "write_probe"
             ],
-            "description": "What this step proves. `credentials` is whether the key this backup set names can be resolved and used on THIS host at all: the reference resolves to a key this deployment holds, and the file's own mode and its whole containing directory chain are still what a real transfer demands. Nothing about the far side, and nothing that opens the private half. `resolve` is whether the hostname resolves, and to what, because \"it resolves\" and \"it resolves to the machine you think\" are different claims and only an operator can settle the second. `connect` is whether TCP to host:port answered, and what identification string came back, which is how you know you reached sshd and not a load balancer. `host_key` is which key the server offered and whether the known_hosts this set verifies against actually trusts it for this host: the comparison is knownhosts' own, the same one the transport will make, never a second opinion that could be wrong in the permissive direction. `authenticate` is whether the server accepted that key for that user, and it is skipped when the host key did not match, because offering a credential to a server whose identity has not been established is the thing FR-6 exists to prevent. `list` is the configured remote path listed over the real transport, and how many entries came back; it is the only step that proves the path in the configuration is a path on that machine."
+            "description": "What this step proves. `credentials` is whether the key this backup set names can be resolved and used on THIS host at all: the reference resolves to a key this deployment holds, and the file's own mode and its whole containing directory chain are still what a real transfer demands. Nothing about the far side, and nothing that opens the private half. `resolve` is whether the hostname resolves, and to what, because \"it resolves\" and \"it resolves to the machine you think\" are different claims and only an operator can settle the second. `connect` is whether TCP to host:port answered, and what identification string came back, which is how you know you reached sshd and not a load balancer. `host_key` is which key the server offered and whether the known_hosts this set verifies against actually trusts it for this host: the comparison is knownhosts' own, the same one the transport will make, never a second opinion that could be wrong in the permissive direction. `authenticate` is whether the server accepted that key for that user, and it is skipped when the host key did not match, because offering a credential to a server whose identity has not been established is the thing FR-6 exists to prevent. `list` is the configured remote path listed over the real transport, and how many entries came back; it is the only step that proves the path in the configuration is a path on that machine. `write_probe` is whether these credentials may WRITE and REMOVE under that path, proven by creating a uniquely named probe file there and deleting it again; it is the only step that changes anything on the far side, it runs last because nothing may be written to a path the `list` step has not established, and it is the one step whose `no` is not a failure: a read-only source backs up perfectly and simply cannot be deleted from, which is what `writable` reports and what a delete-from-source control is enabled on."
           },
           "outcome": {
             "type": "string",
@@ -1317,7 +1321,7 @@
       },
       "TestConnectionResponse": {
         "type": "object",
-        "description": "The outcome of a connection test, as a verdict and as the six steps that produced it. `ok` and `message` mean exactly what they have always meant, so a client reading only those keeps working; `checks` is what the test actually DID, one entry per step and always all of them, in the order they run. Both modes of this endpoint answer the same six steps: a caller no longer has to remember which request it sent to know what shape comes back.",
+        "description": "The outcome of a connection test, as a verdict and as the steps that produced it. `ok` and `message` mean exactly what they have always meant, so a client reading only those keeps working; `checks` is what the test actually DID, one entry per step and always all of them, in the order they run; `writable` is whether these credentials may write to the source at all. Both modes of this endpoint answer the same steps: a caller no longer has to remember which request it sent to know what shape comes back.",
         "additionalProperties": false,
         "properties": {
           "ok": {
@@ -1329,15 +1333,20 @@
           },
           "checks": {
             "type": "array",
-            "description": "One entry per step, always all of them, in the order they run: credentials, resolve, connect, host_key, authenticate, list. Both the persisted mode (`backup_set_id`) and the candidate mode (host, user and key) populate it, so there is one breakdown here and not one per mode.",
+            "description": "One entry per step, always all of them, in the order they run: credentials, resolve, connect, host_key, authenticate, list, write_probe. Both the persisted mode (`backup_set_id`) and the candidate mode (host, user and key) populate it, so there is one breakdown here and not one per mode.",
             "items": {
               "$ref": "#/components/schemas/ConnectionCheck"
             },
             "x-go-omitempty": true
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "Whether the `write_probe` step completed a real write-and-remove round trip under the remote path: a file created at a name nothing else can produce, deleted again, and its absence confirmed. It is what a client enables or disables its \"delete from source after backup\" control on, and what the server refuses a create, an edit or a read-only:false on when it is false. Independent of `ok`: a read-only source is a perfectly OK connection that simply cannot be deleted from, which is a supported posture and never a failure. False whenever nothing was proven, including a check that stopped at an earlier step, because nothing may enable a delete on an absence of evidence."
           }
         },
         "required": [
-          "ok"
+          "ok",
+          "writable"
         ]
       },
       "Validator": {
@@ -5254,7 +5263,7 @@
             ]
           },
           "409": {
-            "description": "Refused: BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED, BACKUP_SET_CONNECTION_NOT_PROVEN. This id already has artifacts on record and the set would be created somewhere other than where they came from, re-sent with acknowledge_repoint once the message has been read; or the connection this set declares could not be proven, re-sent with skip_connection_check once the operator has decided to write it unproven.",
+            "description": "Refused: BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED, BACKUP_SET_CONNECTION_NOT_PROVEN, BACKUP_SET_SOURCE_NOT_WRITABLE. This id already has artifacts on record and the set would be created somewhere other than where they came from, re-sent with acknowledge_repoint once the message has been read; or the connection this set declares could not be proven, re-sent with skip_connection_check once the operator has decided to write it unproven; or the source answered and these credentials cannot write to it, so this set cannot delete from it, re-sent with read_only true (or after granting the account write permission on the source).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5264,7 +5273,8 @@
             },
             "x-error-codes": [
               "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED",
-              "BACKUP_SET_CONNECTION_NOT_PROVEN"
+              "BACKUP_SET_CONNECTION_NOT_PROVEN",
+              "BACKUP_SET_SOURCE_NOT_WRITABLE"
             ]
           },
           "500": {
@@ -7186,7 +7196,7 @@
             ]
           },
           "409": {
-            "description": "Refused: ALREADY_CONFIGURED, BACKUP_SET_CONNECTION_NOT_PROVEN. A configuration already exists, so this operation is no longer available: change a configured deployment through the ordinary settings and backup-set operations. Or the connection this first set declares could not be proven, and nothing was written; re-send with skip_connection_check once the operator has decided to write it unproven.",
+            "description": "Refused: ALREADY_CONFIGURED, BACKUP_SET_CONNECTION_NOT_PROVEN, BACKUP_SET_SOURCE_NOT_WRITABLE. A configuration already exists, so this operation is no longer available: change a configured deployment through the ordinary settings and backup-set operations. Or the connection this first set declares could not be proven, and nothing was written; re-send with skip_connection_check once the operator has decided to write it unproven. Or the source answered and these credentials cannot write to it, so this first set cannot delete from it; re-send with read_only true.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7196,7 +7206,8 @@
             },
             "x-error-codes": [
               "ALREADY_CONFIGURED",
-              "BACKUP_SET_CONNECTION_NOT_PROVEN"
+              "BACKUP_SET_CONNECTION_NOT_PROVEN",
+              "BACKUP_SET_SOURCE_NOT_WRITABLE"
             ]
           },
           "500": {
@@ -8314,7 +8325,7 @@
             ]
           },
           "409": {
-            "description": "Refused: BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED, BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED, BACKUP_SET_CONNECTION_NOT_PROVEN. The edit would move this set to different data while artifacts are already on record for it, or it would trust a different host key for the same host, or it changes the connection and that connection could not be proven. The first two are re-sent with the acknowledgement the message names; the third is re-sent with skip_connection_check once the operator has decided to write it unproven.",
+            "description": "Refused: BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED, BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED, BACKUP_SET_CONNECTION_NOT_PROVEN, BACKUP_SET_SOURCE_NOT_WRITABLE. The edit would move this set to different data while artifacts are already on record for it, or it would trust a different host key for the same host, or it changes the connection and that connection could not be proven, or the source it now names answered and cannot be written to while this set still deletes from its source. The first two are re-sent with the acknowledgement the message names; the third is re-sent with skip_connection_check once the operator has decided to write it unproven; the fourth is answered by making the set read-only or by granting the account write permission on the source.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8325,7 +8336,8 @@
             "x-error-codes": [
               "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED",
               "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED",
-              "BACKUP_SET_CONNECTION_NOT_PROVEN"
+              "BACKUP_SET_CONNECTION_NOT_PROVEN",
+              "BACKUP_SET_SOURCE_NOT_WRITABLE"
             ]
           },
           "500": {
@@ -8858,6 +8870,20 @@
             },
             "x-error-codes": [
               "BACKUP_SET_NOT_FOUND"
+            ]
+          },
+          "409": {
+            "description": "Refused: BACKUP_SET_CONNECTION_NOT_PROVEN, BACKUP_SET_SOURCE_NOT_WRITABLE. Withdrawing read-only asks this deployment to delete from the source after backup, so it is proven first: the source did not answer, or it answered and these credentials cannot write to it. The way past the second is to leave the set read-only, or to grant the account write permission on the source and try again. Declaring read-only (`read_only: true`) proves nothing and is never refused here.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_CONNECTION_NOT_PROVEN",
+              "BACKUP_SET_SOURCE_NOT_WRITABLE"
             ]
           },
           "500": {

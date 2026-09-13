@@ -547,6 +547,21 @@ func (h *handlers) writeBackupSetError(w http.ResponseWriter, r *http.Request, e
 		// internal/sourcecheck's own sentences and the caller's own
 		// values, never from a transport error's text (issue #624).
 		writeError(w, http.StatusConflict, "BACKUP_SET_CONNECTION_NOT_PROVEN", err.Error())
+	case errors.Is(err, service.ErrSourceNotWritable):
+		// 409 and its own code, next to ErrConnectionNotProven rather
+		// than folded into it, because the two offer an operator
+		// different things (issue #852). That one says "the source is
+		// not answering, fix it or save unproven"; this one says "the
+		// source answered, and these credentials cannot write there, so
+		// this set cannot delete from it" — and what it offers is "save
+		// it read-only" or "grant write permission on the source". A
+		// client that could not tell them apart would offer the wrong
+		// way out, and `skip_connection_check` is NOT a way out of this
+		// one.
+		//
+		// Safe to echo, on the same terms: core/service builds this
+		// message from its own text alone.
+		writeError(w, http.StatusConflict, "BACKUP_SET_SOURCE_NOT_WRITABLE", err.Error())
 	case errors.Is(err, service.ErrRepointNotAcknowledged):
 		// 409 rather than 400, because this is not a malformed request:
 		// it is a well-formed one whose consequences the caller has to
@@ -661,6 +676,14 @@ type setReadOnlyRequest struct {
 // doc); turning it back OFF does not reach back and delete anything this
 // manager already retained under it, so neither direction is the
 // "delete a byte of backup data" requireDestructiveGate exists to gate.
+//
+// Since issue #852 the OFF direction runs a real connection check first
+// and answers 409 BACKUP_SET_SOURCE_NOT_WRITABLE when the source's own
+// credentials cannot write there: "delete from the source after backup"
+// is a promise this deployment has to be able to keep. So this route can
+// now make an outbound SSH connection in one direction, which is the same
+// side effect POST /backup-sets already has and the reason both carry
+// requireCSRF.
 //
 // The id is read from two named segments, like setBackupSetEnabled
 // beside it, for the identical reason: a backup set id is always exactly

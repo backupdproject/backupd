@@ -135,6 +135,12 @@ func (b *BackupService) runConnectionTest(ctx context.Context, id string, set *c
 			}
 			return len(entries), nil
 		},
+		// The write probe (issue #852), over the SAME transport.Source
+		// the listing above uses, so what is proven is the access
+		// FR-16's delete-from-source would actually need. A transport
+		// that cannot ask the question leaves this nil and the step is
+		// skipped rather than guessed: see sourceWriteProbe.
+		ProbeWrite: b.sourceWriteProbe(src),
 		// The classified cause goes to the log and never to the wire.
 		// That costs a diagnostic in the API response deliberately: the
 		// cause names a path on this host or the name of an environment
@@ -142,8 +148,20 @@ func (b *BackupService) runConnectionTest(ctx context.Context, id string, set *c
 		// no use for and a reader of an exported response has every use
 		// for. mediumcheck makes the identical trade.
 		Observe: func(step sourcecheck.Step, err error) {
-			b.logger.CompletedAt(ctx, obs.LevelWarn, obs.ResultError, connectionTestEventName,
-				"connection test: "+string(step)+" failed",
+			// A refused write probe is observed like every other step's
+			// cause and worded unlike any of them, because it is the one
+			// step here whose `no` is not a failure (issue #852): a
+			// read-only source is a supported posture, so a log line
+			// calling it an error would send an operator looking for a
+			// break that is not there, and `activity --severity error`
+			// would fill up with sources that work exactly as intended.
+			level, result, message := obs.LevelWarn, obs.ResultError, "connection test: "+string(step)+" failed"
+			if step == sourcecheck.StepWriteProbe {
+				level, result, message = obs.LevelInfo, obs.ResultWarn,
+					"connection test: the source did not accept a write probe, so it is read-only and cannot be deleted from"
+			}
+			b.logger.CompletedAt(ctx, level, result, connectionTestEventName,
+				message,
 				slog.String("backup_set", id),
 				slog.String("step", string(step)),
 				slog.String("cause", err.Error()),
@@ -214,7 +232,7 @@ func connectionTestVerdict(report sourcecheck.Report) obs.Result {
 // once here is also what keeps the two modes from drifting into two
 // different messages for the same failure.
 func resultFromReport(report sourcecheck.Report) ConnectionTestResult {
-	result := ConnectionTestResult{OK: report.OK}
+	result := ConnectionTestResult{OK: report.OK, Writable: report.Writable}
 	for _, c := range report.Checks {
 		result.Checks = append(result.Checks, ConnectionCheck{
 			Step:     string(c.Step),
@@ -236,6 +254,34 @@ func resultFromReport(report sourcecheck.Report) ConnectionTestResult {
 	}
 	result.Message = "could not connect and list the remote path"
 	return result
+}
+
+// sourceWriteProbe is the write-probe dependency for one source, or nil
+// when this deployment's transport cannot prove the question at all
+// (issue #852).
+//
+// The capability is type-asserted rather than required on
+// transport.Transport, which is transport.SourceWriteProbe's own design:
+// a transport that cannot write a probe says so by not having the method.
+// Nil is what sourcecheck reads as "not proven", so a deployment wired to
+// such a transport reports every source as non-writable and refuses to
+// enable a delete against it, which is the fail-safe direction. The one
+// production transport (internal/transport/rclone.Adapter) implements it
+// for both backends it registers.
+func (b *BackupService) sourceWriteProbe(src transport.Source) func(context.Context) error {
+	return sourceWriteProbeVia(b.state.Load().inner.Transport, src)
+}
+
+// sourceWriteProbeVia is sourceWriteProbe for a caller holding a
+// transport directly rather than a BackupService: the candidate check
+// (backupsets.go's testConnectionVia) and the first-run surface both wire
+// their own, and this is what stops them wiring it differently.
+func sourceWriteProbeVia(tr transport.Transport, src transport.Source) func(context.Context) error {
+	probe, ok := tr.(transport.SourceWriteProbe)
+	if !ok {
+		return nil
+	}
+	return func(ctx context.Context) error { return probe.ProbeSourceWrite(ctx, src) }
 }
 
 // hostKeyVerifier is the host key DECISION, and it is knownhosts' own
@@ -295,45 +341,69 @@ func (b *BackupService) sourceKeyIdentity(src transport.Source, remote config.Re
 }
 
 // runLocalConnectionTest answers for a backup set whose source is not
-// sftp. Five of the six steps are about reaching an SSH server and there
-// is not one, so they are SKIPPED with the reason rather than passed.
+// sftp. Five of the steps are about reaching an SSH server and there is
+// not one, so they are SKIPPED with the reason rather than passed.
 //
 // Passing them would be the exact failure sourcecheck.Skipped exists to
-// prevent, one layer up: an operator reading six green rows would believe
-// a host key was checked when no host was involved at all.
+// prevent, one layer up: an operator reading green rows would believe a
+// host key was checked when no host was involved at all.
+//
+// The two steps that ARE real here are the listing and, since issue #852,
+// the write probe: a local path can be read-only just as an SSH account
+// can (a read-only mount, a directory this daemon's account does not own),
+// and FR-16's delete-from-source is offered for a local source on exactly
+// the same terms. The probe row is built by sourcecheck.WriteProbeRow
+// rather than here, so both modes of this check say the same sentences.
 func runLocalConnectionTest(ctx context.Context, target sourcecheck.Target, deps sourcecheck.Deps) sourcecheck.Report {
 	const reason = "this backup set reads a local path, so there is no host to reach"
 	report := sourcecheck.Report{BackupSetID: target.BackupSetID, OK: true}
+	path := target.RemotePath
+	if path == "" {
+		path = "/"
+	}
+
+	entries, listErr := deps.List(ctx)
+	if listErr != nil && deps.Observe != nil {
+		deps.Observe(sourcecheck.StepList, listErr)
+	}
+
 	for _, step := range sourcecheck.Steps {
-		if step != sourcecheck.StepList {
-			report.Checks = append(report.Checks, sourcecheck.Check{Step: step, Outcome: sourcecheck.Skipped, Detail: reason})
-			continue
-		}
-		entries, err := deps.List(ctx)
-		if err != nil {
-			if deps.Observe != nil {
-				deps.Observe(sourcecheck.StepList, err)
-			}
-			report.OK = false
-			path := target.RemotePath
-			if path == "" {
-				path = "/"
+		switch step {
+		case sourcecheck.StepList:
+			if listErr != nil {
+				report.OK = false
+				report.Checks = append(report.Checks, sourcecheck.Check{
+					Step: sourcecheck.StepList, Outcome: sourcecheck.Failed,
+					Category: sourcecheck.CategoryRemotePath,
+					Detail:   path + " could not be listed on this host",
+				})
+				continue
 			}
 			report.Checks = append(report.Checks, sourcecheck.Check{
-				Step: sourcecheck.StepList, Outcome: sourcecheck.Failed,
-				Category: sourcecheck.CategoryRemotePath,
-				Detail:   path + " could not be listed on this host",
+				Step: sourcecheck.StepList, Outcome: sourcecheck.Passed,
+				Detail: path + " listed, " + entriesWord(entries),
 			})
-			continue
+
+		case sourcecheck.StepWriteProbe:
+			// Nothing is written to a path that could not even be
+			// listed, for sourcecheck.StepWriteProbe's own reason: a
+			// probe file created under a path nobody meant to name is
+			// litter, and a source whose path is wrong is not a source
+			// whose writability anybody is asking about yet.
+			if listErr != nil {
+				report.Checks = append(report.Checks, sourcecheck.Check{
+					Step: sourcecheck.StepWriteProbe, Outcome: sourcecheck.Skipped,
+					Detail: path + " could not be listed, so nothing was written to it",
+				})
+				continue
+			}
+			check, writable := sourcecheck.WriteProbeRow(ctx, target, deps)
+			report.Checks = append(report.Checks, check)
+			report.Writable = writable
+
+		default:
+			report.Checks = append(report.Checks, sourcecheck.Check{Step: step, Outcome: sourcecheck.Skipped, Detail: reason})
 		}
-		path := target.RemotePath
-		if path == "" {
-			path = "/"
-		}
-		report.Checks = append(report.Checks, sourcecheck.Check{
-			Step: sourcecheck.StepList, Outcome: sourcecheck.Passed,
-			Detail: path + " listed, " + entriesWord(entries),
-		})
 	}
 	return report
 }

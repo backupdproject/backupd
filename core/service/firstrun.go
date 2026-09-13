@@ -326,6 +326,14 @@ func (f *FirstRun) CreateInitialConfig(ctx context.Context, req CreateBackupSetR
 		if !result.OK {
 			return BackupSet{}, fmt.Errorf("%w: %s", ErrConnectionNotProven, result.Message)
 		}
+		// Issue #852, on the first configuration too: the very first
+		// backup set this deployment writes must not claim it will
+		// delete from a source it has just been refused a write on.
+		// Same function as the configured path, so the first set an
+		// operator creates and the tenth are held to one rule.
+		if err := refuseDeleteOnUnwritableSource(result, req.ReadOnly); err != nil {
+			return BackupSet{}, err
+		}
 	}
 
 	sourceName := req.SourceName

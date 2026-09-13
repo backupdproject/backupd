@@ -410,6 +410,9 @@ func requireHostKeyRefused(t *testing.T, res ConnectionTestResult) {
 		"host_key":     "failed",
 		"authenticate": "skipped",
 		"list":         "skipped",
+		// Nothing is written to a source whose identity did not check
+		// out, so the seventh step never runs either (issue #852).
+		"write_probe": "skipped",
 	}
 	got := stepOutcomes(res.Checks)
 	if len(got) != len(want) {

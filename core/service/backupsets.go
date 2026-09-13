@@ -590,6 +590,15 @@ func (b *BackupService) CreateBackupSet(ctx context.Context, req CreateBackupSet
 			// text.
 			return CreateBackupSetResult{}, fmt.Errorf("%w: %s", ErrConnectionNotProven, result.Message)
 		}
+		// Issue #852: the same check that just proved the connection
+		// also proved whether these credentials may WRITE there, and a
+		// set created with delete-from-source enabled against a source
+		// that refused the write probe is refused here rather than
+		// written and discovered later. The check has already run, so
+		// this costs nothing beyond reading its answer.
+		if err := refuseDeleteOnUnwritableSource(result, req.ReadOnly); err != nil {
+			return CreateBackupSetResult{}, err
+		}
 	}
 
 	sourceName := req.SourceName
@@ -1258,6 +1267,23 @@ type ConnectionTestResult struct {
 	// OK keeps meaning exactly what it meant, so a client reading only
 	// ok and message keeps working.
 	Checks []ConnectionCheck
+
+	// Writable is issue #852's answer: whether a real write-and-remove
+	// round trip under the remote path succeeded (the write_probe step).
+	//
+	// It is a top-level field beside OK rather than something a caller
+	// derives from the checks, because every consumer is making a
+	// decision with it and not rendering it: the UI disables its
+	// "delete from source after backup" control on it, and this package
+	// refuses a create or an edit that enables delete-from-source
+	// against a source where it is false (ErrSourceNotWritable).
+	//
+	// False whenever nothing was proven — a check that stopped early, a
+	// probe that was skipped, a transport that cannot ask — for the
+	// reason sourcecheck.Report.Writable gives: nothing may enable a
+	// delete on an absence of evidence. OK and Writable are therefore
+	// independent: a read-only source is a perfectly OK connection.
+	Writable bool
 }
 
 // ConnectionCheck is one step of a connection test, as the wire carries
@@ -1435,6 +1461,14 @@ func testConnectionVia(ctx context.Context, tr transport.Transport, configPath s
 			}
 			return len(entries), nil
 		},
+		// The same write probe the persisted mode runs, over the same
+		// candidate source (issue #852). The wizard needs this answer
+		// BEFORE the set exists: it is what decides whether its "delete
+		// from source after backup" control is offered at all, and a
+		// create that asked for a delete against a source proven
+		// non-writable is refused by CreateBackupSet on the strength of
+		// this very result.
+		ProbeWrite: sourceWriteProbeVia(tr, src),
 	}
 
 	// Not %w-wrapped, and not returned as a Go error at all: a failed
