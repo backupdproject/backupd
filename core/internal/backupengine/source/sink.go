@@ -116,9 +116,18 @@ type Stored struct {
 // once the read behind it is found wanting. Kopia's tree upload is
 // pull-shaped - the uploader walks an fs.Entry and asks for children -
 // and a snapshot that spans a whole backup set has no per-object thing
-// to discard, only a stream-level error to fail the run with. #783
-// introduces that port and inverts the control flow; see RepositorySink
-// for what that means for the interim implementation below.
+// to discard, only a stream-level error to fail the run with.
+//
+// That port has LANDED (#783), and it is Tree in tree.go: Adapter.OpenTree
+// inverts the control flow, hands the engine a
+// backupengine.SourceDir it pulls from, and moves the discard decision to
+// a run-level failure the uploader observes while it is pulling. Tree is
+// the production path for a backup set. This interface stays because the
+// per-object shape is still the thing this package's own tests read a
+// source through end to end, and because the reading path both share -
+// path safety, capability refusals, cancellation, mutation detection -
+// is proven against it here; see RepositorySink for what that means for
+// the interim implementation below.
 type Sink interface {
 	// Store reads obj.Stream to its end and returns what it stored. It
 	// must not retry: the retry bound belongs to the adapter, and a sink
@@ -155,9 +164,9 @@ type Sink interface {
 // RepositorySink stores each object as one streamed snapshot in a backup
 // repository.
 //
-// # This is the Phase-1 interim, not the snapshot model
+// # This is the per-object interim, not the snapshot model
 //
-// One snapshot per object is what the streaming boundary offers today:
+// One snapshot per object is what the streaming boundary offers:
 // backupengine.StreamingRepository takes one stream and returns one
 // snapshot id, so a backup set of 100k files becomes 100k snapshots,
 // 100k manifests and 100k Kopia sources. That is affordable for the job
@@ -165,24 +174,33 @@ type Sink interface {
 // real transport, into a real repository - and it is not the shape a
 // backup set is stored in.
 //
-// #783 introduces the real port: one snapshot per backup-set RUN, under
-// one SourceInfo (the set's model.SourceIdentity), with the objects as a
-// tree inside it. That is not a different implementation of this
-// interface, and ADR 0012 no longer claims it is. Kopia's tree upload is
-// PULL-based - upload.Uploader walks an fs.Entry and asks it for
-// children - while everything above this sink is PUSH-based: the adapter
-// walks, hands each object to Store, checks the read window and Discards
-// what moved. A tree sink cannot be written against Sink as declared
-// above, so #783 replaces the port, inverts that control flow, and moves
-// the discard decision from "remove the snapshot this object produced"
-// to a stream-level error the uploader observes while it is pulling. The
-// reading path this package owns - path safety, capability refusals,
-// cancellation, mutation detection - is what survives that change
-// unaltered, and it is what is being proven here.
+// The real port has LANDED (#783): one snapshot per backup-set RUN,
+// under one SourceInfo (the set's model.SourceIdentity), with the
+// objects as a tree inside it - backupengine.TreeRepository, fed by
+// Adapter.OpenTree and the Tree in tree.go, which is what a production
+// backup of a set now runs through. It is not a different
+// implementation of this interface and ADR 0012 no longer claims it is.
+// Kopia's tree upload is PULL-based - upload.Uploader walks an fs.Entry
+// and asks it for children - while everything above this sink is
+// PUSH-based: the adapter walks, hands each object to Store, checks the
+// read window and Discards what moved. A tree sink cannot be written
+// against Sink as declared above, which is why #783 replaced the port,
+// inverted that control flow, and moved the discard decision from
+// "remove the snapshot this object produced" to a run-level failure the
+// uploader observes while it is pulling.
 //
-// The set tags below are the one piece of the #783 model that is seeded
-// now rather than then: a snapshot that cannot be attributed to a backup
-// set is invisible to the repository's own accounting, and that is worth
+// What is left for this type is one job and it is not a production
+// backup: it is the per-object path this package's own tests read a
+// source through, including the integration test that drives a real
+// repository, so that the reading path both ports share - path safety,
+// capability refusals, cancellation, mutation detection - is proven
+// against something that stores bytes and can take them away again.
+// Tree reuses that reading path rather than reimplementing it, and this
+// is where the half of it that needs a Discard to exist is exercised.
+//
+// The set tags below were the one piece of the #783 model seeded ahead
+// of it: a snapshot that cannot be attributed to a backup set is
+// invisible to the repository's own accounting, and that was worth
 // fixing in the interim rather than after it.
 type RepositorySink struct {
 	// Repo is the open repository.

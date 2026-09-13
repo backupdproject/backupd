@@ -249,6 +249,86 @@ func Render(report health.Report) string {
 			return float64(s.LastRetentionRunAt.Unix()), true
 		})
 
+	// EPIC K's four numbers, as four series (#783).
+	//
+	// They are separate metrics rather than one with a label because
+	// that is the difference the requirement is about: a scrape has to
+	// be able to graph what was READ against what was WRITTEN without
+	// summing them by accident, and a single
+	// backupd_snapshot_bytes{kind="..."} family is exactly the shape a
+	// dashboard sums. Presenting the logical size where a reader expects
+	// "uploaded" is the claim EPIC K forbids, and a metric that can be
+	// aggregated into that claim is the same mistake one query away.
+	//
+	// Every one of them is absent for a set that runs no snapshots, and
+	// absent for an incremental set whose newest run never got far
+	// enough to measure anything. A zero here would read as a real
+	// reading of zero bytes, which for a deduplicating engine is a
+	// plausible-looking number and therefore the worst possible way to
+	// be wrong.
+	writeGauge(&b, sets, "snapshot_entries_scanned",
+		"Source entries the newest snapshot run of this backup set considered, of every kind, including the ones it deliberately skipped. It is the source side's own census, not files plus directories. Absent for a set that takes no snapshots.",
+		func(s health.BackupSetHealth) (float64, bool) {
+			if s.Snapshot == nil || !s.Snapshot.Measured {
+				return 0, false
+			}
+			return float64(s.Snapshot.EntriesScanned), true
+		})
+
+	writeGauge(&b, sets, "snapshot_logical_bytes",
+		"Size of the source tree as the source described it, for the newest snapshot run. This is what was SCANNED and is never what was uploaded.",
+		func(s health.BackupSetHealth) (float64, bool) {
+			if s.Snapshot == nil || !s.Snapshot.Measured {
+				return 0, false
+			}
+			return float64(s.Snapshot.LogicalBytes), true
+		})
+
+	writeGauge(&b, sets, "snapshot_source_bytes_read",
+		"Bytes the newest snapshot run actually pulled off the source. An incremental engine still reads the source; this is what that cost.",
+		func(s health.BackupSetHealth) (float64, bool) {
+			if s.Snapshot == nil || !s.Snapshot.Measured {
+				return 0, false
+			}
+			return float64(s.Snapshot.SourceBytesRead), true
+		})
+
+	writeGauge(&b, sets, "snapshot_repository_bytes_written",
+		"Bytes the newest snapshot run actually wrote into the repository's storage, after deduplication and compression. This is the only one of these numbers that is storage growth.",
+		func(s health.BackupSetHealth) (float64, bool) {
+			if s.Snapshot == nil || !s.Snapshot.Measured {
+				return 0, false
+			}
+			return float64(s.Snapshot.RepositoryBytesWritten), true
+		})
+
+	writeGauge(&b, sets, "snapshot_content_reused_bytes",
+		"Bytes the newest snapshot run did not have to store again, because the repository already held that content. The gap between read and written.",
+		func(s health.BackupSetHealth) (float64, bool) {
+			if s.Snapshot == nil || !s.Snapshot.Measured {
+				return 0, false
+			}
+			return float64(s.Snapshot.ContentReusedBytes), true
+		})
+
+	writeGauge(&b, sets, "snapshot_unfinished_runs",
+		"Snapshot runs of this backup set left in a non-terminal phase: what a crash left for the next cycle's reconciliation to decide. Zero after a clean cycle.",
+		func(s health.BackupSetHealth) (float64, bool) {
+			if s.Snapshot == nil {
+				return 0, false
+			}
+			return float64(s.Snapshot.UnfinishedRuns), true
+		})
+
+	writeGauge(&b, sets, "snapshot_last_known_good_timestamp_seconds",
+		"Unix time the newest snapshot this backup set can still restore from completed. Absent when it has none, which is not the same as old.",
+		func(s health.BackupSetHealth) (float64, bool) {
+			if s.Snapshot == nil || s.Snapshot.LastKnownGoodAt == nil {
+				return 0, false
+			}
+			return float64(s.Snapshot.LastKnownGoodAt.Unix()), true
+		})
+
 	return b.String()
 }
 

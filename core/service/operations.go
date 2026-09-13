@@ -200,6 +200,15 @@ type Operation struct {
 	// alongside the durable fields above it.
 	Progress *OperationProgress
 
+	// Snapshots is what the incremental engine stored for this
+	// operation, one entry per backup set it ran, and nil for an
+	// operation that took no snapshots -- which is every operation in
+	// every deployment that has not opted into EPIC K's engine.
+	//
+	// Nil rather than an empty slice, and derived per read rather than
+	// stored: see core/service/operationsnapshot.go, which argues both.
+	Snapshots []OperationSnapshot
+
 	// Cycle is what a FINISHED run cycle actually got done, read back off
 	// the summary this package recorded when it completed the operation.
 	// Nil for every other action, for a run cycle that has not finished,
@@ -458,6 +467,13 @@ func (b *BackupService) GetOperation(ctx context.Context, id string) (Operation,
 		// be one round trip per row on a page nobody is watching.
 		op = b.deriveRestore(ctx, op)
 	}
+
+	// EPIC K's half of the same read (#783): what this operation's
+	// snapshot runs stored, as the catalog says NOW rather than as the
+	// operation's result text said when it finished. Like deriveRestore
+	// above, it is deliberately not done by ListOperations.
+	op = b.deriveSnapshots(ctx, op)
+
 	return op, nil
 }
 
@@ -585,10 +601,18 @@ func (b *BackupService) executeRunCycle(operationID string) {
 	b.activity.beginCycle()
 	defer b.activity.endCycle()
 
+	// The operation id travels with the cycle so that the snapshot runs
+	// it performs are attributable to the request that asked for them,
+	// which is what lets GET /operations/{id} answer "what did my run
+	// store" (see operationsnapshot.go). A scheduled cycle carries none
+	// and its runs record an empty operation id, which says the schedule
+	// did it.
 	report := runCycle(b.state.Load().inner,
-		app.WithBackupSetHolds(
-			app.WithProgressObserver(b.ctx, progressFanout{live, b.cycleWatch, b.activity}),
-			b.holds))
+		app.WithOperation(
+			app.WithBackupSetHolds(
+				app.WithProgressObserver(b.ctx, progressFanout{live, b.cycleWatch, b.activity}),
+				b.holds),
+			operationID))
 
 	// SystemicFailure, not Err != nil: a set whose pass was stopped
 	// because an operator entered edit mode (issue #350's hold) carries

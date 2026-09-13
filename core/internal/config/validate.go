@@ -60,6 +60,7 @@ import (
 
 	"github.com/backupdproject/backupd/core/internal/backend"
 	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/backupdproject/backupd/core/internal/secretref"
 )
 
 // Validate checks a Config for every problem this package knows how to
@@ -803,6 +804,23 @@ func (v *validator) validateRepositoryDomains(domains []RepositoryDomainConfig) 
 			v.addf("%s: isolation: %v", path, err)
 		}
 
+		// The passphrase is resolved here and REQUIRED only where it is
+		// referenced (validateEngineReferences), for the reason the
+		// field's own doc gives: a domain nothing points at is a
+		// boundary an operator is still building.
+		//
+		// A declared-but-malformed one is refused here rather than
+		// there, because "you named two secret sources" is a mistake in
+		// this block and has nothing to do with which set uses it.
+		if !d.Passphrase.isZero() {
+			ref := d.Passphrase.secretRef()
+			if err := ref.Validate(); err != nil {
+				v.addf("%s: passphrase: %v", path, err)
+			} else {
+				d.PassphraseRef = ref
+			}
+		}
+
 		d.Domain = model.RepositoryDomain{ID: id, Description: d.Description, Isolation: isolation}
 		declared[id.String()] = d.Domain
 	}
@@ -879,6 +897,17 @@ func (v *validator) validateEngineReferences(c *Config, declared map[string]mode
 				continue
 			}
 
+			// A repository this deployment will actually open needs the
+			// one secret that opens it. Refusing here rather than at the
+			// first backup is the difference between a configuration
+			// error an operator fixes now and a backup window that ends
+			// with nothing stored.
+			if passphraseRefOf(c, id).IsZero() {
+				v.addf("%s: repository_domain %q declares no passphrase; a repository this product creates is always encrypted, "+
+					"so the domain needs passphrase.file, passphrase.env or passphrase.command before a backup set can be stored in it",
+					path, id)
+			}
+
 			for _, other := range occupants[id] {
 				if err := domain.MayShare(other.ref, bs.Repository); err != nil {
 					v.addf("%s: %v (%s already occupies it)", path, err, other.path)
@@ -890,6 +919,24 @@ func (v *validator) validateEngineReferences(c *Config, declared map[string]mode
 			occupants[id] = append(occupants[id], member{path: path, ref: bs.Repository})
 		}
 	}
+}
+
+// passphraseRefOf is the resolved passphrase reference for one declared
+// repository domain, or the zero Ref when the domain declared none.
+//
+// It reads the domain ENTRY rather than the resolved model.RepositoryDomain
+// the reference check works with, because a secret reference is not part of
+// what a domain IS -- the model type is the boundary, and a boundary does
+// not carry a credential. Keeping the lookup here is what lets both
+// statements stay true at once.
+func passphraseRefOf(c *Config, id string) secretref.Ref {
+	for i := range c.RepositoryDomains {
+		if c.RepositoryDomains[i].Domain.ID.String() == id {
+			return c.RepositoryDomains[i].PassphraseRef
+		}
+	}
+
+	return secretref.Ref{}
 }
 
 // declaredDomainList renders the declared domain ids for the refusal above,

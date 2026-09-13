@@ -66,6 +66,15 @@ func incrementalSet(t *testing.T) (config.BackupSet, *fakeTransport) {
 // TestRunCycle_AnIncrementalSetNeverReachesTheArtifactPipeline is the
 // regression test EPIC K asks for by name, at the cycle entry point: the
 // one `run` performs and `daemon` repeats.
+//
+// Since #783 the incremental engine HAS a pipeline, so what this asserts
+// at this entry point has changed shape and not substance: the set is
+// dispatched to that pipeline instead of to the artifact one. This
+// fixture's set names a repository domain nothing declares, so the pass
+// refuses before it opens anything -- which is the point. The claim
+// underneath is the same one the test has always made and is what the
+// second half checks: whatever the incremental pipeline does or refuses
+// to do, the artifact pipeline never touched this set's source.
 func TestRunCycle_AnIncrementalSetNeverReachesTheArtifactPipeline(t *testing.T) {
 	bs, tr := incrementalSet(t)
 
@@ -80,17 +89,31 @@ func TestRunCycle_AnIncrementalSetNeverReachesTheArtifactPipeline(t *testing.T) 
 	}
 
 	set := report.Sets[0]
-	if !errors.Is(set.Err, ErrEngineNotImplemented) {
-		t.Fatalf("BackupSetCycleResult.Err = %v, want errors.Is(_, ErrEngineNotImplemented); anything else means the set ran", set.Err)
+	if set.Err == nil {
+		t.Fatalf("a set naming an undeclared repository domain was reported as a successful pass")
 	}
 
-	// The refusal is what an operator reads, and it has to distinguish a
-	// build limitation from a configuration mistake: the config is
-	// correct, this build simply cannot run it yet.
-	for _, want := range []string{string(model.EngineKopia), "#783"} {
-		if !strings.Contains(set.Err.Error(), want) {
-			t.Errorf("the refusal %q does not mention %q, so it does not say which engine was refused or that the limitation is the build's", set.Err, want)
-		}
+	if errors.Is(set.Err, ErrEngineNotImplemented) {
+		t.Fatalf("the set was refused as an engine this build cannot run (%v); since #783 it has a pipeline and must be dispatched to it", set.Err)
+	}
+
+	if !strings.Contains(set.Err.Error(), "production") {
+		t.Errorf("the refusal %q does not name the repository domain at fault", set.Err)
+	}
+
+	// The set was dispatched to the incremental pipeline, which is the
+	// positive half: a refusal reported in the set's own row with no
+	// snapshot result at all would look identical to the old
+	// build-limitation refusal.
+	if set.Snapshot == nil {
+		t.Error("the set's row carries no snapshot result, so nothing says the incremental pipeline was the one that ran")
+	}
+
+	// Its progress reads as "one piece of work in front of this set, none
+	// of it landed", which is what a run that produced no restore point
+	// has to say to every surface that renders these two counts.
+	if set.Progress.Walked != 1 || set.Progress.Durable != 0 {
+		t.Errorf("progress = %+v, want one walked and none durable", set.Progress)
 	}
 
 	// Nothing was discovered, which is the claim that matters for a source
