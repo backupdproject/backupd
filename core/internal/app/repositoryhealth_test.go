@@ -101,6 +101,11 @@ func probeService(t *testing.T, engine backupengine.Engine, now time.Time) *Serv
 
 	cfg := &config.Config{
 		Capacity: config.Capacity{BackupRoot: t.TempDir()},
+		// EPIC K's production gate (#789) open: every probe below is
+		// about a deployment that runs the incremental engine, and the
+		// gate refuses the probe outright when it is shut (see
+		// TestRepositoryHealth_TheGateRefusesTheProbeItself).
+		IncrementalEngine: config.IncrementalEngine{Enabled: true},
 		RepositoryDomains: []config.RepositoryDomainConfig{{
 			ID:            domain.String(),
 			Isolation:     string(model.RepositoryShared),

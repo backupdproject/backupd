@@ -272,6 +272,66 @@ path. Nothing resembling a credential is ever written into `container/compose.ya
 `container/Dockerfile`, or `container/.env.example` itself; the actual key material only
 ever exists at the host path the operator points `SSH_KEY_FILE` to.
 
+## The incremental engine's gate, and where to set it in a container deployment
+
+The incremental (kopia) backup engine is off by default and gated on one
+setting, which can be given two ways. The environment wins over the file **in
+both directions**: `BACKUPD_INCREMENTAL_ENGINE` set to `1`, `true`, `yes` or
+`on` enables the engine whatever the file says, `0`, `false`, `no` or `off`
+disables it whatever the file says, and unset or empty defers to the file. A
+value that is neither spelling is refused when the configuration is validated,
+naming the variable and the accepted spellings, so a typo does not resolve to
+"off".
+
+**On the standard container deployment, set it in `config.yaml`:**
+
+```yaml
+# on the /etc/backupd/config mount
+incremental_engine:
+  enabled: true
+```
+
+That is the place it belongs, and on this deployment shape it is the only
+place that works for the long-running processes. `container/compose.yaml`
+passes environment through an explicit `environment:` block — `TMPDIR`,
+`LOG_LEVEL`, `TZ` and the rest, each interpolated by name — and there is no
+catch-all, so a variable dropped into `container/.env` reaches nothing unless
+that file declares it. `BACKUPD_INCREMENTAL_ENGINE` is not among them.
+
+Where the environment override is the right tool is a process you launch
+yourself, and it is worth knowing for exactly two situations — proving
+something without editing a deployment's configuration, and turning the engine
+off for one command:
+
+```bash
+# one command, inside the running engine container
+docker compose -p backupd ... exec -e BACKUPD_INCREMENTAL_ENGINE=1 backupd /backupd repository health
+
+# a CLI-only install, or a systemd unit, where you own the environment
+BACKUPD_INCREMENTAL_ENGINE=0 ~/backupd/bin/backupd run
+```
+
+The variable is read by the **engine** process, the one that runs the cycle,
+and not by the web host, so it only ever has to reach wherever `backupd`
+itself runs.
+
+There is no watcher and no SIGHUP reload, so a hand edit to `config.yaml` is
+read when a process starts; restart the engine container after making one.
+Turning the gate off never stops the daemon: a configuration that declares
+incremental backup sets still loads and still backs up every `artifact` set on
+schedule, and only the incremental ones refuse. See
+[`docs/incremental-engine.md`](incremental-engine.md) for what the gate does
+and does not cover, and
+[`docs/incremental-runbooks.md`](incremental-runbooks.md#runbook-4-the-engine-is-refusing-because-the-gate-is-off)
+for the refusal.
+
+One storage note for a deployment that enables it: a repository's bytes live
+under the `/data/backups` mount, in the reserved namespace
+`<backup_root>/.backupd/repositories/<domain>/`. That path must be on a
+filesystem the container can write to and that is not walked by anything else
+&mdash; exclude `.backupd` from any SMB/AFP share, scanner or backup-of-the-backup
+that covers the backup volume.
+
 ## No privileged mode
 
 `container/compose.yaml` never sets `privileged: true` (explicitly `privileged: false`),

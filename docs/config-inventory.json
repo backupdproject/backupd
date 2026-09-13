@@ -19,15 +19,15 @@
   ],
   "what_is_in_here": "One entry per CONFIGURATION field: something that changes what this deployment is, and that persists. Purely operational CLI flags are deliberately excluded, because they select an action rather than configure anything: --dry-run, --json, --limit, --follow, --scope, --severity, --source/--backup-set filters, --note, --content, --days, --medium, --acknowledge, --acknowledge-repoint, --acknowledge-host-key-change, --acknowledge-medium-disclosure, --release, --run, --inherit, --candidate, --stdin, --policy-file and --tier/--tier-medium as a preview override. Where such a flag is the only way to write a persistent field (--no-verify writing connection_unverified, --policy-file and --tier writing a retention chain) it is listed on that field instead.",
   "summary": {
-    "total": 120,
+    "total": 121,
     "ui_already": 49,
     "ui_to_add": 28,
-    "file_only": 43,
+    "file_only": 44,
     "by_scope": {
       "auth_smtp": 9,
       "backup_set": 46,
       "capacity": 5,
-      "deployment": 31,
+      "deployment": 32,
       "medium": 13,
       "retention": 13,
       "source": 2,
@@ -299,6 +299,24 @@
         "configurable": false,
         "location": "Settings > Capacity (reported read-only, with whether it was configured or derived)",
         "recommendation": "add: Settings > Capacity (advanced override beside the reading it already shows)"
+      }
+    },
+    {
+      "field": "incremental_engine.enabled",
+      "yaml_path": "incremental_engine.enabled",
+      "cli_flags": [],
+      "env": [
+        "BACKUPD_INCREMENTAL_ENGINE"
+      ],
+      "type": "bool",
+      "default": false,
+      "required": false,
+      "scope": "deployment",
+      "description": "EPIC K's production gate (#789): whether this deployment may run the incremental (kopia) backup engine at all. Defaults to FALSE, and an absent incremental_engine block is disabled. BACKUPD_INCREMENTAL_ENGINE overrides the file in BOTH directions (1|true|yes|on enables, 0|false|no|off disables, unset or empty defers to the file), and an unparseable value is refused at Validate rather than read as off. Resolved by config.IncrementalEngineEnabled() and nowhere else. With it off, creating or updating an engine: kopia set, that set's snapshot cycle, verification, maintenance, snapshot restore and the repository probes all refuse with config.ErrIncrementalEngineDisabled (409 INCREMENTAL_ENGINE_DISABLED, CLI exit 1); LOADING a configuration that declares kopia sets is deliberately NOT gated, so turning it off never stops a daemon whose artifact sets still have to run. Artifact backup sets are unaffected in either position. See docs/incremental-engine.md.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "File-only on purpose: a release gate an operator can flip from the browser is one that gets flipped without the runbook beside it."
       }
     },
     {

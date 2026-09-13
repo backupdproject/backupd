@@ -630,6 +630,20 @@ func (h *handlers) writeBackupSetError(w http.ResponseWriter, r *http.Request, e
 		// Safe to echo, on the same terms: core/service builds this
 		// message from its own text alone.
 		writeError(w, http.StatusConflict, "BACKUP_SET_SOURCE_NOT_WRITABLE", err.Error())
+	case errors.Is(err, service.ErrIncrementalEngineDisabled):
+		// EPIC K's production feature gate (#789). 409 and its own code,
+		// for the reason above taken one step further out: the request is
+		// well formed and the DEPLOYMENT is configured not to run the
+		// engine this set names. What it offers an operator is "enable
+		// incremental_engine.enabled and try again" or "create an
+		// artifact set instead", and a client that rendered
+		// INVALID_REQUEST here would send them hunting a typo in a
+		// request that was right.
+		//
+		// Safe to echo: the message is core/internal/config's own
+		// sentence, naming the config key and the environment variable
+		// and nothing about this deployment's storage.
+		writeError(w, http.StatusConflict, "INCREMENTAL_ENGINE_DISABLED", err.Error())
 	case errors.Is(err, service.ErrRepointNotAcknowledged):
 		// 409 rather than 400, because this is not a malformed request:
 		// it is a well-formed one whose consequences the caller has to

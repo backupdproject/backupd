@@ -141,6 +141,19 @@ type Config struct {
 	Alerts        Alerts        `yaml:"alerts"`
 	Capacity      Capacity      `yaml:"capacity,omitempty"`
 	KeyEncryption KeyEncryption `yaml:"key_encryption,omitempty"`
+
+	// IncrementalEngine is EPIC K's production feature gate (#789): does
+	// this deployment run the incremental engine at all.
+	//
+	// omitempty, for the round-trip reason every block above states:
+	// core/service re-marshals the whole Config on every settings save,
+	// and a config file that never heard of the incremental engine must
+	// not come back from one carrying an "incremental_engine: {}" an
+	// older binary refuses outright under Load's KnownFields(true). It is
+	// load-bearing here in particular, because the gate's default is off
+	// and a zero block is therefore indistinguishable from silence: see
+	// incrementalengine.go.
+	IncrementalEngine IncrementalEngine `yaml:"incremental_engine,omitempty"`
 }
 
 // KeyEncryption names an optional, config-wide way to obtain the key

@@ -102,7 +102,7 @@
   <section>
     <span class="step-eyebrow">Reference</span>
     <h1>Every screen, every command, every flag</h1>
-    <p>This page is the whole surface in one place: the nine screens of the web interface, the three destination surfaces that live inside one of them, and the terminal docked under them all; the twenty commands of the <code>backupd</code> command line; and every subcommand and flag of the installer. <a href="first-run.html">The first-run tutorial</a> walks the one path a new install takes; this one does not walk anything, it enumerates.</p>
+    <p>This page is the whole surface in one place: every screen of the web interface, the three destination surfaces that live inside one of them, and the terminal docked under them all; the twenty-two commands of the <code>backupd</code> command line; and every subcommand and flag of the installer. <a href="first-run.html">The first-run tutorial</a> walks the one path a new install takes; this one does not walk anything, it enumerates.</p>
 
     <div class="toc">
       <ol>
@@ -110,9 +110,18 @@
         <li><a href="#web-dashboard">Dashboard</a></li>
         <li><a href="#web-sets">Backup sets</a></li>
         <li><a href="#web-backups">Backups</a></li>
+        <li><a href="#web-snapshots">Snapshots</a></li>
+        <li><a href="#web-snapshot-detail">Snapshot detail</a></li>
+        <li><a href="#web-snapshot-restore">Restore from a snapshot</a></li>
+        <li><a href="#web-snapshot-retention">Snapshot retention and holds</a></li>
         <li><a href="#web-activity">Activity</a></li>
         <li><a href="#web-quarantine">Quarantine</a></li>
         <li><a href="#web-settings">Settings</a></li>
+        <li><a href="#web-backup-defaults">Backup defaults</a></li>
+        <li><a href="#web-repositories">Repository domains</a></li>
+        <li><a href="#web-repository-new">Define a repository domain</a></li>
+        <li><a href="#web-repository-health">Repository health</a></li>
+        <li><a href="#web-repository-maintenance">Repository maintenance</a></li>
         <li><a href="#web-destinations">Storage destinations</a></li>
         <li><a href="#web-destination-add">Adding a destination</a></li>
         <li><a href="#web-destination-configure">Configuring a destination</a></li>
@@ -132,7 +141,7 @@
 
   <section>
     <h2 id="web">The web interface</h2>
-    <p>Six items in the sidebar, one screen behind each, two detail screens you reach by opening a row on the list above them, a catalog-recovery screen reached from the footer, and a terminal docked to the bottom of all of them. The top bar carries the service badge (running, and which version), a light/dark toggle and Sign out. The sidebar footer says which platform the deployment thinks it is on, which is the thing to check first when a NAS-specific feature is missing.</p>
+    <p>Seven items in the sidebar &mdash; Dashboard, Backup sets, Backups, Activity, Quarantine, Repositories, Settings &mdash; one screen behind each, detail screens you reach by opening a row on the list above them, the four incremental-engine screens a snapshot-taking backup set adds to its own page, a catalog-recovery screen reached from the footer, and a terminal docked to the bottom of all of them. The top bar carries the service badge (running, and which version), a light/dark toggle and Sign out. The sidebar footer says which platform the deployment thinks it is on, which is the thing to check first when a NAS-specific feature is missing.</p>
     <p>Three of the surfaces below have no route of their own: the storage destinations list and the two wizards that add and configure one all live inside <a href="#web-settings">Settings</a>. They are enumerated separately anyway, because each is a screenful of controls that write configuration, and a reader looking one up should not have to find it inside a table row about a card.</p>
     <p>Nearly everything on these screens is reachable from <a href="#cli">the command line</a> as well, and several screens say so in place: a control that changes configuration prints the <code>backupd</code> command that does the same thing, right underneath itself. Where the command cannot carry a field the screen is about to save, the screen prints the command <em>and</em> names the fields it leaves out, rather than printing a line that quietly configures less than was asked for.</p>
 
@@ -191,7 +200,7 @@
         <tbody>
           <tr><td><strong>Run this backup set</strong></td><td>Runs one pass over this set only.</td><td>A real transfer cycle. Unavailable while the set is disabled, because a sweep would not have visited it either.</td></tr>
           <tr><td><strong>Run all enabled sets</strong></td><td>The same deployment-wide run the Dashboard and Backup sets list offer.</td><td>A cycle over every enabled set, not only this one &mdash; the label says so because this button sits on one set's own page.</td></tr>
-          <tr><td><strong>Test connection</strong></td><td>Resolve, connect, check the host key, authenticate, list the folder.</td><td>Nothing is written. The six-step trace lands in <a href="#web-terminal">the docked terminal</a>, where a refusal is written too rather than silently swallowed.</td></tr>
+          <tr><td><strong>Test connection</strong></td><td>Resolve, connect, check the host key, authenticate, list the folder, and prove whether these credentials may write there.</td><td>Nothing is kept. The seven-step trace lands in <a href="#web-terminal">the docked terminal</a>, where a refusal is written too rather than silently swallowed. The seventh step creates one uniquely named probe file under the remote path and removes it again; both answers pass, because a read-only source is a posture rather than a fault, and what the answer decides is whether <em>delete from source</em> may be enabled at all.</td></tr>
           <tr><td><strong>Edit</strong></td><td>Opens edit mode, one field at a time.</td><td>Nothing yet. Each field keeps its own <strong>Save</strong>, which writes that one field immediately rather than waiting for the rest of the form.</td></tr>
           <tr><td><strong>Save anyway</strong> / <strong>Leave it as it was</strong></td><td>Answers a refusal a per-field save came back with (an unproven host key, a completion-method change mid-transfer).</td><td><strong>Save anyway</strong> writes the same patch again over the refusal. <strong>Leave it as it was</strong> writes nothing and returns the field to what it was.</td></tr>
           <tr><td><strong>SAVE ALL &amp; EXIT EDIT</strong></td><td>Writes every field changed since Edit was pressed and returns to view mode.</td><td>One write per changed field. Anything not touched this session is left alone.</td></tr>
@@ -204,6 +213,24 @@
       <span class="note-label">Editing a set that is mid-transfer</span>
       <p>Pressing <strong>Edit</strong> on a set with a backup in flight stops it first and says so on screen: the confirmation reads &ldquo;Stop it to edit this backup set?&rdquo;, and the interrupted backup stays incomplete rather than counting as a finished one. The next cycle after edit mode closes picks it up again.</p>
     </div>
+
+    <h3 id="web-snapshots">Snapshots</h3>
+    <p>Only on a backup set running <a href="https://github.com/backupdproject/backupd/blob/main/docs/incremental-engine.md">the incremental engine</a>, reached from the set's own page. Every snapshot run this set has on record, newest first, with the phase it reached and the verification level a check actually <em>achieved</em>. Only a run at <code>SUCCESS</code> is a restore point.</p>
+    <p>Each row carries five separate measurements and no total: entries scanned, logical size, read from source, written to repository, and reused. A single &ldquo;backed up&rdquo; figure would report a 100&nbsp;GB tree deduplicated down to 200&nbsp;MB of new content as a 100&nbsp;GB upload every night. A counter nobody took prints <strong>not measured</strong> and never <code>0</code>, because &ldquo;reused 0 bytes&rdquo; sends somebody hunting a fault in a backup that is working. Row actions open <a href="#web-snapshot-detail">the inspector</a>, <a href="#web-snapshot-restore">Restore</a>, and the hold controls on <a href="#web-snapshot-retention">Snapshot retention</a>. The equivalent command is <code>backupd snapshot list &lt;source&gt;/&lt;set&gt;</code>.</p>
+
+    <h3 id="web-snapshot-detail">Snapshot detail</h3>
+    <p>One run in full: the five measurements as a metric strip, the repository domain it was stored in, the source-consistency mode that was in force <em>when the pass ran</em> rather than the one configured now, the verification level asked for beside the level achieved, and the transition log that says how the run reached the phase it is in. A failed verification carries no achieved level at all. <code>backupd snapshot show &lt;source&gt;/&lt;set&gt; &lt;run-id&gt;</code>.</p>
+
+    <h3 id="web-snapshot-restore">Restore from a snapshot</h3>
+    <p>Reads a restore point this deployment holds and writes a tree onto a disk it can reach. Which snapshot (the set's last known good by default), optionally one path inside it, the local directory to write into &mdash; required, and never invented, because an engine that chose the disk would fill it &mdash; and what to do when the destination already holds something: <strong>refuse</strong> (the default, which stops rather than replacing anything), <strong>skip</strong>, or <strong>overwrite</strong>. It submits one durable operation and then watches it.</p>
+    <div class="note danger">
+      <span class="note-label">This is not the <code>restore</code> command</span>
+      <p><a href="#cli-commands"><code>backupd restore</code></a> asks a storage provider to make an <em>archived object</em> readable again, over hours and at a cost, and writes nothing anywhere. This screen, and <code>backupd snapshot restore</code>, read a snapshot and write files. The two are never folded together.</p>
+    </div>
+
+    <h3 id="web-snapshot-retention">Snapshot retention and holds</h3>
+    <p>What snapshot retention would decide about each of this set's snapshots right now, oldest first, and it deletes nothing: <strong>KEEP</strong> names every tier that selected the snapshot, <strong>DELETE</strong> means nothing did and every safety check passed, and <strong>REFUSE</strong> means it was a delete candidate and something stopped it &mdash; the only one of the three that needs somebody to look at it. The same GFS chain that retains artifacts decides this; there is no second policy.</p>
+    <p><strong>Place a hold</strong> stops retention deleting one snapshot until somebody releases it, and a reason is required: a hold nobody explained is one nobody dares release, which makes it permanent by accident. A hold names who placed it and why, and separately who released it and when. <strong>Release this hold</strong> deletes nothing &mdash; it returns the snapshot to whatever the policy already said about it. <code>backupd snapshot retention</code>, <code>snapshot hold</code>, <code>snapshot holds</code>, <code>snapshot unhold</code>.</p>
 
 
     <h3 id="web-backups">Backups</h3>
@@ -292,6 +319,26 @@
       <span class="note-label">The same thing from a terminal</span>
       <p>Under every retention tier and every destination, this screen prints the <code>backupd</code> command that does what the control above it does: <code>backupd settings patch --tier-medium monthly=offsite_s3</code>, <code>backupd medium test-connection offsite_s3</code>, <code>backupd medium remove offsite_s3</code>. They are there to be copied, and they are the reason the two surfaces cannot drift: the button and the command are the same call.</p>
     </div>
+
+    <h3 id="web-backup-defaults">Backup defaults</h3>
+    <p>Reached from <a href="#web-settings">Settings</a>. What a new backup set starts with &mdash; engine, repository domain, source-consistency mode, verification level and sample size, the two verification cadences, poll interval &mdash; so a fleet is not configured one wizard at a time. These are the answers <strong>Add backup set</strong> opens with; they are defaults for the <em>next</em> set and change nothing about a set that already exists.</p>
+    <p>It also lists who maintains each repository domain. Ownership is shown and not transferable from here: there is no API route that moves maintenance ownership in this build, and the card says so rather than offering a control that would fail.</p>
+
+    <h3 id="web-repositories">Repository domains</h3>
+    <p>A <strong>repository domain</strong> is a security boundary, not a folder: one encrypted store, one passphrase, one deduplication span, one maintenance owner, one corruption fate. A backup set running <a href="https://github.com/backupdproject/backupd/blob/main/docs/incremental-engine.md">the incremental engine</a> names exactly one, and two sets sharing a domain share all six of those things &mdash; which is where the storage saving comes from, and why the choice is never defaulted.</p>
+    <p>This screen lists every domain the configuration declares, whether it is <code>shared</code> or <code>isolated</code>, which backup sets store snapshots in it, and its health. <code>backupd repository health</code> is the same answer at a terminal.</p>
+
+    <h3 id="web-repository-new">Define a repository domain</h3>
+    <p>The form that explains the decision, and states plainly that it cannot save it. <strong>There is no API route that creates a repository domain in this build</strong>: the contract declares <code>GET /repositories</code> and <code>GET /repositories/{domain}/maintenance</code> and nothing that writes, so every box that would describe the store &mdash; its id, its location, its passphrase &mdash; is disabled, and so is <strong>Create</strong>. A domain is declared by editing <code>config.yaml</code>; <a href="https://github.com/backupdproject/backupd/blob/main/docs/incremental-runbooks.md#runbook-1-moving-a-source-onto-the-incremental-engine">the migration runbook</a> is the procedure.</p>
+    <p>What is live is the sharing choice, because that is the decision the screen exists for: picking <strong>Shared</strong> or <strong>Isolated</strong> states what each answer commits every set in the domain to. Stating it here rather than in a help page is deliberate &mdash; co-tenancy is named where the decision is made.</p>
+
+    <h3 id="web-repository-health">Repository health</h3>
+    <p>Each domain's own verdict, which is a different question from any backup set's: a set can be perfectly fresh while the repository holding its snapshots is unwritable, out of maintenance, or reached by a process whose clock has drifted far enough to mis-order manifests. Every probe is reported separately rather than reduced to one boolean, because the remedies are different &mdash; unreachable is a mount, unwritable is a permission, invalid credentials is a passphrase, and overdue maintenance is a schedule.</p>
+    <p>The verdict uses the same three words a backup set uses, so one dashboard carries one severity scale. <strong>FAILING</strong> is reserved for a repository that cannot take a backup at all; overdue maintenance, a drifted clock and a failed verification are <strong>DEGRADED</strong>. Clock skew is signed, and the sign is the message: behind the history already stored is the direction that dates a new snapshot before an older one. <code>backupd repository health</code> prints the same rows and exits non-zero when any repository is failing.</p>
+
+    <h3 id="web-repository-maintenance">Repository maintenance</h3>
+    <p>Compaction and reclamation, per domain. Retention deleting a snapshot frees nothing on its own &mdash; the content behind the manifest stays in the store's packs until maintenance collects it &mdash; and <strong>full</strong> maintenance is what actually reclaims storage, so a domain with recent quick runs and no full run is growing.</p>
+    <p>Ownership is a first-class column, because exactly one instance may maintain a domain: two processes rewriting one store's indexes concurrently is how a repository loses content it still references. A domain another instance owns has its actions disabled with the reason in the card, since &ldquo;press it and find out&rdquo; is how that happens. <code>backupd repository maintenance &lt;domain&gt;</code> answers the same question at a terminal, and opens nothing, so it still answers while the repository itself is unreachable.</p>
 
     <h3 id="web-destinations">Storage destinations</h3>
     <figure>
@@ -413,7 +460,7 @@
     <p>On a <a href="index.html#install-cli-only">CLI-only install</a> the installer writes a wrapper and you type <code>~/backupd/bin/backupd status</code> instead. Every command except <code>version</code> takes <code>--config</code>, which defaults to <code>/etc/backupd/config/config.yaml</code> and also accepts the directory, because that is what packaging mounts.</p>
 
     <h3 id="cli-commands">Every command</h3>
-    <p>Twenty of them. This table is checked against the binary's own dispatch table on every run of the repository's gate, so a command that is added, removed or renamed and not reflected here fails the build rather than going quietly stale.</p>
+    <p>Twenty-two of them. This table is checked against the binary's own dispatch table on every run of the repository's gate, so a command that is added, removed or renamed and not reflected here fails the build rather than going quietly stale.</p>
     <div class="scroll-x">
       <!-- BEGIN CLI-COMMANDS -->
       <table>
@@ -424,7 +471,7 @@
           <tr><td><code>check</code></td><td>Validate the configuration and the state database, then exit.</td></tr>
           <tr><td><code>status</code></td><td>Report process and backup-set health, exiting non-zero unless every set is healthy.</td></tr>
           <tr><td><code>sources</code></td><td>List the configured sources and their backup sets.</td></tr>
-          <tr><td><code>backup-set</code></td><td>The configuration verbs for one set: <code>create</code>, <code>patch</code>, <code>remove</code>, <code>test-connection</code>, <code>retention</code>, <code>edit-hold</code>. A create or patch proves the connection before it writes anything, and <code>--no-verify</code> writes it anyway and leaves the set marked unverified until a test passes.</td></tr>
+          <tr><td><code>backup-set</code></td><td>The configuration verbs for one set: <code>create</code>, <code>patch</code>, <code>remove</code>, <code>test-connection</code>, <code>retention</code>, <code>edit-hold</code>, plus the two toggles <code>enabled &lt;on|off&gt;</code> and <code>read-only &lt;on|off&gt;</code>, which change after creation what <code>--disabled</code> and <code>--read-only</code> can only say at it. A create or patch proves the connection before it writes anything, and <code>--no-verify</code> writes it anyway and leaves the set marked unverified until a test passes. <code>read-only on</code> is never refused; <code>read-only off</code> is refused when the source itself was proven unwritable.</td></tr>
           <tr><td><code>artifacts</code></td><td>List journal artifacts, filtered by source and set, or print one artifact's full detail including the reason recorded for a failure.</td></tr>
           <tr><td><code>activity</code></td><td>List recorded lifecycle events, newest first. <code>--follow</code> streams the live feed instead, which is a different feed rather than a mode of the same one, so it needs a route to the serving process and refuses without one.</td></tr>
           <tr><td><code>fetch</code></td><td>Run one backup set's cycle on demand.</td></tr>
@@ -437,6 +484,8 @@
           <tr><td><code>unconfigured</code></td><td>List the backup sets the journal remembers and the configuration no longer names, and what they still occupy. <code>unconfigured clear</code> ends those rows and removes the <code>.partial</code> residue a removal stranded, never a retained backup.</td></tr>
           <tr><td><code>medium</code></td><td>The storage-destination verbs: <code>list</code>, <code>show</code>, <code>add</code>, <code>edit</code>, <code>remove</code>, <code>default</code>, <code>test-connection</code> (also spelled <code>preflight</code>) and <code>import-credentials</code>. Credentials are taken on standard input and never as a flag. Its field flags are the ones a bucket has: <code>--type</code> takes <code>s3</code>, and there is no <code>--path</code>, so an instance of the <code>local_volume</code> backend cannot be declared here &mdash; <a href="#web-destination-configure">the configure wizard</a> is the only surface that can, and it prints its equivalent command with the missing fields named rather than a line that would write something else.</td></tr>
           <tr><td><code>restore</code></td><td>Ask the storage provider to make one archived copy readable again. It is billed and takes hours, so <code>--acknowledge</code> is required; <code>--days</code> defaults to 7 and is bounded to 30.</td></tr>
+          <tr><td><code>snapshot</code></td><td>The incremental engine's restore points: <code>list</code>, <code>show</code>, <code>holds</code>, <code>retention</code>, <code>verify</code>, <code>restore</code>, <code>hold</code>, <code>unhold</code>. Five separate measurements per run and deliberately no total, and <code>not measured</code> is a real answer rather than a zero. <code>verify</code> exits non-zero when it finds damage; <code>restore</code> writes a tree into a local directory and defaults <code>--conflict</code> to <code>refuse</code>; <code>hold</code> requires <code>--reason</code>.</td></tr>
+          <tr><td><code>repository</code></td><td><code>health</code> reports every declared repository domain's own verdict &mdash; reachable, readable, writable, whether the declared passphrase opens it, whether the clock can be trusted, whether maintenance is overdue &mdash; and exits non-zero when one is failing. <code>maintenance &lt;domain&gt;</code> reports who owns maintenance, when it last ran quick and full, and whether it is overdue; it opens nothing, so it answers while the repository is unreachable.</td></tr>
           <tr><td><code>settings</code></td><td>Report the live retention and capacity settings, or change one in place with <code>settings patch</code>, including pointing a single retention tier at a destination.</td></tr>
           <tr><td><code>version</code></td><td>Report the binary, Go and embedded rclone versions.</td></tr>
         </tbody>
@@ -444,8 +493,14 @@
       <!-- END CLI-COMMANDS -->
     </div>
     <div class="note danger">
-      <span class="note-label">There is no restore command</span>
-      <p><code>restore</code> above asks a storage provider to thaw an archived object so it can be read. It does not restore a backup into an application. Recovering data is a documented manual procedure and this product deliberately does not carry it out.</p>
+      <span class="note-label">Two different things are called restore</span>
+      <p><code>restore</code> above asks a storage provider to thaw an <em>archived object</em> so it can be read: it is billed, it takes hours, and it writes nothing anywhere. <code>snapshot restore</code> is the other one, and it only exists for a backup set on the incremental engine: it reads a restore point out of a repository and writes a tree into a local directory you name.</p>
+      <p>Neither one restores an <em>artifact</em> backup into an application. A retained artifact is a file on storage; putting its contents back is a documented manual procedure and this product deliberately does not carry it out. See <a href="https://github.com/backupdproject/backupd/blob/main/docs/recovery.md">docs/recovery.md</a>.</p>
+    </div>
+    <div class="note warn">
+      <span class="note-label">The incremental engine is off until you turn it on</span>
+      <p><code>snapshot</code> and <code>repository</code>, and any backup set whose <code>engine</code> is <code>kopia</code>, are gated on one setting that defaults to <strong>off</strong>: <code>incremental_engine.enabled: true</code> in <code>config.yaml</code>, or <code>BACKUPD_INCREMENTAL_ENGINE=1</code> in the environment, which overrides the file in both directions. With it off, those verbs refuse with one sentence naming both ways to enable it, and exit <code>1</code>; over the API it is <code>409 INCREMENTAL_ENGINE_DISABLED</code>.</p>
+      <p>Turning it off never stops a daemon: a configuration that declares incremental sets still loads and still backs up every <code>artifact</code> set on schedule. Artifact backup sets are unaffected by this setting in either position, and <strong>nothing ever converts one engine to the other</strong>. See <a href="https://github.com/backupdproject/backupd/blob/main/docs/incremental-engine.md">docs/incremental-engine.md</a>.</p>
     </div>
 
     <h3 id="cli-modes">Where a change is written, and how you know</h3>

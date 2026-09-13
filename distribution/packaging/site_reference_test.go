@@ -187,8 +187,22 @@ var routeSections = map[string]documentedRoute{
 	"/activity":                   {"reference.html", "web-activity"},
 	"/quarantine":                 {"reference.html", "web-quarantine"},
 	"/settings":                   {"reference.html", "web-settings"},
-	"/catalog-recovery":           {"reference.html", "web-catalog"},
-	"/enroll":                     {"first-run.html", "enrol"},
+	// EPIC K's operator surface (#788). Four per-set screens for a
+	// backup set on the incremental engine, four repository-domain
+	// screens, and the deployment-wide defaults a new set starts from.
+	// Every one of them is a screen somebody looks something up by, so
+	// none of them is an exemption.
+	"/sets/:source/:set/snapshots":          {"reference.html", "web-snapshots"},
+	"/sets/:source/:set/snapshots/:runId":   {"reference.html", "web-snapshot-detail"},
+	"/sets/:source/:set/restore":            {"reference.html", "web-snapshot-restore"},
+	"/sets/:source/:set/snapshot-retention": {"reference.html", "web-snapshot-retention"},
+	"/repositories":                         {"reference.html", "web-repositories"},
+	"/repositories/new":                     {"reference.html", "web-repository-new"},
+	"/repositories/health":                  {"reference.html", "web-repository-health"},
+	"/repositories/maintenance":             {"reference.html", "web-repository-maintenance"},
+	"/settings/backup-defaults":             {"reference.html", "web-backup-defaults"},
+	"/catalog-recovery":                     {"reference.html", "web-catalog"},
+	"/enroll":                               {"first-run.html", "enrol"},
 	// Both halves of the forgotten-password flow (#830) are documented by
 	// one section, because they are one procedure: the page that asks for
 	// a reset link and the page the emailed link opens. first-run.html's

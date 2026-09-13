@@ -105,14 +105,16 @@ import (
 )
 
 // Kind is one alertable condition. Four of them are the ones §71's Work
-// Package 3.5 names; the fifth is EPIC K's repository maintenance
-// failure, added by issue #786.
+// Package 3.5 names; the fifth and sixth are EPIC K's, a repository whose
+// maintenance is failing (#786) and a repository that cannot take a
+// backup at all (#789).
 //
 // mechanism_test.go pins the whole list, and that pin is the point: a new
 // kind is how "one proactive mechanism for a few specific conditions"
 // quietly becomes the notification framework §71 rules out, so adding one
 // is a deliberate edit with a test to update rather than something that
-// drifts in. What justified the fifth is in MaintenanceFailed's own doc.
+// drifts in. What justified the fifth and sixth is in MaintenanceFailed's
+// and RepositoryUnavailable's own docs.
 type Kind string
 
 const (
@@ -171,12 +173,56 @@ const (
 	// see internal/repomaintenance.AlertConditions, which is where the
 	// sentence an operator reads is composed.
 	MaintenanceFailed Kind = "MAINTENANCE_FAILED"
+
+	// RepositoryUnavailable is EPIC K's repository outage (#789): the
+	// store an incremental backup set's snapshots live in cannot take a
+	// backup at all -- its storage does not answer, it holds no
+	// repository, its declared passphrase does not open it, or it opened
+	// read-only. internal/app's own probe decides which
+	// (health.RepositoryHealth), and health.Failing is exactly that
+	// verdict; the Detail says which of them it was.
+	//
+	// # Why the four probes did not already alert, and why staleness is
+	// not enough
+	//
+	// #788 argued deliberately that an unreachable repository should
+	// raise nothing, because the backup sets inside it go stale and
+	// StaleBackup already says the thing an operator must act on. That
+	// argument has a hole, and #789's production gate is where it had to
+	// be closed.
+	//
+	// StaleBackup fires when no known-good restore point exists inside
+	// stale_after, which is a window measured in DAYS on a normal
+	// deployment. RepeatedFailure would be the fast arm, and its count
+	// arm counts artifacts sitting in FAILED -- a population an
+	// incremental set never produces, because it stores snapshots and
+	// not artifacts. So the fast signal for "every backup into this
+	// repository is failing right now" did not exist, and an operator
+	// who typed the wrong passphrase reference learned about it a day
+	// later, from an alert about freshness that names neither the
+	// repository nor the secret.
+	//
+	// It also passes the three tests MaintenanceFailed's doc sets for a
+	// new kind. It is about a REPOSITORY DOMAIN, so Scope is a
+	// model.RepositoryDomainID and one alert covers every set inside it
+	// rather than n alerts naming the wrong subject. It behaves the way
+	// this package needs: true while the repository is unusable, resolved
+	// the moment a probe opens it again, and a recurrence alerts again.
+	// And it needs a human now -- a wrong credential, an unplugged NAS
+	// and a read-only mount are all things no retry fixes.
+	//
+	// One kind rather than one per probe. "Unreachable", "no repository
+	// here", "credentials refused" and "read-only" are four causes of
+	// one outage with one consequence, they are distinguished by the
+	// Detail an operator reads, and four kinds would quadruple this
+	// vocabulary to say what one sentence already says.
+	RepositoryUnavailable Kind = "REPOSITORY_UNAVAILABLE"
 )
 
 // Kinds is every Kind this package can produce: §71's four in the order
-// it lists them, then EPIC K's. It exists so a test (and a reader) can
-// see the whole vocabulary in one place.
-var Kinds = []Kind{StaleBackup, RepeatedFailure, HostKeyChanged, CriticalStoragePressure, MaintenanceFailed}
+// it lists them, then EPIC K's two. It exists so a test (and a reader)
+// can see the whole vocabulary in one place.
+var Kinds = []Kind{StaleBackup, RepeatedFailure, HostKeyChanged, CriticalStoragePressure, MaintenanceFailed, RepositoryUnavailable}
 
 func (k Kind) String() string { return string(k) }
 
@@ -194,6 +240,8 @@ func (k Kind) title() string {
 		return "Storage is critically low"
 	case MaintenanceFailed:
 		return "Repository maintenance is failing"
+	case RepositoryUnavailable:
+		return "Repository is unavailable"
 	default:
 		return "Backup manager alert"
 	}

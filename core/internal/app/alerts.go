@@ -271,17 +271,18 @@ func (s *Service) evaluateAlerts(ctx context.Context, report CycleReport) {
 		conditions = append(conditions, alert.StorageConditions(bs.Set.String(), assessment)...)
 	}
 
-	// EPIC K's repository conditions (#788), from the durable maintenance
-	// record and nothing else.
+	// EPIC K's repository conditions: the durable maintenance record
+	// (#788) and the access probe (#789).
 	//
 	// The record is a file this deployment writes beside its own state,
-	// so this costs no storage traffic and opens no repository -- which
-	// is what makes it safe on a pass that runs every poll interval. The
-	// probes that DO open a repository (reachable, readable, writable)
-	// deliberately raise nothing here: a repository that has gone away
-	// makes the backup sets inside it go stale, which is a condition
-	// this pass already reports, and a second alert for one outage is how
-	// a product teaches people to filter its notifications.
+	// so that half costs no storage traffic and is answerable while the
+	// repository is the very thing not answering. The probe half does
+	// open each declared repository, which #788 deliberately did not do
+	// here -- see RepositoryAlertConditions for why the staleness
+	// argument that justified the silence does not hold for an
+	// incremental set, and why one open per domain on this cadence is
+	// affordable next to the cycle that opens the same repositories just
+	// as often.
 	conditions = append(conditions, s.RepositoryAlertConditions(ctx)...)
 
 	s.Alerts.Observe(ctx, conditions, unevaluated, s.now())

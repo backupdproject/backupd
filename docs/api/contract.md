@@ -585,6 +585,99 @@ message the configured server would not accept. The second one is why enrollment
 can now fail after passing validation, and the contract says so on the operation
 rather than leaving a client to discover a 502 it did not expect.
 
+## Recorded decision: EPIC K adds six reads and no mutating route
+
+The incremental engine's operator surface (#788) grows six **read** routes:
+
+| route | shape |
+|---|---|
+| `GET /backup-sets/{source}/{set}/snapshots` | `ListSnapshotsResponse` |
+| `GET /backup-sets/{source}/{set}/snapshots/{run}` | `SnapshotResponse` |
+| `GET /backup-sets/{source}/{set}/holds` | `ListSnapshotHoldsResponse` |
+| `GET /backup-sets/{source}/{set}/snapshot-retention` | `SnapshotRetentionResponse` |
+| `GET /repositories` | `ListRepositoriesResponse` |
+| `GET /repositories/{domain}/maintenance` | `RepositoryMaintenance` |
+
+and **no new mutating route at all**. Every mutating act is an `action` on
+`POST /operations`, with a single nested parameter object:
+
+| action | body field | schema | what it does |
+|---|---|---|---|
+| `restore_snapshot` | `snapshot_restore` | `SnapshotRestoreRequest` | read a restore point and write a tree onto a local disk |
+| `verify_snapshot` | `snapshot_verify` | `SnapshotVerifyRequest` | prove now, at a stated depth, that a restore point is readable |
+| `hold_snapshot` | `snapshot_hold` | `SnapshotHoldRequest` | stop retention deleting one snapshot |
+| `release_snapshot_hold` | `snapshot_hold_release` | `SnapshotHoldReleaseRequest` | end one hold by its id |
+
+A body naming another action's parameters is **refused rather than ignored**:
+a server that ignores fields it did not expect teaches clients those fields
+are optional, and the next reader of that client cannot tell which operation
+was meant.
+
+Three consequences, and each is the reason rather than a side effect.
+
+**Everything mutating is already durable, idempotency-keyed and
+revision-checked**, by the machinery `run_backup_set` and the retention apply
+already go through, instead of by a second answer that would drift from it.
+A hold is not long-running and is still an operation: what makes it one is
+the retry, not the duration — a client that does not know whether its hold
+landed must be able to ask the same question again with the same idempotency
+key and get the same answer, and "place a hold twice" is otherwise two holds.
+
+**CLI and Web parity becomes a property of the contract.** There is one
+mutating surface, so `backupd snapshot restore` and the Restore screen submit
+the same operation with the same parameters. A second route for the browser
+is how two surfaces stop agreeing.
+
+**No Kopia namespace and no raw passthrough.** There is no `/kopia` prefix,
+no route that forwards a vendor command, and no vendor word in an operator
+label. `engine: "kopia"` is the contract's spelling of a configured value and
+appears only as such.
+
+### `Snapshot` reports five measurements and refuses a total
+
+`entries_scanned`, `logical_bytes`, `source_bytes_read`,
+`repository_bytes_written` and `content_reused_bytes` are five fields
+measuring five different things about one pass, and the contract will not grow
+a sixth that adds them up: a "bytes backed up" figure reports a 100 GB tree
+deduplicated down to 200 MB of new content as a 100 GB upload. See
+[`docs/incremental-engine.md`](../incremental-engine.md#the-five-numbers-a-run-reports).
+
+All five are **nullable**, along with `source_complete`, `files`,
+`directories` and `duration_seconds`, and null means *nobody measured this* —
+the honest state of a run that died before its manifest was recorded and of a
+snapshot adopted by crash reconciliation. A client must render it as such and
+never as `0`. `required` carries them anyway, because absent and null are not
+the same fact: the field is always present and its value may be null.
+
+Two more shapes are deliberately doubled rather than derived:
+`verification_level` (asked for) beside `verification_level_achieved`
+(proven, absent when nothing was), and `SnapshotHold.released_at` beside
+`active` — a history renders the timestamp and a control renders the boolean.
+
+### `TestConnectionResponse.writable` is required, never omitted
+
+#852's answer is a **required** boolean. Absent and `false` must not be the
+same thing to a client, and a client that reads a missing field as "probably
+writable" would arm a control that deletes a producer's files. The refusing
+value is the one a missing answer resolves to, so the field is mandatory and
+the enforcement is structural.
+
+Setting `read_only = false` against a source the probe proved non-writable is
+**refused, never coerced**: `409` with `BACKUP_SET_SOURCE_NOT_WRITABLE`. The
+incremental engine's own gate is a different refusal with a different code:
+`409` `INCREMENTAL_ENGINE_DISABLED`, returned by every gated route when the
+deployment has not enabled the engine.
+
+### `snapshot-retention` is not `retention`
+
+`GET /backup-sets/{source}/{set}/snapshot-retention` and
+`GET /backup-sets/{source}/{set}/retention` are different resources and the
+names are as close as they are because the concepts are: the second is FR-18's
+artifact retention **policy** for the set, and the first is the incremental
+pruner's per-snapshot **verdict**. Nothing is cached on either, and neither
+deletes anything — as with the repository health read, a cached verdict keeps
+reporting green after the storage under it has gone away.
+
 ## Migration record: what was removed and what replaced it
 
 | removed | replaced by |

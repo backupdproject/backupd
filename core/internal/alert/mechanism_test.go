@@ -152,13 +152,15 @@ func exportedNames(decl ast.Decl) []string {
 
 // TestKindsAreExactlyTheDeliberatelyChosenConditions pins the alert
 // vocabulary: §71's own list -- stale backup, repeated failure, changed
-// SSH host key, critical storage pressure -- plus EPIC K's repository
-// maintenance failure (#786), and nothing else.
+// SSH host key, critical storage pressure -- plus EPIC K's two, a
+// repository whose maintenance is failing (#786) and a repository that
+// cannot take a backup at all (#789), and nothing else.
 //
 // A new kind is how "one proactive mechanism for a few specific
 // conditions" quietly becomes the framework §71 rules out, so it takes an
 // edit here to add one, and the justification belongs beside the constant
-// (see alert.MaintenanceFailed's doc for what that looks like).
+// (see alert.MaintenanceFailed's and alert.RepositoryUnavailable's docs
+// for what that looks like).
 func TestKindsAreExactlyTheDeliberatelyChosenConditions(t *testing.T) {
 	want := []alert.Kind{
 		alert.StaleBackup,
@@ -166,6 +168,7 @@ func TestKindsAreExactlyTheDeliberatelyChosenConditions(t *testing.T) {
 		alert.HostKeyChanged,
 		alert.CriticalStoragePressure,
 		alert.MaintenanceFailed,
+		alert.RepositoryUnavailable,
 	}
 
 	if len(alert.Kinds) != len(want) {

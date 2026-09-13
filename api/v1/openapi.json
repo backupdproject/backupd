@@ -117,7 +117,8 @@
           "SNAPSHOT_HOLD_NOT_FOUND",
           "SNAPSHOT_NOT_HOLDABLE",
           "REPOSITORY_DOMAIN_NOT_FOUND",
-          "BACKUP_SET_NOT_INCREMENTAL"
+          "BACKUP_SET_NOT_INCREMENTAL",
+          "INCREMENTAL_ENGINE_DISABLED"
         ],
         "x-code-origins": {
           "authentication-failed": "ui",
@@ -182,7 +183,8 @@
           "SNAPSHOT_HOLD_NOT_FOUND": "wire",
           "SNAPSHOT_NOT_HOLDABLE": "wire",
           "REPOSITORY_DOMAIN_NOT_FOUND": "wire",
-          "BACKUP_SET_NOT_INCREMENTAL": "wire"
+          "BACKUP_SET_NOT_INCREMENTAL": "wire",
+          "INCREMENTAL_ENGINE_DISABLED": "wire"
         },
         "x-error-classes": {
           "authentication": [
@@ -224,7 +226,8 @@
             "BACKUP_SET_SOURCE_NOT_WRITABLE",
             "MEDIUM_IS_DEFAULT",
             "MEDIUM_CONNECTION_NOT_PROVEN",
-            "SNAPSHOT_NOT_HOLDABLE"
+            "SNAPSHOT_NOT_HOLDABLE",
+            "INCREMENTAL_ENGINE_DISABLED"
           ],
           "not-found": [
             "BACKUP_SET_NOT_FOUND",
@@ -5582,7 +5585,7 @@
             ]
           },
           "409": {
-            "description": "Refused: CONFIG_REVISION_STALE, IDEMPOTENCY_KEY_CONFLICT, OPERATION_ALREADY_RUNNING, BACKUP_SET_HELD_FOR_EDITING, RESTORE_REFUSED, SNAPSHOT_NOT_HOLDABLE. The body is one of two shapes and the code decides which: CONFIG_REVISION_STALE carries the structured config_revision a client retries against, the others are the plain error envelope. oneOf rather than one schema with an optional config_revision, so a client reading .config_revision after a CONFIG_REVISION_STALE still gets a field the type system guarantees is there. SNAPSHOT_NOT_HOLDABLE is the state of the snapshot rather than of the request: the run committed no manifest, or its snapshot is already gone, already being deleted, or not in the repository at all, so a hold accepted now would protect nothing. Nothing about the body would make it work, which is why it is not an INVALID_REQUEST.",
+            "description": "Refused: CONFIG_REVISION_STALE, IDEMPOTENCY_KEY_CONFLICT, OPERATION_ALREADY_RUNNING, BACKUP_SET_HELD_FOR_EDITING, RESTORE_REFUSED, SNAPSHOT_NOT_HOLDABLE. The body is one of two shapes and the code decides which: CONFIG_REVISION_STALE carries the structured config_revision a client retries against, the others are the plain error envelope. oneOf rather than one schema with an optional config_revision, so a client reading .config_revision after a CONFIG_REVISION_STALE still gets a field the type system guarantees is there. SNAPSHOT_NOT_HOLDABLE is the state of the snapshot rather than of the request: the run committed no manifest, or its snapshot is already gone, already being deleted, or not in the repository at all, so a hold accepted now would protect nothing. Nothing about the body would make it work, which is why it is not an INVALID_REQUEST. Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5603,7 +5606,8 @@
               "OPERATION_ALREADY_RUNNING",
               "BACKUP_SET_HELD_FOR_EDITING",
               "RESTORE_REFUSED",
-              "SNAPSHOT_NOT_HOLDABLE"
+              "SNAPSHOT_NOT_HOLDABLE",
+              "INCREMENTAL_ENGINE_DISABLED"
             ]
           },
           "500": {
@@ -6204,7 +6208,7 @@
             ]
           },
           "409": {
-            "description": "Refused: BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED, BACKUP_SET_CONNECTION_NOT_PROVEN, BACKUP_SET_SOURCE_NOT_WRITABLE. This id already has artifacts on record and the set would be created somewhere other than where they came from, re-sent with acknowledge_repoint once the message has been read; or the connection this set declares could not be proven, re-sent with skip_connection_check once the operator has decided to write it unproven; or the source answered and these credentials cannot write to it, so this set cannot delete from it, re-sent with read_only true (or after granting the account write permission on the source).",
+            "description": "Refused: BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED, BACKUP_SET_CONNECTION_NOT_PROVEN, BACKUP_SET_SOURCE_NOT_WRITABLE. This id already has artifacts on record and the set would be created somewhere other than where they came from, re-sent with acknowledge_repoint once the message has been read; or the connection this set declares could not be proven, re-sent with skip_connection_check once the operator has decided to write it unproven; or the source answered and these credentials cannot write to it, so this set cannot delete from it, re-sent with read_only true (or after granting the account write permission on the source). Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6215,7 +6219,8 @@
             "x-error-codes": [
               "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED",
               "BACKUP_SET_CONNECTION_NOT_PROVEN",
-              "BACKUP_SET_SOURCE_NOT_WRITABLE"
+              "BACKUP_SET_SOURCE_NOT_WRITABLE",
+              "INCREMENTAL_ENGINE_DISABLED"
             ]
           },
           "500": {
@@ -12038,6 +12043,19 @@
               "BACKUP_SET_NOT_FOUND"
             ]
           },
+          "409": {
+            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INCREMENTAL_ENGINE_DISABLED"
+            ]
+          },
           "500": {
             "description": "Refused: INTERNAL.",
             "content": {
@@ -12164,6 +12182,19 @@
               "SNAPSHOT_NOT_FOUND"
             ]
           },
+          "409": {
+            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INCREMENTAL_ENGINE_DISABLED"
+            ]
+          },
           "500": {
             "description": "Refused: INTERNAL.",
             "content": {
@@ -12278,6 +12309,19 @@
             },
             "x-error-codes": [
               "BACKUP_SET_NOT_FOUND"
+            ]
+          },
+          "409": {
+            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INCREMENTAL_ENGINE_DISABLED"
             ]
           },
           "500": {
@@ -12396,6 +12440,19 @@
               "BACKUP_SET_NOT_FOUND"
             ]
           },
+          "409": {
+            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INCREMENTAL_ENGINE_DISABLED"
+            ]
+          },
           "500": {
             "description": "Refused: INTERNAL.",
             "content": {
@@ -12464,6 +12521,19 @@
             },
             "x-error-codes": [
               "UNAUTHENTICATED"
+            ]
+          },
+          "409": {
+            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INCREMENTAL_ENGINE_DISABLED"
             ]
           },
           "500": {

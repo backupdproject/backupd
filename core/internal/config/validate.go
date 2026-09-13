@@ -200,6 +200,7 @@ func (c *Config) Validate() error {
 	v.validateAlerts(&c.Alerts)
 	v.validateCapacity(&c.Capacity)
 	v.validateKeyEncryption(&c.KeyEncryption)
+	v.validateIncrementalEngine()
 
 	return v.err()
 }

@@ -507,6 +507,20 @@ func (s *Service) processBackupSet(ctx context.Context, src config.Source, bs co
 	// The set is still counted in the progress feed above, so a refusal
 	// does not freeze "set 2 of 5".
 	if bs.Engine == model.EngineKopia {
+		// EPIC K's production gate (#789), checked before the pipeline
+		// rather than inside it. A gated set is a set-level failure for
+		// unrunnableEngine's reason -- silence is indistinguishable from
+		// success -- and it is refused HERE so that nothing opens a
+		// repository, reads the source or writes a snapshot-run row for
+		// a pass that was never going to happen. See incrementalgate.go.
+		if err := s.incrementalEngineGate(); err != nil {
+			refusal := gatedSetRefusal(bs)
+			s.logger().Error(ctx, "snapshot-cycle", refusal)
+			result.Err = refusal
+
+			return result
+		}
+
 		snap := s.processIncrementalSet(ctx, src, bs)
 		result.Snapshot = snap
 		result.Err = snap.Err

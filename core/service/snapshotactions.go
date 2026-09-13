@@ -323,6 +323,14 @@ func (b *BackupService) incrementalSubmission(action, key, revision, backupSetID
 		return "", "", nil, fmt.Errorf("%w: %s", ErrSnapshotRestoreUnsupported, backupSetID)
 	}
 
+	// EPIC K's production gate (#789), for the reason directly above: a
+	// verify or a hold on a gated deployment is refused by internal/app
+	// as soon as it starts, so writing the durable row first only costs
+	// an operator a poll to be told so. See incrementalgate.go.
+	if err := refuseGatedIncrementalEngine(st.inner.Config); err != nil {
+		return "", "", nil, err
+	}
+
 	return sourceName, setName, st, nil
 }
 
