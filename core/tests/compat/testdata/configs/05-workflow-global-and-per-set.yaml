@@ -1,0 +1,51 @@
+# EPIC L's global-default-plus-per-set-override pair (#807/#808), pinned
+# valid: a deployment-wide workflows.root, global before_dir/after_dir,
+# one literal and one from_secret entry in workflows.environment, a
+# deployment-wide script_timeout, and a backup set that carries its own
+# workflow block overriding both directories and the timeout, plus its
+# own environment entry. Validate must accept this whole shape.
+poll_interval: 15m
+
+state:
+  database: /var/lib/backupd/state.db
+
+workflows:
+  root: /workflows
+  global:
+    before_dir: before.d
+    after_dir: after.d
+  environment:
+    - name: DEPLOY_STAGE
+      value: production
+    - name: DB_PASSWORD
+      from_secret:
+        file: /run/secrets/db_password
+  script_timeout: 5m
+
+sources:
+  - id: production
+    backup_sets:
+      - id: postgres-primary
+        remote:
+          type: local
+        remote_path: /srv/exports/postgres
+        local_path: /backups/production/postgres
+        completion:
+          strategy: stable
+          stable_for: 10m
+        stale_after: 30h
+        workflow:
+          before_dir: postgres-primary/before.d
+          after_dir: postgres-primary/after.d
+          script_timeout: 2m
+        environment:
+          - name: PGDATABASE
+            value: postgres
+
+retention:
+  timezone: UTC
+  week_starts_on: monday
+  daily_days: 7
+  weekly_months: 3
+  monthly_months: 12
+  protect_last_known_good: true

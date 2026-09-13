@@ -4,6 +4,51 @@
 
 ### Added
 
+- **The scripted-workflow security, adversarial and performance gate is
+  executable** (#812). EPIC L's eleven adversarial-review findings (#807) now
+  each map to at least one test that runs, and the mapping itself is checked:
+  `docs/conformance/epic-l-matrix.md` carries one row per claim with the
+  mutation that turns it red, and `core/tests/workflowgate` fails the build
+  when a finding has no row, when a row cites a test that is not in the tree,
+  or when a row is green under any word other than `PASS`.
+
+  **What is new rather than restated.** A remote account whose own shell
+  startup has already changed what a hook means (`BASH_ENV` or `ENV` set, an
+  inherited `errexit` or `pipefail`) is refused, and an ordinary account with
+  the options every bash has is not. A step whose session never completes
+  records termination as `unconfirmed` and a step that stops while
+  termination waits records `confirmed`. A resolved secret is unreachable at
+  EVERY chunk boundary, through both capture implementations rather than one
+  hand-picked split. A hostile terminal sequence in a hook's output reaches
+  the journal byte for byte, changes no structural field of the record, and
+  cannot forge a truncation marker — a marker is distinguishable by kind and
+  never by its text. Every container the host runner starts, hook, capability
+  probe and syntax check alike, is held to `--cap-drop ALL`,
+  `--security-opt no-new-privileges`, `--read-only`, a non-root `--user`,
+  `--network none` and no Docker socket. Under a real bash, the envelope
+  injects no `set -e`, `-u`, `-x` or `pipefail`, hands hostile values over
+  byte-identically without executing them, and gives a hook a closed stdin.
+
+  **The container contract is asked again with local hooks in use.** The
+  engine keeps a read-only view of the script tree and one writable directory
+  holding the runner's socket, and gains no capability, privilege, device or
+  Docker socket for it; the runner's own workspace is deliberately not
+  reachable from the container.
+
+  **Seven scale benchmarks** are recorded in `docs/perf/epic-l-workflows.md`
+  with the commands and the machine. The performance claims themselves are
+  asserted deterministically rather than by timing: a backup of a set with no
+  workflow configuration makes ZERO calls to the durable store, and a whole
+  run's persisted output is bounded by the per-step limit times the number of
+  steps.
+
+  An existing deployment sees no behaviour change: this issue adds tests,
+  fixtures, a conformance matrix, a performance record and one CI job
+  (`workflow-gate`, in the release gate's `needs` list). The only shipped
+  artefacts that moved are five config fixtures under
+  `core/tests/compat/testdata/configs/` and the `01-config-validation` cell
+  they are captured in.
+
 - **A repository domain can be declared from the UI, the API and a terminal**
   (#862). `POST /repositories` persists a new `repository_domains:` entry —
   id, isolation, passphrase REFERENCE, description — into `config.yaml`

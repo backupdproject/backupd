@@ -667,6 +667,67 @@ jobs:
       - name: the proof's own verdict is still a number nothing else produces (#551)
         run: bash scripts/tests/two-machine-exit-status.test.sh
 
+  workflow-gate:
+    name: EPIC L workflow security, adversarial and performance gate (#812)
+    runs-on: ubuntu-latest
+    # A job of its own, and the reason is not coverage: core's own job
+    # already runs every test here as part of `go test -race ./...`. Two
+    # things are different.
+    #
+    # The benchmarks. `go test` does not run a benchmark, so the seven
+    # scale scenarios #812 asks for would compile and never execute, which
+    # is how a benchmark rots into a function nobody has called in a year.
+    # They run at -benchtime 1x here, which is seconds, and what that
+    # proves is that they still work -- the NUMBERS belong on the
+    # benchmark host (docs/perf/epic-l-workflows.md says why they are not
+    # gated on a shared runner).
+    #
+    # And the name. When this gate fails, the reason a reader needs first
+    # is "the workflow gate refused something", not "one of nine hundred
+    # core tests went red". #812's whole framing is that a failure here
+    # blocks the release of the feature, and a check run that says so is
+    # worth one extra runner.
+    #
+    # No Docker preflight: every suite below reaches a fake client or a
+    # fixture SSH server on purpose. The claims that need a real daemon
+    # live in core/tests/containerhooks, which core-build-vet-test runs
+    # after its own `docker info`.
+    env:
+      GOWORK: "off"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.0"
+          cache: true
+          cache-dependency-path: core/go.sum
+
+      # The adversarial refusal, injection, cancellation, redaction,
+      # recovery and log-bound suites, in the packages they exercise.
+      - name: the workflow packages' own adversarial suites
+        working-directory: core
+        run: go test ./internal/workflow/ ./internal/workflowexec/ ./internal/workflowrun/ ./internal/hostrunner/ ./internal/remoteexec/
+
+      # The traceability guard: every finding in #807's consensus table
+      # maps to a test that exists, every row carries a falsification, and
+      # the guard itself has been watched to fail.
+      - name: every consensus finding still maps to a test that exists
+        working-directory: core
+        run: go test ./tests/workflowgate/ -v
+
+      - name: the seven scale benchmarks still run
+        working-directory: core
+        run: go test ./internal/workflowrun/ -run '^$' -bench . -benchtime 1x
+
+      # The container contract, asked with local hooks enabled. A separate
+      # module, so a separate step rather than a separate job.
+      - name: the engine container contract still holds with local hooks enabled
+        working-directory: distribution
+        run: go test ./compose/
+
   two-machine-e2e:
     name: two machines, one temporary network, one real backup (#356)
     runs-on: ubuntu-latest
@@ -813,6 +874,7 @@ jobs:
       - api-contract
       - dependency-rules
       - gate-guards
+      - workflow-gate
       - two-machine-e2e
     runs-on: ubuntu-latest
     steps:
