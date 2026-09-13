@@ -50,9 +50,15 @@
 // delete INTENT it can read (a snapshot delete that was interrupted is a
 // decidable state, and deciding it is not the same as issuing it).
 //
-// Verification DEPTH is #784's. This package runs the verification the
-// repository offers and records two different facts about it -- the level
-// the set was configured for and the level a run actually proved -- because
-// a row that recorded only the configured level would claim a content
-// verification nobody performed.
+// Verification DEPTH arrived with #784 and lives in verification.go. The
+// set's CONFIGURED level is the floor a run has to prove before its
+// snapshot is advertised, a cadence may raise that floor for one run (a
+// periodic full read, a periodic restore drill) and may never lower it,
+// and the row records both the configured level and the level the engine
+// reported actually performing. The two columns are not derived from
+// each other, because a row that recorded only the configured level
+// would claim a verification nobody performed -- and a run that proved
+// LESS than its set requires fails rather than quietly advertising a
+// shallower check, which is what makes last-known-good mean "verified to
+// the level this deployment asked for".
 package snapshotlifecycle

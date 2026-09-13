@@ -604,6 +604,36 @@ type BackupSet struct {
 	// snapshot in a repository has been looked at.
 	VerificationLevelConfig string `yaml:"verification_level,omitempty"`
 
+	// VerificationSamplePercentConfig is how much of a snapshot's file
+	// content a SAMPLED verification reads, 1 to 100. Omission resolves
+	// to backupengine.DefaultVerifySamplePercent.
+	//
+	// It is a percentage of files rather than of bytes because damage
+	// arrives per file: a byte-proportional sample spends its whole
+	// budget inside the largest file and never looks at the others. The
+	// sample is a fixed stride, so a stated percentage is read every
+	// time rather than on average.
+	VerificationSamplePercentConfig int `yaml:"verification_sample_percent,omitempty"`
+
+	// VerificationFullEvery is how often this set's restore points get a
+	// FULL content read regardless of the level above, and
+	// VerificationRestoreDrillEvery is how often one gets an actual
+	// restore drill.
+	//
+	// They are cadences rather than levels because the deep rungs cost
+	// a deployment's I/O budget and its backup window, and the honest
+	// shape of "prove it properly sometimes" is a period, not a level
+	// somebody sets and then turns off again when the nightly window
+	// overruns. Omission means never, which is the only safe default:
+	// nobody should acquire a nightly full read, or a nightly restore of
+	// their entire source, by leaving a key out.
+	//
+	// A cadence only ever raises what a run proves. It cannot lower the
+	// configured level, and a run still has to prove that level to
+	// become a restore point.
+	VerificationFullEvery         Duration `yaml:"verification_full_every,omitempty"`
+	VerificationRestoreDrillEvery Duration `yaml:"verification_restore_drill_every,omitempty"`
+
 	// SourceMountPrefix is the leading part of RemotePath that is how
 	// THIS DEPLOYMENT reaches the source rather than part of the source's
 	// own identity: a container bind mount, an install prefix, or the

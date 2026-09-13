@@ -337,6 +337,78 @@ type SnapshotInfo struct {
 	Incomplete string
 }
 
+// DefaultVerifySamplePercent is how much of a snapshot's file content a
+// sampled verification reads when the caller names no percentage.
+//
+// Five percent is a deliberate compromise and not a measurement: it is
+// enough that a repository losing content at random is found within a
+// handful of runs, and small enough that a set can afford it every night
+// on a tree whose full read would not fit in the backup window. A
+// deployment that wants a different trade makes it explicitly, which is
+// what VerifyRequest.SamplePercent is for.
+const DefaultVerifySamplePercent = 5
+
+// ErrRestoreTargetRequired is returned when a restore drill is asked for
+// without a directory to restore into.
+//
+// It is a refusal rather than a scratch directory the adapter invents,
+// because a drill writes a whole snapshot to a disk somebody owns: which
+// disk, with how much room on it, is the caller's decision, and an engine
+// that picked one would fill an operator's /tmp with a restore nobody
+// asked for. It is also, crucially, not a downgrade -- a drill that
+// cannot run must never come back as a content verification wearing the
+// drill's name.
+var ErrRestoreTargetRequired = errors.New("backupengine: a restore drill needs a directory to restore into")
+
+// VerifyRequest asks for verification at a stated depth.
+//
+// # Why the level is a parameter
+//
+// Because the four rungs of model.VerificationLevel cost four different
+// amounts and prove four different things, and a port offering only the
+// deepest one forces every caller to pay for a full content read to learn
+// that a manifest resolves. Worse, it makes the CLAIM unavailable: a set
+// configured for structural verification whose runs all performed a full
+// read has a catalog full of rows that overstate nothing and understate
+// everything, and the day somebody configures restore_drill the rows look
+// exactly the same.
+//
+// So the level travels in, and what was actually performed travels back
+// out on VerifyReport.Level. The two are never assumed equal by the
+// caller: an adapter that could not do what was asked says so by
+// returning an error, never by returning a shallower level quietly, and a
+// caller comparing the two is comparing a request with a result rather
+// than reading its own request back.
+type VerifyRequest struct {
+	// Level is the depth asked for. An empty level is refused rather
+	// than defaulted: silence here would be a verification claim nobody
+	// made, exactly as model.ParseVerificationLevel argues.
+	Level model.VerificationLevel
+
+	// SamplePercent is how much of the snapshot's file content
+	// LevelContentSample reads, 1 to 100. Zero means
+	// DefaultVerifySamplePercent, and values above 100 are clamped to it.
+	//
+	// It is a percentage of FILES rather than of bytes because the unit a
+	// sample has to spread over is the unit damage arrives in: a
+	// repository that has lost one pack blob has lost some files
+	// entirely, and a byte-proportional sample would spend the whole
+	// budget inside the largest file and never look at the others.
+	//
+	// The sample is a fixed stride over the files the walk finds, not a
+	// coin flip per file, so a run asked for 10% of 30 files reads
+	// exactly 3 of them rather than "about 3": a verification whose
+	// achieved level depends on a random number is a verification that
+	// occasionally proves less than the row says it did.
+	SamplePercent int
+
+	// RestoreTarget is the directory LevelRestoreDrill restores into. It
+	// is created if it does not exist and must be empty; the caller owns
+	// removing it afterwards, because a drill that tidied up after itself
+	// would also destroy the evidence of a drill that failed.
+	RestoreTarget string
+}
+
 // VerifyReport reports what a verification actually read.
 //
 // Errors is a slice of strings rather than errors because these are the
@@ -358,10 +430,42 @@ type SnapshotInfo struct {
 // reports damage to an operator who has a healthy repository, or worse,
 // retries later and calls the second cancellation the same thing.
 type VerifyReport struct {
+	// Level is what this verification ACTUALLY performed, which is the
+	// only value a catalog may record as proven. It is never higher than
+	// the depth the walk reached: a sampled run that found no file to
+	// read reports what it did, and a drill that restored nothing is not
+	// a drill.
+	Level model.VerificationLevel
+
+	// ObjectsVerified is how many entries -- files and directories -- had
+	// their stored structure resolved: the manifest's tree walked and
+	// every content identifier it names looked up.
 	ObjectsVerified int64
-	FilesVerified   int64
-	BytesVerified   int64
-	Errors          []string
+
+	// FilesVerified and BytesVerified are the CONTENT half: files whose
+	// stored bytes were actually read back, decrypted, decompressed and
+	// hash-checked, and how many bytes that was. Both are zero for a
+	// structural verification, which is the point of reporting them
+	// separately from ObjectsVerified.
+	FilesVerified int64
+	BytesVerified int64
+
+	// BlobsChecked is how many distinct backing blobs were proven to
+	// exist in the repository's storage, which is the repository-integrity
+	// half of a sampled verification: an index can happily reference a
+	// pack file that is no longer in the bucket, and no amount of reading
+	// the files that happen to be sampled will find the ones that are not.
+	BlobsChecked int64
+
+	// FilesRestored and HashesMatched are the restore drill's own
+	// evidence: how many files were written to a real filesystem by the
+	// real restore path, and how many of those matched the hash of what
+	// the repository holds. They are zero at every level below
+	// LevelRestoreDrill, because nothing below it restores anything.
+	FilesRestored int64
+	HashesMatched int64
+
+	Errors []string
 }
 
 // RestoreRequest asks for one snapshot to be written to a local directory.
@@ -568,11 +672,17 @@ type Repository interface {
 	// whose identity has since changed.
 	LookupSnapshot(ctx context.Context, id SnapshotID) (SnapshotInfo, error)
 
-	// Verify reads a snapshot's content back and reports damage. A nil
-	// error means it completed and found nothing; anything else is an
-	// error plus a report of what it managed to read. See VerifyReport,
-	// which is where that contract is argued.
-	Verify(ctx context.Context, id SnapshotID) (VerifyReport, error)
+	// Verify checks a snapshot to the depth req names and reports what it
+	// actually did. A nil error means the verification completed and
+	// found nothing wrong; anything else is an error plus a report of
+	// what it managed to check. See VerifyReport and VerifyRequest, which
+	// is where that contract is argued.
+	//
+	// An implementation that cannot perform the level asked for returns
+	// an error. It never returns a shallower level and a nil error,
+	// because the whole value of the ladder is that a row saying
+	// restore_drill means a restore happened.
+	Verify(ctx context.Context, id SnapshotID, req VerifyRequest) (VerifyReport, error)
 
 	// Restore writes a snapshot to a local directory.
 	Restore(ctx context.Context, id SnapshotID, req RestoreRequest) (RestoreReport, error)

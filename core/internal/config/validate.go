@@ -55,6 +55,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -600,6 +601,8 @@ func (v *validator) resolveBackupSetEngine(path string, bs *BackupSet) bool {
 		bs.VerificationLevel = level
 	}
 
+	v.resolveVerificationCadence(path, bs)
+
 	v.resolveSourceIdentity(path, bs)
 
 	return true
@@ -621,6 +624,9 @@ func (v *validator) refuseIncrementalKeys(path string, bs *BackupSet) {
 		{"repository_domain", bs.RepositoryDomainConfig},
 		{"source_consistency", bs.ConsistencyConfig},
 		{"verification_level", bs.VerificationLevelConfig},
+		{"verification_sample_percent", nonZero(bs.VerificationSamplePercentConfig)},
+		{"verification_full_every", nonZeroDuration(bs.VerificationFullEvery)},
+		{"verification_restore_drill_every", nonZeroDuration(bs.VerificationRestoreDrillEvery)},
 		{"source_mount_prefix", bs.SourceMountPrefix},
 	} {
 		if key.written == "" {
@@ -656,6 +662,56 @@ func (v *validator) clearIncrementalResolution(bs *BackupSet) {
 	bs.Consistency = ""
 	bs.VerificationLevel = ""
 	bs.SourceIdentity = ""
+}
+
+// resolveVerificationCadence checks the sample size and the two periods.
+//
+// A refusal rather than a clamp, in both directions. A sample of 0 or of
+// 130 percent is somebody's idea that did not survive contact with the
+// key's meaning, and silently reading it as "the default" or "all of it"
+// would leave them believing a verification budget they do not have. A
+// negative or sub-minute period is the same mistake about time.
+func (v *validator) resolveVerificationCadence(path string, bs *BackupSet) {
+	if p := bs.VerificationSamplePercentConfig; p != 0 && (p < 1 || p > 100) {
+		v.addf("%s: verification_sample_percent is %d; it is a percentage of this set's files and must be between 1 and 100, or omitted for the default", path, p)
+	}
+
+	for _, cadence := range []struct {
+		key   string
+		every Duration
+	}{
+		{"verification_full_every", bs.VerificationFullEvery},
+		{"verification_restore_drill_every", bs.VerificationRestoreDrillEvery},
+	} {
+		if cadence.every == 0 {
+			continue
+		}
+
+		if cadence.every.Duration() < time.Minute {
+			v.addf("%s: %s is %s; a verification cadence shorter than a minute would run a deep check on every single run, which is what the verification_level key is for",
+				path, cadence.key, cadence.every)
+		}
+	}
+}
+
+// nonZero and nonZeroDuration render a numeric key for the dead-key
+// refusal above, which asks "was this written" and can only ask it of a
+// string. A zero is indistinguishable from an omission for both of these
+// keys, deliberately: omission is their legal spelling.
+func nonZero(v int) string {
+	if v == 0 {
+		return ""
+	}
+
+	return strconv.Itoa(v)
+}
+
+func nonZeroDuration(d Duration) string {
+	if d == 0 {
+		return ""
+	}
+
+	return d.String()
 }
 
 // resolveSourceIdentity fills in the stable identity of this set's source.

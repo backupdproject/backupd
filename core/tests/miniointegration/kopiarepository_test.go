@@ -256,7 +256,7 @@ func TestS3RepositoryMatrix(t *testing.T) {
 
 	// --- read: restore, and verify -----------------------------------------
 
-	if report, err := rep.Verify(ctx, snap.ID); err != nil {
+	if report, err := rep.Verify(ctx, snap.ID, backupengine.VerifyRequest{Level: model.LevelContentFull}); err != nil {
 		t.Fatalf("Verify: %v (findings: %v)", err, report.Errors)
 	}
 

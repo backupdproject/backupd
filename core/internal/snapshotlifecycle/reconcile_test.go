@@ -278,8 +278,12 @@ func TestReconcile_ARunThatDiedAfterItsManifestIsVerifiedAndCommitted(t *testing
 		t.Errorf("verification status %q, want passed", after.VerificationStatus)
 	}
 
-	if after.VerificationLevelAchieved != string(model.LevelContentFull) {
-		t.Errorf("achieved level %q, want %q", after.VerificationLevelAchieved, model.LevelContentFull)
+	// The level a recovery pass proves is the one the ROW was admitted
+	// under (seed configures structural), not whatever depth the engine
+	// is capable of: a recovery that quietly proved more would make the
+	// achieved column depend on which code path completed a run.
+	if after.VerificationLevelAchieved != string(model.LevelStructural) {
+		t.Errorf("achieved level %q, want %q", after.VerificationLevelAchieved, model.LevelStructural)
 	}
 }
 

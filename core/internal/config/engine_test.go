@@ -145,7 +145,7 @@ func TestValidate_AnOmittedEngineResolvesToArtifact(t *testing.T) {
 // engineKeyLine matches a YAML mapping key this change introduces, at any
 // indentation. FR-35 forbids any of them appearing in a file that never
 // configured one.
-var engineKeyLine = regexp.MustCompile(`(?m)^\s*(engine|uuid|repository_domain|repository_domains|source_consistency|verification_level|source_mount_prefix):`)
+var engineKeyLine = regexp.MustCompile(`(?m)^\s*(engine|uuid|repository_domain|repository_domains|source_consistency|verification_level|verification_sample_percent|verification_full_every|verification_restore_drill_every|source_mount_prefix):`)
 
 // TestMarshal_ANoEngineConfigGainsNoEngineKeys is FR-35's round-trip rule
 // held at the one place that can hold it byte for byte: the marshaler
@@ -185,6 +185,9 @@ func TestMarshal_ANoEngineConfigGainsNoEngineKeys(t *testing.T) {
 					bs.RepositoryDomainConfig = ""
 					bs.ConsistencyConfig = ""
 					bs.VerificationLevelConfig = ""
+					bs.VerificationSamplePercentConfig = 0
+					bs.VerificationFullEvery = 0
+					bs.VerificationRestoreDrillEvery = 0
 					bs.SourceMountPrefix = ""
 				}
 			}
@@ -473,6 +476,9 @@ func TestValidate_RefusesIncrementalKeysOnAnArtifactSet(t *testing.T) {
 		{"repository_domain", func(bs *BackupSet) { bs.RepositoryDomainConfig = "production" }},
 		{"source_consistency", func(bs *BackupSet) { bs.ConsistencyConfig = string(model.ModeExternalSnapshot) }},
 		{"verification_level", func(bs *BackupSet) { bs.VerificationLevelConfig = string(model.LevelContentFull) }},
+		{"verification_sample_percent", func(bs *BackupSet) { bs.VerificationSamplePercentConfig = 10 }},
+		{"verification_full_every", func(bs *BackupSet) { bs.VerificationFullEvery = Duration(7 * 24 * time.Hour) }},
+		{"verification_restore_drill_every", func(bs *BackupSet) { bs.VerificationRestoreDrillEvery = Duration(30 * 24 * time.Hour) }},
 		{"source_mount_prefix", func(bs *BackupSet) { bs.SourceMountPrefix = "/mnt/user" }},
 		{"uuid", func(bs *BackupSet) { bs.UUID = "6f1d2b7a-1c4e-4f8b-9a2d-3e5c7b9d1f00" }},
 	} {
@@ -490,6 +496,65 @@ func TestValidate_RefusesIncrementalKeysOnAnArtifactSet(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestValidate_RefusesAVerificationBudgetNobodyMeant is the other half of
+// the new keys: they are refused when they are written wrongly, rather
+// than clamped into something plausible.
+//
+// Clamping is the tempting behaviour and the wrong one. An operator who
+// wrote 130 percent, or a cadence of a second, has a belief about how
+// much verification their deployment is doing; reading either as "the
+// default" leaves that belief in place and unfalsified, which is exactly
+// the failure the whole dead-key rule in this file exists to prevent.
+func TestValidate_RefusesAVerificationBudgetNobodyMeant(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		key    string
+		break_ func(*BackupSet)
+	}{
+		{"a sample of no files", "verification_sample_percent", func(bs *BackupSet) { bs.VerificationSamplePercentConfig = -1 }},
+		{"a sample of more than everything", "verification_sample_percent", func(bs *BackupSet) { bs.VerificationSamplePercentConfig = 130 }},
+		{"a full read every second", "verification_full_every", func(bs *BackupSet) { bs.VerificationFullEvery = Duration(time.Second) }},
+		{"a restore drill every second", "verification_restore_drill_every", func(bs *BackupSet) { bs.VerificationRestoreDrillEvery = Duration(time.Second) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := incrementalConfig()
+			tc.break_(&c.Sources[0].BackupSets[1]) // the incremental set
+
+			err := c.Validate()
+			if err == nil {
+				t.Fatalf("Validate accepted %s", tc.name)
+			}
+
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("the refusal does not name %q: %v", tc.key, err)
+			}
+		})
+	}
+}
+
+// TestValidate_AVerificationBudgetSurvivesValidation is the accepted
+// side, and it is worth its own case because the cadence keys are read
+// by the run driver rather than by anything this package renders: a key
+// that validated and then resolved to zero would turn a configured
+// weekly full read into no full read at all, silently.
+func TestValidate_AVerificationBudgetSurvivesValidation(t *testing.T) {
+	c := incrementalConfig()
+	bs := &c.Sources[0].BackupSets[1]
+	bs.VerificationSamplePercentConfig = 12
+	bs.VerificationFullEvery = Duration(7 * 24 * time.Hour)
+	bs.VerificationRestoreDrillEvery = Duration(30 * 24 * time.Hour)
+
+	mustValidate(t, &c)
+
+	got := c.Sources[0].BackupSets[1]
+	if got.VerificationSamplePercentConfig != 12 ||
+		got.VerificationFullEvery.Duration() != 7*24*time.Hour ||
+		got.VerificationRestoreDrillEvery.Duration() != 30*24*time.Hour {
+		t.Errorf("validation changed the verification budget to %d%%, full every %s, drill every %s",
+			got.VerificationSamplePercentConfig, got.VerificationFullEvery, got.VerificationRestoreDrillEvery)
 	}
 }
 
