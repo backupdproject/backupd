@@ -297,7 +297,27 @@ func (a *Adapter) OpenRepository(ctx context.Context, loc backupengine.Repositor
 		return nil, err
 	}
 
-	return &repository{rep: rep, direct: direct, loc: loc, adapter: a, release: release}, nil
+	// The engine's own snapshot retention is turned off here, once per
+	// repository, and enginepolicy.go is where the argument lives: the
+	// vendor's uploader applies the repository's retention policy at every
+	// mid-upload checkpoint, and its default policy would delete this
+	// product's snapshots -- holds included -- during an unrelated backup.
+	// It reads a manifest and writes nothing on a repository this product
+	// has already neutralized.
+	//
+	// A failure NEVER refuses the open. Opening is also how a restore, a
+	// verification drill and reconciliation reach a repository, and
+	// storage that will not accept a write is an ordinary disaster
+	// posture: a WORM bucket, an object lock, a read-only mount. Every
+	// manifest this adapter saves is pinned, which is what makes the
+	// correction defence in depth rather than the guarantee, so the
+	// failure is carried on the handle and reported by Health instead.
+	retentionErr := disableEngineRetention(ctx, rep)
+
+	return &repository{
+		rep: rep, direct: direct, loc: loc, adapter: a, release: release,
+		engineRetention: retentionErr,
+	}, nil
 }
 
 // LookupSnapshot implements backupengine.Repository.
@@ -367,6 +387,20 @@ func (r *repository) Health(ctx context.Context) (backupengine.HealthReport, err
 					"can let one process treat another's maintenance lock as expired or make freshly written content look old enough to reclaim. "+
 					"Fix time synchronisation on this host",
 				skew.Round(time.Second), maxClockSkew),
+		})
+	}
+
+	// The open-time correction that could not be written. It is reported
+	// here, once per health check, because a repository whose stored
+	// policy still expires snapshots is a working repository with a
+	// condition worth an operator's attention -- which is exactly what
+	// this type is for. Every manifest backupd writes here is pinned and
+	// therefore safe; a snapshot written by other software against the
+	// same repository is not.
+	if r.engineRetention != nil {
+		report.Warnings = append(report.Warnings, backupengine.HealthWarning{
+			Kind:   backupengine.HealthWarningEngineRetention,
+			Detail: r.engineRetention.Error(),
 		})
 	}
 

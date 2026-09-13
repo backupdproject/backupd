@@ -603,6 +603,24 @@ const (
 	// must decide whether to start a backup reads the error; a caller
 	// that must show an operator a status reads this.
 	HealthWarningUnreachable HealthWarningKind = "unreachable"
+
+	// HealthWarningEngineRetention means this repository's own stored
+	// retention policy still expires snapshots, and the correction this
+	// product attempts when it opens a repository could not be written.
+	//
+	// It matters because the engine applies that policy by itself, at
+	// every mid-upload checkpoint, with no reference to this product's
+	// catalog or its holds. Every manifest backupd writes carries a pin
+	// the engine's expiry honours, so this product's own snapshots are
+	// safe either way; a snapshot written into the same repository by
+	// anything else is not.
+	//
+	// It is a WARNING and never a refusal, for the reason the correction
+	// is best-effort in the first place: opening a repository is also how
+	// a restore reads one, and storage that will not accept a write --
+	// WORM, an object lock, a read-only mount, a legal hold -- is a
+	// posture where restoring is the whole point.
+	HealthWarningEngineRetention HealthWarningKind = "engine_retention"
 )
 
 // HealthWarning is one thing worth an operator's attention about a
