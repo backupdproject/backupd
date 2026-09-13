@@ -351,6 +351,15 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		// a dashboard polls.
 		r.Get("/repositories", h.listRepositories)
 		r.Get("/repositories/{domain}/maintenance", h.getRepositoryMaintenance)
+		// Issue #862's write, on the same path and in the same tier as
+		// POST /backup-sets: CSRF, no destructive gate. Declaring a
+		// repository domain writes one entry into config.yaml through
+		// the same *BackupService door every other configuration write
+		// goes through; it opens no storage and creates no repository,
+		// which is realized lazily by the first run that stores a
+		// snapshot in it. The claim is recorded in
+		// destructiveGateExemptRoutes (router_test.go) with the rest.
+		r.With(requireCSRF).Post("/repositories", h.createRepositoryDomain)
 
 		r.With(requireCSRF, requireDestructiveGate(gate)).Post("/operations", h.submitOperation)
 		r.Get("/operations/{id}", h.getOperation)

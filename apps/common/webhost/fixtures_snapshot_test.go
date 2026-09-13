@@ -27,6 +27,14 @@ type snapshotFixture struct {
 	repos       service.RepositoryHealthReport
 	maintenance service.RepositoryMaintenance
 
+	// The repository domain a create answers with, the request it was
+	// handed, and what it refuses with (#862). Separate from err above
+	// because the create's refusals are the point of its own tests,
+	// while err is shared by every read.
+	created     service.RepositoryHealth
+	lastCreate  service.CreateRepositoryDomainRequest
+	errOnCreate error
+
 	// err, when set, is what every read in this fixture returns. One
 	// field rather than one per read: the tests that use it are about the
 	// mapping from a service refusal to a status code, and which read
@@ -111,6 +119,13 @@ func (f *syncFakeBackend) RepositoryMaintenanceState(context.Context, string) (s
 	return fx.maintenance, fx.err
 }
 
+func (f *syncFakeBackend) CreateRepositoryDomain(_ context.Context, req service.CreateRepositoryDomainRequest) (service.RepositoryHealth, error) {
+	fx := snapshotsOf(f)
+	fx.lastCreate = req
+
+	return fx.created, fx.errOnCreate
+}
+
 func (f *syncFakeBackend) SubmitSnapshotRestore(_ context.Context, req service.SnapshotRestoreRequest) (service.Operation, error) {
 	fx := snapshotsOf(f)
 	fx.lastRestore = req
@@ -186,6 +201,13 @@ func (f *asyncFakeBackend) RepositoryMaintenanceState(context.Context, string) (
 	fx := snapshotsOf(f)
 
 	return fx.maintenance, fx.err
+}
+
+func (f *asyncFakeBackend) CreateRepositoryDomain(_ context.Context, req service.CreateRepositoryDomainRequest) (service.RepositoryHealth, error) {
+	fx := snapshotsOf(f)
+	fx.lastCreate = req
+
+	return fx.created, fx.errOnCreate
 }
 
 func (f *asyncFakeBackend) SubmitSnapshotRestore(_ context.Context, req service.SnapshotRestoreRequest) (service.Operation, error) {

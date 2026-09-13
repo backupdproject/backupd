@@ -202,6 +202,7 @@ var contractBindings = map[string]contractBinding{
 	"getBackupSetSnapshotRetention": {nil, snapshotRetentionResponse{}, "/api/v1/backup-sets/src/set-1/snapshot-retention"},
 	"listRepositories":              {nil, listRepositoriesResponse{}, "/api/v1/repositories"},
 	"getRepositoryMaintenance":      {nil, repositoryMaintenanceResponse{}, "/api/v1/repositories/vault/maintenance"},
+	"createRepositoryDomain":        {createRepositoryDomainRequest{}, repositoryHealthResponse{}, "/api/v1/repositories"},
 	"getRetentionErrorEnvelope":     {nil, errorResponse{}, ""},
 	"getConfigRevisionStale":        {nil, configRevisionStaleResponse{}, ""},
 }

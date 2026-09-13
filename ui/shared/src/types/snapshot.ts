@@ -231,6 +231,49 @@ export interface RepositoryFleet {
 }
 
 /**
+ * Where a repository domain's passphrase comes from, as a caller declares
+ * it: a file on the deployment's host, the NAME of an environment
+ * variable, or a command whose stdout is the secret.
+ *
+ * A REFERENCE in all three spellings, and there is deliberately no field
+ * for the passphrase itself. A screen that collected one would be
+ * collecting the single secret that stands between a repository's storage
+ * and everything in it, into a request body that reaches an access log.
+ */
+export interface RepositoryPassphraseReference {
+  file?: string;
+  env?: string;
+  command?: string[];
+}
+
+/**
+ * A repository domain as the create screen declares it (issue #862).
+ *
+ * What this creates is a DECLARATION. The store underneath is written the
+ * first time a backup set puts a snapshot in the domain, which is why the
+ * created domain comes back reporting an unreachable repository and why
+ * that is not a failure.
+ */
+export interface CreateRepositoryDomainRequest {
+  domain: string;
+  description?: string;
+  /** shared or isolated. Required, and with no default in either
+   *  direction: sets sharing a domain share one key, one credential, one
+   *  maintenance owner, one deduplication pool and one blast radius. */
+  isolation: "shared" | "isolated";
+  passphrase: RepositoryPassphraseReference;
+  /** Where the repository is stored. Empty is this deployment's own
+   *  storage location, which is the only one this build can honour; a
+   *  value naming anywhere else is refused rather than ignored. */
+  location?: string;
+  /** Which deployment maintains it. Empty is this one. It claims nothing:
+   *  ADR 0017 moves maintenance ownership by transfer only, and the
+   *  service refuses "this" for a repository whose record already names
+   *  another instance. */
+  maintenanceOwner?: "this" | "another-instance";
+}
+
+/**
  * Who owns one repository's maintenance, when it last ran and when it is
  * next eligible.
  *

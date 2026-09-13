@@ -44,7 +44,9 @@ import type { LiveActivity } from "@shared/types/activity";
 // the CALLS that produce one are declared.
 import type {
   BackupEngine,
+  CreateRepositoryDomainRequest,
   RepositoryFleet,
+  RepositoryHealth,
   RepositoryMaintenance,
   RestoreConflictPolicy,
   Snapshot,
@@ -2342,6 +2344,25 @@ export interface BackupdApi {
    *  Refuses with REPOSITORY_DOMAIN_NOT_FOUND for a domain nothing
    *  declares. */
   getRepositoryMaintenance(domain: string): Promise<RepositoryMaintenance>;
+  /**
+   * Declare a repository domain (issue #862).
+   *
+   * It persists a DECLARATION and creates no store: the repository is
+   * written the first time a backup set puts a snapshot in the domain, so
+   * the health that comes back reports an unrealized repository and a
+   * screen must not render that as a failed create.
+   *
+   * The passphrase crosses as a REFERENCE. There is no field for the
+   * secret and there will not be one.
+   *
+   * Rejects with INCREMENTAL_ENGINE_DISABLED when this deployment does
+   * not run the incremental engine, which is a state a screen has to
+   * EXPLAIN rather than retry; with REPOSITORY_DOMAIN_EXISTS for an id
+   * this deployment already declares; and with
+   * REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE when the declaration would
+   * claim a repository another instance maintains (ADR 0017).
+   */
+  createRepositoryDomain(req: CreateRepositoryDomainRequest): Promise<RepositoryHealth>;
 
   /**
    * One durable operation by id, for watching work that outlives the

@@ -2856,6 +2856,52 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
         );
       return delay(record);
     },
+    // Issue #862. The mock DECLARES the domain into the fixture the fleet
+    // read serves, because that is what the real route does and it is
+    // what the screen after the create shows: a mock that resolved with a
+    // detached object would let the wizard ship without ever proving the
+    // domain turns up on the list it navigates to.
+    //
+    // The created domain is FAILING and unreachable, deliberately, and
+    // not as a mock cutting a corner: the store is realized by the first
+    // backup run into the domain, so a freshly declared one has nothing
+    // to reach. A demo that showed a green row here would be teaching the
+    // wrong expectation.
+    createRepositoryDomain: (req) => {
+      if (MOCK_REPOSITORIES.some((repo) => repo.domain === req.domain))
+        return Promise.reject(
+          new BackupdError({
+            code: "REPOSITORY_DOMAIN_EXISTS",
+            message: "this deployment already declares a repository domain of that id: " + req.domain,
+            correlationId: "cid_mock409"
+          })
+        );
+
+      const created: RepositoryHealth = {
+        domain: req.domain,
+        mayShare: req.isolation === "shared",
+        state: "FAILING",
+        reachable: false,
+        readable: false,
+        writable: false,
+        credentialsValid: false,
+        clockSane: true,
+        clockSkewSeconds: null,
+        maintenanceOverdue: false,
+        lastMaintenanceAt: null,
+        lastMaintenanceResult: "",
+        lastSnapshotAt: null,
+        lastSnapshotStatus: "",
+        lastVerificationAt: null,
+        lastVerificationStatus: "",
+        backupSets: [],
+        detail:
+          "nothing has been stored in this domain yet, so its repository has not been written; it is created by the first backup run into it"
+      };
+      MOCK_REPOSITORIES.push(created);
+
+      return delay(created);
+    },
 
     getOperation: (id) => {
       const found = OPERATIONS.find((op) => op.id === id);

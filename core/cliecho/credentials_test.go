@@ -196,6 +196,24 @@ var flagsThatEchoWhatTheRequestSaid = map[string]string{
 	"--repository-domain":  "the storage boundary the operator declared for this set's snapshots, which they named and have to name again",
 	"--source-consistency": "what the source promises about files changing under a snapshot, one of three words",
 	"--verification-level": "how much of each snapshot is read back afterwards, one of four words",
+
+	// Issue #862's repository-domain declaration. The id is the operand
+	// below; these are the rest of the declaration, and each one is
+	// either a word from a closed vocabulary or a REFERENCE the operator
+	// wrote themselves.
+	//
+	// --passphrase-file and --passphrase-env are the same claim
+	// --credentials-file and --credentials-env make one noun over: a
+	// path on the operator's own host, and the NAME of an environment
+	// variable, never a value. --passphrase-command is deliberately NOT
+	// here, because its words are the caller's and it is printed as a
+	// placeholder instead.
+	"--isolation":       "shared or isolated, the co-tenancy posture the operator chose and the one thing a domain cannot be created without",
+	"--description":     "the operator's own sentence about what a domain holds, which they wrote and have to be able to retype",
+	"--location":        "where the domain is stored, which is a directory on the operator's own deployment and is the value the request named",
+	"--owner":           "this or another-instance, which decides whether the declaration may be a maintenance claim (ADR 0017)",
+	"--passphrase-file": "a PATH to the file holding a repository's passphrase, never its contents",
+	"--passphrase-env":  "the NAME of an environment variable the passphrase is read from, never its value",
 }
 
 // operandsThatNameTheSubject is the same list for the positional argument
@@ -212,6 +230,7 @@ var operandsThatNameTheSubject = map[string]string{
 	"POST /operations":                  "the artifact id a restore names",
 	"POST /storage-mediums":             "the destination's own id",
 	"POST /storage-mediums/preflight":   "the candidate destination's id",
+	"POST /repositories":                "the repository domain's own id",
 }
 
 // A credential in an endpoint URL, which is the leak the name-based test

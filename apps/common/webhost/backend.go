@@ -454,6 +454,14 @@ type BackupServiceClient interface {
 	ListRepositories(ctx context.Context) (service.RepositoryHealthReport, error)
 	RepositoryMaintenanceState(ctx context.Context, domain string) (service.RepositoryMaintenance, error)
 
+	// CreateRepositoryDomain backs POST /api/v1/repositories (#862): the
+	// write this surface did not have. It persists a DECLARATION into
+	// config.yaml and creates no store -- the repository is realized by
+	// the first backup run that stores a snapshot in it -- and answers
+	// with the domain as the read above reports it, so a client is never
+	// shown a create's own idea of a repository's health.
+	CreateRepositoryDomain(ctx context.Context, req service.CreateRepositoryDomainRequest) (service.RepositoryHealth, error)
+
 	// The four durable actions EPIC K puts on POST /api/v1/operations
 	// (#788), beside SubmitRestorePlacement above.
 	//

@@ -378,6 +378,12 @@ describe("every request the shared client makes is a declared operation", () => 
       ["getSnapshotRetention", () => httpApi.getSnapshotRetention("src", "set-1")],
       ["listRepositories", () => httpApi.listRepositories()],
       ["getRepositoryMaintenance", () => httpApi.getRepositoryMaintenance("primary-nas")],
+      // Issue #862's write, driven with the reference spelling a browser
+      // sends: a path, never the passphrase.
+      ["createRepositoryDomain", () => httpApi.createRepositoryDomain({
+        domain: "offsite-b2", isolation: "isolated",
+        passphrase: { file: "/etc/backupd/offsite-b2.passphrase" }
+      })],
       ["getOperation", () => httpApi.getOperation("op_1")],
       // The four actions all post to /operations, and the header
       // assertion above is what proves each one sends its idempotency

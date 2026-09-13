@@ -249,8 +249,28 @@ type mediumRoute interface {
 	SetDefaultStorageMedium(ctx context.Context, id string) (service.StorageMediumSummary, error)
 }
 
-// configWriteRoute is where a routed configuration write goes: both halves
-// together, because both are reached through one door and one claim.
+// repositoryRoute is `repository create`'s half of the same seam (issue
+// #862).
+//
+// It is here for settingsRoute's and mediumRoute's reason, restated for
+// the third noun that lives in config.yaml: declaring a repository domain
+// rewrites the configuration, so beside a running engine a declaration
+// left in the file is a boundary that process would never read -- and the
+// next thing it wrote would put the file back without it, leaving an
+// operator with a domain their backup sets cannot name.
+//
+// One method, deliberately. Editing and removing a domain are #862's own
+// out-of-scope list, and a route interface that declared methods nothing
+// implements would be describing an API that does not exist.
+//
+// *service.BackupService satisfies it as it already stands, which is the
+// property backupSetRoute's own doc asks every addition here to preserve.
+type repositoryRoute interface {
+	CreateRepositoryDomain(ctx context.Context, req service.CreateRepositoryDomainRequest) (service.RepositoryHealth, error)
+}
+
+// configWriteRoute is where a routed configuration write goes: every half
+// together, because they are reached through one door and one claim.
 //
 // One door rather than one per command family, so that "this write can be
 // routed" is settled once, in the same act as the mode. Each command still
@@ -262,6 +282,7 @@ type configWriteRoute interface {
 	backupSetRoute
 	settingsRoute
 	mediumRoute
+	repositoryRoute
 }
 
 // attachToEngine builds this invocation's route to the serving process,

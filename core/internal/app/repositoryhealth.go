@@ -121,6 +121,79 @@ func (s *Service) RepositoryHealth(ctx context.Context) ([]health.RepositoryHeal
 	return out, nil
 }
 
+// RepositoryHealthOf probes ONE declared domain and reports its verdict.
+//
+// It exists for the create route (#862), which has just written a
+// declaration and has to answer with that domain as GET /repositories
+// reports it. Walking every declared domain to answer about one of them
+// would make a create's cost, and its worst-case latency, a function of
+// how many OTHER repositories this deployment has and whether they are
+// awake -- so a domain declared successfully could still be reported as
+// a failure because an unrelated NAS was asleep.
+//
+// The gate and the not-declared refusal are the same two this file's
+// other reads make, in the same order and for the same reasons.
+func (s *Service) RepositoryHealthOf(ctx context.Context, domain string) (health.RepositoryHealth, error) {
+	if s.Config == nil {
+		return health.RepositoryHealth{}, ErrRepositoryDomainNotDeclared
+	}
+
+	if err := s.incrementalEngineGate(); err != nil {
+		return health.RepositoryHealth{}, err
+	}
+
+	id, err := model.NewRepositoryDomainID(domain)
+	if err != nil {
+		return health.RepositoryHealth{}, fmt.Errorf("%w: %q", ErrRepositoryDomainNotDeclared, domain)
+	}
+
+	sets := s.setsByDomain()
+	for i := range s.Config.RepositoryDomains {
+		declared := s.Config.RepositoryDomains[i]
+		if declared.Domain.ID != id {
+			continue
+		}
+
+		return s.repositoryHealthOf(ctx, declared, sets[id]), nil
+	}
+
+	return health.RepositoryHealth{}, fmt.Errorf("%w: %q", ErrRepositoryDomainNotDeclared, domain)
+}
+
+// MaintenanceOwnerOf reports which instance the durable record says
+// maintains one repository, and "" when nothing has ever maintained it.
+//
+// Unlike RepositoryMaintenance below, it does NOT require the domain to
+// be declared, and that is the whole point of it: the caller is the
+// create route, which asks before the declaration exists (#862). A
+// record for an undeclared id is not a contradiction -- it is what a
+// re-declared id, or a state directory shared with a second instance,
+// leaves behind, and it is exactly the case ADR 0017 says a declaration
+// must not quietly overwrite by becoming a claim.
+//
+// It opens no repository: the record is a file this deployment writes
+// beside its own state. An unreadable record reads as no record, on the
+// same terms maintenanceRecord already sets, and the create's refusal is
+// therefore never raised on the strength of something this deployment
+// could not read.
+func (s *Service) MaintenanceOwnerOf(ctx context.Context, domain string) string {
+	if s.Config == nil {
+		return ""
+	}
+
+	id, err := model.NewRepositoryDomainID(domain)
+	if err != nil {
+		return ""
+	}
+
+	record := s.maintenanceRecord(ctx, id)
+	if record == nil {
+		return ""
+	}
+
+	return record.Owner.String()
+}
+
 // RepositoryMaintenanceState is one repository's maintenance state, read
 // from the durable ownership record and weighed against the schedule.
 //

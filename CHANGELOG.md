@@ -4,6 +4,32 @@
 
 ### Added
 
+- **A repository domain can be declared from the UI, the API and a terminal**
+  (#862). `POST /repositories` persists a new `repository_domains:` entry —
+  id, isolation, passphrase REFERENCE, description — into `config.yaml`
+  atomically and hot-reloads, through the same door `POST /backup-sets`
+  writes through, and `backupd repository create <domain> --isolation
+  shared|isolated --passphrase-file F` does the same from a shell. The
+  Repositories → "Define a repository domain" screen is a working wizard
+  rather than a read-only explanation of one.
+
+  **Declaring is not creating.** What this writes is the DECLARATION; the
+  store underneath is still realized lazily by the first backup run that puts
+  a snapshot in the domain, exactly as a domain named on the add-backup-set
+  wizard's repository step already was. A domain declared a moment ago
+  therefore reports as unreachable on the fleet list, and the 201 answers with
+  that same probed health rather than a green row nobody measured.
+
+  **The passphrase is a reference in every spelling** — a file, an environment
+  variable, or a command whose stdout is the secret — and there is no field,
+  flag or input anywhere on this path to type one into. The write is gated by
+  the incremental engine (`409 INCREMENTAL_ENGINE_DISABLED`, which the screen
+  renders as the sentence naming the config key), refuses a duplicate id with
+  `REPOSITORY_DOMAIN_EXISTS` without touching the file, and refuses to be a
+  maintenance CLAIM: declaring a domain whose maintenance record already names
+  another instance comes back `REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE`,
+  because ADR 0017 moves ownership by transfer only.
+
 - **A second backup engine: incremental snapshots, off by default** (EPIC K,
   #779, issues #780-#789). A backup set can now run `engine: kopia` instead of
   `artifact`: rather than pulling a producer's finished file whole, it

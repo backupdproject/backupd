@@ -384,6 +384,21 @@ func (c *Client) SetDefaultStorageMedium(ctx context.Context, id string) (apicon
 	return out, err
 }
 
+// CreateRepositoryDomain is POST /repositories (issue #862): declare a
+// repository security boundary.
+//
+// It answers with the domain's HEALTH rather than with an echo of the
+// declaration, because that is what the route answers with: the domain as
+// GET /repositories reports it, probed. A domain that has just been
+// declared and has nothing stored in it therefore comes back unreachable,
+// which is the truth about a repository that is realized lazily and is
+// what `repository create` prints.
+func (c *Client) CreateRepositoryDomain(ctx context.Context, req apicontract.CreateRepositoryDomainRequest) (apicontract.RepositoryHealth, error) {
+	var out apicontract.RepositoryHealth
+	err := c.call(ctx, "createRepositoryDomain", nil, req, &out)
+	return out, err
+}
+
 // ListActivity is GET /activity: the deployment-wide lifecycle feed, newest
 // first.
 //

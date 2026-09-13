@@ -118,7 +118,9 @@
           "SNAPSHOT_NOT_HOLDABLE",
           "REPOSITORY_DOMAIN_NOT_FOUND",
           "BACKUP_SET_NOT_INCREMENTAL",
-          "INCREMENTAL_ENGINE_DISABLED"
+          "INCREMENTAL_ENGINE_DISABLED",
+          "REPOSITORY_DOMAIN_EXISTS",
+          "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE"
         ],
         "x-code-origins": {
           "authentication-failed": "ui",
@@ -184,7 +186,9 @@
           "SNAPSHOT_NOT_HOLDABLE": "wire",
           "REPOSITORY_DOMAIN_NOT_FOUND": "wire",
           "BACKUP_SET_NOT_INCREMENTAL": "wire",
-          "INCREMENTAL_ENGINE_DISABLED": "wire"
+          "INCREMENTAL_ENGINE_DISABLED": "wire",
+          "REPOSITORY_DOMAIN_EXISTS": "wire",
+          "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE": "wire"
         },
         "x-error-classes": {
           "authentication": [
@@ -227,7 +231,9 @@
             "MEDIUM_IS_DEFAULT",
             "MEDIUM_CONNECTION_NOT_PROVEN",
             "SNAPSHOT_NOT_HOLDABLE",
-            "INCREMENTAL_ENGINE_DISABLED"
+            "INCREMENTAL_ENGINE_DISABLED",
+            "REPOSITORY_DOMAIN_EXISTS",
+            "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE"
           ],
           "not-found": [
             "BACKUP_SET_NOT_FOUND",
@@ -5130,6 +5136,72 @@
         "required": [
           "generated_at",
           "repositories"
+        ]
+      },
+      "RepositoryPassphraseReference": {
+        "type": "object",
+        "description": "Where one repository domain's encryption passphrase comes from: a file on the manager's host, the NAME of an environment variable, or an argv array whose stdout is the secret. Exactly one of the three, and none of them is the passphrase itself. There is deliberately no field to paste one into and there will not be: a repository's passphrase is the only thing standing between its storage and everything this product holds, and a secret that could be typed into a request body is one that ends up in an access log, a terminal transcript and config.yaml in the clear. This is the same three-source shape config.yaml's own repository_domains[].passphrase spells, because \"how does a secret reach this process\" is one question this product answers once.",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "A path on the manager's host to a file whose contents are the passphrase. The preferred source when an operator already provisions secrets as files: what protects it is that file's own mode and owner, and the secret never travels over this API at all."
+          },
+          "env": {
+            "type": "string",
+            "description": "The NAME of an environment variable this process reads the passphrase from when it opens the repository. Never a value."
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "An argv array whose stdout is the passphrase, run directly and never through a shell. This is how a secrets manager is adopted without this product depending on one."
+          }
+        }
+      },
+      "CreateRepositoryDomainRequest": {
+        "type": "object",
+        "description": "POST /repositories: declare a repository domain. What this persists is a DECLARATION -- an id, a co-tenancy posture and the reference the passphrase is resolved from -- and it creates no store: the repository itself is realized lazily by the first backup run that stores a snapshot in it, exactly as a domain named on the add-backup-set wizard's repository step already is. Nothing here is therefore proven against storage, and a domain created a moment ago reads as unreachable on GET /repositories until something has run into it, which is the truth about it rather than a failure of it.",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "How a backup set will name this domain, and the name its maintenance record and its storage are keyed by. Unique across the domains this deployment declares -- a second entry claiming one id is two boundaries with one name, so it is refused with REPOSITORY_DOMAIN_EXISTS rather than merged -- and held to the same rule config.yaml's repository_domains[].id is, which is what refuses a `/` in it."
+          },
+          "description": {
+            "type": "string",
+            "description": "The operator's own sentence about what this domain holds. Never interpreted. It is worth sending because a list of five domain ids with no prose is a list nobody reviews, and reviewing it is how an isolation mistake gets caught before an audit does."
+          },
+          "isolation": {
+            "type": "string",
+            "enum": [
+              "shared",
+              "isolated"
+            ],
+            "description": "Whether more than one backup set may store snapshots here. REQUIRED, with no default in either direction: defaulting to shared would make an isolation boundary a belief rather than a rule, and defaulting to isolated would silently forgo the deduplication that is the reason to run this engine. Sets sharing a domain share its encryption key, its credential, its maintenance owner, its deduplication pool, its corruption blast radius and its disk."
+          },
+          "passphrase": {
+            "$ref": "#/components/schemas/RepositoryPassphraseReference",
+            "description": "Where the passphrase that encrypts this repository comes from. REQUIRED, because a repository this product creates is always encrypted and a domain declared without one is a boundary no backup set can be stored in: config.Validate refuses the set that names it, which is a refusal an operator would meet later, somewhere else, about a different object."
+          },
+          "location": {
+            "type": "string",
+            "description": "Where this domain's repository is stored. Empty means this deployment's own storage location, which is the only place this build can put one: a repository domain is a boundary and not a placement, and per-domain storage locations are not in the configuration schema yet. A value naming anywhere else is REFUSED with INVALID_REQUEST rather than accepted and ignored -- a field that silently did nothing is how an operator ends up believing their second copy is off site."
+          },
+          "maintenance_owner": {
+            "type": "string",
+            "enum": [
+              "this",
+              "another-instance"
+            ],
+            "description": "Which deployment maintains this repository. Empty means `this`. Nothing here CLAIMS ownership and nothing here can: ADR 0017 makes maintenance ownership a durable record that is taken by whichever instance first maintains an unclaimed repository and afterwards moves only by transfer, so a declaration that could name an owner would be exactly the \"claim this for me\" operation that design exists to make impossible. What the field does is decide whether this create is allowed to be one. `this` is refused with REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE when a maintenance record for this id already names an owner, which is what a re-declared id or a state directory shared with another instance looks like; `another-instance` says the operator knows that and declares the boundary anyway, and this deployment then reads and writes snapshots here without ever maintaining the store."
+          }
+        },
+        "required": [
+          "id",
+          "isolation",
+          "passphrase"
         ]
       },
       "RepositoryMaintenance": {
@@ -12567,6 +12639,128 @@
         "x-idempotency-key": "none",
         "x-optimistic-concurrency": null,
         "x-csrf-required": false,
+        "x-authenticated": true
+      },
+      "post": {
+        "operationId": "createRepositoryDomain",
+        "summary": "Declare a repository domain: an id, a co-tenancy posture and the reference this deployment resolves its encryption passphrase from. Persists the declaration into this deployment's configuration and creates no store; the repository is realized by the first backup run that stores a snapshot in it.",
+        "tags": [
+          "repositories"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRepositoryDomainRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success. The created domain exactly as GET /repositories reports it, probed rather than echoed: every field is what this deployment can see about the store right now, which for a domain nothing has run into yet is an unrealized repository and not a healthy one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryHealth"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST. An id nothing can name a domain with, an isolation outside the two words, a passphrase reference naming none or more than one of its three sources, or a location that is not this deployment's own storage location.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "409": {
+            "description": "Refused: REPOSITORY_DOMAIN_EXISTS, REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE. This deployment already declares a domain of that id, and a second entry claiming it would be two boundaries with one name; or a maintenance record for that id already names an owner, so declaring it as maintained by THIS deployment would be a claim, and ADR 0017 moves maintenance ownership by transfer only -- re-send with maintenance_owner=another-instance to declare the boundary without claiming it. Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so a repository domain declared here is one nothing could ever open. It is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "REPOSITORY_DOMAIN_EXISTS",
+              "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
+              "INCREMENTAL_ENGINE_DISABLED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
         "x-authenticated": true
       }
     },
