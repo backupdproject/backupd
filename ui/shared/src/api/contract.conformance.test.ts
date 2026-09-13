@@ -263,6 +263,17 @@ describe("every request the shared client makes is a declared operation", () => 
     // is complete. The response above is deliberately thin: what is being
     // recorded is the REQUEST, and a mapper that throws on a thin body
     // has still already made its call.
+    // Issue #830's two write bodies both carry this block, and it is
+    // spelled once rather than twice so the two calls cannot drift into
+    // testing different shapes of the same schema.
+    const SMTP = {
+      host: "smtp.example.net",
+      port: 587,
+      security: "starttls" as const,
+      username: "backupd@example.com",
+      password: "smtp-secret",
+      from: "backupd@example.com"
+    };
     const calls: Array<[string, () => Promise<unknown>]> = [
       ["getVersion", () => httpApi.getVersion()],
       ["getHealth", () => httpApi.getHealth()],
@@ -405,7 +416,12 @@ describe("every request the shared client makes is a declared operation", () => 
       ["scanCatalog", () => httpApi.scanCatalog()],
       ["rebuildCatalog", () => httpApi.rebuildCatalog()],
       ["login", () => httpApi.login("u", "p")],
-      ["enrollAdministrator", () => httpApi.enrollAdministrator("u", "p")],
+      ["enrollAdministrator", () => httpApi.enrollAdministrator("u", "p", "ops@example.com", SMTP)],
+      ["requestPasswordReset", () => httpApi.requestPasswordReset("u")],
+      ["resetPassword", () => httpApi.resetPassword("tok", "hunter22222222")],
+      ["getRecoverySettings", () => httpApi.getRecoverySettings()],
+      ["updateRecoverySettings", () => httpApi.updateRecoverySettings({ recoveryEmail: "ops@example.com", smtp: SMTP })],
+      ["sendRecoveryTestEmail", () => httpApi.sendRecoveryTestEmail()],
       ["rotatePassword", () => httpApi.rotatePassword("a", "b")],
       ["logout", () => httpApi.logout()]
     ];

@@ -27,8 +27,21 @@ import { ErrorState } from "@shared/components/EmptyState";
 import { HelpField } from "@shared/components/FieldHelp";
 import { PasswordInput } from "@shared/components/PasswordInput";
 import { FIELD_HELP } from "@shared/components/fieldHelpCopy";
+import {
+  DEFAULT_SMTP,
+  RecoveryAttention,
+  SmtpFields,
+  looksLikeEmail,
+  smtpFieldsComplete,
+  smtpInput
+} from "@shared/components/RecoveryFields";
+import type { SmtpFieldValues } from "@shared/components/RecoveryFields";
 
-const MIN_LENGTH = 12;
+/** The floor this form applies, and the one ResetPasswordPage imports so
+ *  the two screens that set a password cannot disagree about it. The
+ *  service enforces the same number; this is the courtesy of showing the
+ *  rule before the button is pressed, not a second source of truth. */
+export const MIN_LENGTH = 12;
 
 /**
  * Issue #274. Enrolment refuses for several different reasons and only one
@@ -86,6 +99,34 @@ export function describeEnrollmentFailure(e: unknown, linkCarriedToken: boolean)
         correlationId: api.correlationId,
         offerSignIn: true
       };
+    // Issue #830. The most important thing this refusal has to convey is
+    // what did NOT happen: the service sends the confirmation message
+    // BEFORE it writes anything, so a failed send means no account, no
+    // recovery address, and — the part an operator cannot guess — a
+    // one-time enrolment token that was never spent. Told only that
+    // creation failed, the reasonable next move is to go hunting for a
+    // fresh link that nothing will ever print, when the link already open
+    // in this tab still works.
+    //
+    // The mail server's own words are quoted rather than summarised. They
+    // name the host, the port and the rejection ("connection refused",
+    // "535 authentication failed"), and no sentence written here could
+    // tell those apart.
+    case "SMTP_SEND_FAILED":
+      return {
+        message: "The confirmation email could not be sent, so no account was created.",
+        remediation:
+          "The mail server said: " + (api?.message ?? "no reason given") +
+          ". Nothing has been saved and this enrolment link has not been used up, so correct the SMTP details above and press Create administrator again. Recovery mail is the only way back into this account if the password is lost, which is why enrolment will not proceed without a working endpoint.",
+        correlationId: api?.correlationId
+      };
+    case "INVALID_EMAIL":
+      return {
+        message: "That address was not accepted as an email address.",
+        remediation:
+          "Backupd checked the recovery address and the From address against the mail standard rather than against a rough pattern, so this is one of the two rather than the password. Check both for a missing domain, a stray space or a trailing comma.",
+        correlationId: api?.correlationId
+      };
     default:
       return describeFailure(e, "The administrator account could not be created.");
   }
@@ -96,11 +137,22 @@ export function EnrollmentPage({ onEnrolled }: { onEnrolled(): void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  // Issue #830: the two things that make this account recoverable. They
+  // are collected HERE rather than offered later on Settings because this
+  // is the last moment somebody who can sign in is guaranteed to be
+  // present: after this screen, an operator who has lost the password has
+  // no way to reach a page that would let them configure how to get it
+  // back.
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [smtp, setSmtp] = useState<SmtpFieldValues>(DEFAULT_SMTP);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<EnrollmentFailure | null>(null);
 
   const tooShort = password.length > 0 && password.length < MIN_LENGTH;
   const mismatch = confirm.length > 0 && confirm !== password;
+  // Shown once there is something to be wrong about, so the field does not
+  // start out red at somebody who has not typed in it yet.
+  const badEmail = recoveryEmail.length > 0 && !looksLikeEmail(recoveryEmail);
   // These two warnings render inside their field's own <label>, which used
   // to be how they reached a screen reader: the wrapping label named the
   // input by walking its subtree and swept them up along the way. The
@@ -110,7 +162,13 @@ export function EnrollmentPage({ onEnrolled }: { onEnrolled(): void }) {
   // anyway; it was only ever in the name by accident.
   const tooShortId = useId();
   const mismatchId = useId();
-  const valid = username.length > 0 && password.length >= MIN_LENGTH && confirm === password;
+  const badEmailId = useId();
+  const valid =
+    username.length > 0 &&
+    password.length >= MIN_LENGTH &&
+    confirm === password &&
+    looksLikeEmail(recoveryEmail) &&
+    smtpFieldsComplete(smtp);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,7 +176,7 @@ export function EnrollmentPage({ onEnrolled }: { onEnrolled(): void }) {
     setBusy(true);
     setFailure(null);
     api
-      .enrollAdministrator(username, password)
+      .enrollAdministrator(username, password, recoveryEmail.trim(), smtpInput(smtp))
       .then(onEnrolled)
       .catch((e: unknown) => setFailure(describeEnrollmentFailure(e, bootstrapTokenFromLocation() !== null)))
       .finally(() => setBusy(false));
@@ -168,6 +226,46 @@ export function EnrollmentPage({ onEnrolled }: { onEnrolled(): void }) {
             {"Minimum " + MIN_LENGTH + " characters. Credentials are stored on this NAS; nothing is sent off the device."}
           </span>
         </Banner>
+
+        {/* Issue #830's half of this form. It sits BELOW the credentials
+            and above the button on purpose: the warning is about the
+            password just chosen, and it reads as an afterthought anywhere
+            else on the screen. */}
+        <div style={{ height: 1, background: "var(--border)", margin: "4px 0" }} />
+        <h2 style={{ margin: 0, fontSize: 15 }}>Account recovery</h2>
+        <RecoveryAttention />
+        <HelpField label="Recovery email" help={FIELD_HELP.recoveryEmail}>
+          {/* aria-labelledby for the reason PasswordInput carries one: the
+              validation message below renders inside this field's own
+              <label>, and a label names its control by walking its subtree,
+              so without this the field would answer to "Recovery email
+              Enter an email address, such as ops@example.com." the moment
+              somebody mistyped one. */}
+          {(helpId, field) => (
+            <>
+              <input
+                className="input input--mono"
+                type="email"
+                aria-labelledby={field.id}
+                aria-describedby={badEmail ? helpId + " " + badEmailId : helpId}
+                autoComplete="email"
+                value={recoveryEmail}
+                onChange={(e) => setRecoveryEmail(e.target.value)}
+                required
+              />
+              {badEmail ? (
+                <span id={badEmailId} style={{ fontSize: "var(--text-sm)", color: "var(--danger)" }}>
+                  Enter an email address, such as ops@example.com.
+                </span>
+              ) : null}
+            </>
+          )}
+        </HelpField>
+        <SmtpFields
+          values={smtp}
+          onChange={(patch) => setSmtp((current) => ({ ...current, ...patch }))}
+          passwordAutoComplete="new-password"
+        />
         {failure ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <ErrorState

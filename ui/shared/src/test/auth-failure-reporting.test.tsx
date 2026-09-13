@@ -49,6 +49,12 @@ function renderEnrollment(api: BackupdApi) {
   );
 }
 
+/** Fills the whole form, which since #830 includes the recovery block:
+ *  the submit button stays disabled until a recovery address and a usable
+ *  SMTP endpoint are present, so a helper that filled only the
+ *  credentials would press a button that does nothing and every case
+ *  below would fail on the absence of a refusal rather than on its
+ *  wording. */
 async function enroll() {
   const username = screen.getByLabelText("Username");
   const password = screen.getByLabelText(/^Password/);
@@ -56,6 +62,9 @@ async function enroll() {
   await userEvent.type(username, "bm-admin");
   await userEvent.type(password, "a-long-enough-passphrase");
   await userEvent.type(confirm, "a-long-enough-passphrase");
+  await userEvent.type(screen.getByLabelText("Recovery email"), "ops@example.com");
+  await userEvent.type(screen.getByLabelText("SMTP host"), "smtp.example.net");
+  await userEvent.type(screen.getByLabelText("From address"), "backupd@example.com");
   await userEvent.click(screen.getByRole("button", { name: "Create administrator" }));
 }
 

@@ -123,7 +123,7 @@ export const FIELD_HELP = {
     what: "The password for the administrator account being created. Twelve characters is the minimum this form accepts.",
     example: "a passphrase of at least 12 characters",
     effect:
-      "Stored on this NAS as a verifier for future sign-ins and never sent off the device. There is no recovery flow: losing it means recovering access at the host, not through this page."
+      "Stored on this NAS as a verifier for future sign-ins and never sent off the device. Forgetting it is recoverable only through the recovery address and SMTP endpoint set up below, which is why this form asks for both before it will create anything."
   },
 
   enrollConfirm: {
@@ -152,6 +152,81 @@ export const FIELD_HELP = {
     example: "the identical new passphrase",
     effect:
       "The Change password button stays disabled until the two match, so a mistyped new password cannot become the one you have to sign in with next time."
+  },
+
+  // Issue #830's recovery block. These seven are shared by first-run
+  // enrolment and by Settings' own "Account recovery" card, because they
+  // are the same fields writing the same configuration; what differs is
+  // only whether an administrator exists yet.
+
+  recoveryEmail: {
+    what: "The mailbox a password-reset link is sent to. It is the only way back into this account: the reset flow mails a link and does nothing else, so an address nobody can read is the same as no recovery at all.",
+    example: "ops@example.com",
+    effect:
+      "Backupd sends a confirmation message to this address over the SMTP endpoint below, immediately, and refuses to save anything if that message cannot be delivered. So the address is never recorded as reachable on the strength of it looking plausible, and a mailbox on the NAS this is backing up is the one to avoid: it is unreadable in exactly the failure this exists for."
+  },
+
+  smtpHost: {
+    what: "The mail submission server Backupd connects out to. Any provider that accepts authenticated submission works; there is no mail server inside this product.",
+    example: "mail.smtp2go.com",
+    effect:
+      "Every recovery message, including the confirmation sent when this form is saved, is submitted over a connection to this host. It is dialled from the NAS, so a host only reachable from your workstation will look correct here and fail when it is actually needed."
+  },
+
+  smtpPort: {
+    what: "The TCP port on that host. 587 is submission with STARTTLS, 465 is implicit TLS, 25 is server-to-server relay and is blocked by most networks.",
+    example: "587",
+    effect:
+      "Used for the outbound connection, together with the security setting beside it. A port and a security mode that disagree do not degrade into a working connection: they fail, and saving is refused with the mail server's own error rather than being recorded as configured."
+  },
+
+  smtpSecurity: {
+    what: "How the connection to the mail server is protected. STARTTLS upgrades a plain connection, TLS is encrypted from the first byte, and None is neither.",
+    example: "starttls",
+    effect:
+      "Decides how the SMTP username and password below travel. None sends them in the clear, so it is only ever defensible for a relay on the same machine; anything reached across a network needs one of the other two."
+  },
+
+  smtpUsername: {
+    what: "The account Backupd authenticates to the mail server as. Usually the mailbox itself, or an API-key username the provider issued for submission.",
+    example: "backupd@example.com",
+    effect:
+      "Sent on every submission. It is stored in this deployment's own configuration, so an API key scoped to sending mail is a better thing to put here than a human mailbox's own password."
+  },
+
+  smtpPassword: {
+    what: "The password or API key for that account. Write-only: it is stored in a file only this service can read, and no read of this configuration can return it.",
+    example: "the provider's SMTP key",
+    effect:
+      "Saved, then used for every submission. Because it cannot be read back, leaving this field empty when editing an existing configuration means KEEP the stored one rather than clear it, which is what lets a port or a from-address be corrected by somebody who does not have the key in front of them."
+  },
+
+  smtpFrom: {
+    what: "The address recovery mail is sent from. Most providers refuse to submit mail from a domain the account is not authorised for.",
+    example: "backupd@example.com",
+    effect:
+      "Becomes the From header on every message Backupd sends, and is what the mailbox above filters and replies to. A domain this SMTP account may not send as is rejected at submission time, which is reported here as a failure to save rather than as mail that silently never arrives."
+  },
+
+  forgotUsername: {
+    what: "The administrator account to send a reset link for. It is the only thing this page asks for, because the address it mails to is the one already stored for that account.",
+    example: "backup-admin",
+    effect:
+      "The answer is the same whatever is typed here, deliberately: this page cannot tell you whether that account exists, whether it has a recovery address, or whether the mail went out, because an answer that varied would let anybody on the network confirm an administrator's name."
+  },
+
+  resetNewPassword: {
+    what: "The password to set, using the single-use link that was mailed out. Twelve characters is the minimum, the same floor first-run enrolment applies.",
+    example: "a new passphrase of at least 12 characters",
+    effect:
+      "Redeems the link, which then stops working, and signs out EVERY session including any left open elsewhere. Nothing is signed in afterwards: the new password has to be typed once on the sign-in screen, which is what proves it was set by whoever is now using it."
+  },
+
+  resetConfirmPassword: {
+    what: "The new password again.",
+    example: "the identical new passphrase",
+    effect:
+      "Set password stays disabled until the two match. A typo here would spend the one-time link on a password nobody knows, and the only way on from there is another emailed link."
   },
 
   // ----------------------------------------------------------- retention

@@ -50,6 +50,8 @@ import { CatalogRecoveryPage } from "@shared/pages/CatalogRecoveryPage";
 import { ConfigurationSavedPage } from "@shared/pages/ConfigurationSavedPage";
 import { LoginPage } from "@shared/auth/LoginPage";
 import { EnrollmentPage } from "@shared/auth/EnrollmentPage";
+import { ForgotPasswordPage } from "@shared/auth/ForgotPasswordPage";
+import { ResetPasswordPage } from "@shared/auth/ResetPasswordPage";
 import { ServiceUnreachablePage, SessionCheckFailedPage } from "@shared/pages/SessionCheckFailure";
 import { TooltipOptOutDialog } from "@shared/components/TooltipOptOutDialog";
 import { isServiceUnreachable } from "@shared/api/failure";
@@ -191,6 +193,12 @@ export function App() {
     return (
       <Routes>
         <Route path="/enroll" element={<EnrollmentPage onEnrolled={refreshAuth} />} />
+        {/* Issue #830. Unauthenticated by necessity: somebody who cannot
+            sign in is exactly who these two are for, and a gate in front
+            of them would be a recovery flow that requires the thing being
+            recovered. */}
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="*" element={<LoginPage onSignedIn={refreshAuth} />} />
       </Routes>
     );
