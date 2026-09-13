@@ -32,6 +32,7 @@ import (
 
 	"github.com/backupdproject/backupd/core/internal/model"
 	"github.com/backupdproject/backupd/core/internal/secretref"
+	"github.com/backupdproject/backupd/core/internal/workflow"
 )
 
 // Config is the manager's whole runtime configuration (FR-5).
@@ -154,6 +155,22 @@ type Config struct {
 	// and a zero block is therefore indistinguishable from silence: see
 	// incrementalengine.go.
 	IncrementalEngine IncrementalEngine `yaml:"incremental_engine,omitempty"`
+
+	// Workflows is EPIC L's scripted-workflow configuration (#807,
+	// #808): the approved root hook scripts live in, the
+	// deployment-wide stages, the environment every hook gets, and the
+	// bounds one hook runs under. See workflows.go, which carries the
+	// argument for the shape and for the split between what this
+	// package can refuse and what only a run start can.
+	//
+	// omitempty, for the round-trip reason every block above states:
+	// core/service re-marshals the whole Config on every settings save,
+	// and a config file that never heard of workflows must not come
+	// back from one carrying a "workflows: {}" an older binary refuses
+	// outright under Load's KnownFields(true). Absent means this
+	// deployment runs no workflows, which is every configuration
+	// written before EPIC L.
+	Workflows Workflows `yaml:"workflows,omitempty"`
 }
 
 // KeyEncryption names an optional, config-wide way to obtain the key
@@ -938,6 +955,46 @@ type BackupSet struct {
 	// build cannot parse (Load's KnownFields(true); see RetentionConfig's
 	// own note on that one-way door).
 	PollInterval *Duration `yaml:"poll_interval,omitempty"`
+
+	// Workflow is this set's own scripted-workflow configuration (EPIC
+	// L, #808): its hook directories, its script timeout, and the
+	// connection its remote hooks run over.
+	//
+	// A POINTER, unlike Config.Workflows, because a set that says
+	// nothing and a set that writes "workflow: {}" are different
+	// operator statements: the first runs no per-set hooks, and the
+	// second is a block that configures no directory, which
+	// validateBackupSetWorkflow refuses in words rather than accepting
+	// as an elaborate way of writing nothing.
+	//
+	// omitempty, like every other key this schema has gained, so a
+	// deployment that configures no workflow never writes a file an
+	// older build cannot parse (Load's KnownFields(true); see
+	// RetentionConfig's own note on that one-way door).
+	Workflow *SetWorkflow `yaml:"workflow,omitempty"`
+
+	// Environment is this set's own workflow environment, which wins
+	// over the deployment-wide one and loses to the BACKUPD_* built-ins
+	// (workflow.Resolve). It sits beside Workflow rather than inside it
+	// because an environment is a property of the BACKUP SET, not of its
+	// hook directories: #811's cleanup stage and #810's remote execution
+	// both read it, and neither is a stage an operator configured a
+	// directory for.
+	Environment []EnvironmentVariable `yaml:"environment,omitempty"`
+
+	// WorkflowEnvironment is the fully-merged environment this set's
+	// hooks run with: the sanitized baseline, then the deployment's
+	// entries, then this set's own. Validate fills it in during phase 2,
+	// on the same before/after-Validate discipline ID and Domain
+	// follow, so nothing downstream merges three layers itself and gets
+	// the precedence wrong in one of two places.
+	//
+	// It is the ZERO Environment for a set that runs no hooks, which is
+	// not the same as the baseline: #808's first acceptance criterion is
+	// that a set with no workflow configuration behaves exactly as it
+	// did before this package had workflows at all, and "it has an
+	// environment now" would not be that.
+	WorkflowEnvironment workflow.Environment `yaml:"-"`
 
 	Validation   Validation   `yaml:"validation"`
 	Revalidation Revalidation `yaml:"revalidation"`
