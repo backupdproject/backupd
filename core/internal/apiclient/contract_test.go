@@ -171,6 +171,13 @@ func TestContract_EveryCallThisClientMakesIsAnOperationTheContractDeclares(t *te
 					// "ask for whatever is held" branch, and the one worth
 					// exercising is the one that has to encode a value.
 					args = append(args, reflect.ValueOf(int64(7)))
+				case in.Kind() == reflect.Uint64:
+					// A cursor that cannot be negative, which is what a
+					// run-monotonic sequence is (WorkflowStepLogs). Same
+					// reasoning as the signed one above: positive, so the
+					// branch that encodes a query parameter is the branch
+					// this check walks.
+					args = append(args, reflect.ValueOf(uint64(7)))
 				default:
 					t.Fatalf("%s takes a %s, which this check does not know how to supply. Teach it, rather than letting the method go unchecked.", method.Name, in)
 				}

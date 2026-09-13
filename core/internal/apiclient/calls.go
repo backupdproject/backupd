@@ -512,3 +512,110 @@ func (c *Client) GetBackupSetEditHold(ctx context.Context, source, set string) (
 func (c *Client) ReleaseBackupSetEditHold(ctx context.Context, source, set string) error {
 	return c.call(ctx, "releaseBackupSetEditHold", []string{source, set}, nil, nil)
 }
+
+// EPIC L's four routed workflow operations (#813), and the reason they
+// are four rather than eighteen.
+//
+// This file's rule is that a method exists because a command drives it,
+// and for the workflow surface the line between what a terminal can
+// answer on its own and what only a serving engine can is sharp. A CLI
+// process opens the configuration and the journal, so it answers the
+// configuration reads, the run reads and `validate workflow` in its own
+// process, and its configuration WRITES go through the same
+// *BackupService door every other configuration write does. Those
+// therefore have no wrapper here, deliberately, and adding one would be
+// a claim that this client works against a route nothing calls.
+//
+// These four are the ones that structurally cannot be answered anywhere
+// but in the process that holds the workflow engine. core/service reports
+// ErrWorkflowsNotWired for every one of them when there is no engine, and
+// a CLI process never builds one: the step-log tail needs the engine's
+// broker to wait on, the recovery holds are the engine's own set, and a
+// resume or an acknowledgement is a state transition the engine owns. So
+// beside a serving engine these have to travel over HTTP, which is what
+// this client is for.
+
+// WorkflowStepLogs is GET /workflow-runs/{run}/steps/{step}/logs: one
+// page of one step's captured output, from a cursor.
+//
+// The cursor is the CALLER's, which is the whole protocol: `after` is the
+// last sequence this caller PROCESSED, and the page's own cursor is what
+// to send next time. That makes resume after a dropped connection the
+// ordinary read rather than a special case, and it makes every page a
+// separately authenticated request -- so a session that has expired is
+// refused on the next page instead of a stream outliving its
+// authorization.
+//
+// waitSeconds asks the engine to hold the request briefly for output
+// newer than the cursor, which is what keeps a follow of a quiet hook
+// from being a poll loop choosing between latency and load. It is
+// BOUNDED: the engine clamps it to its own ceiling, so a caller asking
+// for an hour gets an answer in seconds. Zero never waits.
+//
+// after is uint64 because the sequence is: it is run-monotonic, never
+// negative and never zero for a real record, so a signed cursor would
+// have a range of values that cannot name a position.
+func (c *Client) WorkflowStepLogs(ctx context.Context, runID, stepID string, after uint64, limit, waitSeconds int) (apicontract.WorkflowStepLogPage, error) {
+	query := url.Values{}
+	if after > 0 {
+		query.Set("after", strconv.FormatUint(after, 10))
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	if waitSeconds > 0 {
+		query.Set("wait", strconv.Itoa(waitSeconds))
+	}
+	if len(query) == 0 {
+		// No query at all rather than three empty parameters, matching
+		// ListActivity's own handling: the route reads an absent value as
+		// its own default, and sending "after=0" would be naming a
+		// position rather than declining to.
+		query = nil
+	}
+
+	var out apicontract.WorkflowStepLogPage
+	err := c.callQuery(ctx, "getWorkflowStepLogs", []string{runID, stepID}, query, nil, &out)
+	return out, err
+}
+
+// WorkflowRecovery is GET /workflow-recovery: every run whose cleanup
+// this deployment could not finish, and which is therefore holding its
+// backup set.
+//
+// It asks the ENGINE rather than reading the journal for rows that look
+// blocking, because the holds are what the next run will actually be
+// refused against, and a second derivation of "is this set blocked" would
+// be a second answer that can disagree with the one the scheduler acts
+// on.
+func (c *Client) WorkflowRecovery(ctx context.Context) (apicontract.WorkflowRecoveryResponse, error) {
+	var out apicontract.WorkflowRecoveryResponse
+	err := c.call(ctx, "listWorkflowRecovery", nil, nil, &out)
+	return out, err
+}
+
+// ResumeWorkflowCleanup is POST
+// /workflow-recovery/{run}/resume-cleanup: run the "after" hooks an
+// interrupted run still owes, out of that run's own captured bytes.
+//
+// It answers with the run as the journal holds it AFTERWARDS, which is
+// what a caller has to print: a resume that left the run still blocked
+// has to say so from the row the next backup will be refused against,
+// rather than from this call's own idea of how it went.
+func (c *Client) ResumeWorkflowCleanup(ctx context.Context, runID string) (apicontract.WorkflowRun, error) {
+	var out apicontract.WorkflowRun
+	err := c.call(ctx, "resumeWorkflowCleanup", []string{runID}, nil, &out)
+	return out, err
+}
+
+// AcknowledgeWorkflowRecovery is POST
+// /workflow-recovery/{run}/acknowledge: record that a person dealt with
+// an interrupted run by hand, and unblock its backup set.
+//
+// The request carries a reason and nothing else. The ACTOR is the
+// engine's answer rather than this caller's claim -- it comes from the
+// authenticated session on the far side -- which is what makes the record
+// worth having six months later.
+func (c *Client) AcknowledgeWorkflowRecovery(ctx context.Context, runID string, req apicontract.WorkflowAcknowledgementRequest) error {
+	return c.call(ctx, "acknowledgeWorkflowRecovery", []string{runID}, req, nil)
+}

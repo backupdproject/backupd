@@ -263,6 +263,15 @@ func refuseForeignParameters(w http.ResponseWriter, body submitOperationRequest)
 		// caller holding a snapshot in one set while believing it held
 		// one in another.
 		{"backup_set_id", service.ActionRunBackupSet, body.BackupSetID != ""},
+		// EPIC L's bypass (#813), on this list for the reason
+		// backup_set_id above is and with one extra edge: a run_cycle
+		// carrying it would be a request to skip the hooks of every
+		// backup set in the deployment, which is not an operation this
+		// product has. Ignoring the field would serve that request as an
+		// ordinary cycle and teach a client the flag is optional here,
+		// which is the reading that ends with somebody believing a
+		// deployment-wide bypass happened.
+		{"skip_workflow_scripts", service.ActionRunBackupSet, body.SkipWorkflowScripts},
 		{"restore", service.ActionRestorePlacement, body.Restore != nil},
 		{"snapshot_restore", service.ActionRestoreSnapshot, body.SnapshotRestore != nil},
 		{"snapshot_verify", service.ActionVerifySnapshot, body.SnapshotVerify != nil},

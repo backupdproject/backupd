@@ -474,6 +474,70 @@ type BackupServiceClient interface {
 	SubmitSnapshotVerify(ctx context.Context, req service.SnapshotVerifyRequest) (service.Operation, error)
 	SubmitSnapshotHold(ctx context.Context, req service.SnapshotHoldRequest) (service.Operation, error)
 	SubmitSnapshotHoldRelease(ctx context.Context, req service.SnapshotHoldReleaseRequest) (service.Operation, error)
+
+	// EPIC L's workflow surface (#813). Five groups, and which of them
+	// are read-only is the fact that decides the tier of the route in
+	// front of each -- so it is stated here rather than left to be
+	// inferred from a signature.
+	//
+	// The configuration reads and writes. WorkflowSettings and
+	// BackupSetWorkflow report the RESOLVED configuration -- the timeout
+	// a hook will actually get, the stages that will actually run --
+	// which a re-reading of config.yaml cannot, because that file's
+	// whole point is that it omits what it inherits. The two updates are
+	// §50's "state-changing but non-destructive" bucket, the tier
+	// UpdateSettings sits in: they rewrite one block of config.yaml and
+	// hot-reload, and nothing reachable from them touches a backup
+	// datum.
+	WorkflowSettings(ctx context.Context) (service.WorkflowSettings, error)
+	UpdateWorkflowSettings(ctx context.Context, req service.UpdateWorkflowSettingsRequest) (service.WorkflowSettings, error)
+	BackupSetWorkflow(ctx context.Context, id string) (service.BackupSetWorkflow, error)
+	UpdateBackupSetWorkflow(ctx context.Context, id string, req service.UpdateBackupSetWorkflowRequest) (service.BackupSetWorkflow, error)
+
+	// The environment, at either scope: an empty id is the
+	// deployment-wide layer. Three methods rather than a sparse update,
+	// for the reason the per-set retention sub-resource has three: "take
+	// this entry away" cannot be a value on a request where an absent
+	// field already means "leave this alone".
+	//
+	// Every one of them carries a secret as a LOCATION and never a
+	// value, which is core/service's own type-level guarantee rather
+	// than this package's care: nothing on this path resolves a
+	// reference, so there is no resolved secret here to leak.
+	ListWorkflowEnv(ctx context.Context, backupSetID string) ([]service.WorkflowEnvVar, error)
+	SetWorkflowEnv(ctx context.Context, backupSetID string, v service.WorkflowEnvVar) ([]service.WorkflowEnvVar, error)
+	UnsetWorkflowEnv(ctx context.Context, backupSetID, name string) ([]service.WorkflowEnvVar, error)
+
+	// ValidateWorkflow is read-only in the strongest sense this product
+	// has: it never executes a hook body, so the only things it can
+	// cause to run are `bash -n`, which parses, and core/service's own
+	// fixed remote capability probe. It is still expensive -- it
+	// captures and hashes every script and opens two network
+	// connections -- which is why the route in front of it is separate
+	// from the configuration read a dashboard would poll.
+	ValidateWorkflow(ctx context.Context, id string) (service.WorkflowValidation, error)
+
+	// The run reads, all read-only. WorkflowStepLogs is the one with a
+	// protocol: the caller owns its cursor and may ask for a BOUNDED
+	// wait, which is what makes a tail cheap without a held-open
+	// response. See handlers_workflowruns.go for why that shape is also
+	// what makes replay-time authorization structural.
+	WorkflowRuns(ctx context.Context, backupSetID string, limit int) ([]service.WorkflowRunDetail, error)
+	WorkflowRun(ctx context.Context, runID string) (service.WorkflowRunDetail, error)
+	WorkflowSteps(ctx context.Context, runID string) ([]service.WorkflowStepDetail, error)
+	WorkflowStepLogs(ctx context.Context, req service.WorkflowStepLogRequest) (service.WorkflowStepLogPage, error)
+
+	// Recovery: one read and the only two honest exits from an
+	// interrupted run. ResumeWorkflowCleanup EXECUTES the "after" hooks
+	// that are owed, out of the run's own captured bytes rather than
+	// out of today's configuration, and AcknowledgeWorkflowRecovery
+	// records that a person dealt with it by hand. Both are
+	// state-changing and neither can delete a backup datum; the route
+	// docs carry the argument for why the resume in particular is not
+	// behind the destructive gate.
+	WorkflowRecovery(ctx context.Context) ([]service.WorkflowRecoveryHold, error)
+	ResumeWorkflowCleanup(ctx context.Context, runID string) (service.WorkflowRunDetail, error)
+	AcknowledgeWorkflowRecovery(ctx context.Context, runID string, ack service.WorkflowAcknowledgement) error
 }
 
 var _ BackupServiceClient = (*service.BackupService)(nil)
