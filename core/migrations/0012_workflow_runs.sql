@@ -105,8 +105,17 @@ CREATE INDEX idx_workflow_runs_set ON workflow_runs (backup_set_id, started_at);
 -- because a deployment that has been running for years is overwhelmingly
 -- runs with nothing outstanding, and those are never looked up this way --
 -- they are read per set, by the index above.
+--
+-- The predicate names the two unsettled states rather than saying "not
+-- none", so that it keeps matching RecoveryState.Settled in Go as the
+-- vocabulary grows: a state added later is settled or unsettled by
+-- somebody's decision, and <> 'none' would silently enrol it in this index
+-- and in the recovery pass's scan. internal/workflow's
+-- TestRecoveryIndexMatchesTheUnsettledStates is what fails if the two
+-- drift.
 CREATE INDEX idx_workflow_runs_unsettled
-    ON workflow_runs (recovery_state, started_at) WHERE recovery_state <> 'none';
+    ON workflow_runs (recovery_state, started_at)
+    WHERE recovery_state IN ('required', 'in_progress');
 
 CREATE TABLE workflow_steps (
     id                       INTEGER PRIMARY KEY,
@@ -154,10 +163,16 @@ CREATE TABLE workflow_steps (
     state                    TEXT NOT NULL,
 
     -- Resolved at snapshot time, so a config edit mid-run cannot change
-    -- the bound a running step is held to. Seconds, because that is the
-    -- resolution a hook timeout is ever configured at and an integer
-    -- column is legible straight out of the sqlite3 CLI.
-    timeout_seconds          INTEGER NOT NULL,
+    -- the bound a running step is held to.
+    --
+    -- NANOSECONDS, which is what time.Duration is, rather than the
+    -- seconds this column first held. Seconds looked friendlier in the
+    -- sqlite3 CLI and silently destroyed information: 500ms became 0, and
+    -- a step recovered from that row would be a step with no bound at all
+    -- -- or, once Step.Validate refuses a zero timeout, a run that cannot
+    -- be recovered. The configuration accepts any Go duration, so the
+    -- column stores any Go duration.
+    timeout_nanos            INTEGER NOT NULL,
 
     started_at               TEXT,
     finished_at              TEXT,
@@ -189,3 +204,70 @@ CREATE TABLE workflow_steps (
 
 -- One run's plan, in execution order: the read every consumer makes.
 CREATE INDEX idx_workflow_steps_run ON workflow_steps (run_id, step_order);
+
+-- The run's UNRESOLVED environment: one row per variable, holding the
+-- literal an operator wrote or the LOCATION a secret comes from.
+--
+-- WHY THIS EXISTS AT ALL, given the header above says there is no column
+-- for a hook's environment. That paragraph was half right and the half it
+-- got wrong made the feature unrecoverable. It is true that no RESOLVED
+-- value may be persisted: a secret's material is read at execution time,
+-- used, and dropped. It does not follow that the environment itself is
+-- derivable, and the recovery case is where that breaks:
+--
+--   a run is interrupted, the daemon restarts, an operator edits (or
+--   deletes) the workflow environment while it is down, and the recovery
+--   pass then has to finish a run that was planned with the OLD
+--   environment. resolved_plan_hash covers the environment, which proves
+--   it changed and cannot reconstruct it -- a hash is one-way, which is
+--   the property it was chosen for.
+--
+-- So the plan's environment is durable for exactly the reason the plan's
+-- scripts are: what a run executes is decided once, and a config edit
+-- mid-run must not change it. The columns hold what the config file holds
+-- and nothing more.
+--
+-- WHAT MAY GO IN THESE COLUMNS. literal_value is a literal an operator
+-- typed into config.yaml, which is a file on this host in the clear;
+-- persisting it exposes nothing the config file did not. The three secret_
+-- columns are a LOCATION: a path, a variable name, an argv. They are what
+-- secretref.Ref carries and what secretref documents as safe to log.
+--
+-- WHAT MUST NEVER GO IN THEM is the value a location resolves to.
+-- TestWorkflowSchemaHasNoColumnASecretCouldLiveIn pins the column set, and
+-- TestNoResolvedSecretReachesAnyPersistedByte resolves a real secret and
+-- searches the database file for it.
+CREATE TABLE workflow_run_env (
+    id             INTEGER PRIMARY KEY,
+
+    run_id         TEXT NOT NULL REFERENCES workflow_runs (run_id),
+
+    -- The variable's place in the plan's own ordering (by name). It is
+    -- stored rather than re-derived so that a recovered environment is
+    -- byte-identical to the planned one, including its order, which the
+    -- plan hash covers.
+    position       INTEGER NOT NULL,
+
+    name           TEXT NOT NULL,
+
+    -- NULL when this variable is secret-backed. NULL rather than '',
+    -- because '' is a literal an operator can legitimately configure and
+    -- a column that could not tell the two apart would turn an empty
+    -- literal into a secret with no source.
+    literal_value  TEXT,
+
+    -- WHERE a secret-backed value comes from: exactly one of these is
+    -- set, and all three are empty for a literal. secret_command is the
+    -- argv as a JSON array, because an argument may contain any byte and
+    -- a separator-joined form would be one two different argvs could
+    -- share.
+    secret_file    TEXT NOT NULL DEFAULT '',
+    secret_env     TEXT NOT NULL DEFAULT '',
+    secret_command TEXT NOT NULL DEFAULT '',
+
+    UNIQUE (run_id, name),
+    UNIQUE (run_id, position)
+);
+
+-- One run's environment, in plan order: the recovery pass's read.
+CREATE INDEX idx_workflow_run_env_run ON workflow_run_env (run_id, position);

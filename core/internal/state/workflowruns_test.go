@@ -8,6 +8,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/backupdproject/backupd/core/internal/secretref"
+	"github.com/backupdproject/backupd/core/internal/workflow"
 )
 
 // The workflow plan's durable half (EPIC L, #808).
@@ -29,48 +33,71 @@ import (
 func testWorkflowPlan(runID string) WorkflowPlan {
 	started := time.Date(2026, 9, 13, 2, 0, 0, 0, time.UTC)
 
+	setID, err := model.NewBackupSetID("production", "postgres-primary")
+	if err != nil {
+		panic("the fixture's backup set id is not one model accepts: " + err.Error())
+	}
+
+	spool := "/var/lib/backupd/workflow-runs/" + runID
+	scripts := spool + "/scripts/"
+
+	mount := workflow.StepID(0, workflow.ScopeGlobal, workflow.PhaseBefore, "10-mount.local.sh")
+	quiesce := workflow.StepID(1, workflow.ScopeSet, workflow.PhaseBefore, "20-quiesce.remote.sh")
+
+	env, err := workflow.NewEnvironment([]workflow.EnvVar{
+		{Name: "PGHOST", Value: "db.internal"},
+		{Name: "PGPASSWORD", Secret: secretref.Ref{Command: []string{"vault", "read", "-field=password", "secret/db"}}},
+		{Name: "EMPTY", Value: ""},
+	})
+	if err != nil {
+		panic("the fixture's environment is not one workflow accepts: " + err.Error())
+	}
+
 	return WorkflowPlan{
-		Run: WorkflowRun{
-			RunID:            runID,
-			BackupSetID:      "production/postgres-primary",
-			State:            "pending",
+		Run: workflow.Run{
+			ID:               runID,
+			BackupSetID:      setID,
+			State:            workflow.StatePending,
 			StartedAt:        started,
-			BackupStatus:     "unknown",
-			CleanupStatus:    "unknown",
-			WorkflowStatus:   "pending",
-			RecoveryState:    "none",
+			BackupStatus:     workflow.StatusUnknown,
+			CleanupStatus:    workflow.StatusUnknown,
+			WorkflowStatus:   workflow.StatusUnknown,
+			RecoveryState:    workflow.RecoveryNone,
 			ResolvedPlanHash: strings.Repeat("a", 64),
-			ScriptSpoolRef:   "/var/lib/backupd/workflow-runs/" + runID,
+			ScriptSpoolRef:   spool,
 		},
-		Steps: []WorkflowStep{
+		Steps: []workflow.Step{
 			{
-				StepID:       "0000~global~before~10-mount.local.sh",
+				ID:           mount,
+				RunID:        runID,
 				Order:        0,
-				Scope:        "global",
-				Phase:        "before",
+				Scope:        workflow.ScopeGlobal,
+				Phase:        workflow.PhaseBefore,
 				ScriptName:   "10-mount.local.sh",
 				ScriptSHA256: strings.Repeat("b", 64),
 				ScriptSize:   42,
-				Target:       "local",
-				State:        "pending",
+				Target:       workflow.TargetLocal,
+				State:        workflow.StatePending,
 				Timeout:      2 * time.Minute,
-				SpoolRef:     "/var/lib/backupd/workflow-runs/" + runID + "/scripts/0000~global~before~10-mount.local.sh",
+				SpoolRef:     scripts + mount,
 			},
 			{
-				StepID:                 "0001~set~before~20-quiesce.remote.sh",
+				ID:                     quiesce,
+				RunID:                  runID,
 				Order:                  1,
-				Scope:                  "set",
-				Phase:                  "before",
+				Scope:                  workflow.ScopeSet,
+				Phase:                  workflow.PhaseBefore,
 				ScriptName:             "20-quiesce.remote.sh",
 				ScriptSHA256:           strings.Repeat("c", 64),
 				ScriptSize:             99,
-				Target:                 "remote",
+				Target:                 workflow.TargetRemote,
 				ExecutionConnectionRef: "production/postgres-primary",
-				State:                  "pending",
-				Timeout:                30 * time.Second,
-				SpoolRef:               "/var/lib/backupd/workflow-runs/" + runID + "/scripts/0001~set~before~20-quiesce.remote.sh",
+				State:                  workflow.StatePending,
+				Timeout:                1500 * time.Millisecond,
+				SpoolRef:               scripts + quiesce,
 			},
 		},
+		Env: env,
 	}
 }
 
@@ -90,8 +117,21 @@ func TestCommitWorkflowPlanRoundTripsEveryField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WorkflowRun: %v", err)
 	}
-	if !reflect.DeepEqual(gotRun, want.Run) {
-		t.Errorf("the run came back changed.\n got: %+v\nwant: %+v", gotRun, want.Run)
+
+	wantRun := WorkflowRun{
+		RunID:            want.Run.ID,
+		BackupSetID:      want.Run.BackupSetID.String(),
+		State:            string(want.Run.State),
+		StartedAt:        want.Run.StartedAt,
+		BackupStatus:     string(want.Run.BackupStatus),
+		CleanupStatus:    string(want.Run.CleanupStatus),
+		WorkflowStatus:   string(want.Run.WorkflowStatus),
+		RecoveryState:    string(want.Run.RecoveryState),
+		ResolvedPlanHash: want.Run.ResolvedPlanHash,
+		ScriptSpoolRef:   want.Run.ScriptSpoolRef,
+	}
+	if !reflect.DeepEqual(gotRun, wantRun) {
+		t.Errorf("the run came back changed.\n got: %+v\nwant: %+v", gotRun, wantRun)
 	}
 
 	gotSteps, err := j.WorkflowSteps(ctx, "run-1")
@@ -101,10 +141,32 @@ func TestCommitWorkflowPlanRoundTripsEveryField(t *testing.T) {
 	if len(gotSteps) != len(want.Steps) {
 		t.Fatalf("read back %d steps, want %d", len(gotSteps), len(want.Steps))
 	}
-	for i := range want.Steps {
-		if !reflect.DeepEqual(gotSteps[i], want.Steps[i]) {
-			t.Errorf("step %d came back changed.\n got: %+v\nwant: %+v", i, gotSteps[i], want.Steps[i])
+	for i, s := range want.Steps {
+		wantStep := WorkflowStep{
+			StepID:                 s.ID,
+			Order:                  s.Order,
+			Scope:                  string(s.Scope),
+			Phase:                  string(s.Phase),
+			ScriptName:             s.ScriptName,
+			ScriptSHA256:           s.ScriptSHA256,
+			ScriptSize:             s.ScriptSize,
+			Target:                 string(s.Target),
+			ExecutionConnectionRef: s.ExecutionConnectionRef,
+			State:                  string(s.State),
+			Timeout:                s.Timeout,
+			SpoolRef:               s.SpoolRef,
 		}
+		if !reflect.DeepEqual(gotSteps[i], wantStep) {
+			t.Errorf("step %d came back changed.\n got: %+v\nwant: %+v", i, gotSteps[i], wantStep)
+		}
+	}
+
+	// The sub-second bound, spelled out: this is the row that was
+	// destroyed by a column of whole seconds, and 1500ms is what a
+	// deployment that wants a hook killed fast configures.
+	if got := gotSteps[1].Timeout; got != 1500*time.Millisecond {
+		t.Errorf("a step with a %s timeout came back as %s; a bound stored in whole seconds is a bound that was configured and then silently was not",
+			1500*time.Millisecond, got)
 	}
 }
 
@@ -149,7 +211,7 @@ func TestCommitWorkflowPlanIsAllOrNothing(t *testing.T) {
 	ctx := context.Background()
 
 	plan := testWorkflowPlan("run-1")
-	plan.Steps[1].StepID = "" // refused by the write path
+	plan.Steps[1].ID = "" // refused by the write path
 
 	if err := j.CommitWorkflowPlan(ctx, plan); err == nil {
 		t.Fatal("a plan with an unusable step was committed")
@@ -219,19 +281,51 @@ func TestCommitWorkflowPlanRefusesUnusablePlans(t *testing.T) {
 		mutate  func(p *WorkflowPlan)
 		mustSay string
 	}{
-		{"no run id", func(p *WorkflowPlan) { p.Run.RunID = "" }, "run id"},
-		{"no backup set", func(p *WorkflowPlan) { p.Run.BackupSetID = "" }, "backup set"},
-		{"no state", func(p *WorkflowPlan) { p.Run.State = "" }, "state"},
+		{"no run id", func(p *WorkflowPlan) { p.Run.ID = "" }, "run id"},
+		{"no backup set", func(p *WorkflowPlan) { p.Run.BackupSetID = model.BackupSetID{} }, "backup set"},
+		{"no state", func(p *WorkflowPlan) { p.Run.State = "" }, "run state"},
 		{"no start time", func(p *WorkflowPlan) { p.Run.StartedAt = time.Time{} }, "time"},
 		{"no plan hash", func(p *WorkflowPlan) { p.Run.ResolvedPlanHash = "" }, "plan hash"},
 		{"no spool", func(p *WorkflowPlan) { p.Run.ScriptSpoolRef = "" }, "spool"},
-		{"a step with no id", func(p *WorkflowPlan) { p.Steps[0].StepID = "" }, "step id"},
+		{"a step with no id", func(p *WorkflowPlan) { p.Steps[0].ID = "" }, "step id"},
 		{"a step with no script name", func(p *WorkflowPlan) { p.Steps[0].ScriptName = "" }, "script"},
 		{"a step with no hash", func(p *WorkflowPlan) { p.Steps[0].ScriptSHA256 = "" }, "hash"},
 		{"a step with no spooled script", func(p *WorkflowPlan) { p.Steps[0].SpoolRef = "" }, "spool"},
-		{"a step with no state", func(p *WorkflowPlan) { p.Steps[0].State = "" }, "state"},
+		{"a step with no state", func(p *WorkflowPlan) { p.Steps[0].State = "" }, "step state"},
 		{"two steps claiming one order", func(p *WorkflowPlan) { p.Steps[1].Order = p.Steps[0].Order }, "order"},
-		{"two steps claiming one id", func(p *WorkflowPlan) { p.Steps[1].StepID = p.Steps[0].StepID }, "step"},
+		{"two steps claiming one id", func(p *WorkflowPlan) { p.Steps[1].ID = p.Steps[0].ID }, "step"},
+
+		// The vocabulary rows. Every one of these is a value the first
+		// version of this write path accepted, because it checked only
+		// that the string was non-empty -- and every one of them is read
+		// back by a recovery pass after a restart, which has no second
+		// chance to notice.
+		{"a run state this domain does not have", func(p *WorkflowPlan) { p.Run.State = "whatever" }, "run state"},
+		{"a step state that is a run state", func(p *WorkflowPlan) { p.Steps[0].State = workflow.StateCleanupRunning }, "step state"},
+		{"a scope this domain does not have", func(p *WorkflowPlan) { p.Steps[0].Scope = "host" }, "step scope"},
+		{"a phase this domain does not have", func(p *WorkflowPlan) { p.Steps[0].Phase = "during" }, "step phase"},
+		{"a target this domain does not have", func(p *WorkflowPlan) { p.Steps[0].Target = "somewhere" }, "step target"},
+		{"a status this domain does not have", func(p *WorkflowPlan) { p.Run.BackupStatus = "fine" }, "backup status"},
+		{"a recovery state this domain does not have", func(p *WorkflowPlan) { p.Run.RecoveryState = "maybe" }, "recovery state"},
+		{
+			what: "a step whose target disagrees with its script name",
+			mutate: func(p *WorkflowPlan) {
+				p.Steps[0].Target = workflow.TargetRemote
+				p.Steps[0].ExecutionConnectionRef = "production/postgres-primary"
+			},
+			mustSay: "says it runs",
+		},
+		{
+			what:    "a step id that is not derived from the step's own fields",
+			mutate:  func(p *WorkflowPlan) { p.Steps[0].ID = "0000~global~before~something-else.local.sh" },
+			mustSay: "derived",
+		},
+		{"a step with no timeout", func(p *WorkflowPlan) { p.Steps[0].Timeout = 0 }, "no spelling of"},
+		{
+			what:    "a step belonging to another run",
+			mutate:  func(p *WorkflowPlan) { p.Steps[0].RunID = "some-other-run" },
+			mustSay: "belongs to run",
+		},
 	}
 
 	for _, tc := range cases {
@@ -308,7 +402,17 @@ func TestWorkflowSchemaHasNoColumnASecretCouldLiveIn(t *testing.T) {
 			"step_order",
 			"target",
 			"termination_confirmed",
-			"timeout_seconds",
+			"timeout_nanos",
+		},
+		"workflow_run_env": {
+			"id",
+			"literal_value",
+			"name",
+			"position",
+			"run_id",
+			"secret_command",
+			"secret_env",
+			"secret_file",
 		},
 	}
 
@@ -341,11 +445,14 @@ func TestWorkflowSchemaHasNoColumnASecretCouldLiveIn(t *testing.T) {
 
 		if !reflect.DeepEqual(got, wantColumns) {
 			t.Errorf("%s's columns are\n\t%v\nand this guard records\n\t%v\n\n"+
-				"If a column was ADDED, say what it holds: this schema deliberately has nowhere to put a hook's "+
-				"environment, because a secret-backed variable resolves to material and #808's contract is that no "+
-				"resolved value is ever persisted. A variable's NAME and the LOCATION its value comes from live in "+
-				"the config file; the plan hash covers them. If a column was REMOVED, a journal that already has it "+
-				"still has it, and this package cannot read a schema it does not describe.",
+				"If a column was ADDED, say what it holds, and say it against the one rule this schema exists "+
+				"to keep: no RESOLVED secret value is ever persisted. A variable's name, its literal value and the "+
+				"LOCATION a secret comes from are all things config.yaml already holds in the clear, and they are "+
+				"durable here (workflow_run_env) because a recovery after a config edit has to finish the run that "+
+				"was planned. The material a location resolves to is not, anywhere, ever -- and "+
+				"TestNoResolvedSecretReachesAnyPersistedByte is what searches the database file to prove it. "+
+				"If a column was REMOVED, a journal that already has it still has it, and this package cannot read "+
+				"a schema it does not describe.",
 				table, got, wantColumns)
 		}
 	}
@@ -365,7 +472,7 @@ func TestWorkflowStepsCannotOutliveTheirRun(t *testing.T) {
 	}
 
 	if _, err := j.db.ExecContext(ctx,
-		`INSERT INTO workflow_steps (run_id, step_id, step_order, scope, phase, script_name, script_sha256, script_size, target, state, timeout_seconds, spool_ref)
+		`INSERT INTO workflow_steps (run_id, step_id, step_order, scope, phase, script_name, script_sha256, script_size, target, state, timeout_nanos, spool_ref)
 		 VALUES ('run-does-not-exist', 's', 0, 'set', 'before', 'a.local.sh', 'x', 1, 'local', 'pending', 1, '/x')`,
 	); err == nil {
 		t.Error("a step for a run this journal does not have was accepted; a plan's steps must not be able to outlive the run they belong to")

@@ -28,7 +28,7 @@ func TestNoResolvedSecretReachesThePlanTheHashOrTheSpool(t *testing.T) {
 
 	const sentinel = "TOP-SECRET-4a91bd7c-DO-NOT-PERSIST"
 
-	secretDir := t.TempDir()
+	secretDir := custodyTempDir(t)
 	secretFile := filepath.Join(secretDir, "token")
 	if err := os.WriteFile(secretFile, []byte(sentinel+"\n"), 0o600); err != nil {
 		t.Fatalf("fixture: %v", err)
@@ -91,7 +91,7 @@ func TestNoResolvedSecretReachesThePlanTheHashOrTheSpool(t *testing.T) {
 	}
 
 	// 3. The spool on disk: every path and every byte of every file.
-	err = filepath.WalkDir(plan.ScriptSpoolRef, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(plan.ScriptSpoolRef(), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -161,11 +161,11 @@ func TestPlanHashCoversEverySecretSource(t *testing.T) {
 			t.Fatalf("Snapshot(%s): %v", tc.what, err)
 		}
 
-		if previous, clash := hashes[plan.ResolvedPlanHash]; clash {
+		if previous, clash := hashes[plan.ResolvedPlanHash()]; clash {
 			t.Errorf("the %s secret source and the %s one produce the same plan hash %s; the plan hash does not distinguish where a secret comes from",
-				tc.what, previous, plan.ResolvedPlanHash)
+				tc.what, previous, plan.ResolvedPlanHash())
 		}
-		hashes[plan.ResolvedPlanHash] = tc.what
+		hashes[plan.ResolvedPlanHash()] = tc.what
 	}
 
 	if len(hashes) < 7 {
@@ -197,7 +197,7 @@ func TestPlanHashCoversTheConfiguredEnvironment(t *testing.T) {
 			t.Fatalf("Snapshot: %v", err)
 		}
 
-		return plan.ResolvedPlanHash
+		return plan.ResolvedPlanHash()
 	}
 
 	base := hash(t, "run-a", []EnvVar{{Name: "PGDATABASE", Value: "orders"}})

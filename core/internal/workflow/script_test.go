@@ -158,7 +158,7 @@ func TestScriptOrderIsBytewiseOverTheWholeBasename(t *testing.T) {
 		"b.local.sh",
 	}
 
-	dir := t.TempDir()
+	dir := custodyTempDir(t)
 	for _, name := range input {
 		writeScript(t, dir, name, "#!/bin/sh\n")
 	}
@@ -190,7 +190,7 @@ func TestScriptOrderIsBytewiseOverTheWholeBasename(t *testing.T) {
 func TestDiscoverAcceptsAnEmptyStageDirectory(t *testing.T) {
 	t.Parallel()
 
-	scripts, err := Discover(t.TempDir())
+	scripts, err := Discover(custodyTempDir(t))
 	if err != nil {
 		t.Fatalf("an existing, empty hook directory must be zero steps rather than a refusal: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestDiscoverAcceptsAnEmptyStageDirectory(t *testing.T) {
 func TestDiscoverRefusesAnEntryThatIsNotAScript(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := custodyTempDir(t)
 	writeScript(t, dir, "good.local.sh", "#!/bin/sh\n")
 	writeScript(t, dir, "README", "these are the hooks\n")
 

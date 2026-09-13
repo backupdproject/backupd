@@ -283,12 +283,37 @@ func (s Step) Validate() error {
 		return fmt.Errorf("workflow: step %q has order %d; a plan's order is its position counted from zero", s.ID, s.Order)
 	}
 
-	if _, err := ParseScriptName(s.ScriptName); err != nil {
+	// The two derivations, and the reason this is the load-bearing check
+	// in this file rather than a schema formality.
+	//
+	// A step's target is read off its script's basename and NEVER
+	// configured (see Target's doc), and its id is derived from the order,
+	// scope, phase and that same name (StepID). A record that says
+	// quiesce.remote.sh runs LOCALLY is therefore not a record this
+	// package can have produced -- but it is one a recovery pass can read
+	// back off disk after a restart, and executing it would run a script
+	// written for somebody else's database server as root on the backup
+	// server. So the parsed target is RETAINED and compared, rather than
+	// discarded after the name was found to be well-formed.
+	named, err := ParseScriptName(s.ScriptName)
+	if err != nil {
 		return err
 	}
 
 	if !s.Target.Valid() {
 		return vocabularyError("step target", s.Target, Targets())
+	}
+
+	if named != s.Target {
+		return fmt.Errorf(
+			"workflow: step %q runs script %s, whose name says it runs %s, and the step says %s. Where a hook runs is read off its basename and never configured, so the two disagreeing is a record this product did not build: executing it would run a script written for one machine on the other",
+			s.ID, s.ScriptName, named, s.Target)
+	}
+
+	if want := StepID(s.Order, s.Scope, s.Phase, s.ScriptName); s.ID != want {
+		return fmt.Errorf(
+			"workflow: step %q is not the id derived from its own order, scope, phase and script name (%q). The id is derived rather than supplied because it is the spooled script's filename, and a record whose id does not follow from its fields names a file that belongs to some other step",
+			s.ID, want)
 	}
 
 	switch {

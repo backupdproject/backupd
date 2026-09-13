@@ -41,7 +41,7 @@ func writeScript(t *testing.T, dir, name, body string) string {
 func newRoot(t *testing.T) (Root, string) {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := custodyTempDir(t)
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatalf("chmod root: %v", err)
 	}
@@ -71,7 +71,7 @@ func mkStage(t *testing.T, rootDir, name string) string {
 func TestNewRootRefusesWhatIsNotAnApprovedRoot(t *testing.T) {
 	t.Parallel()
 
-	file := filepath.Join(t.TempDir(), "workflows")
+	file := filepath.Join(custodyTempDir(t), "workflows")
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatalf("fixture: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestNewRootRefusesWhatIsNotAnApprovedRoot(t *testing.T) {
 	}{
 		{"unconfigured", "", "no workflow root is configured"},
 		{"relative", "workflows", "not an absolute path"},
-		{"missing", filepath.Join(t.TempDir(), "nope"), "cannot be resolved"},
+		{"missing", filepath.Join(custodyTempDir(t), "nope"), "cannot be resolved"},
 		{"a file where a directory belongs", file, "not a directory"},
 	}
 
@@ -111,8 +111,8 @@ func TestNewRootRefusesWhatIsNotAnApprovedRoot(t *testing.T) {
 func TestNewRootAcceptsASymlinkedRootBecauseAnOperatorDeclaredIt(t *testing.T) {
 	t.Parallel()
 
-	real := t.TempDir()
-	link := filepath.Join(t.TempDir(), "workflows")
+	real := custodyTempDir(t)
+	link := filepath.Join(custodyTempDir(t), "workflows")
 	if err := os.Symlink(real, link); err != nil {
 		t.Skipf("this filesystem will not create symlinks: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestResolveStageRefusesEveryEscapeAndUnsafeShape(t *testing.T) {
 	root, rootDir := newRoot(t)
 	mkStage(t, rootDir, "before")
 
-	outside := t.TempDir()
+	outside := custodyTempDir(t)
 
 	linkedDir := filepath.Join(rootDir, "linked")
 	symlinksWork := os.Symlink(outside, linkedDir) == nil
@@ -229,7 +229,7 @@ func TestResolveStageRefusesEveryEscapeAndUnsafeShape(t *testing.T) {
 func TestResolveStageRefusesAWritableAncestor(t *testing.T) {
 	t.Parallel()
 
-	base := t.TempDir()
+	base := custodyTempDir(t)
 	loose := filepath.Join(base, "loose")
 	if err := os.MkdirAll(loose, 0o777); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -267,8 +267,8 @@ func TestResolveStageRefusesAWritableAncestor(t *testing.T) {
 func TestDiscoverRefusesASymlinkedScript(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	real := writeScript(t, t.TempDir(), "real.local.sh", "#!/bin/sh\n")
+	dir := custodyTempDir(t)
+	real := writeScript(t, custodyTempDir(t), "real.local.sh", "#!/bin/sh\n")
 
 	if err := os.Symlink(real, filepath.Join(dir, "linked.local.sh")); err != nil {
 		t.Skipf("this filesystem will not create symlinks: %v", err)

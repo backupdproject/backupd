@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -133,10 +134,35 @@ type SetWorkflow struct {
 // EnvironmentVariable is one entry in a workflow environment: a name, and
 // either a literal value or a reference to a secret.
 //
-// The two are mutually exclusive, and "which one is this" is decided by
-// FromSecret being empty rather than by Value being empty, because an
-// operator who writes `value: ""` means an empty variable and a schema
-// that could not represent that would silently drop it.
+// # Why both fields are pointers
+//
+// The two are mutually exclusive, and deciding WHICH ONE an operator meant
+// requires knowing whether they wrote the key at all -- which a value type
+// cannot express. With Value a string and FromSecret a SecretSource, the
+// left column below decodes to the same struct as the right one (the
+// leading list dash of each environment entry is elided, because a Go doc
+// comment reads one as a list of its own):
+//
+//	name: PGPASSWORD                name: PGPASSWORD
+//	value: ""                       from_secret:
+//	from_secret:                      file: /run/secrets/db.pw
+//	  file: /run/secrets/db.pw
+//
+//	name: PGPASSWORD                name: PGPASSWORD
+//	from_secret: {}
+//
+// The first pair is a contradiction an operator should be told about: they
+// have written an empty literal AND a secret, and a schema that resolves
+// it silently picks one -- the mistake being that whichever it picks keeps
+// working, so the wrong one is never noticed. The second pair is worse: a
+// from_secret with nothing in it decoded to the zero SecretSource, which
+// is indistinguishable from "no secret configured", so the variable became
+// a silently EMPTY literal. A hook then ran with an empty credential and
+// failed somewhere far away from the reason.
+//
+// Pointers make presence representable, so both are refusals in words.
+// `value: ""` on its own remains exactly what it looks like: an empty
+// variable, deliberately configured, which is a thing operators do.
 type EnvironmentVariable struct {
 	// Name must match workflow.EnvNamePattern and must not be in the
 	// BACKUPD_ namespace. See workflow.ValidateEnvName, which is the one
@@ -146,11 +172,26 @@ type EnvironmentVariable struct {
 
 	// Value is the literal, passed to the hook with no shell evaluation
 	// of any kind. "$HOME" is five characters.
-	Value string `yaml:"value,omitempty"`
+	//
+	// Nil means the key was not written. A non-nil pointer to "" means it
+	// was written empty, which is a valid configuration.
+	Value *string `yaml:"value,omitempty"`
 
 	// FromSecret names where the value comes from when it is not a
-	// literal.
-	FromSecret SecretSource `yaml:"from_secret,omitempty"`
+	// literal. Nil means the key was not written; a non-nil one must name
+	// exactly one location.
+	FromSecret *SecretSource `yaml:"from_secret,omitempty"`
+}
+
+// Literal is the configured literal, and "" when none was written. It
+// exists so that no caller dereferences the pointer, and so that "was the
+// key written" and "what does it say" stay two different questions.
+func (e EnvironmentVariable) Literal() string {
+	if e.Value == nil {
+		return ""
+	}
+
+	return *e.Value
 }
 
 // SecretSource names WHERE a secret comes from: the same file/env/command
@@ -170,6 +211,33 @@ type SecretSource struct {
 	Command []string `yaml:"command,omitempty"`
 }
 
+// validateExactlyOneSource refuses a from_secret block that names no
+// location or more than one.
+//
+// secretref.Ref.Validate already refuses both, and this is not a second
+// copy of that rule: it is the same rule asked EARLIER, because a
+// from_secret written as `{}` reaches secretref as the zero Ref, which is
+// what "this variable has no secret" also looks like. The config layer is
+// the only place that can tell the difference, so it is the only place
+// that can say "you wrote from_secret and put nothing in it".
+func (s SecretSource) validateExactlyOneSource() error {
+	named := 0
+	for _, set := range []bool{s.File != "", s.Env != "", len(s.Command) != 0} {
+		if set {
+			named++
+		}
+	}
+
+	switch named {
+	case 1:
+		return nil
+	case 0:
+		return errors.New("names no location: set exactly one of file, env or command. A from_secret with nothing in it reads as an empty variable, and a hook handed an empty credential fails somewhere far away from the reason")
+	default:
+		return errors.New("names more than one location: set exactly one of file, env or command, because choosing between two would mean an operator who added a second while leaving the first behind gets whichever this product happened to prefer")
+	}
+}
+
 // secretRef is this source as the engine-facing reference. It is a
 // conversion and not a second declaration, for Passphrase.secretRef's
 // reason: internal/secretref sits below this package and cannot import it,
@@ -182,7 +250,12 @@ func (s SecretSource) secretRef() secretref.Ref {
 // hashes. It does not validate; validateEnvironment reports every problem
 // with the config path in the sentence, which a conversion could not do.
 func (e EnvironmentVariable) envVar() workflow.EnvVar {
-	return workflow.EnvVar{Name: e.Name, Value: e.Value, Secret: e.FromSecret.secretRef()}
+	v := workflow.EnvVar{Name: e.Name, Value: e.Literal()}
+	if e.FromSecret != nil {
+		v.Secret = e.FromSecret.secretRef()
+	}
+
+	return v
 }
 
 // WorkflowsConfigured reports whether this deployment runs workflows at
@@ -356,6 +429,26 @@ func (v *validator) validateEnvironment(path string, vars []EnvironmentVariable)
 	for i, entry := range vars {
 		where := fmt.Sprintf("%s[%d]", path, i)
 
+		// The two PRESENCE rules, which the domain type cannot make
+		// because presence is not something it can see: by the time an
+		// entry is a workflow.EnvVar, `value: ""` with a secret and a
+		// secret on its own are the same value. See
+		// EnvironmentVariable's doc for what each of them silently did.
+		if entry.Value != nil && entry.FromSecret != nil {
+			v.addf("%s: %s declares both value and from_secret, and they are alternatives. An empty literal is a real configuration, so this is not read as \"the secret wins\": remove whichever one is not meant, because as long as both are here the variable works and only one of them is being used",
+				where, entry.Name)
+
+			continue
+		}
+
+		if entry.FromSecret != nil {
+			if err := entry.FromSecret.validateExactlyOneSource(); err != nil {
+				v.addf("%s: the secret reference for %s %v", where, entry.Name, err)
+
+				continue
+			}
+		}
+
 		if err := entry.envVar().Validate(); err != nil {
 			v.addf("%s: %v", where, err)
 
@@ -402,12 +495,34 @@ func (v *validator) validateBackupSetWorkflow(path string, c *Config, bs *Backup
 	v.validateEnvironment(path+".environment", bs.Environment)
 
 	if w := bs.Workflow; w != nil {
-		// A block that configures nothing is refused rather than
-		// treated as an elaborate way of writing nothing at all. An
-		// operator who wrote it meant something, and this is the one
-		// moment they are watching.
-		if w.BeforeDir == "" && w.AfterDir == "" {
-			v.addf("%s.workflow: configures no hook directory; set before_dir, after_dir or both, or remove the block", path)
+		// A block that configures nothing is refused rather than treated
+		// as an elaborate way of writing nothing at all. An operator who
+		// wrote it meant something, and this is the one moment they are
+		// watching.
+		//
+		// "Nothing", though, is not the same as "no hook directory", and
+		// the first version of this rule got that wrong in a way that
+		// refused a correct configuration. A set that declares only
+		// remote_exec_connection_ref (or only script_timeout) is
+		// configuring the GLOBAL stages as they apply to this set: the
+		// deployment's global hook directory holds a NAME.remote.sh, and
+		// the connection it runs over is necessarily per-set, because it
+		// is that set's own source host. Refusing that block leaves an
+		// operator with a global remote hook and nowhere to declare where
+		// it runs.
+		//
+		// So the refusal is for a block that says nothing at all, and the
+		// connection-and-timeout case is accepted exactly when some stage
+		// actually runs for this set.
+		configuresNothing := w.BeforeDir == "" && w.AfterDir == "" &&
+			w.RemoteExecConnectionRef == "" && w.ScriptTimeout == 0
+
+		switch {
+		case configuresNothing:
+			v.addf("%s.workflow: configures nothing at all; set before_dir, after_dir, script_timeout or remote_exec_connection_ref, or remove the block", path)
+		case w.BeforeDir == "" && w.AfterDir == "" && len(c.WorkflowStagesFor(bs)) == 0:
+			v.addf("%s.workflow: configures no hook directory of its own, and no global hook directory runs for this set either, so nothing would ever read its %s. Set workflows.global.before_dir/after_dir, or this set's own before_dir/after_dir, or remove the block",
+				path, describeSetWorkflowSettings(w))
 		}
 
 		v.validateStageDir(path+".workflow.before_dir", w.BeforeDir)
@@ -439,6 +554,20 @@ func (v *validator) validateBackupSetWorkflow(path string, c *Config, bs *Backup
 	}
 
 	v.addf("%s: configures an environment and no hook directory runs for this set, so nothing would ever read it; set workflows.global.before_dir/after_dir, or this set's own workflow.before_dir/after_dir", path)
+}
+
+// describeSetWorkflowSettings names what a directory-less set block
+// actually configured, so the refusal quotes the key the operator wrote
+// rather than a generic "settings".
+func describeSetWorkflowSettings(w *SetWorkflow) string {
+	switch {
+	case w.RemoteExecConnectionRef != "" && w.ScriptTimeout != 0:
+		return "remote_exec_connection_ref and script_timeout"
+	case w.RemoteExecConnectionRef != "":
+		return "remote_exec_connection_ref"
+	default:
+		return "script_timeout"
+	}
 }
 
 // resolveBackupSetWorkflowEnvironments merges each set's environment with

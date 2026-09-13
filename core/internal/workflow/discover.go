@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // Discovery: turning a configured directory name into an ordered list of
@@ -37,7 +38,20 @@ import (
 // walk (secretref and transport/rclone have the other two) and it is
 // deliberately a copy: secretref's own doc argues that unifying them is a
 // refactor of transport's most security-sensitive file, tracked
-// separately. The RULE is identical, sticky-bit exception included.
+// separately.
+//
+// The RULE is NOT identical, and the difference is the one thing to carry
+// away from this file: secretref exempts a sticky directory and this
+// package does not. Sticky stops another account RENAMING or UNLINKING an
+// entry that is already there, which is what protects an existing secret
+// file; it has never stopped one CREATING a new entry, and creation is the
+// whole exposure for a directory whose contents this daemon executes. A
+// 1777 hook directory is a root shell for any local account. See
+// checkDirectoryCustody, which also adds the question a mode cannot
+// answer: WHO the owner is.
+//
+// The same rule extends to the SPOOL, which is where the scripts actually
+// run from; spool.go carries that argument.
 //
 // # Why the root is canonicalized once and stages are constrained to it
 //
@@ -254,10 +268,19 @@ type Script struct {
 	// Target is where it runs, read off Name.
 	Target Target
 
-	// Path is the absolute path it was discovered at, inside a resolved
-	// stage directory. It is the path Snapshot opens, once, and nothing
+	// path is the absolute path it was discovered at, inside a resolved
+	// stage directory. It is the path Snapshot opens, ONCE, and nothing
 	// opens afterwards.
-	Path string
+	//
+	// It is unexported, and that is the point rather than an accident of
+	// scope. A Script that handed out the path inside the workflow root
+	// would be a value somebody outside this package could re-open --
+	// after the snapshot, when the tree is no longer the authority and
+	// the file may have been replaced by anybody with write access to it.
+	// The spool exists precisely so that no such path survives planning;
+	// see Plan.OpenScript for the only path this feature exposes, and
+	// what it checks before it opens it.
+	path string
 }
 
 // Discover lists the scripts in one resolved stage directory, in the
@@ -282,6 +305,12 @@ func Discover(stageDir string) ([]Script, error) {
 		return nil, fmt.Errorf("%w: %s cannot be listed: %w", ErrStageDir, stageDir, err)
 	}
 
+	if len(entries) > MaxScriptsPerStage {
+		return nil, fmt.Errorf(
+			"%w: %s holds %d entries and one stage may declare at most %d hook scripts. The whole directory is refused rather than the first %d executed, for the reason an oversized script is: a prefix of a plan is a different plan",
+			ErrStageDir, stageDir, len(entries), MaxScriptsPerStage, MaxScriptsPerStage)
+	}
+
 	scripts := make([]Script, 0, len(entries))
 
 	for _, entry := range entries {
@@ -302,7 +331,7 @@ func Discover(stageDir string) ([]Script, error) {
 				ErrCustody, filepath.Join(stageDir, name), fileKind(entry.Type()))
 		}
 
-		scripts = append(scripts, Script{Name: name, Target: target, Path: filepath.Join(stageDir, name)})
+		scripts = append(scripts, Script{Name: name, Target: target, path: filepath.Join(stageDir, name)})
 	}
 
 	slices.SortFunc(scripts, func(a, b Script) int { return compareScriptNames(a.Name, b.Name) })
@@ -310,35 +339,110 @@ func Discover(stageDir string) ([]Script, error) {
 	return scripts, nil
 }
 
-// checkDirectoryCustody refuses a stage directory any account other than
-// its owner can write to, or one with such an ancestor.
+// MaxScriptsPerStage bounds how many entries one hook directory may have.
 //
-// The directory's own mode is checked in addition to the ancestor walk
-// because the walk starts at the directory and answers "can somebody
-// replace this directory", while this answers "can somebody drop a new
-// script INTO it" -- which is the more direct attack and the one an
-// operator is more likely to have created by hand with a chmod.
+// os.ReadDir is unbounded, and everything downstream of it is per-entry
+// work this process does inside the backup window: an open, a read, a
+// sha256, a spooled copy, a journal row. A directory with a hundred
+// thousand entries in it is not a workflow somebody wrote, it is a
+// directory something else filled up (a log rotation pointed at the wrong
+// path, a build output, an attacker padding a plan), and assembling a plan
+// out of it is how one mistake becomes a backup that never starts.
+//
+// Sixty-four is far past any workflow a person maintains by hand -- the
+// stages are already split four ways -- and small enough that the whole
+// plan is bounded work. It is a constant rather than a setting because a
+// deployment that needs to raise it has a different problem.
+const MaxScriptsPerStage = 64
+
+// checkDirectoryCustody refuses a hook directory another account can write
+// to, one with such an ancestor, or one this process does not own.
+//
+// # Why the sticky exception is NOT here
+//
+// internal/secretref's walk exempts a directory carrying os.ModeSticky,
+// and for a secret FILE that is correct: POSIX restricts unlink and rename
+// inside a sticky directory to the entry's owner, the directory's owner or
+// root, so 1777 cannot be used to REPLACE an existing 0600 file.
+//
+// A hook directory's exposure is the opposite operation. Discovery
+// executes every script it FINDS, so the attack is CREATING a new entry --
+// and sticky has never restricted creation. Copying secretref's rule here
+// would accept a 1777 hook directory, which is /tmp's mode and therefore
+// the mode somebody reaches for, and any local account could then drop
+// 00-root-shell.local.sh into tonight's backup. The ancestor walk drops
+// the exception for the same reason one step removed: a world-writable
+// ancestor is a path any account can CREATE the missing components of, so
+// the stage directory it wins the race to make is one it owns outright.
+//
+// # Why ownership is checked as well as mode
+//
+// A mode says who MAY write; it does not say whether the account that may
+// is one this product trusts. A 0755 directory owned by an unaudited
+// service account is a directory that account fills with scripts this
+// daemon runs as root. So the owner has to be this process's own user or
+// root -- the two accounts that can already do anything this daemon can.
 func checkDirectoryCustody(dir string) error {
 	info, err := os.Stat(dir)
 	if err != nil {
 		return fmt.Errorf("%w: %s cannot be read: %w", ErrStageDir, dir, err)
 	}
 
-	if mode := info.Mode(); mode.Perm()&0o022 != 0 && mode&os.ModeSticky == 0 {
+	if mode := info.Mode(); mode.Perm()&0o022 != 0 {
+		sticky := ""
+		if mode&os.ModeSticky != 0 {
+			sticky = ". The sticky bit does not make this safe: it restricts renaming and deleting the entries that are already there, and what matters for a directory of programs is that a new one can be created"
+		}
+
 		return fmt.Errorf(
-			"%w: the hook directory %s has permissions %04o, which lets an account other than its owner add a script to it. Every script in it would run with this daemon's privileges; correct it (chmod go-w %s)",
-			ErrCustody, dir, mode.Perm(), dir)
+			"%w: the hook directory %s has permissions %04o, which lets an account other than its owner add a script to it. Every script in it would run with this daemon's privileges; correct it (chmod go-w %s)%s",
+			ErrCustody, dir, mode.Perm(), dir, sticky)
+	}
+
+	if err := checkOwnership(dir, info); err != nil {
+		return err
 	}
 
 	if ancestor, mode, err := firstWritableAncestor(dir); err != nil {
 		return fmt.Errorf("%w: checking the directories containing %s: %w", ErrCustody, dir, err)
 	} else if ancestor != "" {
 		return fmt.Errorf(
-			"%w: the hook directory %s has a containing directory %s with permissions %04o: a group- or world-writable directory lets any local account replace the whole directory of scripts regardless of their own modes; correct it (chmod go-w %s)",
+			"%w: the hook directory %s has a containing directory %s with permissions %04o: a group- or world-writable directory lets any local account replace the whole directory of scripts, or create the path in the first place and own everything under it, regardless of the modes further down; correct it (chmod go-w %s)",
 			ErrCustody, dir, ancestor, mode.Perm(), ancestor)
 	}
 
 	return nil
+}
+
+// checkOwnership refuses a path owned by an account that is neither this
+// process's own nor root.
+//
+// Root is accepted whatever this process's own user is, because root can
+// already replace this binary: refusing a root-owned hook tree would be
+// protection against an account that does not need the hook tree to get
+// what it wants, at the cost of refusing the ordinary deployment where
+// /workflows is laid down by root and the daemon runs as a service user.
+//
+// The FileInfo is passed in rather than re-stat'd so that the mode check
+// above and this check are answers about the same inode: two stats are two
+// windows.
+func checkOwnership(path string, info os.FileInfo) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		// Not a platform this daemon ships on. Refusing here would be a
+		// refusal nobody can act on, and pretending the check passed
+		// would be a claim this code cannot make, so say which it is.
+		return fmt.Errorf("%w: the owner of %s cannot be read on this platform, and a directory of programs whose owner is unknown is one this product cannot vouch for", ErrCustody, path)
+	}
+
+	euid := os.Geteuid()
+	if int(stat.Uid) == euid || stat.Uid == 0 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%w: %s is owned by uid %d, and this process runs as uid %d. A directory this daemon executes scripts out of has to be owned by this process's own account or by root; any other owner is an account that can put a script there without touching this configuration (chown %d %s)",
+		ErrCustody, path, stat.Uid, euid, euid, path)
 }
 
 // firstWritableAncestor walks from path's own directory to the filesystem
@@ -348,12 +452,17 @@ func checkDirectoryCustody(dir string) error {
 // It is a third copy of internal/secretref's function of the same name,
 // and secretref's own doc says why the mechanism is duplicated rather than
 // shared: unifying it with internal/transport/rclone's copy is a refactor
-// of that package's most security-sensitive file, tracked separately. The
-// RULE is identical, sticky-bit exception included: a directory carrying
-// os.ModeSticky (/tmp on every mainstream Unix) is not refused for being
-// world-writable, because POSIX restricts unlink and rename inside one to
-// the entry's owner, the directory's owner or root, which is exactly the
-// attack this walk exists to close.
+// of that package's most security-sensitive file, tracked separately.
+//
+// The RULE is NOT identical, and the difference is the one thing to read
+// before copying this back the other way: secretref's walk exempts a
+// sticky directory and this one does not. Sticky protects the entries that
+// EXIST in a directory from being renamed or unlinked by another account,
+// which is what a secret file needs. It says nothing about creating a new
+// entry, and creating is the whole exposure for a tree this daemon
+// executes: a world-writable /tmp lets any account win the race to create
+// /tmp/hooks, and every script under the directory it then owns runs with
+// this daemon's privileges. See checkDirectoryCustody.
 func firstWritableAncestor(path string) (dir string, mode os.FileMode, err error) {
 	dir, err = filepath.Abs(filepath.Dir(path))
 	if err != nil {
@@ -367,7 +476,7 @@ func firstWritableAncestor(path string) (dir string, mode os.FileMode, err error
 		}
 
 		m := info.Mode()
-		if m.Perm()&0o022 != 0 && m&os.ModeSticky == 0 {
+		if m.Perm()&0o022 != 0 {
 			return dir, m, nil
 		}
 

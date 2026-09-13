@@ -323,7 +323,7 @@ func TestAResolvedSecretRoundTripsWithoutEverBeingExposed(t *testing.T) {
 
 	const sentinel = "TOP-SECRET-c7f1e0a9-DO-NOT-PERSIST"
 
-	dir := t.TempDir()
+	dir := custodyTempDir(t)
 	secretFile := filepath.Join(dir, "token")
 	if err := os.WriteFile(secretFile, []byte(sentinel+"\n"), 0o600); err != nil {
 		t.Fatalf("fixture: %v", err)
@@ -394,7 +394,7 @@ func TestAResolvedSecretRoundTripsWithoutEverBeingExposed(t *testing.T) {
 func TestResolveRefusesASecretItCannotRead(t *testing.T) {
 	t.Parallel()
 
-	env, err := NewEnvironment([]EnvVar{{Name: "API_TOKEN", Secret: secretref.Ref{File: filepath.Join(t.TempDir(), "absent")}}})
+	env, err := NewEnvironment([]EnvVar{{Name: "API_TOKEN", Secret: secretref.Ref{File: filepath.Join(custodyTempDir(t), "absent")}}})
 	if err != nil {
 		t.Fatalf("NewEnvironment: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestResolveRefusesASecretItCannotRead(t *testing.T) {
 func TestResolveInheritsSecretrefCustody(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "token")
+	path := filepath.Join(custodyTempDir(t), "token")
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatalf("fixture: %v", err)
 	}

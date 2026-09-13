@@ -10,8 +10,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/backupdproject/backupd/core/internal/model"
 	"github.com/backupdproject/backupd/core/internal/secretref"
@@ -39,13 +40,22 @@ import (
 // # The spool is the execution authority
 //
 // After Snapshot returns, nothing in this product ever opens a path under
-// the workflow root again. Execution reads Step.SpoolRef. That is what
-// makes the guarantee in #808's acceptance criteria true rather than
+// the workflow root again. Execution goes through Plan.OpenScript. That is
+// what makes the guarantee in #808's acceptance criteria true rather than
 // hopeful: editing or deleting a script in /workflows after the snapshot
 // cannot change what the run executes, and cannot change what a recovery
 // of that run executes tomorrow after a restart, because the run's
 // authority is a private copy under the state directory with modes
 // (0700/0600) that say so.
+//
+// The Plan is OPAQUE for the same reason the spool exists. Its steps, its
+// environment and its paths are package-private, and OpenScript is the
+// only way to reach a script's bytes -- it re-derives the path from the
+// plan, re-walks the spool with O_NOFOLLOW, re-checks custody and
+// re-verifies the sha256. A Plan that exported a mutable Steps slice and
+// a SpoolRef string would be a plan its own consumer could edit between
+// the journal write and the exec, which is not a boundary a comment can
+// hold. spool.go carries the argument for the creation side.
 //
 // # The hash, and what is deliberately not in it
 //
@@ -82,6 +92,17 @@ const DefaultMaxScriptSize int64 = 1 << 20
 // script and still small enough that this process reads it into memory
 // without thinking about it.
 const MaxConfigurableScriptSize int64 = 16 << 20
+
+// MaxPlanBytes bounds the TOTAL size of the scripts one run captures.
+//
+// MaxScriptSize bounds one file and MaxScriptsPerStage bounds one
+// directory, and neither bounds the product: four stages of sixty-four
+// one-mebibyte scripts is a quarter of a gigabyte this process reads,
+// hashes and copies inside the backup window, with every individual file
+// perfectly legal. Eight mebibytes is far past any workflow somebody
+// wrote and small enough that capturing it is not something an operator
+// notices.
+const MaxPlanBytes int64 = 8 << 20
 
 // DefaultStepTimeout is how long a hook may run when nothing says
 // otherwise.
@@ -215,33 +236,306 @@ type SnapshotRequest struct {
 // workflow root, deliberately: a Plan that carried the original paths
 // would be a Plan somebody could be tempted to re-read.
 type Plan struct {
-	RunID       string
-	BackupSetID model.BackupSetID
+	runID       string
+	backupSetID model.BackupSetID
 
-	// Steps are in execution order, with Order matching the index.
-	Steps []Step
+	// steps are in execution order, with Order matching the index.
+	steps []Step
 
-	// Env is the configured environment this plan resolves with,
+	// env is the configured environment this plan resolves with,
 	// carrying secret LOCATIONS and no material.
-	Env Environment
+	env Environment
 
-	// ResolvedPlanHash fingerprints the decision. See this file's
+	// resolvedPlanHash fingerprints the decision. See this file's
 	// preamble for what is in it and what is deliberately not.
-	ResolvedPlanHash string
+	resolvedPlanHash string
 
-	// ScriptSpoolRef is the run-scoped spool directory.
-	ScriptSpoolRef string
+	// spoolRef is the run-scoped spool directory, and scriptsDir is the
+	// directory inside it that holds the captured scripts. Both are
+	// derived here rather than taken from a step, because they are what
+	// OpenScript checks a step's own SpoolRef AGAINST.
+	spoolRef   string
+	scriptsDir string
+}
+
+// RunID, BackupSetID, ResolvedPlanHash and ScriptSpoolRef are the plan's
+// scalar facts, for the journal and for the operator surfaces.
+func (p Plan) RunID() string                  { return p.runID }
+func (p Plan) BackupSetID() model.BackupSetID { return p.backupSetID }
+func (p Plan) ResolvedPlanHash() string       { return p.resolvedPlanHash }
+func (p Plan) ScriptSpoolRef() string         { return p.spoolRef }
+
+// IsZero reports whether this is the zero Plan: no run, nothing to
+// execute. It is what distinguishes "this set has no workflow" from "this
+// set has a workflow with no steps in it".
+func (p Plan) IsZero() bool { return p.runID == "" }
+
+// Steps returns the planned steps in execution order.
+//
+// It COPIES, and the slice being unexported is the point rather than
+// style. A Plan whose Steps slice a caller held could have a step's
+// target, timeout or spool path rewritten after the hash was taken and
+// after the plan was journaled -- by the very layer (#810, #811) whose job
+// is to execute it. The copy means an execution layer can only ever change
+// its own view, which then disagrees with the journal and with the hash
+// instead of quietly becoming the plan.
+func (p Plan) Steps() []Step { return append([]Step(nil), p.steps...) }
+
+// Env is the configured environment this plan resolves with: secret
+// LOCATIONS and no material. Environment is already a value type whose
+// entries are copied out (see Environment.Vars).
+func (p Plan) Env() Environment { return p.env }
+
+// SpooledScript is one step's captured bytes, opened through the plan and
+// verified against it.
+type SpooledScript struct {
+	// StepID is the step these bytes belong to.
+	StepID string
+
+	// Path is the file inside the run's own spool that was opened. It is
+	// returned so an execution layer can hand it to an interpreter, and
+	// it is derived from the plan rather than from anything a caller
+	// supplied.
+	Path string
+
+	// Body is the script itself, verified byte-for-byte against the
+	// sha256 the plan recorded at snapshot time.
+	Body []byte
+}
+
+// OpenScript is the ONLY way to get at a spooled script, and it is a
+// capability rather than a path accessor.
+//
+// The distinction matters because of what #810 and #811 are going to do
+// with it. A plan that handed out paths would be a plan whose consumer
+// executes a string -- and a string can come from a journal row that was
+// edited, from a step whose SpoolRef was rewritten in memory, or from a
+// recovery pass that reconstructed a plan out of a database somebody else
+// can write. So this function trusts NOTHING it is given except the step
+// id, and re-derives, re-checks and re-verifies everything else:
+//
+//   - the step must be one THIS plan has;
+//   - its SpoolRef must be exactly <spool>/scripts/<step id>, which is
+//     what makes a forged "../../etc/cron.d/x" or an absolute path
+//     somewhere else a refusal rather than an open;
+//   - the whole path to the spool is walked with O_NOFOLLOW and
+//     custody-checked again, so a link or a group-writable directory that
+//     appeared since the snapshot is caught here too;
+//   - the bytes are hashed and compared against the plan's own sha256.
+//
+// The last one is the one that makes the rest worth having: it holds for a
+// RECOVERED plan exactly as it does for a fresh one, which is the case
+// where the spool has been sitting on disk across a restart.
+func (p Plan) OpenScript(stepID string) (SpooledScript, error) {
+	if p.IsZero() {
+		return SpooledScript{}, fmt.Errorf("%w: there is no plan to open a script from", ErrSpool)
+	}
+
+	step, ok := p.step(stepID)
+	if !ok {
+		return SpooledScript{}, fmt.Errorf(
+			"%w: run %q has no step %q, so there is nothing in its spool to open; execution may only run steps the plan declared",
+			ErrSpool, p.runID, stepID)
+	}
+
+	want := filepath.Join(p.scriptsDir, step.ID)
+	if step.SpoolRef != want {
+		return SpooledScript{}, fmt.Errorf(
+			"%w: step %q of run %q names the spooled script %s, and this run's spool holds it at %s. A step's spool path is derived from the run and the step id, so one that does not match is a record that has been edited since the plan was committed",
+			ErrSpool, step.ID, p.runID, step.SpoolRef, want)
+	}
+
+	scripts, err := openTrustedDir(p.scriptsDir, false)
+	if err != nil {
+		return SpooledScript{}, err
+	}
+	defer scripts.Close() //nolint:errcheck // read-only
+
+	body, err := readSpooledScript(scripts, step)
+	if err != nil {
+		return SpooledScript{}, err
+	}
+
+	return SpooledScript{StepID: step.ID, Path: want, Body: body}, nil
+}
+
+// step finds one step by id. Linear, because a plan is a handful of steps
+// and a map would be a second structure to keep in step with the slice.
+func (p Plan) step(stepID string) (Step, bool) {
+	for _, s := range p.steps {
+		if s.ID == stepID {
+			return s, true
+		}
+	}
+
+	return Step{}, false
+}
+
+// readSpooledScript opens one captured script through the scripts
+// directory's own descriptor and verifies it against the step.
+//
+// The mode test is 0o077 rather than discover.go's 0o022: a spooled script
+// is this process's private copy under the state directory, so anything
+// another account can even READ is a spool that is not what this package
+// documents. That is stricter than the rule the original file was held to,
+// deliberately -- the original is an operator's file in an operator's
+// tree, and this one is ours.
+func readSpooledScript(scripts *os.File, step Step) ([]byte, error) {
+	path := filepath.Join(scripts.Name(), step.ID)
+
+	fd, err := unix.Openat(int(scripts.Fd()), step.ID,
+		unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s cannot be opened: %w", ErrSpool, path, err)
+	}
+
+	f := os.NewFile(uintptr(fd), path)
+	defer f.Close() //nolint:errcheck // read-only
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s cannot be inspected: %w", ErrSpool, path, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is a %s, not a regular file", ErrCustody, path, fileKind(info.Mode()))
+	}
+
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		return nil, fmt.Errorf(
+			"%w: the spooled script %s has permissions %04o. This file is this process's own copy, written 0600, and anything else means somebody has been in the spool",
+			ErrCustody, path, mode)
+	}
+
+	if err := checkOwnership(path, info); err != nil {
+		return nil, err
+	}
+
+	body, err := io.ReadAll(io.LimitReader(f, step.ScriptSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s cannot be read: %w", ErrSpool, path, err)
+	}
+
+	if int64(len(body)) != step.ScriptSize {
+		return nil, fmt.Errorf(
+			"%w: the spooled script %s is %d bytes and the plan recorded %d",
+			ErrSpool, path, len(body), step.ScriptSize)
+	}
+
+	sum := sha256.Sum256(body)
+	if got := hex.EncodeToString(sum[:]); got != step.ScriptSHA256 {
+		return nil, fmt.Errorf(
+			"%w: the spooled script %s hashes to %s and the plan recorded %s. The plan's hash is what proves the bytes about to run are the bytes that passed validation, so a mismatch is refused rather than reported: whatever is in the spool now, nobody vouched for it",
+			ErrSpool, path, got, step.ScriptSHA256)
+	}
+
+	return body, nil
+}
+
+// RecoveredPlan is what the journal holds about a run, on its way back to
+// being a Plan.
+//
+// It exists because recovery is the case the capability in OpenScript has
+// to survive: after a restart the spool is a directory on disk and the
+// plan is a set of rows, and the code that has to run the next step needs
+// the same guarantees the original run had. So a recovered plan goes
+// through the same validation a fresh one does, and gets the same opaque
+// type out -- there is no second, weaker Plan for recovery.
+type RecoveredPlan struct {
+	RunID            string
+	BackupSetID      model.BackupSetID
+	Steps            []Step
+	Env              Environment
+	ResolvedPlanHash string
+	ScriptSpoolRef   string
+}
+
+// RecoverPlan rebuilds a Plan from what was durably recorded, refusing
+// anything that is not a plan this package could have produced.
+//
+// The environment comes back from the journal rather than from today's
+// configuration file, which is the whole reason it is persisted: a run
+// that was interrupted has to be recovered with the variables it was
+// planned with, and an operator who edited (or deleted) the config in
+// between must not silently change what the recovery executes. See
+// EncodeEnvironment.
+func RecoverPlan(rec RecoveredPlan) (Plan, error) {
+	if err := validPathComponent("run id", rec.RunID); err != nil {
+		return Plan{}, err
+	}
+
+	if rec.BackupSetID.IsZero() {
+		return Plan{}, fmt.Errorf("%w: recovered run %q names no backup set", ErrPlan, rec.RunID)
+	}
+
+	if rec.ResolvedPlanHash == "" {
+		return Plan{}, fmt.Errorf("%w: recovered run %q has no resolved plan hash; the hash is what makes a recovery reproducible", ErrPlan, rec.RunID)
+	}
+
+	if !filepath.IsAbs(rec.ScriptSpoolRef) {
+		return Plan{}, fmt.Errorf(
+			"%w: recovered run %q has script spool %q, which is not an absolute path",
+			ErrPlan, rec.RunID, rec.ScriptSpoolRef)
+	}
+
+	plan := Plan{
+		runID:            rec.RunID,
+		backupSetID:      rec.BackupSetID,
+		steps:            append([]Step(nil), rec.Steps...),
+		env:              rec.Env,
+		resolvedPlanHash: rec.ResolvedPlanHash,
+		spoolRef:         filepath.Clean(rec.ScriptSpoolRef),
+	}
+	plan.scriptsDir = filepath.Join(plan.spoolRef, scriptsDirName)
+
+	seenID := map[string]bool{}
+	seenOrder := map[int]bool{}
+
+	for i, s := range plan.steps {
+		if err := s.Validate(); err != nil {
+			return Plan{}, err
+		}
+
+		switch {
+		case s.RunID != rec.RunID:
+			return Plan{}, fmt.Errorf("%w: step %q belongs to run %q and was recovered as part of run %q", ErrPlan, s.ID, s.RunID, rec.RunID)
+		case seenID[s.ID]:
+			return Plan{}, fmt.Errorf("%w: run %q recovered two steps with id %q, which would share one spooled script", ErrPlan, rec.RunID, s.ID)
+		case seenOrder[s.Order]:
+			return Plan{}, fmt.Errorf("%w: run %q recovered two steps claiming order %d; the order IS the plan", ErrPlan, rec.RunID, s.Order)
+		case i > 0 && s.Order < plan.steps[i-1].Order:
+			return Plan{}, fmt.Errorf("%w: run %q recovered its steps out of order (%d after %d); the order is the execution sequence and a recovery that reads it wrongly runs an after hook before a before hook", ErrPlan, rec.RunID, s.Order, plan.steps[i-1].Order)
+		case s.SpoolRef != filepath.Join(plan.scriptsDir, s.ID):
+			return Plan{}, fmt.Errorf(
+				"%w: recovered step %q names the spooled script %s, and run %q's spool holds it at %s",
+				ErrPlan, s.ID, s.SpoolRef, rec.RunID, filepath.Join(plan.scriptsDir, s.ID))
+		}
+
+		seenID[s.ID] = true
+		seenOrder[s.Order] = true
+	}
+
+	return plan, nil
 }
 
 // Snapshot builds the immutable plan for one run, and durably captures
 // every script it will execute.
 //
-// On any refusal it removes the spool it had begun to build, so a refused
+// On any refusal it removes the run directory IT CREATED, so a refused
 // snapshot leaves nothing behind for a later recovery pass to find and
-// misread as a plan. The removal is best-effort and its failure is not
+// misread as a plan. "It created" is the load-bearing half: the run
+// directory is made with mkdirat, which fails rather than succeeding on a
+// path that is already there, so this function never removes a directory
+// it found -- another run's spool is what a recovery pass reads, and a
+// refusal that deleted it would destroy the evidence of a run that is
+// still open. The removal is best-effort and its failure is not
 // reported: the refusal the caller is about to see is the more important
 // one, and a leftover directory under the state dir with no journal row
 // pointing at it is inert.
+//
+// On success the spool's directory entries are fsynced before this
+// returns, because the caller's next act is to journal the plan and a
+// crash between the two must not leave a run whose scripts have no names.
 func Snapshot(req SnapshotRequest) (Plan, error) {
 	if err := validPathComponent("run id", req.RunID); err != nil {
 		return Plan{}, err
@@ -253,12 +547,6 @@ func Snapshot(req SnapshotRequest) (Plan, error) {
 
 	if req.Root.IsZero() {
 		return Plan{}, fmt.Errorf("%w: run %q has no workflow root; a deployment with no root configured has no workflow runs", ErrPlan, req.RunID)
-	}
-
-	if !filepath.IsAbs(req.SpoolRoot) {
-		return Plan{}, fmt.Errorf(
-			"%w: the script spool root %q is not an absolute path. This process creates directories under it and later executes what it finds there",
-			ErrPlan, req.SpoolRoot)
 	}
 
 	maxSize, err := boundedScriptSize(req.MaxScriptSize)
@@ -279,21 +567,27 @@ func Snapshot(req SnapshotRequest) (Plan, error) {
 		return Plan{}, err
 	}
 
-	spool := filepath.Join(req.SpoolRoot, req.RunID)
-	scriptDir := filepath.Join(spool, "scripts")
-
-	if err := makeProtectedDir(scriptDir); err != nil {
-		return Plan{}, err
-	}
-
-	plan, err := snapshotInto(req, stages, scriptDir, maxSize, timeout)
+	dirs, err := createSpool(req.SpoolRoot, req.RunID)
 	if err != nil {
-		os.RemoveAll(spool) //nolint:errcheck // see Snapshot's doc: the refusal below is the report
+		return Plan{}, err
+	}
+	defer dirs.close()
+
+	plan, err := snapshotInto(req, stages, dirs, maxSize, timeout)
+	if err != nil {
+		dirs.removeAndClose()
 
 		return Plan{}, err
 	}
 
-	plan.ScriptSpoolRef = spool
+	// The directory entries are flushed before the plan is returned, so
+	// that a caller journaling it is journaling something a crash cannot
+	// take away. See spoolDirs.sync.
+	if err := dirs.sync(); err != nil {
+		dirs.removeAndClose()
+
+		return Plan{}, err
+	}
 
 	return plan, nil
 }
@@ -301,12 +595,16 @@ func Snapshot(req SnapshotRequest) (Plan, error) {
 // snapshotInto is Snapshot's body once the request has been checked and
 // the spool exists, split out so that every refusal inside it goes through
 // the one caller that cleans the spool up.
-func snapshotInto(req SnapshotRequest, stages []StageSpec, scriptDir string, maxSize int64, timeout time.Duration) (Plan, error) {
+func snapshotInto(req SnapshotRequest, stages []StageSpec, dirs *spoolDirs, maxSize int64, timeout time.Duration) (Plan, error) {
 	plan := Plan{
-		RunID:       req.RunID,
-		BackupSetID: req.BackupSetID,
-		Env:         req.Env,
+		runID:       req.RunID,
+		backupSetID: req.BackupSetID,
+		env:         req.Env,
+		spoolRef:    dirs.run.Name(),
+		scriptsDir:  dirs.scripts.Name(),
 	}
+
+	captured := int64(0)
 
 	for _, stage := range stages {
 		dir, err := req.Root.ResolveStage(stage.Dir)
@@ -320,7 +618,7 @@ func snapshotInto(req SnapshotRequest, stages []StageSpec, scriptDir string, max
 		}
 
 		for _, script := range scripts {
-			order := len(plan.Steps)
+			order := len(plan.steps)
 			id := StepID(order, stage.Scope, stage.Phase, script.Name)
 
 			connection := ""
@@ -329,43 +627,57 @@ func snapshotInto(req SnapshotRequest, stages []StageSpec, scriptDir string, max
 					return Plan{}, fmt.Errorf(
 						"%w: %s runs on the host this backup set pulls from, and no execution connection is configured for it. "+
 							"Set the backup set's workflow remote_exec_connection_ref, or rename the script %s.%s.sh to run it on this backup server instead",
-						ErrPlan, script.Path,
+						ErrPlan, script.path,
 						strings.TrimSuffix(script.Name, "."+string(TargetRemote)+".sh"), TargetLocal)
 				}
 
 				connection = req.RemoteExecConnectionRef
 			}
 
-			captured, err := captureScript(script.Path, filepath.Join(scriptDir, id), maxSize)
+			spooled, err := captureScript(script.path, dirs, id, maxSize)
 			if err != nil {
 				return Plan{}, err
 			}
 
-			plan.Steps = append(plan.Steps, Step{
+			// The aggregate bound, checked as the plan grows rather than
+			// after it is built: the point of a bound is that the work
+			// stops, and a plan refused after every byte of it has been
+			// read and copied has already cost what the bound exists to
+			// avoid. MaxScriptsPerStage bounds the COUNT; this bounds the
+			// volume, which four stages of large-but-legal scripts can
+			// reach without any single one being refused.
+			captured += spooled.size
+			if captured > MaxPlanBytes {
+				return Plan{}, fmt.Errorf(
+					"%w: the scripts in this plan come to more than the %d bytes one run may capture. A workflow is a handful of shell scripts; this much of it is something else, and copying it into the spool is work the backup window pays for",
+					ErrScriptTooLarge, MaxPlanBytes)
+			}
+
+			plan.steps = append(plan.steps, Step{
 				ID:                     id,
 				RunID:                  req.RunID,
 				Scope:                  stage.Scope,
 				Phase:                  stage.Phase,
 				Order:                  order,
 				ScriptName:             script.Name,
-				ScriptSHA256:           captured.sha256,
-				ScriptSize:             captured.size,
+				ScriptSHA256:           spooled.sha256,
+				ScriptSize:             spooled.size,
 				Target:                 script.Target,
 				ExecutionConnectionRef: connection,
 				Timeout:                timeout,
-				SpoolRef:               captured.path,
+				SpoolRef:               spooled.path,
 				State:                  StatePending,
 			})
 		}
 	}
 
-	for i := range plan.Steps {
-		if err := plan.Steps[i].Validate(); err != nil {
+	for i := range plan.steps {
+		if err := plan.steps[i].Validate(); err != nil {
 			return Plan{}, err
 		}
 	}
 
-	plan.ResolvedPlanHash = plan.hash(req)
+	plan.resolvedPlanHash = plan.hash(req)
 
 	return plan, nil
 }
@@ -445,7 +757,7 @@ type capturedScript struct {
 // would otherwise make this open BLOCK until somebody wrote to the other
 // end. The refusal below is what rejects it; the flag is what makes sure
 // the refusal is reached at all.
-func captureScript(src, dst string, maxSize int64) (capturedScript, error) {
+func captureScript(src string, dirs *spoolDirs, stepID string, maxSize int64) (capturedScript, error) {
 	if li, err := os.Lstat(src); err == nil && li.Mode()&os.ModeSymlink != 0 {
 		target, rerr := os.Readlink(src)
 		if rerr != nil {
@@ -457,7 +769,7 @@ func captureScript(src, dst string, maxSize int64) (capturedScript, error) {
 			ErrCustody, src, target)
 	}
 
-	f, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := os.OpenFile(src, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return capturedScript{}, fmt.Errorf("%w: %s cannot be opened: %w", ErrCustody, src, err)
 	}
@@ -483,6 +795,13 @@ func captureScript(src, dst string, maxSize int64) (capturedScript, error) {
 			ErrCustody, src, mode, src)
 	}
 
+	// And who that owner is, which the mode does not say. A 0755 script
+	// owned by an unaudited service account is a program that account can
+	// rewrite between tonight and tomorrow night; see checkOwnership.
+	if err := checkOwnership(src, info); err != nil {
+		return capturedScript{}, err
+	}
+
 	if info.Size() > maxSize {
 		return capturedScript{}, fmt.Errorf(
 			"%w: %s is %d bytes and the limit is %d. A hook is a shell script; this product refuses the whole file rather than executing a prefix of it, because a prefix of a program is a different program",
@@ -506,92 +825,18 @@ func captureScript(src, dst string, maxSize int64) (capturedScript, error) {
 
 	sum := sha256.Sum256(body)
 
-	if err := writeSpooledScript(dst, body); err != nil {
+	dst, err := dirs.writeScript(stepID, body)
+	if err != nil {
 		return capturedScript{}, err
 	}
 
 	return capturedScript{sha256: hex.EncodeToString(sum[:]), size: int64(len(body)), path: dst}, nil
 }
 
-// makeProtectedDir creates a spool directory tree owner-only.
-//
-// The explicit Chmod after the MkdirAll is not redundant. MkdirAll applies
-// the process umask, which can only REMOVE bits, so the result is never
-// more permissive than 0700 -- but on a deployment running with umask 077
-// it would be 0600, and a spool directory this process cannot traverse is
-// a run that cannot execute. Setting the mode explicitly makes the
-// directory exactly what it is documented to be, whatever the umask is.
-func makeProtectedDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("%w: creating the script spool at %s: %w", ErrPlan, dir, err)
-	}
-
-	// Both the leaf and its parent: MkdirAll may have created either or
-	// both, and the parent is the directory that holds one run's whole
-	// spool.
-	for _, d := range []string{filepath.Dir(dir), dir} {
-		if err := os.Chmod(d, 0o700); err != nil {
-			return fmt.Errorf("%w: protecting the script spool at %s: %w", ErrPlan, d, err)
-		}
-	}
-
-	return nil
-}
-
-// writeSpooledScript writes one captured script into the spool,
-// owner-readable and owner-writable and nothing else.
-//
-// O_EXCL: a spool file that already exists means either a run id was
-// reused or something else is writing into this run's spool, and both are
-// situations where overwriting is the wrong answer.
-//
-// Not executable, deliberately. Execution runs these through an
-// interpreter with the script as an argument rather than relying on the
-// file's exec bit, so the spooled copy never needs to be executable, and a
-// file under the state directory that is not executable is one fewer thing
-// a mistake elsewhere can turn into a running program.
-func writeSpooledScript(path string, body []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return fmt.Errorf("%w: writing the captured script to %s: %w", ErrPlan, path, err)
-	}
-
-	if _, err := f.Write(body); err != nil {
-		f.Close() //nolint:errcheck // the write already failed
-
-		return fmt.Errorf("%w: writing the captured script to %s: %w", ErrPlan, path, err)
-	}
-
-	// Explicit, for makeProtectedDir's umask reason: 0600 & ~umask can
-	// only be narrower, and a spool file this process cannot read back is
-	// a run that cannot execute.
-	if err := f.Chmod(0o600); err != nil {
-		f.Close() //nolint:errcheck // the chmod already failed
-
-		return fmt.Errorf("%w: protecting the captured script at %s: %w", ErrPlan, path, err)
-	}
-
-	// Sync before Close, and check Close: this copy is the run's only
-	// authority over what it executes, so "durably committed before any
-	// hook may execute" has to include the bytes actually reaching the
-	// disk rather than a page cache that a crash discards.
-	if err := f.Sync(); err != nil {
-		f.Close() //nolint:errcheck // the sync already failed
-
-		return fmt.Errorf("%w: flushing the captured script at %s: %w", ErrPlan, path, err)
-	}
-
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("%w: closing the captured script at %s: %w", ErrPlan, path, err)
-	}
-
-	return nil
-}
-
 // planHashVersion prefixes the canonical form, so that a future change to
 // what the hash covers is a visibly different hash rather than a silent
 // collision in somebody's records.
-const planHashVersion = "backupd/workflow-plan/1"
+const planHashVersion = "backupd/workflow-plan/2"
 
 // hash computes ResolvedPlanHash over a canonical, line-oriented rendering
 // of the plan.
@@ -602,10 +847,26 @@ const planHashVersion = "backupd/workflow-plan/1"
 // consequence of which fields a marshaller happened to include. Adding a
 // field to Step must not silently move every deployment's plan hash.
 //
-// Field separator is a tab and records are newline-terminated, which is
-// unambiguous because every value that reaches here has already been
-// validated as free of control characters (script names, ids) or is a
-// number, an enum or a path this process built.
+// Every field is LENGTH-PREFIXED (see writeRecord), and version 2 of this
+// encoding exists because version 1 was not: it joined fields with tabs
+// and terminated records with newlines, on the argument that every value
+// reaching it had been validated free of control characters. That
+// argument was wrong about exactly one class of value, and it is the class
+// an operator controls -- an environment variable's literal VALUE, a
+// secret file's PATH and a secret command's ARGV are all arbitrary bytes,
+// tabs and newlines included. So
+//
+//	{"A": "x\nenv\tB\tliteral\ty"}
+//
+// and
+//
+//	{"A": "x", "B": "y"}
+//
+// rendered to the same bytes and therefore to the same plan hash: two
+// materially different environments that this product would have reported
+// as "nothing about what we execute has changed". A length prefix makes
+// the encoding injective, which is the only property a fingerprint needs
+// and the one it did not have.
 func (p Plan) hash(req SnapshotRequest) string {
 	h := sha256.New()
 	h.Write([]byte(p.canonical(req))) //nolint:errcheck // hash.Hash never errors
@@ -638,13 +899,13 @@ func (p Plan) canonical(req SnapshotRequest) string {
 	b.WriteString(planHashVersion)
 	b.WriteString("\n")
 
-	writeRecord(&b, "set", p.BackupSetID.String())
+	writeRecord(&b, "set", p.backupSetID.String())
 
 	for _, s := range req.Stages {
 		writeRecord(&b, "stage", string(s.Scope), string(s.Phase), s.Dir)
 	}
 
-	for _, s := range p.Steps {
+	for _, s := range p.steps {
 		writeRecord(&b, "step",
 			strconv.Itoa(s.Order),
 			string(s.Scope),
@@ -658,9 +919,9 @@ func (p Plan) canonical(req SnapshotRequest) string {
 		)
 	}
 
-	for _, v := range p.Env.Vars() {
+	for _, v := range p.env.Vars() {
 		if v.IsSecret() {
-			writeRecord(&b, "env", v.Name, "secret", secretLocation(v.Secret))
+			writeRecord(&b, append([]string{"env", v.Name, "secret"}, secretLocation(v.Secret)...)...)
 
 			continue
 		}
@@ -671,29 +932,59 @@ func (p Plan) canonical(req SnapshotRequest) string {
 	return b.String()
 }
 
+// writeRecord appends one length-prefixed record.
+//
+// The form is a field COUNT, then each field as its byte length and its
+// bytes, each prefix terminated by a colon:
+//
+//	3:3:env1:A22:x\nenv\tB\tliteral\ty
+//
+// Nothing in a field can be mistaken for a delimiter, because the reader
+// never looks for one: it is told how much to take. That is what makes
+// this encoding injective, and the count is part of it -- without it, a
+// record of two fields and a record of one field whose value happened to
+// contain the second field's prefix would render alike, which is the same
+// bug one level up. It also means a secret's argv can be written as its
+// own fields rather than joined with a separator no argument may contain
+// (there is no such byte).
+//
+// The newline at the end is for a human reading the canonical form during
+// a debugging session. It carries no meaning for the parse.
 func writeRecord(b *strings.Builder, fields ...string) {
-	b.WriteString(strings.Join(fields, "\t"))
+	b.WriteString(strconv.Itoa(len(fields)))
+	b.WriteString(":")
+
+	for _, f := range fields {
+		b.WriteString(strconv.Itoa(len(f)))
+		b.WriteString(":")
+		b.WriteString(f)
+	}
+
 	b.WriteString("\n")
 }
 
-// secretLocation renders WHERE a secret comes from, in a form that is
-// stable across runs and contains no material. secretref.Ref is
-// documented as safe to log, and this is the same claim: a file path, a
-// variable name, or an argv.
+// secretLocation renders WHERE a secret comes from as the fields of a
+// hash record: stable across runs, and containing no material.
+// secretref.Ref is documented as safe to log, and this is the same claim:
+// a file path, a variable name, or an argv.
 //
 // A fourth source appearing on secretref.Ref has to appear here too, or a
 // plan hash would stop distinguishing two plans that differ in where a
 // secret comes from. TestPlanHashCoversEverySecretSource is what fails
 // when it does not.
-func secretLocation(ref secretref.Ref) string {
+func secretLocation(ref secretref.Ref) []string {
 	switch {
 	case ref.File != "":
-		return "file=" + ref.File
+		return []string{"file", ref.File}
 	case ref.Env != "":
-		return "env=" + ref.Env
+		return []string{"env", ref.Env}
 	case len(ref.Command) != 0:
-		return "command=" + strings.Join(ref.Command, "\x1f")
+		// Each argument is its own field rather than a join: an argv is
+		// arbitrary bytes, so any separator chosen here would be one two
+		// different argvs could render alike through. writeRecord's
+		// length prefixes are what make the boundaries unambiguous.
+		return append([]string{"command"}, ref.Command...)
 	default:
-		return "none"
+		return []string{"none"}
 	}
 }

@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"os"
 	"reflect"
 	"regexp"
 	"strings"
@@ -30,19 +31,58 @@ import (
 // it is refused outright by an older binary under Load's KnownFields(true).
 var workflowKeyLine = regexp.MustCompile(`(?m)^\s*(workflows|workflow|environment|root|before_dir|after_dir|script_timeout|max_script_size_bytes|remote_exec_connection_ref|from_secret):`)
 
-// TestMarshal_ANoWorkflowConfigGainsNoWorkflowKeys is #808's first
-// acceptance criterion, held at the one place it can be held byte for
-// byte: the marshaler core/service's writeConfigAtomically feeds the file
-// from.
+// TestMarshal_ANoWorkflowConfigIsByteIdenticalToWhatItWasBeforeThisFeature
+// is #808's first acceptance criterion, held against bytes that were
+// captured BEFORE this feature existed.
 //
-// The second half is the one that can actually fail in practice. A
-// settings form that renders a workflow section, submitted unchanged on a
-// config that configured none, hands this struct empty strings and empty
-// slices; without omitempty those marshal to "workflow: {}" and
-// "environment: []" on a file that never opted in.
-func TestMarshal_ANoWorkflowConfigGainsNoWorkflowKeys(t *testing.T) {
-	for _, fixture := range []string{"testdata/full.yaml", "testdata/minimal.yaml"} {
+// The golden files under testdata/golden were produced by running the
+// PARENT COMMIT's (6cc9ef3e, the last commit before EPIC L's config
+// surface) Load + Validate + yaml.Marshal over these same fixtures. They
+// are regenerated the same way -- from a checkout that predates this
+// feature -- and never from this one. That provenance is the whole point, and it is worth stating
+// why, because the obvious version of this test is worse in a way that is
+// easy to miss:
+//
+//	base, _ := yaml.Marshal(cfg)  // marshal the loaded config
+//	cfg.Workflows = Workflows{}   // empty every new field
+//	after, _ := yaml.Marshal(cfg) // marshal it again
+//	if base != after { ... }      // and compare the two
+//
+// That compares this feature against ITSELF. Anything Validate now does
+// to a no-workflow config -- a defaulted field, a resolved environment
+// that reaches a marshaled key, a normalised path -- is present on both
+// sides and cancels out. Every assertion passes, and the one regression
+// the test exists to catch is exactly the one it cannot see.
+//
+// A checked-in golden cannot cancel out. If this feature changes one byte
+// of what a config that never heard of workflows marshals to, this fails,
+// because the other side of the comparison was written by a binary with no
+// workflow code in it at all.
+//
+// The second half is the practical failure mode FR-35 makes real:
+// core/service re-marshals the whole Config on every settings save, and a
+// settings form that renders a workflow section and is submitted unchanged
+// hands this struct empty strings and empty slices. Without omitempty
+// those become "workflow: {}" and "environment: []" in a file that never
+// opted in, and an older binary refuses that file outright under Load's
+// KnownFields(true).
+func TestMarshal_ANoWorkflowConfigIsByteIdenticalToWhatItWasBeforeThisFeature(t *testing.T) {
+	for fixture, golden := range map[string]string{
+		"testdata/full.yaml":    "testdata/golden/full.premarshal.yaml",
+		"testdata/minimal.yaml": "testdata/golden/minimal.premarshal.yaml",
+	} {
 		t.Run(fixture, func(t *testing.T) {
+			want, err := os.ReadFile(golden)
+			if err != nil {
+				t.Fatalf("reading the pre-feature golden: %v", err)
+			}
+			if len(want) == 0 {
+				t.Fatalf("%s is empty, so this test compared nothing", golden)
+			}
+			if workflowKeyLine.Match(want) {
+				t.Fatalf("%s carries workflow keys, so it is not a pre-feature capture", golden)
+			}
+
 			cfg, err := Load(fixture)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
@@ -51,14 +91,19 @@ func TestMarshal_ANoWorkflowConfigGainsNoWorkflowKeys(t *testing.T) {
 				t.Fatalf("Validate: %v", err)
 			}
 
-			base, err := yaml.Marshal(cfg)
+			got, err := yaml.Marshal(cfg)
 			if err != nil {
 				t.Fatalf("Marshal: %v", err)
 			}
-			if found := workflowKeyLine.FindAllString(string(base), -1); len(found) != 0 {
-				t.Errorf("a config that configures no workflow came back from a re-marshal carrying %v:\n%s", found, base)
+
+			if string(got) != string(want) {
+				t.Errorf("a config that configures no workflow no longer marshals to what it did before this feature existed.\nwant (%s):\n%s\ngot:\n%s\n\n"+
+					"Every deployment's config file is re-marshaled on every settings save, so a difference here is a difference written back to disk on a file the operator did not edit -- and an older binary refuses a key it does not know under KnownFields(true).",
+					golden, want, got)
 			}
 
+			// The empty-submission half: the same config with every new
+			// field explicitly zeroed must marshal to the same bytes.
 			cfg.Workflows = Workflows{}
 			for i := range cfg.Sources {
 				for j := range cfg.Sources[i].BackupSets {
@@ -72,8 +117,8 @@ func TestMarshal_ANoWorkflowConfigGainsNoWorkflowKeys(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Marshal: %v", err)
 			}
-			if string(base) != string(afterEmptySubmission) {
-				t.Errorf("an explicitly-empty workflow submission changed the marshaled file.\nbefore:\n%s\nafter:\n%s", base, afterEmptySubmission)
+			if string(afterEmptySubmission) != string(want) {
+				t.Errorf("an explicitly-empty workflow submission changed the marshaled file.\nwant:\n%s\ngot:\n%s", want, afterEmptySubmission)
 			}
 		})
 	}
@@ -128,6 +173,11 @@ func TestASetWithNoWorkflowResolvesToNoWorkflowAtAll(t *testing.T) {
 	}
 }
 
+// literal is the configured-literal pointer these fixtures need. Presence
+// is part of the schema now (see EnvironmentVariable), so a test that
+// means "value: x" has to say so rather than relying on a zero value.
+func literal(v string) *string { return &v }
+
 // workflowConfig is a minimal, valid config that DOES configure a
 // workflow, used as the positive control above and as the base for the
 // inheritance tests below.
@@ -140,8 +190,8 @@ func workflowConfig() Config {
 			Global:        WorkflowStageDirs{BeforeDir: "global-before", AfterDir: "global-after"},
 			ScriptTimeout: Duration(2 * time.Minute),
 			Environment: []EnvironmentVariable{
-				{Name: "DEPLOYMENT", Value: "production"},
-				{Name: "API_TOKEN", FromSecret: SecretSource{File: "/run/secrets/token"}},
+				{Name: "DEPLOYMENT", Value: literal("production")},
+				{Name: "API_TOKEN", FromSecret: &SecretSource{File: "/run/secrets/token"}},
 			},
 			MaxScriptSizeBytes: 2 << 20,
 		},
@@ -160,7 +210,7 @@ func workflowConfig() Config {
 					ScriptTimeout:           Duration(30 * time.Second),
 					RemoteExecConnectionRef: "production/db",
 				},
-				Environment: []EnvironmentVariable{{Name: "PGDATABASE", Value: "orders"}},
+				Environment: []EnvironmentVariable{{Name: "PGDATABASE", Value: literal("orders")}},
 			}},
 		}},
 		Retention: Retention{},
@@ -222,8 +272,8 @@ func TestWorkflowEnvironmentInheritsAndOverrides(t *testing.T) {
 
 	cfg := workflowConfig()
 	cfg.Sources[0].BackupSets[0].Environment = []EnvironmentVariable{
-		{Name: "PGDATABASE", Value: "orders"},
-		{Name: "DEPLOYMENT", Value: "staging"}, // overrides the deployment-wide value
+		{Name: "PGDATABASE", Value: literal("orders")},
+		{Name: "DEPLOYMENT", Value: literal("staging")}, // overrides the deployment-wide value
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -340,36 +390,58 @@ func TestValidateRefusesUnusableWorkflowConfigurations(t *testing.T) {
 		},
 		{
 			what:    "a NUL in an environment value",
-			mutate:  func(c *Config) { c.Workflows.Environment[0].Value = "a\x00b" },
+			mutate:  func(c *Config) { c.Workflows.Environment[0].Value = literal("a\x00b") },
 			mustSay: "NUL",
-		},
-		{
-			what: "a literal and a secret on one variable",
-			mutate: func(c *Config) {
-				c.Workflows.Environment[0].FromSecret = SecretSource{Env: "SOMEWHERE"}
-			},
-			mustSay: "both a literal value and a secret reference",
 		},
 		{
 			what: "two secret sources on one variable",
 			mutate: func(c *Config) {
-				c.Workflows.Environment[1].FromSecret = SecretSource{File: "/a", Env: "B"}
+				c.Workflows.Environment[1].FromSecret = &SecretSource{File: "/a", Env: "B"}
 			},
-			mustSay: "more than one secret source",
+			mustSay: "names more than one location",
 		},
 		{
 			what: "the same variable twice in one block",
 			mutate: func(c *Config) {
-				c.Workflows.Environment = append(c.Workflows.Environment, EnvironmentVariable{Name: "DEPLOYMENT", Value: "again"})
+				c.Workflows.Environment = append(c.Workflows.Environment, EnvironmentVariable{Name: "DEPLOYMENT", Value: literal("again")})
 			},
 			mustSay: "declared twice",
 		},
 		{
-			what: "a workflow block with neither stage configured",
+			what: "a workflow block that configures nothing at all",
 			mutate: func(c *Config) {
 				c.Sources[0].BackupSets[0].Workflow = &SetWorkflow{}
 			},
-			mustSay: "configures no hook directory",
+			mustSay: "configures nothing at all",
+		},
+		{
+			what: "a connection-only workflow block on a set no stage runs for",
+			mutate: func(c *Config) {
+				c.Workflows.Global = WorkflowStageDirs{}
+				c.Sources[0].BackupSets[0].Workflow = &SetWorkflow{RemoteExecConnectionRef: "production/db"}
+			},
+			mustSay: "no global hook directory runs for this set",
+		},
+		{
+			what: "an environment variable declaring both value and from_secret",
+			mutate: func(c *Config) {
+				c.Workflows.Environment[0].FromSecret = &SecretSource{File: "/run/secrets/x"}
+			},
+			mustSay: "declares both value and from_secret",
+		},
+		{
+			what: "an explicitly EMPTY literal alongside a secret",
+			mutate: func(c *Config) {
+				c.Workflows.Environment[1].Value = literal("")
+			},
+			mustSay: "declares both value and from_secret",
+		},
+		{
+			what: "a from_secret block with nothing in it",
+			mutate: func(c *Config) {
+				c.Workflows.Environment[1].FromSecret = &SecretSource{}
+			},
+			mustSay: "names no location",
 		},
 		{
 			what: "an environment no hook directory would ever read",

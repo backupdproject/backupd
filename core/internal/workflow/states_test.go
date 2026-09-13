@@ -246,7 +246,11 @@ func TestValidateRefusesRecordsTheJournalMustNotStore(t *testing.T) {
 		{"a negative order", func(s *Step) { s.Order = -1 }, "counted from zero"},
 		{"a script name the rule refuses", func(s *Step) { s.ScriptName = "backup.sh" }, "does not say where it runs"},
 		{"a target this domain does not have", func(s *Step) { s.Target = "somewhere" }, "step target"},
-		{"a remote step with no connection", func(s *Step) { s.Target = TargetRemote; s.ScriptName = "a.remote.sh" }, "names no execution connection"},
+		{"a remote step with no connection", func(s *Step) {
+			s.Target = TargetRemote
+			s.ScriptName = "a.remote.sh"
+			s.ID = StepID(s.Order, s.Scope, s.Phase, s.ScriptName)
+		}, "names no execution connection"},
 		{"a local step carrying a connection", func(s *Step) { s.ExecutionConnectionRef = "prod/db" }, "run somewhere it will not"},
 		{"a hash that is not a sha256", func(s *Step) { s.ScriptSHA256 = "abc" }, "not a hex sha256"},
 		{"no timeout", func(s *Step) { s.Timeout = 0 }, "no spelling of"},
@@ -277,6 +281,7 @@ func TestValidateRefusesRecordsTheJournalMustNotStore(t *testing.T) {
 	remote := goodStep
 	remote.Target = TargetRemote
 	remote.ScriptName = "a.remote.sh"
+	remote.ID = StepID(remote.Order, remote.Scope, remote.Phase, remote.ScriptName)
 	remote.ExecutionConnectionRef = "production/db"
 
 	if err := remote.Validate(); err != nil {

@@ -275,7 +275,7 @@ func NewEnvironment(layers ...[]EnvVar) (Environment, error) {
 			if _, already := merged[v.Name]; !already {
 				order = append(order, v.Name)
 			}
-			merged[v.Name] = v
+			merged[v.Name] = v.clone()
 		}
 	}
 
@@ -292,7 +292,41 @@ func NewEnvironment(layers ...[]EnvVar) (Environment, error) {
 // Vars returns the merged entries in name order. It copies, because an
 // Environment that a caller could edit is one whose plan hash stops
 // describing it.
-func (e Environment) Vars() []EnvVar { return append([]EnvVar(nil), e.vars...) }
+//
+// The copy is DEEP, and the depth is the whole reason this is not one
+// append. An EnvVar is a value type with one slice in it -- a
+// command-sourced secret's argv -- and a shallow copy shares that slice's
+// backing array with the caller. So this:
+//
+//	argv := []string{"vault", "read", "secret/db"}
+//	env, _ := NewEnvironment([]EnvVar{{Name: "PW", Secret: secretref.Ref{Command: argv}}})
+//	plan, _ := Snapshot(...)
+//	argv[2] = "secret/root"
+//
+// would change what the plan resolves at execution time, after the plan
+// was hashed, journaled and declared immutable: the hash still describes
+// secret/db and the run reads secret/root. Cloning on the way in
+// (NewEnvironment) and on the way out (here) is what makes "immutable
+// after snapshot" a property of the value rather than a request to the
+// caller.
+func (e Environment) Vars() []EnvVar {
+	out := make([]EnvVar, 0, len(e.vars))
+	for _, v := range e.vars {
+		out = append(out, v.clone())
+	}
+
+	return out
+}
+
+// clone returns this entry with its secret's argv copied rather than
+// shared. See Environment.Vars for why.
+func (e EnvVar) clone() EnvVar {
+	if len(e.Secret.Command) != 0 {
+		e.Secret.Command = append([]string(nil), e.Secret.Command...)
+	}
+
+	return e
+}
 
 // Names returns the merged entry names in order.
 func (e Environment) Names() []string {

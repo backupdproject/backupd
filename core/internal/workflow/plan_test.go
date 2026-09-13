@@ -56,7 +56,7 @@ func newFixture(t *testing.T) fixture {
 	f := fixture{
 		root:    root,
 		rootDir: rootDir,
-		spool:   filepath.Join(t.TempDir(), "workflow-runs"),
+		spool:   filepath.Join(custodyTempDir(t), "workflow-runs"),
 		setID:   testSetID(t),
 	}
 	f.beforeSh = writeScript(t, before, "10-quiesce.local.sh", "#!/bin/sh\necho quiesce\n")
@@ -95,15 +95,15 @@ func TestSnapshotIsDeterministicOverAnUnchangedTree(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 
-	if first.ResolvedPlanHash == "" {
+	if first.ResolvedPlanHash() == "" {
 		t.Fatal("Snapshot produced no plan hash")
 	}
-	if first.ResolvedPlanHash != second.ResolvedPlanHash {
+	if first.ResolvedPlanHash() != second.ResolvedPlanHash() {
 		t.Errorf("two runs over an unchanged workflow tree produced different plan hashes:\n\t%s\n\t%s\nThe hash is what answers \"has anything about what we execute changed since last night\"",
-			first.ResolvedPlanHash, second.ResolvedPlanHash)
+			first.ResolvedPlanHash(), second.ResolvedPlanHash())
 	}
-	if first.ScriptSpoolRef == second.ScriptSpoolRef {
-		t.Errorf("both runs spooled to %s; a run's captured scripts must be its own", first.ScriptSpoolRef)
+	if first.ScriptSpoolRef() == second.ScriptSpoolRef() {
+		t.Errorf("both runs spooled to %s; a run's captured scripts must be its own", first.ScriptSpoolRef())
 	}
 
 	// The negative control: one byte of one script, and the hash moves.
@@ -115,7 +115,7 @@ func TestSnapshotIsDeterministicOverAnUnchangedTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if third.ResolvedPlanHash == first.ResolvedPlanHash {
+	if third.ResolvedPlanHash() == first.ResolvedPlanHash() {
 		t.Error("editing a script's content did not change the plan hash, so the hash does not cover the bytes it claims to")
 	}
 }
@@ -170,7 +170,7 @@ func TestSnapshotIsImmuneToAPostSnapshotReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot after the replacement: %v", err)
 	}
-	if after.ResolvedPlanHash == plan.ResolvedPlanHash {
+	if after.ResolvedPlanHash() == plan.ResolvedPlanHash() {
 		t.Error("a plan taken after the tree changed has the same hash as one taken before, so the hash is not reading the tree at all")
 	}
 }
@@ -178,13 +178,13 @@ func TestSnapshotIsImmuneToAPostSnapshotReplacement(t *testing.T) {
 func planStep(t *testing.T, plan Plan, scriptName string) Step {
 	t.Helper()
 
-	for _, s := range plan.Steps {
+	for _, s := range plan.Steps() {
 		if s.ScriptName == scriptName {
 			return s
 		}
 	}
 
-	t.Fatalf("the plan has no step for %s; it has %d steps", scriptName, len(plan.Steps))
+	t.Fatalf("the plan has no step for %s; it has %d steps", scriptName, len(plan.Steps()))
 
 	return Step{}
 }
@@ -203,13 +203,13 @@ func TestSnapshotProtectsTheSpool(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 
-	if len(plan.Steps) == 0 {
+	if len(plan.Steps()) == 0 {
 		t.Fatal("the fixture produced no steps, so this test checked no permissions at all")
 	}
 
 	var checkedDirs, checkedFiles int
 
-	err = filepath.WalkDir(plan.ScriptSpoolRef, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(plan.ScriptSpoolRef(), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -242,9 +242,9 @@ func TestSnapshotProtectsTheSpool(t *testing.T) {
 
 	// Anti-vacuity: a walk that found nothing would have passed every
 	// assertion above.
-	if checkedDirs < 2 || checkedFiles != len(plan.Steps) {
+	if checkedDirs < 2 || checkedFiles != len(plan.Steps()) {
 		t.Fatalf("the walk saw %d directories and %d files; the spool must have the run directory, its scripts directory and one file per step (%d)",
-			checkedDirs, checkedFiles, len(plan.Steps))
+			checkedDirs, checkedFiles, len(plan.Steps()))
 	}
 }
 
@@ -260,7 +260,7 @@ func TestSnapshotHashesWhatItSpooled(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 
-	for _, step := range plan.Steps {
+	for _, step := range plan.Steps() {
 		body, err := os.ReadFile(step.SpoolRef)
 		if err != nil {
 			t.Fatalf("reading the spooled %s: %v", step.ScriptName, err)
@@ -306,7 +306,7 @@ func TestSnapshotOrdersStagesByExecutionAndScriptsByBytes(t *testing.T) {
 			StageDirs{Before: "set-before", After: "set-after"},
 		),
 		RemoteExecConnectionRef: "production/postgres-primary",
-		SpoolRoot:               filepath.Join(t.TempDir(), "workflow-runs"),
+		SpoolRoot:               filepath.Join(custodyTempDir(t), "workflow-runs"),
 	})
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
@@ -326,12 +326,12 @@ func TestSnapshotOrdersStagesByExecutionAndScriptsByBytes(t *testing.T) {
 		{ScopeGlobal, PhaseAfter, "aaa.local.sh"},
 	}
 
-	if len(plan.Steps) != len(want) {
-		t.Fatalf("the plan has %d steps, want %d", len(plan.Steps), len(want))
+	if len(plan.Steps()) != len(want) {
+		t.Fatalf("the plan has %d steps, want %d", len(plan.Steps()), len(want))
 	}
 
 	for i, w := range want {
-		got := plan.Steps[i]
+		got := plan.Steps()[i]
 		if got.Scope != w.scope || got.Phase != w.phase || got.ScriptName != w.name {
 			t.Errorf("step %d is %s/%s/%s, want %s/%s/%s", i, got.Scope, got.Phase, got.ScriptName, w.scope, w.phase, w.name)
 		}
@@ -341,7 +341,7 @@ func TestSnapshotOrdersStagesByExecutionAndScriptsByBytes(t *testing.T) {
 	}
 
 	// The remote step carries the connection and the local ones do not.
-	for _, step := range plan.Steps {
+	for _, step := range plan.Steps() {
 		switch step.Target {
 		case TargetRemote:
 			if step.ExecutionConnectionRef == "" {
@@ -451,7 +451,7 @@ func TestSnapshotRefusesTheWholePlanAndCleansUp(t *testing.T) {
 			stage := mkStage(t, rootDir, "before")
 			tc.build(t, rootDir, stage)
 
-			spoolRoot := filepath.Join(t.TempDir(), "workflow-runs")
+			spoolRoot := filepath.Join(custodyTempDir(t), "workflow-runs")
 
 			plan, err := Snapshot(SnapshotRequest{
 				RunID:       "run-1",
@@ -461,7 +461,7 @@ func TestSnapshotRefusesTheWholePlanAndCleansUp(t *testing.T) {
 				SpoolRoot:   spoolRoot,
 			})
 			if err == nil {
-				t.Fatalf("Snapshot produced a plan with %d steps; this tree must be refused", len(plan.Steps))
+				t.Fatalf("Snapshot produced a plan with %d steps; this tree must be refused", len(plan.Steps()))
 			}
 			if !errors.Is(err, tc.wantIs) {
 				t.Errorf("Snapshot returned %v, want it to wrap %v", err, tc.wantIs)
@@ -496,7 +496,7 @@ func TestSnapshotBoundsTheConfigurableSizeLimit(t *testing.T) {
 			BackupSetID: testSetID(t),
 			Root:        root,
 			Stages:      PlanStages(StageDirs{}, StageDirs{Before: "before"}),
-			SpoolRoot:   filepath.Join(t.TempDir(), "workflow-runs"),
+			SpoolRoot:   filepath.Join(custodyTempDir(t), "workflow-runs"),
 		}
 	}
 
@@ -544,22 +544,22 @@ func TestSnapshotDistinguishesDisabledEmptyAndMissingStages(t *testing.T) {
 		RunID:       "run-1",
 		BackupSetID: testSetID(t),
 		Root:        root,
-		SpoolRoot:   filepath.Join(t.TempDir(), "workflow-runs"),
+		SpoolRoot:   filepath.Join(custodyTempDir(t), "workflow-runs"),
 	}
 
 	t.Run("no stage configured at all", func(t *testing.T) {
 		t.Parallel()
 
 		req := base
-		req.SpoolRoot = filepath.Join(t.TempDir(), "workflow-runs")
+		req.SpoolRoot = filepath.Join(custodyTempDir(t), "workflow-runs")
 		req.Stages = PlanStages(StageDirs{}, StageDirs{})
 
 		plan, err := Snapshot(req)
 		if err != nil {
 			t.Fatalf("a set with no hook directories configured must snapshot cleanly: %v", err)
 		}
-		if len(plan.Steps) != 0 {
-			t.Errorf("plan has %d steps", len(plan.Steps))
+		if len(plan.Steps()) != 0 {
+			t.Errorf("plan has %d steps", len(plan.Steps()))
 		}
 	})
 
@@ -567,15 +567,15 @@ func TestSnapshotDistinguishesDisabledEmptyAndMissingStages(t *testing.T) {
 		t.Parallel()
 
 		req := base
-		req.SpoolRoot = filepath.Join(t.TempDir(), "workflow-runs")
+		req.SpoolRoot = filepath.Join(custodyTempDir(t), "workflow-runs")
 		req.Stages = PlanStages(StageDirs{}, StageDirs{Before: "empty-before"})
 
 		plan, err := Snapshot(req)
 		if err != nil {
 			t.Fatalf("a configured but empty hook directory must be zero steps, not a refusal: %v", err)
 		}
-		if len(plan.Steps) != 0 {
-			t.Errorf("plan has %d steps", len(plan.Steps))
+		if len(plan.Steps()) != 0 {
+			t.Errorf("plan has %d steps", len(plan.Steps()))
 		}
 	})
 
@@ -583,7 +583,7 @@ func TestSnapshotDistinguishesDisabledEmptyAndMissingStages(t *testing.T) {
 		t.Parallel()
 
 		req := base
-		req.SpoolRoot = filepath.Join(t.TempDir(), "workflow-runs")
+		req.SpoolRoot = filepath.Join(custodyTempDir(t), "workflow-runs")
 		req.Stages = PlanStages(StageDirs{}, StageDirs{Before: "not-there"})
 
 		_, err := Snapshot(req)
