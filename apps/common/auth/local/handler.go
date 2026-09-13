@@ -97,6 +97,7 @@ var errorCodeStatus = map[string]int{
 	"UNAUTHENTICATED":         http.StatusUnauthorized,
 	"BOOTSTRAP_TOKEN_INVALID": http.StatusUnauthorized,
 	"RESET_TOKEN_INVALID":     http.StatusUnauthorized,
+	"VERIFY_TOKEN_INVALID":    http.StatusUnauthorized,
 	"ENROLLMENT_CLOSED":       http.StatusForbidden,
 	"CSRF_TOKEN_MISSING":      http.StatusForbidden,
 	"CSRF_TOKEN_MISMATCH":     http.StatusForbidden,
@@ -157,20 +158,22 @@ func correlationID() string {
 	return "cid_" + base64.RawURLEncoding.EncodeToString(b)
 }
 
-// Handler returns the http.Handler serving this package's nine routes,
+// Handler returns the http.Handler serving this package's twelve routes,
 // relative to whatever prefix the caller mounts it at (apps/generic
 // mounts it at /api/v1/auth, matching ui/shared's own expectation):
 //
-//	POST  /login           - {username, password} -> 204 + session cookie
-//	POST  /enroll          - {username, password, recoveryEmail, smtp} + X-Bootstrap-Token -> 204 + session cookie
-//	POST  /password        - {currentPassword, newPassword}, session required -> 204 + fresh session cookie
-//	POST  /logout          - -> 204, session cookie cleared
-//	GET   /session         - -> 200 {username} if authenticated, 401 otherwise
-//	POST  /forgot-password - {username} -> 204, ALWAYS (recovery.go)
-//	POST  /reset-password  - {token, newPassword} -> 204, every session revoked
-//	GET   /recovery        - session required -> 200 recovery + SMTP settings, never the SMTP password
-//	PATCH /recovery        - session required -> 200, re-verifies by sending a confirmation
-//	POST  /recovery/test   - session required -> 204 once a test message has actually gone out
+//	POST  /login               - {username, password} -> 204 + session cookie
+//	POST  /enroll              - {username, password, recoveryEmail, smtp} + X-Bootstrap-Token -> 204 + session cookie
+//	POST  /password            - {currentPassword, newPassword}, session required -> 204 + fresh session cookie
+//	POST  /logout              - -> 204, session cookie cleared
+//	GET   /session             - -> 200 {username} if authenticated, 401 otherwise
+//	POST  /forgot-password     - {username} -> 204, ALWAYS (recovery.go)
+//	POST  /reset-password      - {token, newPassword} -> 204, every session revoked
+//	POST  /verify-email        - {token} -> 204, the recovery address is verified (verify.go)
+//	POST  /verify-email/resend - session required -> 204 once a fresh link has gone out
+//	GET   /recovery            - session required -> 200 recovery + SMTP settings, never the SMTP password
+//	PATCH /recovery            - session required -> 200, re-verifies by mailing a fresh link
+//	POST  /recovery/test       - session required -> 204 once a test message has actually gone out
 //
 // Every route but GET /session and GET /recovery is wrapped in
 // requireCSRF (they mutate server-side state - a new or cleared session,
@@ -206,6 +209,8 @@ func (s *Service) Handler() http.Handler {
 	r.Get("/session", s.handleSession)
 	r.With(requireCSRF).Post("/forgot-password", s.handleForgotPassword)
 	r.With(requireCSRF).Post("/reset-password", s.handleResetPassword)
+	r.With(requireCSRF).Post("/verify-email", s.handleVerifyEmail)
+	r.With(requireCSRF).Post("/verify-email/resend", s.handleResendVerifyEmail)
 	r.Get("/recovery", s.handleGetRecovery)
 	r.With(requireCSRF).Patch("/recovery", s.handleUpdateRecovery)
 	r.With(requireCSRF).Post("/recovery/test", s.handleTestRecoveryEmail)
@@ -305,20 +310,21 @@ var dummyPasswordHash = sync.OnceValue(func() string {
 // #830 changed it. It runs:
 //
 //	rate limit -> already enrolled? -> validate the body ->
-//	VERIFY the bootstrap token -> send the confirmation email ->
-//	SPEND the bootstrap token -> write the record -> issue a session
+//	VERIFY the bootstrap token -> mail the verification link ->
+//	SPEND the bootstrap token -> write the PROVISIONAL record ->
+//	issue a session
 //
-// Three properties fall out of that order, and each one is there because
+// Four properties fall out of that order, and each one is there because
 // the alternative has a specific failure.
 //
 // Whether an administrator already exists is decided before the
 // bootstrap token is even looked at, so a stale token can never produce
 // a refusal that hints it would have worked.
 //
-// The token is verified but NOT spent until the confirmation email has
-// actually been accepted by the operator's own SMTP server. Enrollment
-// now has work between authenticating the caller and committing anything,
-// and that work is allowed to fail: a mistyped SMTP password used to be
+// The token is verified but NOT spent until the message has actually
+// been accepted by the operator's own SMTP server. Enrollment has work
+// between authenticating the caller and committing anything, and that
+// work is allowed to fail: a mistyped SMTP password used to be
 // unrecoverable if it burned the token, because the only way to get
 // another is to restart the process, and an operator debugging their
 // mail provider would have needed one restart per attempt. Spending it
@@ -327,13 +333,21 @@ var dummyPasswordHash = sync.OnceValue(func() string {
 // still what actually decides a race - while making a refusal cost
 // nothing but a retry with the same link.
 //
-// The confirmation send is what makes the SMTP endpoint PROVEN rather
-// than merely declared (#830's acceptance criterion). It runs before the
-// record is written, so an enrollment that could not reach the recovery
-// address does not create an account at all: an administrator with an
-// unreachable recovery address is exactly the silent lockout this
-// feature exists to prevent, and refusing loudly at the one moment
-// somebody is watching is the only place it can be prevented.
+// The send is what makes the SMTP endpoint PROVEN rather than merely
+// declared (#830 §4). It runs before the record is written, so an
+// enrollment that could not reach the recovery address does not create
+// an account at all: an administrator with an unreachable recovery
+// address is exactly the silent lockout this feature exists to prevent,
+// and refusing loudly at the one moment somebody is watching is the only
+// place it can be prevented.
+//
+// And the ONE message it sends is the VERIFICATION link (#830 §8,
+// verify.go), not a separate "this worked" note. The record it writes is
+// provisional: unverified, carrying the hash of that link's token and a
+// deadline after which the reaper deletes it. Two messages to the same
+// address in the same second - one saying the endpoint works, one asking
+// for a click - would make the operator guess which one mattered, and
+// the one that matters is the one that can lose the account.
 func (s *Service) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	if !s.enrollLimiter.Allow(remoteIP(r, s.trustForwardedHeaders)) {
 		writeAuthError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many enrollment attempts; wait before trying again")
@@ -392,13 +406,32 @@ func (s *Service) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.send(r.Context(), req.SMTP.config(req.SMTP.Password), confirmationMessage(req.RecoveryEmail, req.Username)); err != nil {
+	// The window this account gets, fixed now and never moved again
+	// (verify.go's verificationDeadline). The bootstrap token's own
+	// expiry is read BEFORE it is spent below, because it is the
+	// enrollment-link-active-window end half of the rule and spending it
+	// does not end the window it defined.
+	createdAt := s.now().UTC()
+	linkWindowEnd, _ := s.bootstrap.expiry()
+	deadline := verificationDeadline(createdAt, linkWindowEnd)
+
+	challenge, err := mintVerificationChallenge(createdAt)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
+		return
+	}
+
+	// A challenge minted for an enrollment that then fails is inert:
+	// nothing persisted its hash, so POST /verify-email has nothing to
+	// match it against.
+	if err := s.send(r.Context(), req.SMTP.config(req.SMTP.Password),
+		verifyMessage(req.RecoveryEmail, req.Username, challenge.Token, s.baseURL, &deadline)); err != nil {
 		// The operator IS watching this one, and the SMTP error is the
 		// entire content of what they need (wrong port, wrong password,
 		// certificate not trusted, recipient refused). It is surfaced
 		// verbatim, which is safe because apps/common/email is
 		// responsible for never putting the credential in it.
-		writeAuthError(w, http.StatusBadGateway, "SMTP_SEND_FAILED", "could not send the confirmation email: "+err.Error())
+		writeAuthError(w, http.StatusBadGateway, "SMTP_SEND_FAILED", "could not send the verification email: "+err.Error())
 		return
 	}
 
@@ -426,13 +459,18 @@ func (s *Service) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	confirmedAt := s.now().UTC()
 	err = s.store.Enroll(AdminRecord{
-		Username:                 req.Username,
-		PasswordHash:             hash,
-		RecoveryEmail:            req.RecoveryEmail,
-		RecoveryEmailConfirmedAt: &confirmedAt,
-		CreatedAt:                confirmedAt,
+		Username:      req.Username,
+		PasswordHash:  hash,
+		RecoveryEmail: req.RecoveryEmail,
+		// Confirmed: the mail server took the message. NOT verified:
+		// nobody has opened the link yet, and until somebody does this
+		// record lapses at its deadline (#830 §§8-9).
+		RecoveryEmailConfirmedAt:   &createdAt,
+		VerificationDeadline:       &deadline,
+		VerificationTokenHash:      challenge.Hash,
+		VerificationTokenExpiresAt: &challenge.ExpiresAt,
+		CreatedAt:                  createdAt,
 	}, &SMTPRecord{
 		Host:        req.SMTP.Host,
 		Port:        req.SMTP.Port,

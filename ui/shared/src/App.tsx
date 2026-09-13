@@ -37,6 +37,7 @@ import { useResource } from "@shared/state/resource";
 import { configuredNode, countsNode, healthNode, operationsNode, quarantineNode, readOnlyNode, setsNode, versionNode } from "@shared/state/appNodes";
 import { AppShell } from "@shared/layouts/AppShell";
 import { WarningBanner } from "@shared/components/WarningBanner";
+import { RecoveryVerificationBanner } from "@shared/components/RecoveryVerificationBanner";
 import { DashboardPage } from "@shared/pages/DashboardPage";
 import { BackupSetsPage } from "@shared/pages/BackupSetsPage";
 import { BackupSetDetailPage } from "@shared/pages/BackupSetDetailPage";
@@ -52,6 +53,7 @@ import { LoginPage } from "@shared/auth/LoginPage";
 import { EnrollmentPage } from "@shared/auth/EnrollmentPage";
 import { ForgotPasswordPage } from "@shared/auth/ForgotPasswordPage";
 import { ResetPasswordPage } from "@shared/auth/ResetPasswordPage";
+import { VerifyEmailPage } from "@shared/auth/VerifyEmailPage";
 import { ServiceUnreachablePage, SessionCheckFailedPage } from "@shared/pages/SessionCheckFailure";
 import { TooltipOptOutDialog } from "@shared/components/TooltipOptOutDialog";
 import { isServiceUnreachable } from "@shared/api/failure";
@@ -194,11 +196,15 @@ export function App() {
       <Routes>
         <Route path="/enroll" element={<EnrollmentPage onEnrolled={refreshAuth} />} />
         {/* Issue #830. Unauthenticated by necessity: somebody who cannot
-            sign in is exactly who these two are for, and a gate in front
-            of them would be a recovery flow that requires the thing being
-            recovered. */}
+            sign in is exactly who these are for, and a gate in front of
+            them would be a recovery flow that requires the thing being
+            recovered. The verification link is the same shape for a
+            third reason (§8): it is opened from whatever device holds
+            the mailbox, which is frequently not the one the console is
+            signed in on. */}
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route path="*" element={<LoginPage onSignedIn={refreshAuth} />} />
       </Routes>
     );
@@ -220,6 +226,12 @@ export function App() {
       onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
       onSignOut={() => api.logout().then(refreshAuth)}
     >
+      {/* Issue #830 §9, and it sits here for the same reason the
+          first-run banner below does: above <Routes>, mounted once for
+          the session, on every page. It renders nothing at all for a
+          verified account, which is the overwhelmingly common case. */}
+      <RecoveryVerificationBanner />
+
       {configured ? null : (
         // Deliberately no button of its own: the two pages that can act on
         // this (the dashboard and the backup-sets list) already offer
@@ -312,6 +324,13 @@ export function App() {
         <Route path="/quarantine" element={<QuarantinePage readOnly={readOnly} quarantine={quarantine} />} />
         <Route path="/settings" element={<SettingsPage readOnly={readOnly} />} />
         <Route path="/catalog-recovery" element={<CatalogRecoveryPage readOnly={readOnly} />} />
+        {/* Issue #830 §8, and mounted on BOTH sides of the sign-in gate
+            (the unauthenticated router above has it too). Without this
+            one, an operator who is already signed in on the device that
+            holds the mailbox lands on the catch-all below, is redirected
+            to the dashboard, and never spends the token - the link looks
+            broken precisely for the person most likely to click it. */}
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 

@@ -143,6 +143,12 @@ func testServerWithMail(t *testing.T) (*Service, *httptest.Server, *http.Client,
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// Every Service runs a background reaper for its whole life
+	// (verify.go), which a real process wants and a test binary building
+	// dozens of Services does not: without this, each test leaves one
+	// live goroutine ticking against a temp directory that is about to
+	// be deleted.
+	t.Cleanup(svc.stopReaping)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/auth/", http.StripPrefix("/api/v1/auth", svc.Handler()))

@@ -24,7 +24,7 @@ import type { RecoverySettings } from "@shared/api/contracts";
 import { useAsync } from "@shared/hooks/useAsync";
 import { notificationCopy } from "@shared/platform/capabilities";
 import { useCausl } from "@shared/state/graph";
-import { configuredNode, versionNode } from "@shared/state/appNodes";
+import { configuredNode, publishRecoverySettings, versionNode } from "@shared/state/appNodes";
 import { Banner } from "@shared/components/Banner";
 import { PageHeader } from "@shared/components/PageHeader";
 import { PlatformBadge } from "@shared/components/PlatformBadge";
@@ -559,9 +559,16 @@ function RecoveryEditor({ loaded, readOnly }: { loaded: RecoverySettings; readOn
         setCurrent(next);
         setEmail(next.recoveryEmail);
         setSmtp(smtpFieldsOf(next.smtp));
+        // And published, because this answer is also what the unverified
+        // banner above every page is drawn from (#830 §§8-9). A changed
+        // address comes back UNVERIFIED - a verification link was just
+        // mailed to it and nobody has opened it - so without this the
+        // banner would keep reporting the previous address's proof until
+        // the next full page load.
+        publishRecoverySettings(next);
         setSaved(
           addressChanged
-            ? "Saved. A confirmation email has been delivered to " + next.recoveryEmail + "."
+            ? "Saved. A verification link has been delivered to " + next.recoveryEmail + "."
             : "Saved."
         );
       })

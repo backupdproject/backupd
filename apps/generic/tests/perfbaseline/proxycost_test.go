@@ -225,7 +225,7 @@ func enrollReturningCredentials(t *testing.T, c *http.Client, base, bootstrapTok
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("enroll: status %d: %s", resp.StatusCode, payload)
 	}
-	sink.WaitForMessage(t, "backupd: recovery email confirmed", 10*time.Second)
+	sink.WaitForMessage(t, "backupd: verify your recovery email", 10*time.Second)
 	return username, password
 }
 

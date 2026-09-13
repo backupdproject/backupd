@@ -464,7 +464,7 @@ func enroll(t *testing.T, c *http.Client, base, bootstrapToken string) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("enroll: status %d: %s", resp.StatusCode, payload)
 	}
-	sink.WaitForMessage(t, "backupd: recovery email confirmed", 10*time.Second)
+	sink.WaitForMessage(t, "backupd: verify your recovery email", 10*time.Second)
 }
 
 var bootstrapTokenRE = regexp.MustCompile(`Enrollment bootstrap token: (\S+)`)

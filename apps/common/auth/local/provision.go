@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/backupdproject/backupd/apps/common/email"
@@ -59,13 +60,27 @@ type CreateAdminConfig struct {
 	// recoveryEmailConfirmed false).
 	//
 	// When SMTP IS supplied, this command behaves exactly like the
-	// browser route: the same confirmation message is sent, and a send
-	// that fails fails the whole command rather than leaving an account
-	// whose recovery address has never received anything.
+	// browser route: the same VERIFICATION message is sent (#830 §8), a
+	// send that fails fails the whole command rather than leaving an
+	// account whose recovery address has never received anything, and
+	// the account it writes is PROVISIONAL - if nobody opens the link
+	// within 30 minutes, the next Service to run deletes it and reopens
+	// enrollment (verify.go's reaper). An unattended deployment that
+	// provisions an administrator therefore has to be able to receive
+	// that message, which is the point: an automated deployment with a
+	// wrong recovery address is exactly as locked out as a hand-made one.
 	RecoveryEmail string
 	SMTP          *email.Config
 
-	// SendMail is the seam the confirmation send goes through; nil means
+	// BaseURL is this deployment's externally reachable address, used to
+	// build the verification link the message carries - the same
+	// Config.BaseURL the server is given (`--public-base-url`). Empty is
+	// supported: the message then carries the bare token and names the
+	// page to paste it into, because a provisioning script frequently
+	// does not know the address operators will reach the deployment at.
+	BaseURL string
+
+	// SendMail is the seam the verification send goes through; nil means
 	// apps/common/email.Send, exactly like Config.SendMail.
 	SendMail email.Sender
 
@@ -179,10 +194,26 @@ func CreateAdmin(cfg CreateAdminConfig) (*AdminRecord, error) {
 		// The same proof the browser route demands, in the same order:
 		// the message goes out BEFORE anything is written, so a command
 		// that could not reach the recovery address creates no account.
-		if err := sendMail(context.Background(), *cfg.SMTP, confirmationMessage(cfg.RecoveryEmail, cfg.Username)); err != nil {
-			return nil, fmt.Errorf("local: sending the confirmation email: %w", err)
+		//
+		// There is no bootstrap token in this process, so the deadline
+		// is the floor half of #830 §9's rule on its own
+		// (verificationDeadline with a zero window end). The challenge
+		// is persisted with the record rather than held in memory,
+		// which is what lets the SERVER - a different process, started
+		// afterwards - redeem the link this command mailed.
+		deadline := verificationDeadline(createdAt, time.Time{})
+		challenge, err := mintVerificationChallenge(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("local: mint a verification token: %w", err)
+		}
+		msg := verifyMessage(cfg.RecoveryEmail, cfg.Username, challenge.Token, strings.TrimRight(cfg.BaseURL, "/"), &deadline)
+		if err := sendMail(context.Background(), *cfg.SMTP, msg); err != nil {
+			return nil, fmt.Errorf("local: sending the verification email: %w", err)
 		}
 		admin.RecoveryEmailConfirmedAt = &createdAt
+		admin.VerificationDeadline = &deadline
+		admin.VerificationTokenHash = challenge.Hash
+		admin.VerificationTokenExpiresAt = &challenge.ExpiresAt
 
 		passwordRef := ""
 		if cfg.SMTP.Password != "" {

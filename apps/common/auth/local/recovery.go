@@ -43,10 +43,14 @@ import (
 // The three subjects this package sends. Fixed strings rather than
 // operator-configurable ones: they are the only mail this product sends,
 // and an operator filtering them in their client needs them stable.
+//
+// The confirmation subject this file used to declare is gone: since #830
+// §8 the message a new (or newly changed) recovery address receives IS
+// the verification link, and its subject lives with the rest of that
+// flow in verify.go (verifySubject).
 const (
-	confirmationSubject = "backupd: recovery email confirmed"
-	resetSubject        = "backupd: password reset"
-	testSubject         = "backupd: SMTP test"
+	resetSubject = "backupd: password reset"
+	testSubject  = "backupd: SMTP test"
 )
 
 // smtpSettingsRequest is the SMTP half of an enrollment or a settings
@@ -118,12 +122,40 @@ type resetPasswordRequest struct {
 }
 
 // recoveryResponse is GET /recovery's and PATCH /recovery's answer: the
-// recovery address, whether a confirmation has actually reached it, and
-// the SMTP endpoint without its password.
+// recovery address, the two proofs about it, the deadline an unverified
+// one lapses at, and the SMTP endpoint without its password.
+//
+// RecoveryEmailVerified and VerificationDeadline are what the signed-in
+// UI's "unverified - this account will be removed" banner is built from
+// (#830 §§8-9). The deadline is a string rather than a time so that the
+// contract can declare one type for a field that is frequently absent:
+// "" means there is no deadline, which is the state of a verified
+// address and of an administrator provisioned without SMTP at all.
 type recoveryResponse struct {
 	RecoveryEmail          string            `json:"recoveryEmail"`
 	RecoveryEmailConfirmed bool              `json:"recoveryEmailConfirmed"`
+	RecoveryEmailVerified  bool              `json:"recoveryEmailVerified"`
+	VerificationDeadline   string            `json:"verificationDeadline"`
 	SMTP                   *smtpSettingsView `json:"smtp"`
+}
+
+// recoveryViewOf renders the administrator half of that answer, so the
+// three places that serve it cannot disagree about what "verified"
+// means or how a deadline is formatted.
+func recoveryViewOf(admin *AdminRecord, smtp *SMTPRecord) recoveryResponse {
+	out := recoveryResponse{
+		RecoveryEmail:          admin.RecoveryEmail,
+		RecoveryEmailConfirmed: admin.RecoveryEmailConfirmedAt != nil,
+		RecoveryEmailVerified:  admin.RecoveryEmailVerifiedAt != nil,
+		SMTP:                   viewOf(smtp),
+	}
+	if admin.VerificationDeadline != nil {
+		// Non-nil exactly while the record can still lapse: verifying
+		// clears it (Store.MarkRecoveryEmailVerified), so there is no
+		// second rule here about when to show one.
+		out.VerificationDeadline = admin.VerificationDeadline.UTC().Format(time.RFC3339)
+	}
+	return out
 }
 
 // recoveryUpdateRequest is PATCH /recovery's body. Both members are
@@ -212,24 +244,6 @@ func (s *Service) smtpConfig() (email.Config, error) {
 		cfg.Password = password
 	}
 	return cfg, nil
-}
-
-// confirmationMessage is what a newly set (or newly changed) recovery
-// address is sent to prove the whole chain works end to end: this
-// deployment, that SMTP endpoint, that mailbox.
-func confirmationMessage(to, username string) email.Message {
-	return email.Message{
-		To:      to,
-		Subject: confirmationSubject,
-		Body: "This address is now the recovery address for the Backupd administrator " +
-			username + ".\n\n" +
-			"If you forget that account's password, Backupd will email a single-use, " +
-			"time-limited reset link here. Keep this address reachable, and keep the SMTP " +
-			"connection in Backupd's settings working - together they are the only way " +
-			"back into the account.\n\n" +
-			"You are receiving this because the SMTP connection was tested against this " +
-			"address. No action is needed.\n",
-	}
 }
 
 // resetMessage is the forgotten-password link. baseURL is the deployment's
@@ -422,22 +436,27 @@ func (s *Service) handleGetRecovery(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
 		return
 	}
-	writeJSON(w, http.StatusOK, recoveryResponse{
-		RecoveryEmail:          admin.RecoveryEmail,
-		RecoveryEmailConfirmed: admin.RecoveryEmailConfirmedAt != nil,
-		SMTP:                   viewOf(rec),
-	})
+	writeJSON(w, http.StatusOK, recoveryViewOf(admin, rec))
 }
 
 // handleUpdateRecovery implements PATCH /recovery.
 //
 // The order matters twice. Everything is validated before anything is
 // written, so a refused request changes nothing. And when the recovery
-// address changes, the confirmation message is sent BEFORE the new
-// address is marked confirmed and, on failure, the whole update is
-// refused - an operator must not be able to leave the account with a
-// recovery address that has never received anything, which is exactly the
-// silent-lockout state #830 exists to prevent.
+// address changes, a fresh VERIFICATION message is sent BEFORE the new
+// address is recorded and, on failure, the whole update is refused - an
+// operator must not be able to leave the account with a recovery address
+// that has never received anything, which is exactly the silent-lockout
+// state #830 exists to prevent.
+//
+// A changed address also drops the VERIFIED flag (#830 §8): the proof
+// that somebody can read a mailbox belongs to the address it was earned
+// for, and carrying it across a change would report the new one as
+// verified on the strength of a click on the old one. What it does NOT
+// do is give the account a new deadline - this is an established
+// administrator editing its settings, not a provisional one being
+// created, and only creation sets a lapse window
+// (AdminRecord.VerificationDeadline).
 func (s *Service) handleUpdateRecovery(w http.ResponseWriter, r *http.Request) {
 	admin, ok := s.authenticatedAdmin(w, r)
 	if !ok {
@@ -486,20 +505,43 @@ func (s *Service) handleUpdateRecovery(w http.ResponseWriter, r *http.Request) {
 		address = *req.RecoveryEmail
 	}
 
-	// A confirmation is sent when the address changed, and also when only
-	// the SMTP endpoint changed and the current address has never been
-	// confirmed: in both cases the pairing of "this endpoint" with "this
-	// mailbox" is unproven, and #830's requirement is that it never stays
-	// unproven silently.
-	needsConfirmation := addressChanged || (req.SMTP != nil && admin.RecoveryEmailConfirmedAt == nil)
-	confirmedAt := admin.RecoveryEmailConfirmedAt
-	if needsConfirmation && address != "" {
-		if err := s.send(r.Context(), cfg, confirmationMessage(address, admin.Username)); err != nil {
-			writeAuthError(w, http.StatusBadGateway, "SMTP_SEND_FAILED", "could not send the confirmation email: "+err.Error())
+	// A verification message is sent when the address changed, and also
+	// when only the SMTP endpoint changed while the current address is
+	// still unverified: in both cases the pairing of "this endpoint"
+	// with "this mailbox" is unproven, and #830's requirement is that it
+	// never stays unproven silently.
+	needsVerification := addressChanged || (req.SMTP != nil && admin.RecoveryEmailVerifiedAt == nil)
+	state := RecoveryEmailState{
+		Address:        address,
+		ConfirmedAt:    admin.RecoveryEmailConfirmedAt,
+		VerifiedAt:     admin.RecoveryEmailVerifiedAt,
+		TokenHash:      admin.VerificationTokenHash,
+		TokenExpiresAt: admin.VerificationTokenExpiresAt,
+	}
+	if addressChanged {
+		state.ConfirmedAt = nil
+		state.VerifiedAt = nil
+		state.TokenHash = ""
+		state.TokenExpiresAt = nil
+	}
+	if needsVerification && address != "" {
+		now := s.now().UTC()
+		challenge, err := mintVerificationChallenge(now)
+		if err != nil {
+			writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
 			return
 		}
-		now := s.now().UTC()
-		confirmedAt = &now
+		// The record's own deadline, nil included: an established
+		// account editing its address is not given a lapse window, and
+		// a provisional one still inside its original window keeps it.
+		if err := s.send(r.Context(), cfg, verifyMessage(address, admin.Username, challenge.Token, s.baseURL, admin.VerificationDeadline)); err != nil {
+			writeAuthError(w, http.StatusBadGateway, "SMTP_SEND_FAILED", "could not send the verification email: "+err.Error())
+			return
+		}
+		state.ConfirmedAt = &now
+		state.VerifiedAt = nil
+		state.TokenHash = challenge.Hash
+		state.TokenExpiresAt = &challenge.ExpiresAt
 	}
 
 	// Persisted only now that the send (if any) has succeeded. The SMTP
@@ -524,8 +566,11 @@ func (s *Service) handleUpdateRecovery(w http.ResponseWriter, r *http.Request) {
 			s.secrets.remove(stored.PasswordRef)
 		}
 	}
-	if req.RecoveryEmail != nil || confirmedAt != admin.RecoveryEmailConfirmedAt {
-		if err := s.store.SetRecoveryEmail(address, confirmedAt); err != nil {
+	if req.RecoveryEmail != nil || needsVerification {
+		// One write for the whole recovery block, so the old address's
+		// challenge can never be live against the new address (see
+		// RecoveryEmailState).
+		if err := s.store.SetRecoveryEmail(state); err != nil {
 			writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
 			return
 		}
@@ -541,11 +586,7 @@ func (s *Service) handleUpdateRecovery(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
 		return
 	}
-	writeJSON(w, http.StatusOK, recoveryResponse{
-		RecoveryEmail:          updated.RecoveryEmail,
-		RecoveryEmailConfirmed: updated.RecoveryEmailConfirmedAt != nil,
-		SMTP:                   viewOf(rec),
-	})
+	writeJSON(w, http.StatusOK, recoveryViewOf(updated, rec))
 }
 
 // pendingSMTP works out which endpoint and which password reference an

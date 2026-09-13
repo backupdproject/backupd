@@ -997,7 +997,7 @@ func TestComposeStack_WebUIProxiesToTheEngineEndToEnd(t *testing.T) {
 	// The confirmation really left the engine's container and arrived at
 	// the sink: the 204 above already implies the send succeeded, and
 	// this is what proves the message exists and is the one it claims.
-	waitForSinkMessage(t, sinkAPI, "admin", "backupd: recovery email confirmed")
+	waitForSinkMessage(t, sinkAPI, "admin", "backupd: verify your recovery email")
 
 	versionResp, err := client.Get(base + "/api/v1/system/version")
 	if err != nil {

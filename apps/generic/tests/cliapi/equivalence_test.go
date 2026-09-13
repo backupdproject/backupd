@@ -280,7 +280,7 @@ func enroll(t *testing.T, authSvc *local.Service, client *http.Client, base stri
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("enroll returned %d: %s", resp.StatusCode, b)
 	}
-	sink.WaitForMessage(t, "backupd: recovery email confirmed", 10*time.Second)
+	sink.WaitForMessage(t, "backupd: verify your recovery email", 10*time.Second)
 }
 
 func normalise(in []verdict) []verdict {

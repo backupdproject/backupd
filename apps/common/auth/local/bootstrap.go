@@ -102,6 +102,27 @@ func (b *singleUseIssuer) issue() (string, error) {
 	return value, nil
 }
 
+// expiry returns when the token currently outstanding lapses, and
+// whether there is one at all.
+//
+// One caller: the verification deadline (#830 §9), which is
+// max(enrollment-link-active-window end, created_at + 30 minutes). The
+// first half of that max is precisely this value, read at the moment the
+// record is created - and it is read rather than recomputed because the
+// window belongs to the token that was actually issued (at THIS
+// process's start, or at the last resend), not to the clock the record
+// happens to be written on. A used or expired token still reports its
+// expiry: the window it defined is a fact about the past, and the max
+// below is what decides whether it matters.
+func (b *singleUseIssuer) expiry() (time.Time, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.token == nil {
+		return time.Time{}, false
+	}
+	return b.token.expiresAt, true
+}
+
 // valid reports whether candidate is the current, unexpired, unused token
 // WITHOUT spending it.
 //

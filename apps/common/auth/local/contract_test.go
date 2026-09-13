@@ -45,17 +45,19 @@ var authBindings = map[string]struct {
 	// the pseudo-binding, which names no real operation to compare it to.
 	successStatus int
 }{
-	"login":                  {"/login", credentialsRequest{}, nil, http.StatusNoContent},
-	"enrollAdministrator":    {"/enroll", enrollRequest{}, nil, http.StatusNoContent},
-	"rotatePassword":         {"/password", rotatePasswordRequest{}, nil, http.StatusNoContent},
-	"logout":                 {"/logout", nil, nil, http.StatusNoContent},
-	"getSession":             {"/session", nil, sessionResponse{}, http.StatusOK},
-	"requestPasswordReset":   {"/forgot-password", forgotPasswordRequest{}, nil, http.StatusNoContent},
-	"resetPassword":          {"/reset-password", resetPasswordRequest{}, nil, http.StatusNoContent},
-	"getRecoverySettings":    {"/recovery", nil, recoveryResponse{}, http.StatusOK},
-	"updateRecoverySettings": {"/recovery", recoveryUpdateRequest{}, recoveryResponse{}, http.StatusOK},
-	"sendRecoveryTestEmail":  {"/recovery/test", nil, nil, http.StatusNoContent},
-	"x-auth-error-envelope":  {"", nil, authErrorResponse{}, 0},
+	"login":                           {"/login", credentialsRequest{}, nil, http.StatusNoContent},
+	"enrollAdministrator":             {"/enroll", enrollRequest{}, nil, http.StatusNoContent},
+	"rotatePassword":                  {"/password", rotatePasswordRequest{}, nil, http.StatusNoContent},
+	"logout":                          {"/logout", nil, nil, http.StatusNoContent},
+	"getSession":                      {"/session", nil, sessionResponse{}, http.StatusOK},
+	"requestPasswordReset":            {"/forgot-password", forgotPasswordRequest{}, nil, http.StatusNoContent},
+	"resetPassword":                   {"/reset-password", resetPasswordRequest{}, nil, http.StatusNoContent},
+	"verifyRecoveryEmail":             {"/verify-email", verifyEmailRequest{}, nil, http.StatusNoContent},
+	"resendRecoveryEmailVerification": {"/verify-email/resend", nil, nil, http.StatusNoContent},
+	"getRecoverySettings":             {"/recovery", nil, recoveryResponse{}, http.StatusOK},
+	"updateRecoverySettings":          {"/recovery", recoveryUpdateRequest{}, recoveryResponse{}, http.StatusOK},
+	"sendRecoveryTestEmail":           {"/recovery/test", nil, nil, http.StatusNoContent},
+	"x-auth-error-envelope":           {"", nil, authErrorResponse{}, 0},
 }
 
 // authErrorEnvelopeSchema is the schema the pseudo-binding above pins: the

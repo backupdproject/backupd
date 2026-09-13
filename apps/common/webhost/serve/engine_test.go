@@ -247,8 +247,8 @@ func enrollAndLogIn(t *testing.T, h *engineHarness, client *http.Client, base st
 	}
 	// Asserted rather than assumed: a 204 already implies the send
 	// succeeded, and this proves the message that succeeded is the
-	// confirmation and that it reached the sink.
-	sink.WaitForMessage(t, "backupd: recovery email confirmed", 10*time.Second)
+	// verification message and that it reached the sink.
+	sink.WaitForMessage(t, "backupd: verify your recovery email", 10*time.Second)
 }
 
 // TestEngine_UnauthenticatedDestructiveRequestIsRefused proves the

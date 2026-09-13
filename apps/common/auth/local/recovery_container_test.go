@@ -275,6 +275,7 @@ func sinkServer(t *testing.T) (*Service, *httptest.Server, *http.Client, string)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(svc.stopReaping)
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/auth/", http.StripPrefix("/api/v1/auth", svc.Handler()))
 	server := httptest.NewServer(EnsureCSRFCookie(false)(mux))
@@ -307,7 +308,17 @@ func sinkEnrollBody(sink mailSink, recoveryEmail string) enrollRequest {
 	}
 }
 
-func TestContainer_EnrollmentDeliversTheConfirmationOverRealSMTP(t *testing.T) {
+// #830 §8's acceptance criterion against a REAL mail server: enrollment
+// delivers a verification LINK to the recovery address, the account is
+// unverified until that link is used, and using the exact string the
+// message carried verifies it.
+//
+// The link is read out of the delivered message rather than out of this
+// process, which is the whole point of doing it here: recovery_test.go
+// replaces the sender, so it could not catch a message whose link was
+// mangled on the way through a real SMTP conversation (a wrapped line, a
+// token character a header encoder decided to escape).
+func TestContainer_EnrollmentDeliversAUsableVerificationLinkOverRealSMTP(t *testing.T) {
 	sink := startMailSink(t)
 	svc, server, client, csrf := sinkServer(t)
 	token := currentBootstrapToken(t, svc)
@@ -322,16 +333,70 @@ func TestContainer_EnrollmentDeliversTheConfirmationOverRealSMTP(t *testing.T) {
 		t.Fatalf("enroll status = %d, want 204; body=%s", resp.StatusCode, body)
 	}
 
-	msg := waitForMessage(t, sink, "confirm-me", confirmationSubject)
+	msg := waitForMessage(t, sink, "confirm-me", verifySubject)
 	if !strings.Contains(msg.From, "backupd@example.test") {
-		t.Errorf("confirmation from = %q, want the configured from-address", msg.From)
+		t.Errorf("the message's from = %q, want the configured from-address", msg.From)
 	}
 	if !strings.Contains(msg.Body.Text, "bm-admin") {
-		t.Errorf("confirmation body does not name the administrator:\n%s", msg.Body.Text)
+		t.Errorf("the body does not name the administrator:\n%s", msg.Body.Text)
 	}
 	if !strings.Contains(msg.Body.Text, "recovery address") {
-		t.Errorf("confirmation body does not explain what it is for:\n%s", msg.Body.Text)
+		t.Errorf("the body does not explain what it is for:\n%s", msg.Body.Text)
 	}
+
+	// Unverified until the link is used, and the deadline is published so
+	// the console can say by when.
+	before := sinkRecovery(t, client, server)
+	if before.RecoveryEmailVerified {
+		t.Fatal("the account is verified before anybody opened the link")
+	}
+	if before.VerificationDeadline == "" {
+		t.Error("no verification deadline was published for a provisional account")
+	}
+
+	_, after, ok := strings.Cut(msg.Body.Text, "verify-email?token=")
+	if !ok {
+		t.Fatalf("the delivered message carries no verification link:\n%s", msg.Body.Text)
+	}
+	verifyToken := strings.TrimSpace(strings.Fields(after)[0])
+	if verifyToken == "" {
+		t.Fatalf("the delivered link carries no token:\n%s", msg.Body.Text)
+	}
+
+	verify := postJSON(t, client, server.URL+"/api/v1/auth/verify-email",
+		verifyEmailRequest{Token: verifyToken}, map[string]string{CSRFHeaderName: csrf})
+	verifyBody, _ := io.ReadAll(verify.Body)
+	verify.Body.Close()
+	if verify.StatusCode != http.StatusNoContent {
+		t.Fatalf("verify status = %d, want 204; body=%s", verify.StatusCode, verifyBody)
+	}
+
+	settled := sinkRecovery(t, client, server)
+	if !settled.RecoveryEmailVerified || settled.VerificationDeadline != "" {
+		t.Fatalf("after redeeming the delivered link: %+v, want verified with no deadline", settled)
+	}
+	// The account survives its original deadline now, which is the whole
+	// point of verifying: the reaper has nothing to act on.
+	if deleted, err := svc.reapUnverifiedAdmin(); err != nil || deleted {
+		t.Fatalf("reap after verification: deleted=%v err=%v, want false/nil", deleted, err)
+	}
+}
+
+// sinkRecovery reads GET /recovery as the signed-in operator, which is
+// where the unverified state and its deadline are published.
+func sinkRecovery(t *testing.T, client *http.Client, server *httptest.Server) recoveryResponse {
+	t.Helper()
+	resp, err := client.Get(server.URL + "/api/v1/auth/recovery")
+	if err != nil {
+		t.Fatalf("GET /recovery: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("GET /recovery status = %d, want 200", resp.StatusCode)
+	}
+	var out recoveryResponse
+	decodeInto(t, resp, &out)
+	return out
 }
 
 // The whole recovery path over a real mail server: enroll, forget the
@@ -348,7 +413,7 @@ func TestContainer_ForgotPasswordDeliversAUsableResetLink(t *testing.T) {
 	if enroll.StatusCode != http.StatusNoContent {
 		t.Fatalf("enroll status = %d, want 204", enroll.StatusCode)
 	}
-	waitForMessage(t, sink, "reset-me", confirmationSubject)
+	waitForMessage(t, sink, "reset-me", verifySubject)
 
 	forgot := postJSON(t, client, server.URL+"/api/v1/auth/forgot-password",
 		forgotPasswordRequest{Username: "bm-admin"}, map[string]string{CSRFHeaderName: csrf})
@@ -411,7 +476,7 @@ func TestContainer_TestSendReachesTheSinkAndLeaksNoCredential(t *testing.T) {
 	if enroll.StatusCode != http.StatusNoContent {
 		t.Fatalf("enroll status = %d, want 204; body=%s", enroll.StatusCode, enrollBody)
 	}
-	waitForMessage(t, sink, "settings", confirmationSubject)
+	waitForMessage(t, sink, "settings", verifySubject)
 
 	test := postJSON(t, client, server.URL+"/api/v1/auth/recovery/test", struct{}{}, map[string]string{CSRFHeaderName: csrf})
 	test.Body.Close()

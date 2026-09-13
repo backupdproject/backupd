@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "857a5a00227d1e8a8e2bccd9744f868a31e296f202fce63e39086244aff57fd4";
+export const CONTRACT_SHA256 = "d0a95c8cf83b192a706c06ae23c8994de40691a0d0c73e0027cdbea3d51a2f74";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -27,6 +27,7 @@ export const WIRE_ERROR_CODES = [
   "ENROLLMENT_CLOSED",
   "BOOTSTRAP_TOKEN_INVALID",
   "RESET_TOKEN_INVALID",
+  "VERIFY_TOKEN_INVALID",
   "INTERNAL_ERROR",
   "SMTP_SEND_FAILED",
   "CSRF_TOKEN_MISSING",
@@ -105,6 +106,7 @@ export const API_ERROR_CODES = [
   "ENROLLMENT_CLOSED",
   "BOOTSTRAP_TOKEN_INVALID",
   "RESET_TOKEN_INVALID",
+  "VERIFY_TOKEN_INVALID",
   "INTERNAL_ERROR",
   "SMTP_SEND_FAILED",
   "CSRF_TOKEN_MISSING",
@@ -151,7 +153,7 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 /** Codes grouped by the refusal they represent, so a caller can assert
  *  the RIGHT refusal rather than any refusal. */
 export const API_ERROR_CLASSES = {
-  "authentication": ["UNAUTHENTICATED", "BOOTSTRAP_TOKEN_INVALID", "RESET_TOKEN_INVALID"],
+  "authentication": ["UNAUTHENTICATED", "BOOTSTRAP_TOKEN_INVALID", "RESET_TOKEN_INVALID", "VERIFY_TOKEN_INVALID"],
   "authorization": ["ENROLLMENT_CLOSED", "DESTRUCTIVE_OPERATIONS_DISABLED", "CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
   "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN"],
   "internal": ["INTERNAL", "INTERNAL_ERROR"],
@@ -414,6 +416,47 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
     successStatus: 200,
     errorCodes: {
       401: ["UNAUTHENTICATED"],
+    }
+  },
+  {
+    id: "verifyRecoveryEmail",
+    method: "POST",
+    path: "/auth/verify-email",
+    authenticated: false,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "VerifyEmailRequest",
+    responseSchema: "",
+    successStatus: 204,
+    errorCodes: {
+      400: ["INVALID_REQUEST"],
+      401: ["VERIFY_TOKEN_INVALID"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      429: ["RATE_LIMITED"],
+      500: ["INTERNAL_ERROR"],
+    }
+  },
+  {
+    id: "resendRecoveryEmailVerification",
+    method: "POST",
+    path: "/auth/verify-email/resend",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "",
+    successStatus: 204,
+    errorCodes: {
+      400: ["INVALID_REQUEST", "INVALID_EMAIL"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      429: ["RATE_LIMITED"],
+      500: ["INTERNAL_ERROR"],
+      502: ["SMTP_SEND_FAILED"],
     }
   },
   {
@@ -2415,15 +2458,17 @@ export interface WirePlacement {
 }
 
 /** GET /auth/recovery and PATCH /auth/recovery: the recovery address,
- *  whether a confirmation message has actually reached it, and the
- *  SMTP endpoint without its password. `smtp` is null on a deployment
- *  whose administrator was provisioned headlessly (`auth
+ *  the two proofs about it, the deadline an unverified one lapses at,
+ *  and the SMTP endpoint without its password. `smtp` is null on a
+ *  deployment whose administrator was provisioned headlessly (`auth
  *  create-admin` leaves recovery optional), which is a state a
  *  settings page has to report rather than hide. */
 export interface WireRecoverySettingsResponse {
   recoveryEmail: string;
   recoveryEmailConfirmed: boolean;
+  recoveryEmailVerified: boolean;
   smtp: WireSmtpSettingsView;
+  verificationDeadline: string;
 }
 
 /** PATCH /auth/recovery. Both members are optional and at least one
@@ -2971,6 +3016,16 @@ export interface WireVerificationClassInfo {
   downloads_object: boolean;
   proves: string;
   requires: string;
+}
+
+/** POST /auth/verify-email: the token out of the emailed verification
+ *  link, and nothing else. The token names the account by itself, so
+ *  there is deliberately no username or address field - one would be
+ *  a second thing to check and a way to ask whether an address is the
+ *  administrator's. The token is single-use and expires; redeeming it
+ *  makes a provisional administrator permanent. */
+export interface WireVerifyEmailRequest {
+  token: string;
 }
 
 /** GET /system/version. Nothing here names an implementation: no

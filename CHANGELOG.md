@@ -54,6 +54,39 @@
   fails, and given none it leaves recovery unconfigured for the operator to finish
   in Settings.
 
+  **The address is not merely mailed to — it is verified, and an account whose
+  address nobody verifies is deleted** (#830, scope additions 8-9). The one
+  message enrolment sends now IS the verification: it carries a single-use link
+  (`PUBLIC_BASE_URL` + `/verify-email?token=…`, expiring in 30 minutes) and the
+  account it creates is **provisional** — `local-auth.json` gains
+  `recovery_email_verified_at`, a `verification_deadline`, and the SHA-256 of the
+  outstanding token, never the token itself. `POST /api/v1/auth/verify-email`
+  redeems the link (single-use, expiring, and one `VERIFY_TOKEN_INVALID` refusal
+  for expired, spent, unknown and no-such-account alike, so nothing can be probed
+  with it); `POST /api/v1/auth/verify-email/resend` mails a fresh one to whoever
+  can still sign in.
+
+  If the address is never verified, a reaper **deletes the administrator record**,
+  revokes its sessions and reopens enrolment with a fresh bootstrap token. The
+  deadline is `max(enrolment-link window end, created_at + 30 minutes)`, fixed at
+  creation and moved by nothing afterwards — a resend that extended it would be no
+  deadline at all. It is enforced on a timer *and* at service start, so a
+  deployment that was shut down through its whole window still cleans up on its
+  next start. That is deliberately harsher than a warning: an SMTP server
+  accepting a message proves the endpoint works and nothing more, since a typo
+  that lands in the neighbouring domain is accepted just as happily as the right
+  address, and an administrator nobody can mail is already lost — 30 seconds of
+  re-enrolment now is cheaper than discovering it the day a password is forgotten.
+  Verifying clears the deadline for good, so an established administrator who
+  later edits the address gets an unverified address and a nudge, never a deleted
+  account, and `auth create-admin` run with no SMTP endpoint at all never gets a
+  deadline, because no link was ever mailed for anybody to open.
+
+  While the address is unverified the console carries a banner that cannot be
+  dismissed, naming the address, the deadline and a **Resend link** action, plus a
+  `/verify-email` page that reports what the link did. `auth create-admin` prints
+  the same warning to stdout and takes `--public-base-url` for the link it mails.
+
 - **A backup set can name a subtree discovery must not walk into** (#737).
   `exclude_paths` on a backup set lists directories, relative to
   `remote_path`, that the listing skips: "recurse into `uploads/`, never into

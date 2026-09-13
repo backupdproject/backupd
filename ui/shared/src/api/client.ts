@@ -1940,6 +1940,14 @@ function fromWireRecoverySettings(r: WireRecoverySettingsResponse): RecoverySett
   return {
     recoveryEmail: r.recoveryEmail,
     recoveryEmailConfirmed: r.recoveryEmailConfirmed,
+    // Issue #830 §§8-9. Two fields, one question each, and the banner
+    // needs both: whether the link has been OPENED, and by when it has
+    // to be. The deadline arrives as "" when this account cannot lapse,
+    // which is a state rather than a missing value, so it is carried
+    // through verbatim rather than normalised to null - every consumer
+    // tests the same empty string the service sends.
+    recoveryEmailVerified: r.recoveryEmailVerified,
+    verificationDeadline: r.verificationDeadline,
     smtp: r.smtp
       ? {
           host: r.smtp.host,
@@ -2435,6 +2443,20 @@ export const httpApi: BackupdApi = {
   // body to read back either.
   requestPasswordReset: (username) => post("/auth/forgot-password", { username }),
   resetPassword: (token, newPassword) => post("/auth/reset-password", { token, newPassword }),
+
+  // Issue #830 §8. Unauthenticated by necessity, exactly like the two
+  // above: the link is opened out of a mail client, on whatever device
+  // happened to be holding the mailbox, and requiring a session would
+  // mean proving you hold the account in order to prove you can read its
+  // recovery address.
+  verifyRecoveryEmail: (token) => post("/auth/verify-email", { token }),
+
+  // The resend is the one that needs a session, because it makes the
+  // service SEND to an address the caller does not choose. No body: the
+  // address, the endpoint and the deadline are all already on the
+  // record, and a body would be a second place for one of them to be
+  // wrong.
+  resendRecoveryEmailVerification: () => post("/auth/verify-email/resend"),
 
   getRecoverySettings: () =>
     request<WireRecoverySettingsResponse>("/auth/recovery").then(fromWireRecoverySettings),

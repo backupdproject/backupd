@@ -362,6 +362,15 @@ auth create-admin flags:
                        appears in this process's own argument list -
                        e.g. echo -n "$PASS" | %s auth create-admin
                        --username admin --password-stdin)
+  --recovery-email A   address account recovery mails to; with an SMTP
+                       endpoint (--smtp-host and friends) the account is
+                       created PROVISIONALLY and a verification link is
+                       mailed to it - if nobody opens that link within
+                       30 minutes the account is removed and enrollment
+                       reopens (#830)
+  --public-base-url U  base URL the mailed verification link points at
+                       (default $PUBLIC_BASE_URL); unset mails the bare
+                       token and the page to paste it into
 `, cliecho.WebBinary, cliecho.Binary, cliecho.WebBinary)
 }
 
@@ -875,6 +884,8 @@ func cmdAuthCreateAdmin(args []string) int {
 	smtpUsername := fset.String("smtp-username", "", "SMTP username; empty for a relay that needs no authentication")
 	smtpPasswordStdin := fset.Bool("smtp-password-stdin", false, "read the SMTP password from stdin, as a SECOND line after the administrator password")
 	smtpFrom := fset.String("smtp-from", "", "address recovery mail is sent from")
+	publicBaseURL := fset.String("public-base-url", envOrDefault("PUBLIC_BASE_URL", ""),
+		"externally-reachable base URL the verification link in the recovery email points at (default $PUBLIC_BASE_URL); empty mails the bare token instead of a link")
 	if err := fset.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -926,6 +937,7 @@ func cmdAuthCreateAdmin(args []string) int {
 		Password:      password,
 		RecoveryEmail: *recoveryEmail,
 		SMTP:          smtp,
+		BaseURL:       *publicBaseURL,
 	})
 	if err != nil {
 		if errors.Is(err, local.ErrStoreLocked) {
@@ -940,8 +952,20 @@ func cmdAuthCreateAdmin(args []string) int {
 		if admin.RecoveryEmailConfirmedAt == nil {
 			recovery += " (unconfirmed: no SMTP connection was given, so nothing has been delivered to it yet)"
 		} else {
-			recovery += " (confirmed: a message was delivered to it)"
+			recovery += " (a verification link has been delivered to it)"
 		}
+	}
+
+	// #830 §9, and the loudest line this command can print. An account
+	// whose recovery address is never verified is DELETED at its
+	// deadline and enrollment reopens, so a provisioning script whose
+	// operator never reads the mailbox ends up with no administrator at
+	// all. Saying it here, on stdout, beside the account that was just
+	// created, is the only chance to warn the person watching.
+	lapse := ""
+	if admin.VerificationDeadline != nil {
+		lapse = fmt.Sprintf(" IMPORTANT: this account is PROVISIONAL - open the verification link mailed to %s by %s, or the account will be removed and enrollment will reopen.",
+			admin.RecoveryEmail, admin.VerificationDeadline.UTC().Format(time.RFC3339))
 	}
 
 	// errcheck's default exclusions cover a diagnostic write to
@@ -949,8 +973,8 @@ func cmdAuthCreateAdmin(args []string) int {
 	// os.Stdout like this one, which is this command's actual
 	// machine/operator-facing output rather than a log line - so its
 	// error is checked explicitly rather than silently ignored.
-	if _, err := fmt.Fprintf(os.Stdout, cliecho.WebBinary+": administrator %q created in %s; %s. Start the server normally - it will see this account already exists and will not print or accept an enrollment bootstrap token.\n",
-		admin.Username, *authStorePath, recovery); err != nil {
+	if _, err := fmt.Fprintf(os.Stdout, cliecho.WebBinary+": administrator %q created in %s; %s. Start the server normally - it will see this account already exists and will not print or accept an enrollment bootstrap token.%s\n",
+		admin.Username, *authStorePath, recovery, lapse); err != nil {
 		return fail(fmt.Errorf("auth create-admin: writing confirmation: %w", err))
 	}
 	return exitOK

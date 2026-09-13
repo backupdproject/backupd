@@ -128,6 +128,17 @@ type Config struct {
 	// own topology guarantees this) trusts nothing but its own directly
 	// observed connection, which is always safe regardless of topology.
 	TrustForwardedHeaders bool
+
+	// ReapInterval is how often the background reaper asks whether the
+	// provisional administrator's verification deadline has passed
+	// (verify.go, #830 §9). Zero means DefaultReapInterval.
+	//
+	// It is a real-time ticker even when Now is faked, because it
+	// decides how often to ASK and Now decides the answer. A test that
+	// wants the decision without waiting calls it directly; one that
+	// wants to prove the timer itself fires sets a small interval here
+	// and moves Now.
+	ReapInterval time.Duration
 }
 
 // Default rate limits: generous enough that an operator mistyping a
@@ -160,20 +171,36 @@ type Service struct {
 	rotateLimiter         *RateLimiter
 	forgotLimiter         *RateLimiter
 	resetLimiter          *RateLimiter
+	verifyLimiter         *RateLimiter
 	sendMail              email.Sender
 	baseURL               string
 	log                   io.Writer
 	outbound              sync.WaitGroup
 	now                   func() time.Time
 	trustForwardedHeaders bool
+	reapInterval          time.Duration
+	reaperStop            chan struct{}
+	reaperStopOnce        sync.Once
 }
 
-// New builds a Service from cfg. If no administrator has enrolled yet
-// (Store.Admin() is nil), it issues a fresh bootstrap token immediately -
-// see PrintBootstrapNotice to actually surface it to the operator - so a
-// process restart before enrollment completes always invalidates
-// whatever token a previous run may have printed (§49.1: "single-use and
-// SHALL expire").
+// New builds a Service from cfg.
+//
+// Three things happen in an order that matters. It takes the store's
+// exclusive lock. It REAPS a provisional administrator whose recovery
+// address was never verified before its deadline (verify.go, #830 §9),
+// which is why a process that was down through an entire verification
+// window still cleans up on its next start. And only then does it ask
+// whether anybody is enrolled: if nobody is - including because the reap
+// just deleted the record - it issues a fresh bootstrap token
+// immediately (see PrintBootstrapNotice to actually surface it to the
+// operator), so a process restart before enrollment completes always
+// invalidates whatever token a previous run may have printed (§49.1:
+// "single-use and SHALL expire").
+//
+// It also starts the background reaper, which runs for this Service's
+// whole life. There is deliberately no public way to stop it, for the
+// reason there is no Close: the process that owns a Service owns it
+// until it exits.
 func New(cfg Config) (*Service, error) {
 	if cfg.StorePath == "" {
 		return nil, fmt.Errorf("local: Config.StorePath is required")
@@ -197,6 +224,10 @@ func New(cfg Config) (*Service, error) {
 	recoveryLimit := cfg.RecoveryRateLimit
 	if recoveryLimit == 0 {
 		recoveryLimit = DefaultRecoveryRateLimit
+	}
+	reapInterval := cfg.ReapInterval
+	if reapInterval == 0 {
+		reapInterval = DefaultReapInterval
 	}
 	sendMail := cfg.SendMail
 	if sendMail == nil {
@@ -225,19 +256,6 @@ func New(cfg Config) (*Service, error) {
 	}
 
 	store := NewStore(cfg.StorePath)
-	admin, err := store.Admin()
-	if err != nil {
-		_ = lock.release()
-		return nil, fmt.Errorf("local: read existing administrator: %w", err)
-	}
-
-	bootstrap := newBootstrapIssuer(now)
-	if admin == nil {
-		if _, err := bootstrap.issue(); err != nil {
-			_ = lock.release()
-			return nil, fmt.Errorf("local: issue bootstrap token: %w", err)
-		}
-	}
 
 	loginLimiter := NewRateLimiter(loginLimit, rateLimitWindow)
 	loginLimiter.now = now
@@ -249,25 +267,53 @@ func New(cfg Config) (*Service, error) {
 	forgotLimiter.now = now
 	resetLimiter := NewRateLimiter(recoveryLimit, rateLimitWindow)
 	resetLimiter.now = now
+	verifyLimiter := NewRateLimiter(recoveryLimit, rateLimitWindow)
+	verifyLimiter.now = now
 
-	return &Service{
+	s := &Service{
 		store:                 store,
 		lock:                  lock,
 		secrets:               newSecretVault(cfg.StorePath),
 		sessions:              newSessionManager(now),
-		bootstrap:             bootstrap,
+		bootstrap:             newBootstrapIssuer(now),
 		resetTokens:           newResetTokenIssuer(now),
 		loginLimiter:          loginLimiter,
 		enrollLimiter:         enrollLimiter,
 		rotateLimiter:         rotateLimiter,
 		forgotLimiter:         forgotLimiter,
 		resetLimiter:          resetLimiter,
+		verifyLimiter:         verifyLimiter,
 		sendMail:              sendMail,
 		baseURL:               strings.TrimRight(cfg.BaseURL, "/"),
 		log:                   log,
 		now:                   now,
 		trustForwardedHeaders: cfg.TrustForwardedHeaders,
-	}, nil
+		reapInterval:          reapInterval,
+		reaperStop:            make(chan struct{}),
+	}
+
+	// Before the enrollment question below, so that a lapsed provisional
+	// administrator is gone by the time it is asked and the fresh
+	// bootstrap token this start prints is the one enrollment will use.
+	if _, err := s.reapUnverifiedAdmin(); err != nil {
+		_ = lock.release()
+		return nil, fmt.Errorf("local: reap an unverified administrator: %w", err)
+	}
+
+	admin, err := store.Admin()
+	if err != nil {
+		_ = lock.release()
+		return nil, fmt.Errorf("local: read existing administrator: %w", err)
+	}
+	if admin == nil {
+		if _, err := s.bootstrap.issue(); err != nil {
+			_ = lock.release()
+			return nil, fmt.Errorf("local: issue bootstrap token: %w", err)
+		}
+	}
+
+	s.startReaper()
+	return s, nil
 }
 
 // Authenticator returns the capabilities.Authenticator apps/common/webhost's

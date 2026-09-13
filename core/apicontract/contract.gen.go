@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "857a5a00227d1e8a8e2bccd9744f868a31e296f202fce63e39086244aff57fd4"
+const ContractSHA256 = "d0a95c8cf83b192a706c06ae23c8994de40691a0d0c73e0027cdbea3d51a2f74"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -64,6 +64,7 @@ const (
 	ErrorCodeEnrollmentClosed                       ErrorCode = "ENROLLMENT_CLOSED"
 	ErrorCodeBootstrapTokenInvalid                  ErrorCode = "BOOTSTRAP_TOKEN_INVALID"
 	ErrorCodeResetTokenInvalid                      ErrorCode = "RESET_TOKEN_INVALID"
+	ErrorCodeVerifyTokenInvalid                     ErrorCode = "VERIFY_TOKEN_INVALID"
 	ErrorCodeInternalError                          ErrorCode = "INTERNAL_ERROR"
 	ErrorCodeSmtpSendFailed                         ErrorCode = "SMTP_SEND_FAILED"
 	ErrorCodeCSRFTokenMissing                       ErrorCode = "CSRF_TOKEN_MISSING"
@@ -114,6 +115,7 @@ var WireErrorCodes = []ErrorCode{
 	ErrorCodeEnrollmentClosed,
 	ErrorCodeBootstrapTokenInvalid,
 	ErrorCodeResetTokenInvalid,
+	ErrorCodeVerifyTokenInvalid,
 	ErrorCodeInternalError,
 	ErrorCodeSmtpSendFailed,
 	ErrorCodeCSRFTokenMissing,
@@ -188,6 +190,7 @@ var ErrorCodes = []ErrorCode{
 	ErrorCodeEnrollmentClosed,
 	ErrorCodeBootstrapTokenInvalid,
 	ErrorCodeResetTokenInvalid,
+	ErrorCodeVerifyTokenInvalid,
 	ErrorCodeInternalError,
 	ErrorCodeSmtpSendFailed,
 	ErrorCodeCSRFTokenMissing,
@@ -232,7 +235,7 @@ var ErrorCodes = []ErrorCode{
 // ErrorClasses groups codes by the refusal they represent, so a caller (or
 // a red team) can assert the RIGHT refusal rather than any refusal.
 var ErrorClasses = map[string][]ErrorCode{
-	"authentication": {ErrorCodeUnauthenticated, ErrorCodeBootstrapTokenInvalid, ErrorCodeResetTokenInvalid},
+	"authentication": {ErrorCodeUnauthenticated, ErrorCodeBootstrapTokenInvalid, ErrorCodeResetTokenInvalid, ErrorCodeVerifyTokenInvalid},
 	"authorization":  {ErrorCodeEnrollmentClosed, ErrorCodeDestructiveOperationsDisabled, ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
 	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven},
 	"internal":       {ErrorCodeInternal, ErrorCodeInternalError},
@@ -390,6 +393,31 @@ var Endpoints = []Endpoint{
 		RequestSchema: "", ResponseSchema: "SessionResponse", SuccessStatus: 200,
 		ErrorCodes: map[int][]ErrorCode{
 			401: {ErrorCodeUnauthenticated},
+		},
+	},
+	{
+		ID: "verifyRecoveryEmail", Method: "POST", Path: "/auth/verify-email",
+		Authenticated: false, CSRFRequired: true, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "VerifyEmailRequest", ResponseSchema: "", SuccessStatus: 204,
+		ErrorCodes: map[int][]ErrorCode{
+			400: {ErrorCodeInvalidRequest},
+			401: {ErrorCodeVerifyTokenInvalid},
+			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
+			429: {ErrorCodeRateLimited},
+			500: {ErrorCodeInternalError},
+		},
+	},
+	{
+		ID: "resendRecoveryEmailVerification", Method: "POST", Path: "/auth/verify-email/resend",
+		Authenticated: true, CSRFRequired: true, IdempotencyKey: "none", DestructiveGate: false, Concurrency: "",
+		RequestSchema: "", ResponseSchema: "", SuccessStatus: 204,
+		ErrorCodes: map[int][]ErrorCode{
+			400: {ErrorCodeInvalidRequest, ErrorCodeInvalidEmail},
+			401: {ErrorCodeUnauthenticated},
+			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
+			429: {ErrorCodeRateLimited},
+			500: {ErrorCodeInternalError},
+			502: {ErrorCodeSmtpSendFailed},
 		},
 	},
 	{
@@ -1956,15 +1984,17 @@ type Placement struct {
 }
 
 // RecoverySettingsResponse is GET /auth/recovery and PATCH /auth/recovery: the recovery address,
-// whether a confirmation message has actually reached it, and the
-// SMTP endpoint without its password. `smtp` is null on a deployment
-// whose administrator was provisioned headlessly (`auth
+// the two proofs about it, the deadline an unverified one lapses at,
+// and the SMTP endpoint without its password. `smtp` is null on a
+// deployment whose administrator was provisioned headlessly (`auth
 // create-admin` leaves recovery optional), which is a state a
 // settings page has to report rather than hide.
 type RecoverySettingsResponse struct {
 	RecoveryEmail          string            `json:"recoveryEmail"`
 	RecoveryEmailConfirmed bool              `json:"recoveryEmailConfirmed"`
+	RecoveryEmailVerified  bool              `json:"recoveryEmailVerified"`
 	Smtp                   *SmtpSettingsView `json:"smtp"`
+	VerificationDeadline   string            `json:"verificationDeadline"`
 }
 
 // RecoverySettingsUpdate is PATCH /auth/recovery. Both members are optional and at least one
@@ -2514,6 +2544,16 @@ type VerificationClassInfo struct {
 	Requires        string `json:"requires"`
 }
 
+// VerifyEmailRequest is POST /auth/verify-email: the token out of the emailed verification
+// link, and nothing else. The token names the account by itself, so
+// there is deliberately no username or address field - one would be
+// a second thing to check and a way to ask whether an address is the
+// administrator's. The token is single-use and expires; redeeming it
+// makes a provisional administrator permanent.
+type VerifyEmailRequest struct {
+	Token string `json:"token"`
+}
+
 // VersionResponse is GET /system/version. Nothing here names an implementation: no
 // rclone, no SQLite, no filesystem path.
 type VersionResponse struct {
@@ -2644,5 +2684,6 @@ var SchemaTypes = map[string]any{
 	"UpdateSettingsRequest":             UpdateSettingsRequest{},
 	"Validator":                         Validator{},
 	"VerificationClassInfo":             VerificationClassInfo{},
+	"VerifyEmailRequest":                VerifyEmailRequest{},
 	"VersionResponse":                   VersionResponse{},
 }

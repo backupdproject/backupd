@@ -1688,6 +1688,8 @@ const SERVED_WHILE_UNCONFIGURED: ReadonlySet<keyof BackupdApi> = new Set([
   // has never been configured at all.
   "requestPasswordReset",
   "resetPassword",
+  "verifyRecoveryEmail",
+  "resendRecoveryEmailVerification",
   "getRecoverySettings",
   "updateRecoverySettings",
   "sendRecoveryTestEmail",
@@ -1821,6 +1823,14 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
   const recovery: RecoverySettings = {
     recoveryEmail: "backup-admin@example.com",
     recoveryEmailConfirmed: true,
+    // Verified, for the reason the block above is confirmed: it is the
+    // state nearly every screen is rendered against. The PROVISIONAL
+    // state (#830 §§8-9) is reached the way the real service reaches it,
+    // by verifyRecoveryEmail below flipping it, or by a test writing
+    // false here through its own spy - no scenario navigates into it,
+    // because no page can put an account back into it.
+    recoveryEmailVerified: true,
+    verificationDeadline: "",
     smtp: {
       host: "smtp.example.net",
       port: 587,
@@ -2628,6 +2638,29 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
           }))
         : delay(undefined),
 
+    // Mirrors apps/common/auth/local's handleVerifyEmail: one sentinel
+    // token is "expired" (the same shape resetPassword above uses for
+    // its own dead link, and for the same reason - a fixture that never
+    // issued a real token has nothing else for that path to exercise),
+    // everything else verifies the address and clears the deadline.
+    verifyRecoveryEmail: (token) =>
+      token === "expired-verify-token"
+        ? Promise.reject(new BackupdError({
+            code: "VERIFY_TOKEN_INVALID",
+            message: "this verification link has expired or has already been used",
+            correlationId: "cid_mockverify401"
+          }))
+        : delay(undefined).then(() => {
+            recovery.recoveryEmailVerified = true;
+            recovery.verificationDeadline = "";
+          }),
+
+    // The resend changes nothing but the link that is outstanding, which
+    // this fixture has no way to hold: what a caller can observe is that
+    // it resolves, and the real service's own tests are what prove the
+    // previous link stops working.
+    resendRecoveryEmailVerification: () => delay(undefined, 400),
+
     getRecoverySettings: () => delay(structuredClone(recovery)),
     updateRecoverySettings: (update) => {
       if (update.smtp) {
@@ -2646,10 +2679,15 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
       }
       if (update.recoveryEmail !== undefined && update.recoveryEmail !== recovery.recoveryEmail) {
         recovery.recoveryEmail = update.recoveryEmail;
-        // The real handler sends the confirmation as part of the update
-        // and refuses the whole request if it cannot, so an address that
-        // comes back from a SUCCESSFUL update is a confirmed one.
+        // The real handler mails the verification link as part of the
+        // update and refuses the whole request if it cannot, so an
+        // address that comes back from a SUCCESSFUL update has been sent
+        // to - and is NOT yet verified, because nobody has opened that
+        // link (#830 §8). The deadline stays empty: an established
+        // administrator editing its address is never given a lapse
+        // window, only a nudge.
         recovery.recoveryEmailConfirmed = true;
+        recovery.recoveryEmailVerified = false;
       }
       return delay(structuredClone(recovery), 400);
     },

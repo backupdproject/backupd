@@ -1685,7 +1685,15 @@ export type SmtpSettingsView = WireSmtpSettingsView;
  *  `recoveryEmailConfirmed` is separate from the address for the same
  *  reason: an address that has been typed and an address a message has
  *  actually reached are different facts, and only the second one means
- *  recovery works. */
+ *  recovery works.
+ *
+ *  `recoveryEmailVerified` is a THIRD fact and the strongest one (#830
+ *  §8): a mail server accepting a message proves the endpoint works, and
+ *  a redeemed link proves somebody can READ the mailbox. Until it is
+ *  true, `verificationDeadline` is the RFC3339 instant at which a
+ *  provisional administrator is DELETED and enrollment reopens, or "" for
+ *  an account that cannot lapse (already verified, or provisioned
+ *  headlessly with no SMTP endpoint to mail a link over). */
 export type RecoverySettings = Omit<WireRecoverySettingsResponse, "smtp"> & {
   smtp: SmtpSettingsView | null;
 };
@@ -2263,6 +2271,30 @@ export interface BackupdApi {
    * link.
    */
   resetPassword(token: string, newPassword: string): Promise<void>;
+
+  /**
+   * Redeem the single-use link mailed to the recovery address (issue
+   * #830 §8), which is what makes a PROVISIONAL administrator permanent.
+   *
+   * Unauthenticated, like the two reset calls above and for the same
+   * reason: the link is opened from a mail client that may never have
+   * signed into this deployment.
+   *
+   * VERIFY_TOKEN_INVALID covers expired, already-used, never-issued and
+   * "there is no administrator any more" alike, deliberately: they are
+   * all recovered the same way, by signing in and asking for another
+   * link (or by enrolling again), and distinguishing them would let an
+   * unauthenticated caller probe the account's state.
+   */
+  verifyRecoveryEmail(token: string): Promise<void>;
+
+  /** Mail a FRESH verification link to the stored recovery address
+   *  (issue #830 §9's re-send option). Authenticated, because it makes
+   *  the service send to an address the caller does not choose, and it
+   *  never moves the verification deadline - the new link carries the
+   *  same one the old link did. Refusing with SMTP_SEND_FAILED is the
+   *  honest answer when the mail server is the thing that is broken. */
+  resendRecoveryEmailVerification(): Promise<void>;
 
   /** The recovery block as it stands (issue #830). Authenticated, and
    *  never carries the SMTP password: see SmtpSettingsView. */

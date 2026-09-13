@@ -419,6 +419,10 @@ describe("every request the shared client makes is a declared operation", () => 
       ["enrollAdministrator", () => httpApi.enrollAdministrator("u", "p", "ops@example.com", SMTP)],
       ["requestPasswordReset", () => httpApi.requestPasswordReset("u")],
       ["resetPassword", () => httpApi.resetPassword("tok", "hunter22222222")],
+      // Issue #830 §§8-9's two verification calls: the unauthenticated
+      // redemption of the mailed link, and the authenticated resend.
+      ["verifyRecoveryEmail", () => httpApi.verifyRecoveryEmail("tok")],
+      ["resendRecoveryEmailVerification", () => httpApi.resendRecoveryEmailVerification()],
       ["getRecoverySettings", () => httpApi.getRecoverySettings()],
       ["updateRecoverySettings", () => httpApi.updateRecoverySettings({ recoveryEmail: "ops@example.com", smtp: SMTP })],
       ["sendRecoveryTestEmail", () => httpApi.sendRecoveryTestEmail()],

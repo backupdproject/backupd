@@ -72,6 +72,7 @@
           "ENROLLMENT_CLOSED",
           "BOOTSTRAP_TOKEN_INVALID",
           "RESET_TOKEN_INVALID",
+          "VERIFY_TOKEN_INVALID",
           "INTERNAL_ERROR",
           "SMTP_SEND_FAILED",
           "CSRF_TOKEN_MISSING",
@@ -168,13 +169,15 @@
           "MEDIUM_CONNECTION_NOT_PROVEN": "wire",
           "RESET_TOKEN_INVALID": "wire",
           "INVALID_EMAIL": "wire",
-          "SMTP_SEND_FAILED": "wire"
+          "SMTP_SEND_FAILED": "wire",
+          "VERIFY_TOKEN_INVALID": "wire"
         },
         "x-error-classes": {
           "authentication": [
             "UNAUTHENTICATED",
             "BOOTSTRAP_TOKEN_INVALID",
-            "RESET_TOKEN_INVALID"
+            "RESET_TOKEN_INVALID",
+            "VERIFY_TOKEN_INVALID"
           ],
           "authorization": [
             "ENROLLMENT_CLOSED",
@@ -739,7 +742,7 @@
       },
       "OperationProgress": {
         "type": "object",
-        "description": "Live progress for an operation that is running in THIS process right now (docs/EPIC-B-multi-nas.md §52). It is sampled from the transfer engine while a run cycle executes and is never written to the operations table: an operation record is durable and crash-safe, and progress is neither, so persisting it would put a tick-rate write path on the one record whose durability guarantees exist to avoid exactly that, and would resurrect a dead cycle's last reading after a restart as though it were live. So this field is present only while the cycle producing it is executing here. A finished operation, and one that was running before a restart, both carry no progress object at all, which is not the same answer as zero and must not be rendered as one. Nothing here is a percentage of the whole operation: a run cycle is a pass over every enabled backup set, and the artifacts it will find are not known when it starts, so no honest denominator for the whole exists. The byte counters describe the ONE artifact being copied at observed_at; the counters beside them say where in the cycle that artifact sits.",
+        "description": "Live progress for an operation that is running in THIS process right now (docs/EPIC-B-multi-nas.md \u00a752). It is sampled from the transfer engine while a run cycle executes and is never written to the operations table: an operation record is durable and crash-safe, and progress is neither, so persisting it would put a tick-rate write path on the one record whose durability guarantees exist to avoid exactly that, and would resurrect a dead cycle's last reading after a restart as though it were live. So this field is present only while the cycle producing it is executing here. A finished operation, and one that was running before a restart, both carry no progress object at all, which is not the same answer as zero and must not be rendered as one. Nothing here is a percentage of the whole operation: a run cycle is a pass over every enabled backup set, and the artifacts it will find are not known when it starts, so no honest denominator for the whole exists. The byte counters describe the ONE artifact being copied at observed_at; the counters beside them say where in the cycle that artifact sits.",
         "additionalProperties": false,
         "properties": {
           "observed_at": {
@@ -1792,9 +1795,23 @@
           "newPassword"
         ]
       },
+      "VerifyEmailRequest": {
+        "type": "object",
+        "description": "POST /auth/verify-email: the token out of the emailed verification link, and nothing else. The token names the account by itself, so there is deliberately no username or address field - one would be a second thing to check and a way to ask whether an address is the administrator's. The token is single-use and expires; redeeming it makes a provisional administrator permanent.",
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
       "RecoverySettingsResponse": {
         "type": "object",
-        "description": "GET /auth/recovery and PATCH /auth/recovery: the recovery address, whether a confirmation message has actually reached it, and the SMTP endpoint without its password. `smtp` is null on a deployment whose administrator was provisioned headlessly (`auth create-admin` leaves recovery optional), which is a state a settings page has to report rather than hide.",
+        "description": "GET /auth/recovery and PATCH /auth/recovery: the recovery address, the two proofs about it, the deadline an unverified one lapses at, and the SMTP endpoint without its password. `smtp` is null on a deployment whose administrator was provisioned headlessly (`auth create-admin` leaves recovery optional), which is a state a settings page has to report rather than hide.",
         "additionalProperties": false,
         "properties": {
           "recoveryEmail": {
@@ -1804,6 +1821,14 @@
             "type": "boolean",
             "description": "Whether a confirmation message to this address has been accepted by the operator's own SMTP server. False after the address is changed until its own confirmation send succeeds: an address nothing has ever been delivered to is not a recovery path, and reporting it as one is the silent lockout this whole feature exists to prevent."
           },
+          "recoveryEmailVerified": {
+            "type": "boolean",
+            "description": "Whether somebody has actually OPENED the verification link that message carried (#830 s8). Separate from recoveryEmailConfirmed because the two prove different things: a mail server accepting a message proves the endpoint works and nothing more, since a typo that lands in the neighbouring domain is accepted just as happily as the right address, while a redeemed link proves the operator can READ what was sent - which is the whole of what account recovery depends on."
+          },
+          "verificationDeadline": {
+            "type": "string",
+            "description": "RFC3339 instant after which an administrator whose recovery address is still unverified is DELETED and enrollment reopens (#830 s9), or \"\" when this record cannot lapse - a verified address, or an administrator provisioned with no SMTP endpoint at all, which was never mailed a link to open. It is computed once, when the account is created, as max(enrollment-link window end, created_at + 30 minutes), and no later request moves it."
+          },
           "smtp": {
             "$ref": "#/components/schemas/SmtpSettingsView",
             "x-go-pointer": true
@@ -1812,6 +1837,8 @@
         "required": [
           "recoveryEmail",
           "recoveryEmailConfirmed",
+          "recoveryEmailVerified",
+          "verificationDeadline",
           "smtp"
         ]
       },
@@ -6495,6 +6522,213 @@
         "x-optimistic-concurrency": null,
         "x-csrf-required": true,
         "x-authenticated": false
+      }
+    },
+    "/auth/verify-email": {
+      "post": {
+        "operationId": "verifyRecoveryEmail",
+        "summary": "Verify the administrator's recovery email from the emailed single-use link.",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Success, no body. The recovery address is recorded as verified, the account stops being provisional and its verification deadline is cleared. Unauthenticated on purpose: the link is opened from a mail client that may never have signed into this deployment, and the token is the credential."
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "401": {
+            "description": "Refused: VERIFY_TOKEN_INVALID. Missing, expired, already-used or unknown verification token - and the one answer for all of them, including a deployment with no administrator at all, so that an unauthenticated caller cannot probe the account's state one request at a time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "VERIFY_TOKEN_INVALID"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "429": {
+            "description": "Refused: RATE_LIMITED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "RATE_LIMITED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL_ERROR.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL_ERROR"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": false
+      }
+    },
+    "/auth/verify-email/resend": {
+      "post": {
+        "operationId": "resendRecoveryEmailVerification",
+        "summary": "Mail a fresh verification link to the stored recovery address.",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Success, no body, once a fresh link has actually gone out over the stored SMTP endpoint. The previous link stops working, so only one is ever live. It does NOT move the verification deadline: a resend inside a window that has nearly closed is honest about that, and a deadline a resend could push out would be no deadline at all."
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST (already verified, or no SMTP connection is configured yet), INVALID_EMAIL (no recovery address is configured to verify).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST",
+              "INVALID_EMAIL"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "429": {
+            "description": "Refused: RATE_LIMITED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "RATE_LIMITED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL_ERROR.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "502": {
+            "description": "Refused: SMTP_SEND_FAILED. The operator is watching this one, so the SMTP error is surfaced verbatim; it never contains the SMTP password.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "SMTP_SEND_FAILED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": true
       }
     },
     "/auth/recovery": {

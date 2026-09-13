@@ -42,28 +42,28 @@ func enrolledServer(t *testing.T) (*Service, *httptest.Server, *http.Client, *ma
 	return svc, server, client, mail, csrf
 }
 
-func TestEnroll_SendsAConfirmationToTheRecoveryAddressOverTheSuppliedSMTP(t *testing.T) {
+func TestEnroll_SendsTheVerificationMessageToTheRecoveryAddressOverTheSuppliedSMTP(t *testing.T) {
 	_, _, _, mail, _ := enrolledServer(t)
 
 	sent := mail.delivered()
 	if len(sent) != 1 {
-		t.Fatalf("enrollment sent %d messages, want exactly 1 (the confirmation)", len(sent))
+		t.Fatalf("enrollment sent %d messages, want exactly 1 (the verification)", len(sent))
 	}
 	got := sent[0]
 	if got.msg.To != testRecoveryEmail {
-		t.Errorf("confirmation went to %q, want the recovery address %q", got.msg.To, testRecoveryEmail)
+		t.Errorf("the message went to %q, want the recovery address %q", got.msg.To, testRecoveryEmail)
 	}
-	if got.msg.Subject != confirmationSubject {
-		t.Errorf("confirmation subject = %q, want %q", got.msg.Subject, confirmationSubject)
+	if got.msg.Subject != verifySubject {
+		t.Errorf("subject = %q, want %q", got.msg.Subject, verifySubject)
 	}
 	if got.cfg.Host != testSMTP().Host || got.cfg.Port != testSMTP().Port {
-		t.Errorf("confirmation went over %s:%d, want the endpoint the request carried", got.cfg.Host, got.cfg.Port)
+		t.Errorf("the message went over %s:%d, want the endpoint the request carried", got.cfg.Host, got.cfg.Port)
 	}
 	if got.cfg.Password != testSMTPPassword {
 		t.Errorf("the send was made with password %q, want the one the request carried", got.cfg.Password)
 	}
 	if !strings.Contains(got.msg.Body, "bm-admin") {
-		t.Errorf("confirmation body does not name the administrator it belongs to:\n%s", got.msg.Body)
+		t.Errorf("the body does not name the administrator it belongs to:\n%s", got.msg.Body)
 	}
 }
 
@@ -103,7 +103,7 @@ func TestEnroll_IsRefusedWhenTheConfirmationCannotBeSent(t *testing.T) {
 		t.Fatalf("Admin: %v", err)
 	}
 	if admin != nil {
-		t.Fatalf("a failed confirmation send still created administrator %q", admin.Username)
+		t.Fatalf("a failed verification send still created administrator %q", admin.Username)
 	}
 
 	// The same link, a second time, against a working mail server: the
@@ -168,6 +168,7 @@ func TestEnroll_TheDefaultSenderIsTheRealSMTPPathAndItsFailureRefusesEnrollment(
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(svc.stopReaping)
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/auth/", http.StripPrefix("/api/v1/auth", svc.Handler()))
 	server := httptest.NewServer(EnsureCSRFCookie(false)(mux))
@@ -428,6 +429,7 @@ func TestResetPassword_RefusesAnExpiredToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(svc.stopReaping)
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/auth/", http.StripPrefix("/api/v1/auth", svc.Handler()))
 	server := httptest.NewServer(EnsureCSRFCookie(false)(mux))
@@ -475,7 +477,7 @@ func TestGetRecovery_ReportsTheSettingsWithoutTheSMTPPassword(t *testing.T) {
 		t.Errorf("recoveryEmail = %q, want %q", got.RecoveryEmail, testRecoveryEmail)
 	}
 	if !got.RecoveryEmailConfirmed {
-		t.Error("recoveryEmailConfirmed = false after an enrollment whose confirmation was delivered")
+		t.Error("recoveryEmailConfirmed = false after an enrollment whose verification message was delivered")
 	}
 	if got.SMTP == nil {
 		t.Fatal("smtp = null after an enrollment that configured one")
@@ -552,7 +554,7 @@ func TestPatchRecovery_ChangingTheAddressReVerifiesItAndRefusesIfTheSendFails(t 
 		t.Fatalf("a refused update changed the stored address to %q", admin.RecoveryEmail)
 	}
 
-	// Then a working one: the address changes, and a confirmation goes to
+	// Then a working one: the address changes, and a verification link goes to
 	// the NEW address over the stored endpoint.
 	mail.refuseWith(nil)
 	before := len(mail.delivered())
@@ -568,16 +570,16 @@ func TestPatchRecovery_ChangingTheAddressReVerifiesItAndRefusesIfTheSendFails(t 
 	}
 	sent := mail.delivered()
 	if len(sent) != before+1 {
-		t.Fatalf("%d messages sent, want one confirmation", len(sent)-before)
+		t.Fatalf("%d messages sent, want one verification message", len(sent)-before)
 	}
 	last := sent[len(sent)-1]
-	if last.msg.To != changed || last.msg.Subject != confirmationSubject {
-		t.Errorf("confirmation went to %q (%q), want %q (%q)", last.msg.To, last.msg.Subject, changed, confirmationSubject)
+	if last.msg.To != changed || last.msg.Subject != verifySubject {
+		t.Errorf("the message went to %q (%q), want %q (%q)", last.msg.To, last.msg.Subject, changed, verifySubject)
 	}
 	// The stored password was resolved out of its file for this send: the
 	// request carried no SMTP block at all.
 	if last.cfg.Password != testSMTPPassword {
-		t.Errorf("the confirmation was sent with password %q, want the stored one", last.cfg.Password)
+		t.Errorf("the message was sent with password %q, want the stored one", last.cfg.Password)
 	}
 }
 

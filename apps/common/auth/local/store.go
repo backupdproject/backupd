@@ -51,12 +51,65 @@ type AdminRecord struct {
 	// path that writes one now requires it.
 	RecoveryEmail string `json:"recovery_email,omitempty"`
 
-	// RecoveryEmailConfirmedAt records when a confirmation message to
-	// RecoveryEmail was last accepted by the operator's own SMTP server.
-	// It is what lets Settings show "confirmed" rather than claiming an
-	// address works because somebody typed it: a changed address is
-	// unconfirmed until its own confirmation send succeeds.
+	// RecoveryEmailConfirmedAt records when a message to RecoveryEmail
+	// was last accepted by the operator's own SMTP server. It is the
+	// SENDING half of the pair below: the mail server took the message.
+	// A changed address is unconfirmed until its own send succeeds.
 	RecoveryEmailConfirmedAt *time.Time `json:"recovery_email_confirmed_at,omitempty"`
+
+	// RecoveryEmailVerifiedAt records when somebody actually opened the
+	// verification link that message carried (#830 §8). It is the
+	// RECEIVING half, and the two are deliberately separate facts: an
+	// SMTP server accepting a message proves the endpoint works, and
+	// nothing more - a typo'd-but-deliverable address (the neighbouring
+	// domain, a colleague's mailbox) is accepted just as happily as the
+	// right one. Only a redeemed link proves the operator can READ what
+	// was sent, which is the whole of what account recovery depends on.
+	//
+	// nil means unverified, and an unverified record with a
+	// VerificationDeadline in the past is deleted (verify.go's reaper).
+	RecoveryEmailVerifiedAt *time.Time `json:"recovery_email_verified_at,omitempty"`
+
+	// VerificationDeadline is when an unverified record lapses: the
+	// moment after which the reaper deletes this administrator and
+	// reopens enrollment (#830 §9). It is computed once, at creation
+	// (verificationDeadline in verify.go), and never moved afterwards -
+	// a deadline a resend could push out would be no deadline at all.
+	//
+	// nil means "nothing to verify, nothing to lapse", and that is a
+	// real state rather than a missing value: a record provisioned by
+	// `auth create-admin` with no SMTP endpoint (provision.go) never had
+	// a verification message sent, so there is no link anybody could
+	// open, and deleting the only administrator of an unattended
+	// deployment 30 minutes after provisioning it would be the worst
+	// possible reading of this feature. A record written before #830
+	// existed has none either, and must equally never be reaped.
+	VerificationDeadline *time.Time `json:"verification_deadline,omitempty"`
+
+	// VerificationTokenHash and VerificationTokenExpiresAt are the
+	// PENDING verification challenge: the SHA-256 of the token the last
+	// verification message carried, and when that token stops being
+	// accepted. Both are cleared the moment the link is redeemed, which
+	// is what makes it single-use.
+	//
+	// The HASH and never the token: a store file an operator can read is
+	// not a place to keep a live credential, and a verification link is
+	// one. POST /verify-email hashes what it was given and compares in
+	// constant time (verify.go), which needs nothing more than this.
+	//
+	// It is PERSISTED, unlike the bootstrap and password-reset tokens
+	// this package keeps in memory, and the difference is forced rather
+	// than stylistic. Those two are recovered by asking again - a
+	// restart reprints the enrollment token, and forgot-password mails a
+	// second link. This one is the only thing standing between a
+	// provisional account and the reaper deleting it, so a token that
+	// died with the process would mean a restart inside the verification
+	// window guaranteed the loss of the account. It also has to cross a
+	// process boundary by construction: `auth create-admin`
+	// (provision.go) mints the challenge in a short-lived CLI process and
+	// the server that redeems it starts afterwards.
+	VerificationTokenHash      string     `json:"verification_token_hash,omitempty"`
+	VerificationTokenExpiresAt *time.Time `json:"verification_token_expires_at,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -87,9 +140,12 @@ type SMTPRecord struct {
 	From string `json:"from"`
 }
 
-// storeFile is the on-disk shape Store persists. Enrollment is
-// permanently closed the moment Admin is non-nil (§49.1: "single-shot and
-// irreversible"); nothing in this package ever sets it back to nil.
+// storeFile is the on-disk shape Store persists. Enrollment is closed
+// while Admin is non-nil (§49.1: "single-shot and irreversible") and the
+// one thing that can ever set it back to nil is DeleteAdmin below -
+// reaping a provisional administrator whose recovery address was never
+// verified (#830 §9), which is not a reopening of a finished enrollment
+// but the abandonment of an unfinished one.
 //
 // SMTP sits BESIDE Admin rather than inside it because it is a property
 // of the deployment rather than of the identity: it is what the runtime
@@ -282,17 +338,43 @@ func (s *Store) SetSMTP(rec SMTPRecord) error {
 	return s.save(f)
 }
 
-// SetRecoveryEmail replaces the persisted administrator's recovery
-// address and its confirmation timestamp together, leaving every other
-// field untouched.
+// RecoveryEmailState is the whole of what a writer says about the
+// administrator's recovery address in one go: the address, the two
+// proofs about it, and the verification challenge outstanding against
+// it.
 //
-// The two are one call because they are one fact. A changed address that
-// kept the old confirmation time would claim, on the Settings page and to
-// anyone reading the file, that a message had been delivered to an
-// address nothing was ever sent to; passing confirmedAt = nil is how a
-// caller says "changed, not yet proved", and passing a time is what a
-// successful confirmation send earns.
-func (s *Store) SetRecoveryEmail(address string, confirmedAt *time.Time) error {
+// It is one struct rather than five parameters because the five are one
+// fact and a partial write of them is always a lie. An address changed
+// without clearing its proofs claims a message was delivered somewhere
+// nothing was sent; an address changed without replacing the challenge
+// leaves the OLD address's live token able to verify the NEW one, which
+// is a verification bypass rather than a cosmetic inconsistency. Store
+// writes one file at a time, so making this one call is also what makes
+// it one rename with no intermediate state on disk.
+type RecoveryEmailState struct {
+	Address string
+
+	// ConfirmedAt is when a message to Address was last accepted by the
+	// operator's SMTP server; VerifiedAt is when the link it carried was
+	// opened. nil for either means "not proved".
+	ConfirmedAt *time.Time
+	VerifiedAt  *time.Time
+
+	// TokenHash/TokenExpiresAt are the pending challenge, empty/nil when
+	// there is none outstanding (nothing sent, or already redeemed).
+	TokenHash      string
+	TokenExpiresAt *time.Time
+}
+
+// SetRecoveryEmail replaces the persisted administrator's whole recovery
+// block with st in one write, leaving every other field - the password
+// hash, the creation time, the verification DEADLINE - untouched.
+//
+// The deadline is deliberately not part of st: it is written once, when
+// the record is created, and a setter able to move it would be a way to
+// give a provisional account an unbounded reprieve (see
+// AdminRecord.VerificationDeadline).
+func (s *Store) SetRecoveryEmail(st RecoveryEmailState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
@@ -302,7 +384,92 @@ func (s *Store) SetRecoveryEmail(address string, confirmedAt *time.Time) error {
 	if f.Admin == nil {
 		return ErrNotEnrolled
 	}
-	f.Admin.RecoveryEmail = address
-	f.Admin.RecoveryEmailConfirmedAt = confirmedAt
+	f.Admin.RecoveryEmail = st.Address
+	f.Admin.RecoveryEmailConfirmedAt = st.ConfirmedAt
+	f.Admin.RecoveryEmailVerifiedAt = st.VerifiedAt
+	f.Admin.VerificationTokenHash = st.TokenHash
+	f.Admin.VerificationTokenExpiresAt = st.TokenExpiresAt
 	return s.save(f)
+}
+
+// MarkRecoveryEmailVerified records that the verification link mailed to
+// the current recovery address was opened, at at, and spends the
+// challenge that link carried (#830 §8).
+//
+// Three fields in one write, and each one has to be in it.
+//
+// The challenge is cleared by the same save that records the proof,
+// which IS what single-use means here: a replay of the same link finds
+// no challenge to match rather than a second acceptance.
+//
+// The DEADLINE is cleared because it has been met. It described the
+// window this provisional account had to prove itself, and that window
+// closed by being satisfied; leaving it behind would arm the reaper
+// against an account that passed, the moment anything later set
+// RecoveryEmailVerifiedAt back to nil - which is exactly what changing
+// the recovery address on the Settings page does (handleUpdateRecovery).
+// An established administrator who edits their address gets an
+// unverified address and a nudge to verify it, never a deleted account.
+//
+// It re-states the address deliberately not at all: a verification that
+// could write one would be a second way to change it, and the address
+// this proof belongs to is already on the record.
+func (s *Store) MarkRecoveryEmailVerified(at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return err
+	}
+	if f.Admin == nil {
+		return ErrNotEnrolled
+	}
+	f.Admin.RecoveryEmailVerifiedAt = &at
+	f.Admin.VerificationDeadline = nil
+	f.Admin.VerificationTokenHash = ""
+	f.Admin.VerificationTokenExpiresAt = nil
+	return s.save(f)
+}
+
+// DeleteAdmin removes the administrator record and the SMTP
+// configuration that belonged to it in ONE write, and returns the SMTP
+// record it removed (nil when there was none) so the caller can drop the
+// secret file it referenced.
+//
+// This is the one method that reopens enrollment, and it exists for
+// exactly one caller: verify.go's reaper, deleting a PROVISIONAL
+// administrator whose recovery address was never verified before its
+// deadline (#830 §9). §49.1's "single-shot and irreversible" is not
+// weakened by it - the rule is that a bootstrap token may only ever
+// create ONE account, and what this deletes is an account that, by its
+// own unverified state, was never finished. What reopens afterwards is a
+// deployment with no administrator at all, which is the state §49.1
+// describes and which Service.New handles by minting a fresh token.
+//
+// The two go together for Enroll's reason in reverse: an SMTP endpoint
+// left behind by a deleted administrator would be a secret reference
+// belonging to nobody, sitting in a store that reads as unenrolled, and
+// the next enrollment writes its own endpoint anyway. Returning it (and
+// removing the file only once the store no longer points at it) keeps
+// that cleanup in the caller, which is where the secret vault lives.
+//
+// Deleting nothing is not an error: a reaper racing a verification, or
+// two reapers on one store, must both be able to run to completion.
+func (s *Store) DeleteAdmin() (*SMTPRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	if f.Admin == nil {
+		return nil, nil
+	}
+	removed := f.SMTP
+	f.Admin = nil
+	f.SMTP = nil
+	if err := s.save(f); err != nil {
+		return nil, err
+	}
+	return removed, nil
 }

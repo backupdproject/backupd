@@ -173,6 +173,18 @@ in the first ten minutes.
   every session out, including any still open elsewhere, so the next thing to do is sign
   in with the new one. Nothing arrives? The address or the mail server is the problem, not
   the password, and that is the case below.
+- **The console says the account is unverified and will be removed.** That is not a
+  fault: a new administrator is *provisional* until somebody opens the link in the
+  verification email sent to its recovery address. The banner names the deadline, and
+  if the address is not verified by it, Backupd deletes the administrator, signs every
+  session out and reopens enrollment — which puts you back at the setup wizard with the
+  bootstrap link printed in the application's log, not in a dead end. Open the link from
+  the mail (it works on a phone; it needs no session), or press **Resend link** on the
+  banner while you are still signed in. It is deliberately strict: a mail server
+  accepting the message only proves the *server* works, and an address with a typo in it
+  is accepted just as happily as the right one, so the day a password is forgotten would
+  otherwise be the day you find out. Verifying once settles it permanently; changing the
+  address later asks you to verify the new one, but nothing is deleted for that.
 - **You cannot sign in and no reset mail arrives.** The administrator record lives in the
   application's state directory, which survives restarts and upgrades, and so do the
   recovery address and the SMTP settings — which is also why a mail server that has since
