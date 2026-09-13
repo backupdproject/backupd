@@ -505,5 +505,25 @@ func snapshotInfo(man *snapshot.Manifest) backupengine.SnapshotInfo {
 		info.Bytes = man.RootEntry.DirSummary.TotalFileSize
 	}
 
+	// The attribution tags, copied rather than aliased.
+	//
+	// A manifest loaded from the repository is the vendor's own struct,
+	// and handing its map out across this boundary would make every
+	// caller of ListSnapshots a writer of the engine's in-memory state:
+	// one caller deleting a key it did not recognise would be editing a
+	// snapshot manifest the adapter still holds. The copy costs a few
+	// entries per snapshot and removes the whole class.
+	//
+	// A manifest with no tags reports nil rather than an empty map,
+	// because "carries no attribution" is a thing reconciliation has to
+	// be able to see, and an empty map that ranges zero times reads the
+	// same as one nobody filled in.
+	if len(man.Tags) > 0 {
+		info.Tags = make(map[string]string, len(man.Tags))
+		for k, v := range man.Tags {
+			info.Tags[k] = v
+		}
+	}
+
 	return info
 }

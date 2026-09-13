@@ -267,7 +267,7 @@ func Render(report health.Report) string {
 	// plausible-looking number and therefore the worst possible way to
 	// be wrong.
 	writeGauge(&b, sets, "snapshot_entries_scanned",
-		"Source entries the newest snapshot run of this backup set considered: files plus directories. Absent for a set that takes no snapshots.",
+		"Source entries the newest snapshot run of this backup set considered, of every kind, including the ones it deliberately skipped. It is the source side's own census, not files plus directories. Absent for a set that takes no snapshots.",
 		func(s health.BackupSetHealth) (float64, bool) {
 			if s.Snapshot == nil || !s.Snapshot.Measured {
 				return 0, false

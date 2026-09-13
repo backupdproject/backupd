@@ -42,6 +42,14 @@ const (
 	treeUser = "tree-user"
 )
 
+// treeRunID is the manager-owned snapshot-run id the requests below
+// carry. Every request needs one -- SnapshotTree refuses an empty one
+// before it touches storage -- because it is the evidence crash
+// reconciliation matches an orphaned manifest against, and the tests
+// that are about its value say so themselves rather than relying on
+// this.
+const treeRunID = "run-0f3c1d6a"
+
 // treeChunkSize is how big each file in the reuse measurement is.
 //
 // The number is chosen so the measurement cannot pass by luck. Three files
@@ -268,6 +276,7 @@ func TestSnapshotTreeStoresOneSnapshotPerRun(t *testing.T) {
 
 	info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
 		Source:      src,
+		RunID:       treeRunID,
 		Root:        root,
 		Description: "nightly run",
 		Tags: map[string]string{
@@ -373,7 +382,7 @@ func TestSnapshotTreeReusesContentOnASecondRun(t *testing.T) {
 		}}
 	}
 
-	first, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, Root: build()})
+	first, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: build()})
 	if err != nil {
 		t.Fatalf("SnapshotTree (first run): %v", err)
 	}
@@ -382,7 +391,7 @@ func TestSnapshotTreeReusesContentOnASecondRun(t *testing.T) {
 	// content. Nothing about the listing changes.
 	changing.data = randomBytes(t, treeChunkSize)
 
-	second, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, Root: build()})
+	second, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: build()})
 	if err != nil {
 		t.Fatalf("SnapshotTree (second run): %v", err)
 	}
@@ -489,7 +498,7 @@ func TestSnapshotTreeRestoresEveryByte(t *testing.T) {
 
 	src := treeSource("/sets/restore")
 
-	info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, Root: root})
+	info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: root})
 	if err != nil {
 		t.Fatalf("SnapshotTree: %v", err)
 	}
@@ -597,7 +606,7 @@ func TestSnapshotTreeLeavesNoSnapshotWhenAStreamBreaks(t *testing.T) {
 
 	src := treeSource("/sets/broken-stream")
 
-	if _, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, Root: root}); err == nil {
+	if _, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: root}); err == nil {
 		t.Fatal("SnapshotTree returned no error for a stream that broke part way through")
 	} else if !errors.Is(err, errStreamBroke) {
 		t.Errorf("SnapshotTree reported %v, want the source's own failure (%v)", err, errStreamBroke)
@@ -641,7 +650,7 @@ func TestSnapshotTreeCancellationUnblocksAReadInFlight(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, Root: root})
+	_, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: root})
 	if err == nil {
 		t.Fatal("SnapshotTree stored a snapshot of a source it never finished reading")
 	}
@@ -713,7 +722,7 @@ func TestSnapshotTreeLeavesNoSnapshotWhenAListingFails(t *testing.T) {
 
 		src := treeSource("/sets/broken-root-listing")
 
-		if _, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, Root: root}); err == nil {
+		if _, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: root}); err == nil {
 			t.Fatal("SnapshotTree returned no error for a root directory whose listing failed")
 		} else if !errors.Is(err, errListingFailed) {
 			t.Errorf("SnapshotTree reported %v, want the source's own failure (%v)", err, errListingFailed)
@@ -739,7 +748,7 @@ func TestSnapshotTreeLeavesNoSnapshotWhenAListingFails(t *testing.T) {
 
 		src := treeSource("/sets/broken-nested-listing")
 
-		if _, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, Root: root}); err == nil {
+		if _, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: root}); err == nil {
 			t.Fatal("SnapshotTree returned no error for a subdirectory whose listing failed")
 		} else if !errors.Is(err, errListingFailed) {
 			t.Errorf("SnapshotTree reported %v, want the source's own failure (%v)", err, errListingFailed)
@@ -805,7 +814,7 @@ func TestSnapshotTreeRefusesEntriesNothingCanBeReadFrom(t *testing.T) {
 
 			src := treeSource("/sets/refused")
 
-			_, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, Root: tc.root})
+			_, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: tc.root})
 			if err == nil {
 				t.Fatal("SnapshotTree stored the tree instead of refusing it")
 			}
@@ -842,4 +851,284 @@ func assertNoSnapshots(t *testing.T, ctx context.Context, rep backupengine.TreeR
 	if stats.Snapshots != 0 {
 		t.Errorf("the repository holds %d snapshots after a failed run, want none", stats.Snapshots)
 	}
+}
+
+// compressibleBytes is the counterpart to randomBytes: a short pattern
+// repeated until it is n bytes long, which is data a repository can
+// store in far less space than it occupies at the source.
+//
+// It exists to separate the two savings a backup has, because the
+// arithmetic this file refuses -- read minus written -- adds them
+// together and calls the total deduplication.
+func compressibleBytes(pattern string, n int) []byte {
+	return bytes.Repeat([]byte(pattern), n/len(pattern)+1)[:n]
+}
+
+// TestSnapshotTreeReportsNoReuseForAFirstSnapshotOfCompressibleData is the
+// regression the arithmetic definition of reuse fails.
+//
+// SourceBytesRead minus RepositoryBytesWritten is not deduplication. That
+// difference also holds compression, and the pack and index overhead of
+// storing anything at all, and this run has no reuse to report and no way
+// to have earned any: a first-ever snapshot, of content nothing has seen,
+// into an empty repository. The honest answer is zero and the arithmetic
+// cannot produce it.
+//
+// WHICH WAY it goes wrong is a policy knob, and both ways are wrong. The
+// tree here is highly compressible, so under an upload policy with a
+// compressor configured the run stores a fraction of what it read and the
+// difference reports most of a brand new backup as reused -- an operator
+// told their first night was mostly free, and a catalog recording a dedup
+// ratio for a run that deduplicated nothing. This adapter uploads under
+// policy.DefaultPolicy, whose file compressor is "none", so today the
+// difference goes the other way: storing costs MORE than reading, because
+// pack headers, index blobs and directory manifests count as written and
+// are not source content at all, and the arithmetic yields a NEGATIVE
+// reuse that only looks like the right answer after something clamps it.
+//
+// So what keeps the zero below from being vacuous is not a threshold on
+// either byte count -- that would pin whichever way the knob happens to
+// be set today. It is that the two definitions visibly disagree on this
+// fixture, which is true under both settings and is the entire claim.
+func TestSnapshotTreeReportsNoReuseForAFirstSnapshotOfCompressibleData(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rep := newTreeRepository(t)
+
+	src := treeSource("/sets/compressible")
+
+	// Two different patterns, so nothing in this tree deduplicates
+	// against anything else in it. Any saving here would be compression,
+	// and compression is not reuse.
+	root := &memDir{entries: []backupengine.SourceEntry{
+		fileEntry("prose.txt", newMemStream(compressibleBytes(
+			"the quick brown fox jumps over the lazy dog\n", treeChunkSize))),
+		fileEntry("service.log", newMemStream(compressibleBytes(
+			"2026-01-01T00:00:00Z level=info msg=\"nothing happened\"\n", treeChunkSize))),
+	}}
+
+	info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: root})
+	if err != nil {
+		t.Fatalf("SnapshotTree: %v", err)
+	}
+
+	arithmetic := info.SourceBytesRead - info.RepositoryBytesWritten
+
+	t.Logf("first compressible run: scanned=%d read=%d written=%d reused=%d measured=%t (read-written=%d)",
+		info.Bytes, info.SourceBytesRead, info.RepositoryBytesWritten,
+		info.ContentReusedBytes, info.ContentReuseMeasured, arithmetic)
+
+	if !info.ContentReuseMeasured {
+		t.Fatal("the run reports reuse as not measured; the engine's dedup accounting was not readable, which is what a vendor upgrade that renamed the counter looks like from here")
+	}
+
+	if info.ContentReusedBytes != 0 {
+		t.Errorf("a first snapshot reports %d bytes of reused content, want 0; nothing in this repository existed before this run",
+			info.ContentReusedBytes)
+	}
+
+	if arithmetic == info.ContentReusedBytes {
+		t.Fatalf("read minus written (%d) is the same number as the reported reuse (%d) on this fixture, so nothing here tells the engine's dedup accounting apart from the arithmetic that conflates it with compression and storage overhead",
+			arithmetic, info.ContentReusedBytes)
+	}
+}
+
+// TestSnapshotTreeMeasuresContentReuseOfAnUnchangedTree is the other half:
+// the number is not just honestly zero, it is actually wired to something.
+//
+// A second run over a tree nothing touched hands the repository content it
+// already holds, byte for byte, so the engine's own dedup accounting has to
+// see nearly the whole tree. A counter that was never incremented, or one
+// whose name the adapter looks up by a string that no longer exists, would
+// report a perfectly honest zero here -- which is why the assertion is a
+// large fraction of the tree rather than "greater than zero".
+func TestSnapshotTreeMeasuresContentReuseOfAnUnchangedTree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rep := newTreeRepository(t)
+
+	src := treeSource("/sets/unchanged")
+
+	first := newMemStream(randomBytes(t, treeChunkSize))
+	second := newMemStream(randomBytes(t, treeChunkSize))
+	third := newMemStream(randomBytes(t, treeChunkSize))
+
+	build := func() *memDir {
+		nested := &memDir{entries: []backupengine.SourceEntry{fileEntry("third.bin", third)}}
+
+		return &memDir{entries: []backupengine.SourceEntry{
+			fileEntry("first.bin", first),
+			fileEntry("second.bin", second),
+			dirEntry("nested", nested),
+		}}
+	}
+
+	one, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: build()})
+	if err != nil {
+		t.Fatalf("SnapshotTree (first run): %v", err)
+	}
+
+	two, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: "run-2e90ab41", Root: build()})
+	if err != nil {
+		t.Fatalf("SnapshotTree (second run): %v", err)
+	}
+
+	const logical = 3 * treeChunkSize
+
+	t.Logf("run 1: read=%d written=%d reused=%d measured=%t",
+		one.SourceBytesRead, one.RepositoryBytesWritten, one.ContentReusedBytes, one.ContentReuseMeasured)
+	t.Logf("run 2: read=%d written=%d reused=%d measured=%t",
+		two.SourceBytesRead, two.RepositoryBytesWritten, two.ContentReusedBytes, two.ContentReuseMeasured)
+
+	if !one.ContentReuseMeasured || !two.ContentReuseMeasured {
+		t.Fatalf("reuse was not measured (run 1: %t, run 2: %t); the adapter could not read the engine's dedup accounting",
+			one.ContentReuseMeasured, two.ContentReuseMeasured)
+	}
+
+	if one.ContentReusedBytes != 0 {
+		t.Errorf("the first run reports %d bytes of reused content for a repository that held nothing, want 0", one.ContentReusedBytes)
+	}
+
+	// The delta is this run's, not the repository's lifetime total. A
+	// total would count the first run's contents too and would only ever
+	// grow, which is how "reuse" turns into a number that always looks
+	// better than the run before it.
+	if want := int64(logical) * 9 / 10; two.ContentReusedBytes < want {
+		t.Errorf("the second run reports %d bytes of reused content for an unchanged %d byte tree, want at least %d",
+			two.ContentReusedBytes, logical, want)
+	}
+
+	if two.ContentReusedBytes > int64(logical)*2 {
+		t.Errorf("the second run reports %d bytes of reused content for a %d byte tree; that is more content than the tree has, so this is a lifetime total rather than this run's delta",
+			two.ContentReusedBytes, logical)
+	}
+}
+
+// TestSnapshotTreeReportsTheRunTagOnTheReadSide is the write half and the
+// read half of the attribution contract, asserted together because either
+// one alone is a claim nothing can act on.
+//
+// Crash reconciliation adopts an orphaned manifest only when its run,
+// domain and set all match a catalog row exactly, and it can only do that
+// if the adapter wrote the run id the caller could not omit AND the read
+// side gives all three back. A snapshot that stored the tag but reported
+// SnapshotInfo.Tags as nil would send reconciliation back to matching on
+// time, which is the ambiguity the tag exists to remove.
+func TestSnapshotTreeReportsTheRunTagOnTheReadSide(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rep := newTreeRepository(t)
+
+	src := treeSource("/sets/attributed")
+
+	root := &memDir{entries: []backupengine.SourceEntry{
+		fileEntry("a.txt", newMemStream([]byte("first object\n"))),
+	}}
+
+	const runID = "run-9c41f0d2"
+
+	info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
+		Source: src,
+		RunID:  runID,
+		Root:   root,
+		Tags: map[string]string{
+			backupengine.TagKeyBackupSet: "set-attributed",
+			backupengine.TagKeyDomain:    "production",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SnapshotTree: %v", err)
+	}
+
+	want := map[string]string{
+		backupengine.TagKeyRun:       runID,
+		backupengine.TagKeyBackupSet: "set-attributed",
+		backupengine.TagKeyDomain:    "production",
+	}
+
+	snaps, err := rep.ListSnapshots(ctx, src)
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+
+	if len(snaps) != 1 {
+		t.Fatalf("the set has %d snapshots after one run, want exactly 1", len(snaps))
+	}
+
+	assertTags(t, "ListSnapshots", snaps[0].Tags, want)
+
+	found, err := rep.LookupSnapshot(ctx, info.ID)
+	if err != nil {
+		t.Fatalf("LookupSnapshot(%s): %v", info.ID, err)
+	}
+
+	assertTags(t, "LookupSnapshot", found.Tags, want)
+}
+
+// assertTags compares one read path's tags against what the run stored.
+// Both paths are asserted against the same map because reconciliation
+// uses whichever it has to hand, and a snapshot that is attributable
+// through one and not the other is attributable by luck.
+func assertTags(t *testing.T, path string, got, want map[string]string) {
+	t.Helper()
+
+	for key, value := range want {
+		if got[key] != value {
+			t.Errorf("%s reports %s=%q, want %q (tags: %v)", path, key, got[key], value, got)
+		}
+	}
+
+	if len(got) != len(want) {
+		t.Errorf("%s reports %d tags (%v), want exactly the %d written", path, len(got), got, len(want))
+	}
+}
+
+// TestSnapshotTreeRefusesARunWithoutARunID is the refusal that keeps the
+// tag from being optional in practice.
+//
+// An id the caller may leave out is an id that is missing on the path
+// nobody exercises by hand, and the missing case cannot be repaired
+// afterwards: nothing later can work out which run wrote a manifest that
+// never said. So the run is refused before any storage is touched, and
+// what makes that assertion worth writing is the second half -- the
+// repository holds nothing for this source afterwards, rather than an
+// unattributable snapshot plus an error.
+func TestSnapshotTreeRefusesARunWithoutARunID(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rep := newTreeRepository(t)
+
+	src := treeSource("/sets/unattributed")
+
+	root := &memDir{entries: []backupengine.SourceEntry{
+		fileEntry("a.txt", newMemStream([]byte("first object\n"))),
+	}}
+
+	_, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
+		Source: src,
+		Root:   root,
+		Tags: map[string]string{
+			backupengine.TagKeyBackupSet: "set-unattributed",
+			backupengine.TagKeyDomain:    "production",
+		},
+	})
+	if err == nil {
+		t.Fatal("SnapshotTree stored a snapshot for a run that did not say which run it was")
+	}
+
+	if !strings.Contains(err.Error(), "run id") {
+		t.Errorf("SnapshotTree reported %v, want a refusal naming the missing run id", err)
+	}
+
+	// The source was never read either: the refusal happens before the
+	// walk, not after a tree has been pulled off a remote for nothing.
+	if got := root.opens.Load(); got != 0 {
+		t.Errorf("the refused run opened the source %d times, want 0", got)
+	}
+
+	assertNoSnapshots(t, ctx, rep, src)
 }

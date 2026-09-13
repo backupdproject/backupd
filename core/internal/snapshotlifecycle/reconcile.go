@@ -96,6 +96,22 @@ const (
 	// not prove. The manifest is kept and attributed; the run is failed.
 	VerdictVerificationFailed VerdictKind = "verification_failed"
 
+	// VerdictSourceIncomplete is a run whose snapshot this pass refuses to
+	// promote because the row does not durably say the source pass covered
+	// the source.
+	//
+	// Two rows get it and they are different situations with the same
+	// answer. One says outright that the pass did not cover everything: a
+	// run that recorded its manifest and the verdict together and then
+	// died before it could fail itself. The other says nothing either
+	// way -- a manifest adopted from the repository, whose measurements
+	// and verdict died with the process that took them. Promoting either
+	// would advertise, as a verified restore point, a snapshot that may
+	// be missing source data, and no amount of verification can tell:
+	// verification proves the snapshot is intact, never that it is
+	// complete. The manifest is kept and attributed; the run is failed.
+	VerdictSourceIncomplete VerdictKind = "source_incomplete"
+
 	// VerdictManifestMissing is a row that names a manifest the
 	// repository does not have, before it ever reached success.
 	VerdictManifestMissing VerdictKind = "manifest_missing"
@@ -138,6 +154,7 @@ var verdictKinds = []VerdictKind{
 	VerdictVerified,
 	VerdictCommitCompleted,
 	VerdictVerificationFailed,
+	VerdictSourceIncomplete,
 	VerdictManifestMissing,
 	VerdictRestorePointLost,
 	VerdictDeleteCompleted,
@@ -212,8 +229,15 @@ func (r ReconcileReport) Changed() []Verdict {
 
 // ReconcileRequest is one backup set's reconciliation input.
 type ReconcileRequest struct {
-	Set    model.BackupSetID
-	Domain model.RepositoryDomainID
+	// Set is the backup set's names and SetUUID is its durable identifier.
+	// Every catalog read this pass makes is keyed on the second: a pass
+	// that looked a set's history up by name would, the day after a
+	// rename, find no history, no restore point and no unfinished work --
+	// and would then decide about a repository full of snapshots on the
+	// strength of having found nothing.
+	Set     model.BackupSetID
+	SetUUID string
+	Domain  model.RepositoryDomainID
 
 	// Source is the set's identity in the repository: what its snapshots
 	// are listed by.
@@ -275,8 +299,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ReconcileRequest) (Recon
 		return ReconcileReport{}, ErrNoRepository
 	}
 
-	if req.Set.IsZero() || req.Domain.IsZero() {
-		return ReconcileReport{}, errors.New("snapshotlifecycle: reconciliation needs the backup set and the repository domain it is about")
+	if req.Set.IsZero() || req.SetUUID == "" || req.Domain.IsZero() {
+		return ReconcileReport{}, errors.New(
+			"snapshotlifecycle: reconciliation needs the backup set, its durable uuid and the repository domain it is about")
 	}
 
 	present, err := r.repositorySnapshots(ctx, req)
@@ -284,15 +309,31 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ReconcileRequest) (Recon
 		return ReconcileReport{}, err
 	}
 
+	// Which manifests in this domain the catalog already accounts for,
+	// read ONCE for the pass and used by both the passes that ask.
+	//
+	// Attribution asks it of every snapshot the repository holds, and
+	// orphan adoption asks it again of the same set; a row-at-a-time
+	// lookup made that two queries per manifest per cycle. It is also
+	// the read whose failure must stop the pass rather than be treated as
+	// "no", which a per-snapshot lookup made easy to get wrong: an
+	// unreadable catalog would otherwise look exactly like a repository
+	// full of snapshots nobody owns.
+	owned, err := r.Catalog.DomainSnapshotIDs(ctx, req.Domain.String())
+	if err != nil {
+		return ReconcileReport{}, fmt.Errorf(
+			"snapshotlifecycle: reading which of repository %s's snapshots this catalog accounts for: %w", req.Domain, err)
+	}
+
 	report := ReconcileReport{Set: req.Set}
 
-	unfinished, err := r.unfinishedFor(ctx, req.Set)
+	unfinished, err := r.unfinishedFor(ctx, req)
 	if err != nil {
 		return ReconcileReport{}, err
 	}
 
 	for i := range unfinished {
-		verdicts, err := r.resolveUnfinished(ctx, req, unfinished[i], present)
+		verdicts, err := r.resolveUnfinished(ctx, req, unfinished[i], present, owned)
 		if err != nil {
 			return report, err
 		}
@@ -300,13 +341,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ReconcileRequest) (Recon
 		report.Verdicts = append(report.Verdicts, verdicts...)
 	}
 
-	finished, err := r.Catalog.ListSnapshotRuns(ctx, req.Set, r.historyLimit())
+	finished, err := r.Catalog.ListSnapshotRuns(ctx, req.SetUUID, r.historyLimit())
 	if err != nil {
 		return report, fmt.Errorf("snapshotlifecycle: reading %s's snapshot history: %w", req.Set, err)
 	}
 
 	for i := range finished {
-		verdicts, err := r.resolveFinished(ctx, finished[i], present)
+		verdicts, err := r.resolveFinished(ctx, req, finished[i], present)
 		if err != nil {
 			return report, err
 		}
@@ -314,7 +355,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ReconcileRequest) (Recon
 		report.Verdicts = append(report.Verdicts, verdicts...)
 	}
 
-	quarantines, err := r.quarantineUnattributed(ctx, req, present)
+	quarantines, err := r.quarantineUnattributed(ctx, req, present, owned)
 	if err != nil {
 		return report, err
 	}
@@ -332,7 +373,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ReconcileRequest) (Recon
 		report.Verdicts = append(report.Verdicts, v)
 	}
 
-	lkg, err := r.Catalog.LastKnownGoodSnapshot(ctx, req.Set)
+	lkg, err := r.Catalog.LastKnownGoodSnapshot(ctx, req.SetUUID)
 	switch {
 	case err == nil:
 		report.LastKnownGoodRunID = lkg.RunID
@@ -363,14 +404,21 @@ func (r *Reconciler) repositorySnapshots(ctx context.Context, req ReconcileReque
 	return present, nil
 }
 
-// unfinishedFor is every non-terminal row for this set, oldest first.
+// unfinishedFor is every non-terminal row of this LINEAGE that this pass
+// can actually decide about, oldest first.
 //
 // The journal's worklist is deployment-wide, because a reconciler reads it
 // to find what a dead process abandoned and a dead process does not tidy
 // up per set. Filtering here rather than asking for a narrower query
 // keeps the journal's side one read and one index, and the population is
 // bounded by how many runs were interrupted rather than by how many ran.
-func (r *Reconciler) unfinishedFor(ctx context.Context, set model.BackupSetID) ([]state.SnapshotRun, error) {
+//
+// The filter is the lineage AND the view: see inThisView. A row of this
+// set written against a different source identity or a different domain
+// is a row about a repository this pass has not looked in, and every
+// verdict below is of the form "the catalog says X and the repository
+// says Y".
+func (r *Reconciler) unfinishedFor(ctx context.Context, req ReconcileRequest) ([]state.SnapshotRun, error) {
 	all, err := r.Catalog.UnfinishedSnapshotRuns(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("snapshotlifecycle: reading the unfinished snapshot runs: %w", err)
@@ -378,12 +426,30 @@ func (r *Reconciler) unfinishedFor(ctx context.Context, set model.BackupSetID) (
 
 	var out []state.SnapshotRun
 	for _, run := range all {
-		if run.Set == set {
+		if run.SetUUID == req.SetUUID && inThisView(run, req) {
 			out = append(out, run)
 		}
 	}
 
 	return out, nil
+}
+
+// inThisView reports whether a catalog row is about the repository this
+// pass has just read.
+//
+// It is the guard on every "the repository does not have it, so it is
+// gone" verdict in this file, and the defect it exists for is specific: a
+// set whose source identity or repository domain changed lists its
+// snapshots under a DIFFERENT identity, so the repository read comes back
+// empty of everything the old identity wrote -- and the pass, comparing
+// old rows against a view that could never contain them, marks every one
+// of them LOST and clears the set's last-known-good. Nothing was lost;
+// the pass was looking somewhere else.
+//
+// A row outside the view is left exactly as it is, for a pass that can
+// see its repository, which is the only honest answer available here.
+func inThisView(run state.SnapshotRun, req ReconcileRequest) bool {
+	return run.Domain == req.Domain.String() && run.SourceIdentity == req.SourceIdentity.String()
 }
 
 // resolveUnfinished is the crash-boundary table for a row that never
@@ -393,6 +459,7 @@ func (r *Reconciler) resolveUnfinished(
 	req ReconcileRequest,
 	run state.SnapshotRun,
 	present map[string]backupengine.SnapshotInfo,
+	owned map[string]string,
 ) ([]Verdict, error) {
 	switch run.Phase {
 	case state.PhasePending, state.PhaseSourceScan:
@@ -402,7 +469,7 @@ func (r *Reconciler) resolveUnfinished(
 			fmt.Sprintf("this run was interrupted at %s, before any snapshot was written", run.Phase))
 
 	case state.PhaseSnapshotWrite:
-		return r.resolveInterruptedUpload(ctx, req, run, present)
+		return r.resolveInterruptedUpload(ctx, req, run, present, owned)
 
 	case state.PhaseManifestCommitted, state.PhaseVerification:
 		return r.resolveUnverified(ctx, req, run, present)
@@ -432,9 +499,10 @@ func (r *Reconciler) resolveInterruptedUpload(
 	req ReconcileRequest,
 	run state.SnapshotRun,
 	present map[string]backupengine.SnapshotInfo,
+	owned map[string]string,
 ) ([]Verdict, error) {
-	if adopted, ok := r.orphanFor(ctx, req, run, present); ok {
-		verdicts, err := r.adopt(ctx, run, adopted)
+	if adopted, ok := r.orphanFor(req, run, present, owned); ok {
+		verdicts, err := r.adopt(ctx, run, adopted, owned)
 		if err != nil {
 			return verdicts, err
 		}
@@ -465,6 +533,19 @@ func (r *Reconciler) resolveUnverified(
 	if _, ok := present[run.SnapshotID]; !ok {
 		return r.finish(ctx, run, state.PhaseFailed, VerdictManifestMissing,
 			"the snapshot this run committed is no longer in the repository, so the run cannot be completed")
+	}
+
+	// The source-completeness gate, and it comes BEFORE the verification
+	// this pass would otherwise spend a full read of the snapshot on.
+	//
+	// Verification proves a snapshot is intact. It cannot prove it is
+	// complete: a snapshot of a tree the source pass only got half way
+	// through verifies perfectly. So a row that does not durably say the
+	// pass covered the source is failed here, with its manifest kept and
+	// attributed, rather than proven and promoted into a restore point
+	// this product would then offer.
+	if reason, ok := sourceIncompleteReason(run); ok {
+		return r.finish(ctx, run, state.PhaseFailed, VerdictSourceIncomplete, reason)
 	}
 
 	var verdicts []Verdict
@@ -537,6 +618,16 @@ func (r *Reconciler) completeCommit(
 			fmt.Sprintf("this run reached the catalog commit with verification %q, which is not a pass", run.VerificationStatus))
 	}
 
+	if reason, ok := sourceIncompleteReason(run); ok {
+		// A row cannot normally reach the catalog commit without the
+		// verdict -- the run driver writes it with the manifest and
+		// fails the run itself if it is false -- and that is exactly why
+		// the check is here as well as one phase earlier. This is the
+		// promotion, and the rule is that nothing gets promoted without
+		// the verdict, not that most things do.
+		return r.finish(ctx, run, state.PhaseFailed, VerdictSourceIncomplete, reason)
+	}
+
 	if err := r.move(ctx, &run, state.PhaseSuccess, state.SnapshotRunUpdate{}); err != nil {
 		return nil, err
 	}
@@ -556,6 +647,7 @@ func (r *Reconciler) completeCommit(
 // went away on its own.
 func (r *Reconciler) resolveFinished(
 	ctx context.Context,
+	req ReconcileRequest,
 	run state.SnapshotRun,
 	present map[string]backupengine.SnapshotInfo,
 ) ([]Verdict, error) {
@@ -563,6 +655,15 @@ func (r *Reconciler) resolveFinished(
 	// against: a failed pre-upload run, or a quarantine row this pass
 	// has not finished writing. Neither is a question for this function.
 	if run.SnapshotID == "" {
+		return nil, nil
+	}
+
+	// A row written against a different source identity or domain is a
+	// row about a repository this pass has not read. Everything below
+	// turns "the view does not contain it" into a verdict, so deciding
+	// one of those here would report a snapshot as lost on the evidence
+	// of having looked somewhere else. See inThisView.
+	if !inThisView(run, req) {
 		return nil, nil
 	}
 
@@ -604,25 +705,25 @@ func (r *Reconciler) resolveFinished(
 // quarantineUnattributed records every repository snapshot under this
 // set's source identity that no catalog row accounts for.
 //
-// The keyed lookup, rather than a scan of the rows this pass happens to
-// have read, is what makes the answer right for a snapshot older than the
-// history window: the question "is this manifest one of ours" has a
-// unique-index answer and does not depend on how far back a pass looked.
+// It answers "is this manifest one of ours" from the domain-wide
+// membership this pass already read, rather than from the rows it
+// happens to have listed: the question must be right for a snapshot
+// older than the history window and for one belonging to a co-tenant
+// set, and a scan of one set's newest rows is right for neither. The
+// read that produced `owned` is also the one place a catalog failure can
+// stop the pass, which is what it does -- an unreadable catalog must
+// never present as "nobody owns any of this".
 func (r *Reconciler) quarantineUnattributed(
 	ctx context.Context,
 	req ReconcileRequest,
 	present map[string]backupengine.SnapshotInfo,
+	owned map[string]string,
 ) ([]Verdict, error) {
 	var verdicts []Verdict
 
 	for _, id := range sortedIDs(present) {
-		_, err := r.Catalog.SnapshotRunBySnapshotID(ctx, req.Domain.String(), id)
-		switch {
-		case err == nil:
+		if _, ours := owned[id]; ours {
 			continue
-		case errors.Is(err, state.ErrSnapshotRunNotFound):
-		default:
-			return verdicts, fmt.Errorf("snapshotlifecycle: asking whether snapshot %s is ours: %w", id, err)
 		}
 
 		v, err := r.quarantine(ctx, req, present[id])
@@ -653,6 +754,7 @@ func (r *Reconciler) quarantine(ctx context.Context, req ReconcileRequest, info 
 		RunID:          id,
 		IdempotencyKey: id,
 		Set:            req.Set,
+		SetUUID:        req.SetUUID,
 		Engine:         model.EngineKopia.String(),
 		Domain:         req.Domain.String(),
 		SourceIdentity: sourceIdentityOf(req),
@@ -697,19 +799,24 @@ func (r *Reconciler) quarantine(ctx context.Context, req ReconcileRequest, info 
 }
 
 // repointLastKnownGood moves the last-known-good flag to the newest
-// successful run whose snapshot is still in the repository, when the set
-// has no flagged run any more.
+// successful run whose snapshot is still in the repository, when the
+// lineage has no flagged run any more.
 //
 // It runs after the row-level verdicts, because the pass above is what
 // takes the flag away: advancing a row to LOST clears it, which is
 // correct and which would otherwise leave a set with a perfectly good
 // older snapshot reporting no restore point at all.
+//
+// Only a run inside this pass's view is a candidate: a row written under
+// a different source identity or domain names a snapshot in a repository
+// this pass has not read, and "present holds it" is not a question that
+// can be asked of it at all. See inThisView.
 func (r *Reconciler) repointLastKnownGood(
 	ctx context.Context,
 	req ReconcileRequest,
 	present map[string]backupengine.SnapshotInfo,
 ) ([]Verdict, error) {
-	_, err := r.Catalog.LastKnownGoodSnapshot(ctx, req.Set)
+	_, err := r.Catalog.LastKnownGoodSnapshot(ctx, req.SetUUID)
 	switch {
 	case err == nil:
 		return nil, nil
@@ -718,13 +825,13 @@ func (r *Reconciler) repointLastKnownGood(
 		return nil, fmt.Errorf("snapshotlifecycle: reading %s's last-known-good snapshot: %w", req.Set, err)
 	}
 
-	runs, err := r.Catalog.ListSnapshotRuns(ctx, req.Set, r.historyLimit())
+	runs, err := r.Catalog.ListSnapshotRuns(ctx, req.SetUUID, r.historyLimit())
 	if err != nil {
 		return nil, fmt.Errorf("snapshotlifecycle: reading %s's snapshot history: %w", req.Set, err)
 	}
 
 	for _, run := range runs {
-		if run.Phase != state.PhaseSuccess || run.SnapshotID == "" {
+		if run.Phase != state.PhaseSuccess || run.SnapshotID == "" || !inThisView(run, req) {
 			continue
 		}
 
@@ -732,7 +839,7 @@ func (r *Reconciler) repointLastKnownGood(
 			continue
 		}
 
-		if err := r.Catalog.RepointLastKnownGood(ctx, req.Set, run.RunID); err != nil {
+		if err := r.Catalog.RepointLastKnownGood(ctx, req.SetUUID, run.RunID); err != nil {
 			return nil, fmt.Errorf("snapshotlifecycle: re-pointing %s's last-known-good snapshot at run %s: %w", req.Set, run.RunID, err)
 		}
 
@@ -784,22 +891,43 @@ func maintenanceVerdict(req ReconcileRequest) (Verdict, bool) {
 }
 
 // orphanFor looks for a manifest in the repository that this interrupted
-// run must have produced.
+// run PROVABLY produced.
 //
-// The claim has to be made carefully, because adopting the wrong manifest
-// onto a row would attribute somebody else's snapshot to this run. Two
-// conditions have to hold: the manifest is not already claimed by any
-// catalog row, and it was started at or after this run was (a snapshot
-// under this set's source identity that predates the run cannot be its
-// output). If more than one candidate matches, none is adopted: two
-// unclaimed manifests inside one run's window is not a situation to guess
-// at, and the run fails while both manifests stay in place for the
-// quarantine pass to name.
+// The claim has to be exact, because adopting the wrong manifest onto a
+// row attributes somebody else's snapshot to this run and then offers it
+// as this set's restore point. Three things must all agree, and they are
+// the three tags the adapter writes on every snapshot this product
+// stores: the run id, the repository domain and the backup set. A
+// manifest that matches all three was written by this run and by nothing
+// else.
+//
+// # Why time is not evidence
+//
+// The rule this replaces was "unclaimed, and started at or after this run
+// did". Every part of that is satisfied by a snapshot the operator took
+// by hand with the vendor's own CLI against their own bucket while the
+// backup window was open, and by a co-tenant set's snapshot in a shared
+// domain whose source identity happens to be listed here. Both would have
+// been adopted, verified and advertised as this set's restore point. A
+// snapshot this manager cannot prove is its own is left for the
+// quarantine pass to name, which is the whole disposition this file's
+// header argues for.
+//
+// A manifest another catalog row already claims is skipped: `owned` is
+// the domain-wide membership the pass read once, and a failure to read it
+// aborted the pass before this function was ever called. That ordering is
+// deliberate. The version of this that asked per snapshot treated ANY
+// non-nil error as "unclaimed", so a catalog that could not be read made
+// every manifest in the repository look adoptable.
+//
+// If more than one candidate matches -- which would mean two manifests
+// tagged with one run id -- none is adopted: that is not a situation to
+// guess at, and the run fails while both manifests stay in place.
 func (r *Reconciler) orphanFor(
-	ctx context.Context,
 	req ReconcileRequest,
 	run state.SnapshotRun,
 	present map[string]backupengine.SnapshotInfo,
+	owned map[string]string,
 ) (backupengine.SnapshotInfo, bool) {
 	var (
 		found backupengine.SnapshotInfo
@@ -809,11 +937,11 @@ func (r *Reconciler) orphanFor(
 	for _, id := range sortedIDs(present) {
 		info := present[id]
 
-		if info.Start.Before(run.StartedAt) {
+		if !producedBy(info, req, run) {
 			continue
 		}
 
-		if _, err := r.Catalog.SnapshotRunBySnapshotID(ctx, req.Domain.String(), id); err == nil {
+		if claimant, ours := owned[id]; ours && claimant != run.RunID {
 			continue
 		}
 
@@ -827,8 +955,38 @@ func (r *Reconciler) orphanFor(
 	return found, true
 }
 
-// adopt records a manifest onto the row that produced it.
-func (r *Reconciler) adopt(ctx context.Context, run state.SnapshotRun, info backupengine.SnapshotInfo) ([]Verdict, error) {
+// producedBy reports whether a repository snapshot carries this exact
+// run's attribution.
+//
+// All three tags are required and an absent one is a mismatch, not a
+// benign gap: a manifest with no run tag was written by something that is
+// not this build's run driver -- an older build, another tool, a person
+// -- and "we cannot tell" is precisely the case that must not be adopted.
+func producedBy(info backupengine.SnapshotInfo, req ReconcileRequest, run state.SnapshotRun) bool {
+	if info.Tags == nil {
+		return false
+	}
+
+	return info.Tags[backupengine.TagKeyRun] == run.RunID &&
+		info.Tags[backupengine.TagKeyDomain] == req.Domain.String() &&
+		info.Tags[backupengine.TagKeyBackupSet] == req.Set.String()
+}
+
+// adopt records a manifest onto the run whose tag says it produced it.
+//
+// Adoption attributes a snapshot; it does not rehabilitate it. The row
+// still carries no source-completeness verdict -- the process that would
+// have written one died before it could -- so the pass that follows
+// refuses to promote it (see sourceIncompleteReason). That is the
+// intended and only honest end for it: the manifest is kept, named and
+// owned, and nothing advertises it as a restore point, because nothing
+// alive knows whether the pass behind it covered the source.
+func (r *Reconciler) adopt(
+	ctx context.Context,
+	run state.SnapshotRun,
+	info backupengine.SnapshotInfo,
+	owned map[string]string,
+) ([]Verdict, error) {
 	// Only what the manifest itself can answer is recorded. The bytes a
 	// run READ off the source and the bytes it WROTE to storage are
 	// measurements the dead process took and did not persist, and
@@ -845,6 +1003,15 @@ func (r *Reconciler) adopt(ctx context.Context, run state.SnapshotRun, info back
 		return nil, err
 	}
 
+	// The domain's membership was read once, at the top of the pass, and
+	// this row has just joined it. Without this line the quarantine pass
+	// that runs afterwards would find the manifest unclaimed -- by a map
+	// that is a few milliseconds out of date -- and try to open a
+	// quarantine row for a snapshot this run now owns, which the
+	// catalog's one-manifest-one-run index correctly refuses and which
+	// would fail the whole cycle.
+	owned[string(info.ID)] = run.RunID
+
 	return []Verdict{{
 		Kind:       VerdictManifestAdopted,
 		RunID:      run.RunID,
@@ -853,6 +1020,31 @@ func (r *Reconciler) adopt(ctx context.Context, run state.SnapshotRun, info back
 		To:         state.PhaseManifestCommitted,
 		Reason:     "the repository held an unclaimed snapshot this run must have written, so the row adopted it instead of leaving it unattributable",
 	}}, nil
+}
+
+// sourceIncompleteReason is the one place reconciliation asks whether a
+// row may become a restore point, and the operator sentence for when it
+// may not.
+//
+// Three states, two answers. A recorded true is the only one that permits
+// promotion. A recorded false is a pass that said outright it did not
+// cover the source. NULL is a row nobody ever wrote a verdict on, which
+// is what a crash before the manifest was recorded and an adopted
+// manifest both leave behind, and it is not the same claim -- but it is
+// the same answer, because the question a restore point has to survive is
+// "does this manager know the snapshot covers the source", and "no idea"
+// fails it.
+func sourceIncompleteReason(run state.SnapshotRun) (string, bool) {
+	switch {
+	case run.SourceComplete == nil:
+		return "nothing durably recorded whether the source pass behind this snapshot covered the source, " +
+			"so it is kept and attributed but never advertised as a restore point: a verification proves a snapshot is intact, never that it is complete", true
+	case !*run.SourceComplete:
+		return "the source pass behind this snapshot did not cover every entry it was asked to, " +
+			"so the manifest is kept and attributed and the run is failed rather than advertised as a restore point", true
+	default:
+		return "", false
+	}
 }
 
 // finish records a terminal phase and returns the verdict for it.

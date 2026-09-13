@@ -234,7 +234,13 @@ type SnapshotRunRequest struct {
 	RunID          string
 	IdempotencyKey string
 
-	Set model.BackupSetID
+	// Set is the backup set's NAMES, which is what a surface renders.
+	// SetUUID is what the row is keyed by. See 0010's preamble: the two
+	// halves of a BackupSetID are configuration an operator edits, and a
+	// lineage keyed on them loses its history and duplicates its
+	// last-known-good flag the moment a set is renamed.
+	Set     model.BackupSetID
+	SetUUID string
 
 	// OperationID is the durable operation row this run belongs to, empty
 	// for a scheduled cycle no client asked for.
@@ -291,6 +297,25 @@ type SnapshotRunUpdate struct {
 	RepositoryBytesWritten *int64
 	ContentReusedBytes     *int64
 
+	// EntriesScanned is how many source entries the pass considered, of
+	// every kind, including the ones it deliberately skipped. It is not
+	// files + directories: that reconstruction leaves out everything a
+	// pass refused and reads as zero for a snapshot nobody measured.
+	EntriesScanned *int64
+
+	// SourceComplete is the source side's own verdict that the pass
+	// covered every entry it was asked to, written in the same statement
+	// that records the manifest.
+	//
+	// It is a pointer for a reason the counters' own doc does not cover:
+	// the third value is load-bearing. nil leaves the column as it is,
+	// and a column that is still NULL means NOBODY RECORDED A VERDICT --
+	// which is what a run that died before its manifest was recorded, and
+	// a manifest adopted from the repository by reconciliation, both
+	// genuinely are. That is a different claim from "the pass was
+	// incomplete", and neither of them is a restore point.
+	SourceComplete *bool
+
 	// VerificationStatus is "", "pending", "passed" or "failed"; anything
 	// else is refused rather than stored, because the schema's CHECK would
 	// otherwise refuse it in the column's words instead of the caller's.
@@ -321,6 +346,7 @@ type SnapshotRun struct {
 	IdempotencyKey string
 
 	Set         model.BackupSetID
+	SetUUID     string
 	OperationID string
 
 	Engine         string
@@ -348,6 +374,15 @@ type SnapshotRun struct {
 	SourceBytesRead        *int64
 	RepositoryBytesWritten *int64
 	ContentReusedBytes     *int64
+
+	// EntriesScanned is every entry the pass considered, skipped ones
+	// included; nil when nobody measured it.
+	EntriesScanned *int64
+
+	// SourceComplete is the source side's verdict about this pass, nil
+	// when no verdict was ever recorded. See
+	// SnapshotRunUpdate.SourceComplete for why the third value matters.
+	SourceComplete *bool
 
 	VerificationStatus string
 	Reason             string
@@ -466,11 +501,13 @@ func snapshotIDFor(upd SnapshotRunUpdate, current SnapshotRun) string {
 //
 // Every field it insists on is one that makes the row addressable or
 // attributable later: without the two identifiers a run cannot be polled
-// or replayed, without the set it belongs to nothing, and without engine,
-// domain and source identity a reconciler walking a repository cannot
-// decide whether a snapshot it finds is this run's. The schema would
-// refuse most of this too, in the column's words rather than the caller's,
-// which is the argument validateOperationRequest already makes.
+// or replayed, without the set it belongs to nothing, without the set's
+// durable uuid its lineage hangs off a name an operator can edit, and
+// without engine, domain and source identity a reconciler walking a
+// repository cannot decide whether a snapshot it finds is this run's. The
+// schema would refuse most of this too, in the column's words rather than
+// the caller's, which is the argument validateOperationRequest already
+// makes.
 func validateSnapshotRunRequest(req SnapshotRunRequest) error {
 	switch {
 	case req.RunID == "":
@@ -479,6 +516,8 @@ func validateSnapshotRunRequest(req SnapshotRunRequest) error {
 		return fmt.Errorf("state: snapshot run requires a non-empty IdempotencyKey")
 	case req.Set.IsZero():
 		return fmt.Errorf("state: snapshot run requires a backup set id")
+	case req.SetUUID == "":
+		return fmt.Errorf("state: snapshot run requires the backup set's durable SetUUID, or its snapshot lineage would be keyed on a name an operator can edit")
 	case req.Engine == "":
 		return fmt.Errorf("state: snapshot run requires an Engine")
 	case req.Domain == "":
@@ -560,11 +599,17 @@ func (j *Journal) BeginSnapshotRun(ctx context.Context, req SnapshotRunRequest) 
 }
 
 // commitSnapshotRunReplay is BeginSnapshotRun's shared "this key was
-// already used" path. The four fields it compares are the run's identity:
-// two requests agreeing on all of them are the same logical piece of work
+// already used" path. The fields it compares are the run's identity: two
+// requests agreeing on all of them are the same logical piece of work
 // whoever asked for it, and two that differ on any of them are not.
+//
+// The set's uuid is compared and its NAMES are not. A set that was
+// renamed between a submission and its retry is the same set, and
+// refusing the replay over the rename would start a second pass over one
+// source; a request carrying a different uuid under the same key is a
+// different set whatever it happens to be called.
 func commitSnapshotRunReplay(tx *sql.Tx, req SnapshotRunRequest, existing SnapshotRun) (SnapshotRunOutcome, error) {
-	if existing.Set != req.Set ||
+	if existing.SetUUID != req.SetUUID ||
 		existing.Engine != req.Engine ||
 		existing.Domain != req.Domain ||
 		existing.SourceIdentity != req.SourceIdentity {
@@ -584,11 +629,11 @@ func insertSnapshotRun(ctx context.Context, tx *sql.Tx, req SnapshotRunRequest) 
 	started := formatTime(req.StartedAt)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO snapshot_runs (
-			run_id, idempotency_key, source, backup_set, operation_id,
+			run_id, idempotency_key, source, backup_set, set_uuid, operation_id,
 			engine, domain, source_identity, consistency_mode, verification_level,
 			phase, started_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.RunID, req.IdempotencyKey, req.Set.Source, req.Set.Set, req.OperationID,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.RunID, req.IdempotencyKey, req.Set.Source, req.Set.Set, req.SetUUID, req.OperationID,
 		req.Engine, req.Domain, req.SourceIdentity, req.ConsistencyMode, req.VerificationLevel,
 		string(PhasePending), started, started,
 	); err != nil {
@@ -688,11 +733,25 @@ func (j *Journal) AdvanceSnapshotRun(ctx context.Context, runID string, to Snaps
 		{"source_bytes_read", upd.SourceBytesRead},
 		{"repository_bytes_written", upd.RepositoryBytesWritten},
 		{"content_reused_bytes", upd.ContentReusedBytes},
+		{"entries_scanned", upd.EntriesScanned},
 	} {
 		if counter.value != nil {
 			set = append(set, counter.column+" = ?")
 			args = append(args, *counter.value)
 		}
+	}
+	if upd.SourceComplete != nil {
+		// Stored as 0/1 rather than as a boolean, because SQLite has no
+		// boolean and the column's CHECK says so. What the column does
+		// have is three states, and only a caller that actually reached a
+		// verdict writes one: see SnapshotRunUpdate.SourceComplete.
+		complete := int64(0)
+		if *upd.SourceComplete {
+			complete = 1
+		}
+
+		set = append(set, "source_complete = ?")
+		args = append(args, complete)
 	}
 	if upd.VerificationStatus != nil {
 		set = append(set, "verification_status = ?")
@@ -727,14 +786,18 @@ func (j *Journal) AdvanceSnapshotRun(ctx context.Context, runID string, to Snaps
 
 	switch {
 	case changingPhase && to == PhaseSuccess:
-		// Take the flag off whoever in this set holds it, then put it on
-		// this row. Both statements are in this transaction and in this
+		// Take the flag off whoever in this LINEAGE holds it, then put it
+		// on this row. Both statements are in this transaction and in this
 		// order because the partial unique index refuses two holders, so
-		// the clear is not tidying up: it is what makes the set legal.
+		// the clear is not tidying up: it is what makes the lineage legal.
+		//
+		// Keyed on set_uuid and not on the set's names: a rename must not
+		// leave the previous holder's flag standing while this row sets a
+		// second one, which is what 0010 exists for.
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE snapshot_runs SET last_known_good = 0, updated_at = ?
-			  WHERE source = ? AND backup_set = ? AND last_known_good = 1 AND run_id <> ?`,
-			stamp, current.Set.Source, current.Set.Set, runID,
+			  WHERE set_uuid = ? AND last_known_good = 1 AND run_id <> ?`,
+			stamp, current.SetUUID, runID,
 		); err != nil {
 			return fmt.Errorf("state: clear previous last-known-good: %w", err)
 		}
@@ -776,8 +839,9 @@ func (j *Journal) AdvanceSnapshotRun(ctx context.Context, runID string, to Snaps
 	return nil
 }
 
-// RepointLastKnownGood moves this set's last-known-good flag onto runID,
-// taking it off every other row of the same set, in one transaction.
+// RepointLastKnownGood moves this lineage's last-known-good flag onto
+// runID, taking it off every other row of the same lineage, in one
+// transaction.
 //
 // It is the ONE way the flag moves other than a run reaching SUCCESS, and
 // it exists because of a hole nothing else can fill. When the newest
@@ -791,17 +855,19 @@ func (j *Journal) AdvanceSnapshotRun(ctx context.Context, runID string, to Snaps
 // refusals are why it can be trusted with a flag everything else is
 // forbidden to touch. A run that is not at SUCCESS has no snapshot worth
 // offering: a run at PENDING or FAILED never wrote one, and a run at LOST
-// or DELETED had one and does not now. A run belonging to a different set
-// would offer one set's data as another's, which is the exact failure
-// model.BackupSetID exists to make impossible. And a run id with no row is
-// ErrSnapshotRunNotFound, not a silent success.
+// or DELETED had one and does not now. A run belonging to a different
+// LINEAGE would offer one set's data as another's, which is the exact
+// failure model.BackupSetID exists to make impossible -- and the lineage,
+// not the name pair, is what that comparison has to be made on, or a
+// renamed set could never be re-pointed at all. And a run id with no row
+// is ErrSnapshotRunNotFound, not a silent success.
 //
 // It does not append a transition row: no phase changed. What changed is
 // which restore point this product offers, and the run's own log is not
 // where that belongs.
-func (j *Journal) RepointLastKnownGood(ctx context.Context, set model.BackupSetID, runID string) error {
-	if set.IsZero() {
-		return fmt.Errorf("state: repointing last-known-good requires a backup set id")
+func (j *Journal) RepointLastKnownGood(ctx context.Context, setUUID, runID string) error {
+	if setUUID == "" {
+		return fmt.Errorf("state: repointing last-known-good requires the backup set's durable uuid")
 	}
 
 	tx, err := j.db.BeginTx(ctx, nil)
@@ -814,9 +880,9 @@ func (j *Journal) RepointLastKnownGood(ctx context.Context, set model.BackupSetI
 	if err != nil {
 		return err
 	}
-	if run.Set != set {
-		return fmt.Errorf("state: run %s belongs to backup set %s, not %s, and cannot be its last-known-good",
-			runID, run.Set, set)
+	if run.SetUUID != setUUID {
+		return fmt.Errorf("state: run %s belongs to backup set lineage %s, not %s, and cannot be its last-known-good",
+			runID, run.SetUUID, setUUID)
 	}
 	if run.Phase != PhaseSuccess {
 		return fmt.Errorf("state: run %s is at %s, and only a run at %s has a snapshot that may be offered as a restore point",
@@ -826,8 +892,8 @@ func (j *Journal) RepointLastKnownGood(ctx context.Context, set model.BackupSetI
 	stamp := formatTime(now())
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE snapshot_runs SET last_known_good = 0, updated_at = ?
-		  WHERE source = ? AND backup_set = ? AND last_known_good = 1 AND run_id <> ?`,
-		stamp, set.Source, set.Set, runID,
+		  WHERE set_uuid = ? AND last_known_good = 1 AND run_id <> ?`,
+		stamp, setUUID, runID,
 	); err != nil {
 		return fmt.Errorf("state: clear previous last-known-good: %w", err)
 	}
@@ -908,12 +974,13 @@ func (j *Journal) MarkSnapshotDeleteRequested(ctx context.Context, runID string,
 // and got two of them the wrong way round would not fail, it would put a
 // domain into an engine on that one code path.
 const snapshotRunColumns = `
-	run_id, idempotency_key, source, backup_set, operation_id,
+	run_id, idempotency_key, source, backup_set, set_uuid, operation_id,
 	engine, domain, source_identity, consistency_mode,
 	verification_level, verification_level_achieved,
 	phase, snapshot_id,
-	files, directories, logical_bytes,
+	entries_scanned, files, directories, logical_bytes,
 	source_bytes_read, repository_bytes_written, content_reused_bytes,
+	source_complete,
 	verification_status, reason, last_known_good,
 	started_at, updated_at, completed_at, delete_requested_at`
 
@@ -943,20 +1010,23 @@ func scanSnapshotRun(row scanRow) (SnapshotRun, error) {
 		run                                   SnapshotRun
 		source, backupSet                     string
 		phase                                 string
-		files, directories, logicalBytes      sql.NullInt64
+		entries, files, directories           sql.NullInt64
+		logicalBytes                          sql.NullInt64
 		sourceRead, repoWritten, contentReuse sql.NullInt64
+		sourceComplete                        sql.NullInt64
 		lastKnownGood                         int64
 		startedAt, updatedAt                  string
 		completedAt, deleteRequestedAt        sql.NullString
 	)
 
 	if err := row.Scan(
-		&run.RunID, &run.IdempotencyKey, &source, &backupSet, &run.OperationID,
+		&run.RunID, &run.IdempotencyKey, &source, &backupSet, &run.SetUUID, &run.OperationID,
 		&run.Engine, &run.Domain, &run.SourceIdentity, &run.ConsistencyMode,
 		&run.VerificationLevel, &run.VerificationLevelAchieved,
 		&phase, &run.SnapshotID,
-		&files, &directories, &logicalBytes,
+		&entries, &files, &directories, &logicalBytes,
 		&sourceRead, &repoWritten, &contentReuse,
+		&sourceComplete,
 		&run.VerificationStatus, &run.Reason, &lastKnownGood,
 		&startedAt, &updatedAt, &completedAt, &deleteRequestedAt,
 	); err != nil {
@@ -970,11 +1040,13 @@ func scanSnapshotRun(row scanRow) (SnapshotRun, error) {
 	run.Phase = parsed
 	run.Set = model.BackupSetID{Source: source, Set: backupSet}
 	run.Files = nullableInt64(files)
+	run.EntriesScanned = nullableInt64(entries)
 	run.Directories = nullableInt64(directories)
 	run.LogicalBytes = nullableInt64(logicalBytes)
 	run.SourceBytesRead = nullableInt64(sourceRead)
 	run.RepositoryBytesWritten = nullableInt64(repoWritten)
 	run.ContentReusedBytes = nullableInt64(contentReuse)
+	run.SourceComplete = nullableBool(sourceComplete)
 	run.LastKnownGood = lastKnownGood != 0
 
 	if run.StartedAt, err = parseTime(startedAt); err != nil {
@@ -999,6 +1071,22 @@ func nullableInt64(v sql.NullInt64) *int64 {
 	return &v.Int64
 }
 
+// nullableBool flattens the third state of a nullable 0/1 column.
+//
+// It exists for source_complete, where the third state is the point: NULL
+// means nobody recorded a verdict, which is neither "complete" nor
+// "incomplete" and must not collapse into either. See
+// SnapshotRunUpdate.SourceComplete.
+func nullableBool(v sql.NullInt64) *bool {
+	if !v.Valid {
+		return nil
+	}
+
+	b := v.Int64 != 0
+
+	return &b
+}
+
 func nullableTime(v sql.NullString) (*time.Time, error) {
 	if !v.Valid {
 		return nil, nil
@@ -1015,39 +1103,112 @@ func (j *Journal) GetSnapshotRun(ctx context.Context, runID string) (SnapshotRun
 	return getSnapshotRunBy(ctx, j.db, "run_id = ?", runID)
 }
 
-// LastKnownGoodSnapshot returns the one run of set whose snapshot may be
-// offered as a restore point, or ErrSnapshotRunNotFound when the set has
-// none.
+// LastKnownGoodSnapshot returns the one run of a backup set LINEAGE whose
+// snapshot may be offered as a restore point, or ErrSnapshotRunNotFound
+// when it has none.
 //
 // Not-found is an answer, not a failure, and it is deliberately not a zero
 // SnapshotRun: a caller handed one of those would offer a restore point
 // with an empty snapshot id. A set has none before its first success, and
 // again after the flag holder's snapshot turned out to be gone and nothing
 // has re-pointed it yet.
-func (j *Journal) LastKnownGoodSnapshot(ctx context.Context, set model.BackupSetID) (SnapshotRun, error) {
-	return getSnapshotRunBy(ctx, j.db,
-		"source = ? AND backup_set = ? AND last_known_good = 1", set.Source, set.Set)
+//
+// Keyed on the set's durable uuid rather than its names, with the rest of
+// this table's per-set reads, so that renaming a set does not hide the
+// restore point it already has.
+func (j *Journal) LastKnownGoodSnapshot(ctx context.Context, setUUID string) (SnapshotRun, error) {
+	if setUUID == "" {
+		return SnapshotRun{}, fmt.Errorf("state: reading a last-known-good snapshot requires the backup set's durable uuid")
+	}
+
+	return getSnapshotRunBy(ctx, j.db, "set_uuid = ? AND last_known_good = 1", setUUID)
 }
 
-// SnapshotRunBySnapshotID answers "is this repository manifest one of ours"
-// within a domain, and returns ErrSnapshotRunNotFound when it is not.
+// DomainSnapshotIDs is every repository manifest in one domain that this
+// journal accounts for, mapped to the run that claims it.
+//
+// It answers "is this manifest one of ours", which crash reconciliation
+// asks about EVERY snapshot the repository holds, and it answers it once
+// for the whole domain rather than once per snapshot. The row-at-a-time
+// version of this was a query per repository snapshot in two separate
+// passes (attribution and orphan adoption), so a domain holding a
+// thousand manifests cost two thousand round trips per reconciliation
+// cycle to learn something one index scan says.
 //
 // The domain is part of the question rather than a filter for tidiness:
 // two repositories can hand out the same opaque manifest id and they are
-// not the same snapshot, so an unscoped lookup would attribute one
+// not the same snapshot, so an unscoped read would attribute one
 // repository's snapshot to a run against another.
 //
-// An empty snapshot id is refused outright. Every run carries one until
-// its manifest is committed, so answering it would attribute an unrelated,
-// possibly still-running, run to a snapshot.
-func (j *Journal) SnapshotRunBySnapshotID(ctx context.Context, domain, snapshotID string) (SnapshotRun, error) {
-	if snapshotID == "" {
-		return SnapshotRun{}, fmt.Errorf("state: looking up a snapshot run requires a non-empty snapshot id")
-	}
+// It is unbounded, deliberately, and that is the finding it exists for: a
+// bounded window over one set's newest rows answers "is this ours" with
+// "no" for every older snapshot, and the caller of that answer either
+// quarantines a snapshot it already owns or creates a second repository
+// over a history it cannot see. The population is one row per manifest
+// this deployment ever committed to this domain, read through the partial
+// unique index on (domain, snapshot_id), and the id strings are all that
+// is loaded.
+//
+// Rows with no manifest are excluded: every run carries an empty
+// snapshot_id until its manifest is committed, and ” is not a manifest
+// id.
+func (j *Journal) DomainSnapshotIDs(ctx context.Context, domain string) (map[string]string, error) {
 	if domain == "" {
-		return SnapshotRun{}, fmt.Errorf("state: looking up snapshot %q requires the domain it is in", snapshotID)
+		return nil, fmt.Errorf("state: reading a domain's snapshot ids requires the domain")
 	}
-	return getSnapshotRunBy(ctx, j.db, "domain = ? AND snapshot_id = ?", domain, snapshotID)
+
+	rows, err := j.db.QueryContext(ctx,
+		`SELECT snapshot_id, run_id FROM snapshot_runs WHERE domain = ? AND snapshot_id <> ''`, domain)
+	if err != nil {
+		return nil, fmt.Errorf("state: query domain %q snapshot ids: %w", domain, err)
+	}
+	defer rows.Close()
+
+	out := map[string]string{}
+	for rows.Next() {
+		var snapshotID, runID string
+		if err := rows.Scan(&snapshotID, &runID); err != nil {
+			return nil, fmt.Errorf("state: scan domain %q snapshot ids: %w", domain, err)
+		}
+
+		out[snapshotID] = runID
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: read domain %q snapshot ids: %w", domain, err)
+	}
+
+	return out, nil
+}
+
+// DomainHasSnapshot reports whether this journal has ever recorded a
+// manifest in one repository domain, by any backup set.
+//
+// It is the guard in front of creating a repository, and DOMAIN-wide is
+// the whole point. A repository serves a domain, several sets may share
+// one, and the question that guard has to ask is "does a repository
+// already exist at this location" -- for which evidence from any set in
+// the domain is evidence. Asking only about the set that happens to be
+// running, over a bounded window of its newest rows, answers "no" for a
+// brand new set in a populated domain, and the caller then creates a
+// second, empty repository on top of a live one.
+//
+// EXISTS rather than a count or a listing: the answer is a boolean, the
+// partial unique index on (domain, snapshot_id) leads with domain, and
+// this must not grow with how many snapshots the domain holds.
+func (j *Journal) DomainHasSnapshot(ctx context.Context, domain string) (bool, error) {
+	if domain == "" {
+		return false, fmt.Errorf("state: asking whether a domain holds snapshots requires the domain")
+	}
+
+	var exists int
+	err := j.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM snapshot_runs WHERE domain = ? AND snapshot_id <> '')`, domain).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("state: asking whether domain %q holds any snapshot: %w", domain, err)
+	}
+
+	return exists != 0, nil
 }
 
 // querySnapshotRuns is every multi-row read of this table.
@@ -1072,8 +1233,15 @@ func querySnapshotRuns(ctx context.Context, q querier, tail string, args ...any)
 	return runs, nil
 }
 
-// ListSnapshotRuns returns the most recent limit runs of one set, newest
-// first.
+// ListSnapshotRuns returns the most recent limit runs of one backup set
+// LINEAGE, newest first.
+//
+// Keyed on the set's durable uuid rather than on its names: a renamed set
+// is the same set, and a history that disappeared when somebody edited a
+// name would take with it the reconciler's view of what it may compare
+// against the repository and the guard that refuses to create a second
+// repository over a set that already has one. The names remain on every
+// row, for a surface to render.
 //
 // Ordered by started_at then rowid, for ListOperations' reason: started_at
 // is what a reader means by "most recent", and the rowid tiebreak totally
@@ -1084,16 +1252,16 @@ func querySnapshotRuns(ctx context.Context, q querier, tail string, args ...any)
 // also for ListOperations' reason: this table is append-only and never
 // pruned, so an unbounded read grows with the deployment's whole history,
 // and an hourly snapshot schedule fills it faster than anything else here.
-func (j *Journal) ListSnapshotRuns(ctx context.Context, set model.BackupSetID, limit int) ([]SnapshotRun, error) {
+func (j *Journal) ListSnapshotRuns(ctx context.Context, setUUID string, limit int) ([]SnapshotRun, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("state: listing snapshot runs requires a positive limit, got %d", limit)
 	}
-	if set.IsZero() {
-		return nil, fmt.Errorf("state: listing snapshot runs requires a backup set id")
+	if setUUID == "" {
+		return nil, fmt.Errorf("state: listing snapshot runs requires the backup set's durable uuid")
 	}
 	return querySnapshotRuns(ctx, j.db,
-		`WHERE source = ? AND backup_set = ? ORDER BY started_at DESC, id DESC LIMIT ?`,
-		set.Source, set.Set, limit)
+		`WHERE set_uuid = ? ORDER BY started_at DESC, id DESC LIMIT ?`,
+		setUUID, limit)
 }
 
 // SnapshotRunsByOperation returns the snapshot runs one durable operation

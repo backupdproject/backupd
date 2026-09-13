@@ -114,6 +114,14 @@ func (s *Service) BuildHealthReport(ctx context.Context, versionInfo VersionInfo
 	// never ask.
 	var moves movesBySet
 
+	// The crash reconciler's worklist, counted once for the whole report
+	// (#783). It is one deployment-wide query whose answer is the same
+	// for every set, so asking it inside the loop asked it once per
+	// configured backup set -- fifty sets, fifty identical scans of the
+	// same rows, on a command an operator runs to find out whether
+	// anything is wrong.
+	unfinishedSnapshots := s.unfinishedSnapshotRuns(ctx)
+
 	var sets []health.BackupSetHealth
 	for _, src := range s.Config.Sources {
 		for _, bs := range src.BackupSets {
@@ -167,7 +175,7 @@ func (s *Service) BuildHealthReport(ctx context.Context, versionInfo VersionInfo
 				// An artifact set gets nil, which is what keeps "this
 				// set runs no snapshots" and "its snapshots measured
 				// zero" apart on every surface that renders them.
-				Snapshot: s.snapshotHealth(ctx, bs),
+				Snapshot: s.snapshotHealth(ctx, bs, unfinishedSnapshots),
 			}
 			if stat, statErr := capacity.StatPath(bs.LocalPath); statErr == nil {
 				free := stat.AvailableBytes

@@ -42,6 +42,16 @@ func testSnapshotSet(t *testing.T, source, set string) model.BackupSetID {
 	return id
 }
 
+// testSetUUID is the DURABLE identifier the catalog keys a set's snapshot
+// lineage on (see 0010_snapshot_run_lineage.sql). It is derived from the
+// set's names here only so that a test which never mentions it gets a
+// distinct one per set; the whole point of the column is that the names
+// can change afterwards and this cannot, which is what the rename test
+// below drives.
+func testSetUUID(set model.BackupSetID) string {
+	return "uuid-" + set.Source + "-" + set.Set
+}
+
 // snapshotRunAt is the base time every run in this file starts from, so an
 // ordering assertion is about the timestamps the test chose rather than
 // about how long the test took to run.
@@ -60,6 +70,7 @@ func testSnapshotRunRequest(t *testing.T, runID, key string, set model.BackupSet
 		ConsistencyMode:   "snapshot",
 		VerificationLevel: "content_full",
 		StartedAt:         startedAt,
+		SetUUID:           testSetUUID(set),
 	}
 }
 
@@ -174,6 +185,10 @@ func TestBeginSnapshotRun_ReplayResolvesToTheExistingRow(t *testing.T) {
 // different set, engine, domain or source would tell a caller "your
 // snapshot is already in flight" about a snapshot of something else, and
 // the caller would then skip taking the one it actually asked for.
+//
+// "A different set" means a different LINEAGE. A set that was renamed
+// between a submission and its retry is the same set, and refusing the
+// replay over the rename would start a second pass over one source.
 func TestBeginSnapshotRun_RefusesAKeyReusedForADifferentRun(t *testing.T) {
 	j, _ := openJournal(t)
 	ctx := context.Background()
@@ -183,7 +198,7 @@ func TestBeginSnapshotRun_RefusesAKeyReusedForADifferentRun(t *testing.T) {
 	beginRun(t, j, testSnapshotRunRequest(t, "run-1", "idem-1", set, snapshotRunAt))
 
 	differing := map[string]func(*SnapshotRunRequest){
-		"set":             func(r *SnapshotRunRequest) { r.Set = other },
+		"set lineage":     func(r *SnapshotRunRequest) { r.SetUUID = testSetUUID(other) },
 		"engine":          func(r *SnapshotRunRequest) { r.Engine = "restic" },
 		"domain":          func(r *SnapshotRunRequest) { r.Domain = "nas-secondary" },
 		"source identity": func(r *SnapshotRunRequest) { r.SourceIdentity = "sha256:deadbe" },
@@ -194,6 +209,18 @@ func TestBeginSnapshotRun_RefusesAKeyReusedForADifferentRun(t *testing.T) {
 		if _, err := j.BeginSnapshotRun(ctx, req); !errors.Is(err, ErrSnapshotRunIdempotencyKeyReused) {
 			t.Errorf("key reused for a different %s: error = %v, want ErrSnapshotRunIdempotencyKeyReused", name, err)
 		}
+	}
+
+	// The rename: same lineage, new names, same key. That is a replay of
+	// the run that already exists, not a different piece of work.
+	renamed := testSnapshotRunRequest(t, "run-x", "idem-1", testSnapshotSet(t, "prod-eu", "postgres-main"), snapshotRunAt)
+	renamed.SetUUID = testSetUUID(set)
+	out, err := j.BeginSnapshotRun(ctx, renamed)
+	if err != nil {
+		t.Fatalf("BeginSnapshotRun for a renamed set under the same key: %v", err)
+	}
+	if out.Created || out.Run.RunID != "run-1" {
+		t.Errorf("a renamed set replaying its key created = %v, run = %q; want a replay of run-1", out.Created, out.Run.RunID)
 	}
 }
 
@@ -417,7 +444,7 @@ func TestAdvanceSnapshotRun_SamePhaseAppliesFactsAndLogsNoSelfEdge(t *testing.T)
 	if err := j.AdvanceSnapshotRun(ctx, "run-1", PhaseSuccess, SnapshotRunUpdate{At: snapshotRunAt.Add(12 * time.Hour)}); err != nil {
 		t.Fatalf("re-advance of the older run to SUCCESS: %v", err)
 	}
-	lkg, err := j.LastKnownGoodSnapshot(ctx, set)
+	lkg, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(set))
 	if err != nil {
 		t.Fatalf("LastKnownGoodSnapshot: %v", err)
 	}
@@ -487,7 +514,7 @@ func TestLastKnownGood_OnlySuccessMovesItAndNoFailureEverDoes(t *testing.T) {
 	advanceThrough(t, j, "good-1", snapshotRunAt,
 		PhaseSourceScan, PhaseSnapshotWrite, PhaseManifestCommitted, PhaseVerification, PhaseCatalogCommit, PhaseSuccess)
 
-	good, err := j.LastKnownGoodSnapshot(ctx, set)
+	good, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(set))
 	if err != nil {
 		t.Fatalf("LastKnownGoodSnapshot after the first success: %v", err)
 	}
@@ -516,7 +543,7 @@ func TestLastKnownGood_OnlySuccessMovesItAndNoFailureEverDoes(t *testing.T) {
 			t.Fatalf("failing %s: %v", runID, err)
 		}
 
-		still, err := j.LastKnownGoodSnapshot(ctx, set)
+		still, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(set))
 		if err != nil {
 			t.Fatalf("LastKnownGoodSnapshot after %s failed: %v", runID, err)
 		}
@@ -544,7 +571,7 @@ func TestLastKnownGood_OnlySuccessMovesItAndNoFailureEverDoes(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("quarantining %s: %v", runID, err)
 			}
-			lkg, err := j.LastKnownGoodSnapshot(ctx, set)
+			lkg, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(set))
 			if err != nil {
 				t.Fatalf("LastKnownGoodSnapshot after a quarantine: %v", err)
 			}
@@ -556,7 +583,7 @@ func TestLastKnownGood_OnlySuccessMovesItAndNoFailureEverDoes(t *testing.T) {
 
 		advanceThrough(t, j, runID, started,
 			PhaseSourceScan, PhaseSnapshotWrite, PhaseManifestCommitted, PhaseVerification, PhaseCatalogCommit, PhaseSuccess)
-		holding, err := j.LastKnownGoodSnapshot(ctx, set)
+		holding, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(set))
 		if err != nil || holding.RunID != runID {
 			t.Fatalf("after %s succeeded, last-known-good = %q (err %v), want %s", runID, holding.RunID, err, runID)
 		}
@@ -567,7 +594,7 @@ func TestLastKnownGood_OnlySuccessMovesItAndNoFailureEverDoes(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("advancing %s to %s: %v", runID, to, err)
 		}
-		if _, err := j.LastKnownGoodSnapshot(ctx, set); !errors.Is(err, ErrSnapshotRunNotFound) {
+		if _, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(set)); !errors.Is(err, ErrSnapshotRunNotFound) {
 			t.Errorf("after the last-known-good run reached %s, LastKnownGoodSnapshot error = %v, want ErrSnapshotRunNotFound: a snapshot that is not in the repository is not a restore point", to, err)
 		}
 		gone, err := j.GetSnapshotRun(ctx, runID)
@@ -580,7 +607,7 @@ func TestLastKnownGood_OnlySuccessMovesItAndNoFailureEverDoes(t *testing.T) {
 
 		// Which is exactly the hole RepointLastKnownGood fills: the older
 		// success is still there and still restorable.
-		if err := j.RepointLastKnownGood(ctx, set, "good-1"); err != nil {
+		if err := j.RepointLastKnownGood(ctx, testSetUUID(set), "good-1"); err != nil {
 			t.Fatalf("RepointLastKnownGood back to good-1: %v", err)
 		}
 	}
@@ -596,7 +623,7 @@ func TestLastKnownGoodSnapshot_NotFoundForASetThatHasNeverSucceeded(t *testing.T
 	other := testSnapshotSet(t, "production", "uploads")
 
 	beginRun(t, j, testSnapshotRunRequest(t, "run-1", "idem-1", set, snapshotRunAt))
-	if _, err := j.LastKnownGoodSnapshot(ctx, set); !errors.Is(err, ErrSnapshotRunNotFound) {
+	if _, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(set)); !errors.Is(err, ErrSnapshotRunNotFound) {
 		t.Errorf("LastKnownGoodSnapshot with only an in-flight run: error = %v, want ErrSnapshotRunNotFound", err)
 	}
 
@@ -604,8 +631,154 @@ func TestLastKnownGoodSnapshot_NotFoundForASetThatHasNeverSucceeded(t *testing.T
 		PhaseSourceScan, PhaseSnapshotWrite, PhaseManifestCommitted, PhaseVerification, PhaseCatalogCommit, PhaseSuccess)
 
 	// One set's success says nothing about another set's.
-	if _, err := j.LastKnownGoodSnapshot(ctx, other); !errors.Is(err, ErrSnapshotRunNotFound) {
+	if _, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(other)); !errors.Is(err, ErrSnapshotRunNotFound) {
 		t.Errorf("LastKnownGoodSnapshot for a different set: error = %v, want ErrSnapshotRunNotFound", err)
+	}
+}
+
+// Renaming a backup set must not fork its snapshot lineage.
+//
+// This is the durable half of the finding: everything a run is looked up
+// by used to be keyed on (source, backup_set), which are the NAMES in an
+// operator's configuration. So an operator who moved a set to a different
+// source stanza, or simply renamed it, silently got a set with no
+// history, no unfinished work and no restore point -- while the old rows
+// sat in the table still holding the last-known-good flag, ready to make
+// a second one the next time this set succeeded. The set's uuid does not
+// move, so nothing above this layer notices the rename at all.
+func TestSnapshotLineage_SurvivesARenameOfTheSet(t *testing.T) {
+	j, _ := openJournal(t)
+	ctx := context.Background()
+
+	before := testSnapshotSet(t, "production", "postgres-primary")
+	after := testSnapshotSet(t, "prod-eu", "postgres-main")
+	lineage := testSetUUID(before)
+
+	beginRun(t, j, testSnapshotRunRequest(t, "old-success", "idem-old", before, snapshotRunAt))
+	advanceThrough(t, j, "old-success", snapshotRunAt,
+		PhaseSourceScan, PhaseSnapshotWrite, PhaseManifestCommitted, PhaseVerification, PhaseCatalogCommit, PhaseSuccess)
+
+	// A second run of the same set that was still in flight when the
+	// process died: the reconciler has to find this one after the rename
+	// too, or a crashed run becomes invisible work.
+	beginRun(t, j, testSnapshotRunRequest(t, "old-unfinished", "idem-unfinished", before, snapshotRunAt.Add(time.Hour)))
+	advanceThrough(t, j, "old-unfinished", snapshotRunAt.Add(time.Hour), PhaseSourceScan, PhaseSnapshotWrite)
+
+	// The rename: same lineage, new names.
+	renamed := testSnapshotRunRequest(t, "new-success", "idem-new", after, snapshotRunAt.Add(2*time.Hour))
+	renamed.SetUUID = lineage
+	beginRun(t, j, renamed)
+
+	history, err := j.ListSnapshotRuns(ctx, lineage, 10)
+	if err != nil {
+		t.Fatalf("ListSnapshotRuns: %v", err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("the lineage lists %d runs after the rename, want 3: %+v", len(history), history)
+	}
+
+	unfinished, err := j.UnfinishedSnapshotRuns(ctx)
+	if err != nil {
+		t.Fatalf("UnfinishedSnapshotRuns: %v", err)
+	}
+	var found bool
+	for _, run := range unfinished {
+		if run.RunID == "old-unfinished" {
+			found = run.SetUUID == lineage
+		}
+	}
+	if !found {
+		t.Error("the run interrupted before the rename is not attributable to the renamed set's lineage")
+	}
+
+	advanceThrough(t, j, "new-success", snapshotRunAt.Add(2*time.Hour),
+		PhaseSourceScan, PhaseSnapshotWrite, PhaseManifestCommitted, PhaseVerification, PhaseCatalogCommit, PhaseSuccess)
+
+	lkg, err := j.LastKnownGoodSnapshot(ctx, lineage)
+	if err != nil {
+		t.Fatalf("LastKnownGoodSnapshot after the rename: %v", err)
+	}
+	if lkg.RunID != "new-success" {
+		t.Errorf("last-known-good = %q, want new-success", lkg.RunID)
+	}
+
+	// And exactly one row holds it. Two would mean "the" restore point
+	// depends on which row a reader happens to get.
+	var holders int
+	for _, run := range history {
+		got, err := j.GetSnapshotRun(ctx, run.RunID)
+		if err != nil {
+			t.Fatalf("GetSnapshotRun(%s): %v", run.RunID, err)
+		}
+		if got.LastKnownGood {
+			holders++
+		}
+	}
+	if holders != 1 {
+		t.Errorf("%d rows in this lineage are flagged last-known-good, want exactly 1: the rename must not have started a second one", holders)
+	}
+}
+
+// source_complete has three states and entries_scanned has two, and the
+// third state of each is the one that matters: a row nobody recorded a
+// verdict for is not a row whose verdict was "no", and a run nobody
+// measured did not measure zero.
+func TestSnapshotRun_RecordsTheSourceVerdictAndTheEntryCountItMeasured(t *testing.T) {
+	j, _ := openJournal(t)
+	ctx := context.Background()
+	set := testSnapshotSet(t, "production", "postgres-primary")
+
+	beginRun(t, j, testSnapshotRunRequest(t, "run-1", "idem-1", set, snapshotRunAt))
+
+	fresh, err := j.GetSnapshotRun(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("GetSnapshotRun: %v", err)
+	}
+	if fresh.SourceComplete != nil {
+		t.Errorf("SourceComplete = %v on a fresh run, want nil: nobody has looked at the source yet", *fresh.SourceComplete)
+	}
+	if fresh.EntriesScanned != nil {
+		t.Errorf("EntriesScanned = %v on a fresh run, want nil", *fresh.EntriesScanned)
+	}
+
+	advanceThrough(t, j, "run-1", snapshotRunAt, PhaseSourceScan, PhaseSnapshotWrite)
+
+	incomplete := false
+	entries := int64(9_412)
+	if err := j.AdvanceSnapshotRun(ctx, "run-1", PhaseManifestCommitted, SnapshotRunUpdate{
+		SnapshotID:     new("kopia-manifest-1"),
+		SourceComplete: &incomplete,
+		EntriesScanned: &entries,
+		At:             snapshotRunAt.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("AdvanceSnapshotRun: %v", err)
+	}
+
+	got, err := j.GetSnapshotRun(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("GetSnapshotRun: %v", err)
+	}
+	if got.SourceComplete == nil || *got.SourceComplete {
+		t.Errorf("SourceComplete = %v, want a recorded false: the pass did not cover the source", got.SourceComplete)
+	}
+	if got.EntriesScanned == nil || *got.EntriesScanned != entries {
+		t.Errorf("EntriesScanned = %v, want %d", got.EntriesScanned, entries)
+	}
+
+	// An update that says nothing about either leaves both as they are: a
+	// later phase must not silently withdraw a verdict.
+	if err := j.AdvanceSnapshotRun(ctx, "run-1", PhaseVerification, SnapshotRunUpdate{At: snapshotRunAt.Add(2 * time.Hour)}); err != nil {
+		t.Fatalf("AdvanceSnapshotRun to VERIFICATION: %v", err)
+	}
+	still, err := j.GetSnapshotRun(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("GetSnapshotRun: %v", err)
+	}
+	if still.SourceComplete == nil || *still.SourceComplete {
+		t.Errorf("SourceComplete = %v after an unrelated advance, want the recorded false", still.SourceComplete)
+	}
+	if still.EntriesScanned == nil || *still.EntriesScanned != entries {
+		t.Errorf("EntriesScanned = %v after an unrelated advance, want %d", still.EntriesScanned, entries)
 	}
 }
 
@@ -673,10 +846,15 @@ func TestUnfinishedSnapshotRuns_SurvivesAReopenAndIsOldestFirst(t *testing.T) {
 }
 
 // "Is this repository manifest one of ours" is the question that decides
-// whether a snapshot found in the repository gets quarantined, and the
-// answer is scoped to a domain: two repositories can hand out the same
-// opaque manifest id and they are not the same snapshot.
-func TestSnapshotRunBySnapshotID_IsScopedToItsDomain(t *testing.T) {
+// whether a snapshot found in the repository gets quarantined, and
+// "does this domain hold any of ours at all" is the question that decides
+// whether a repository may be created at a location. Both are answered
+// per DOMAIN and over the whole table: two repositories can hand out the
+// same opaque manifest id and they are not the same snapshot, and a
+// bounded window over one set's newest rows answers the second question
+// "no" for a new set in a populated domain -- which is a second, empty
+// repository written over a live one.
+func TestDomainSnapshotIDs_AreScopedToTheirDomainAndUnbounded(t *testing.T) {
 	j, _ := openJournal(t)
 	ctx := context.Background()
 	set := testSnapshotSet(t, "production", "postgres-primary")
@@ -690,25 +868,51 @@ func TestSnapshotRunBySnapshotID_IsScopedToItsDomain(t *testing.T) {
 		t.Fatalf("AdvanceSnapshotRun: %v", err)
 	}
 
-	got, err := j.SnapshotRunBySnapshotID(ctx, "nas-primary", "kopia-manifest-1")
+	ids, err := j.DomainSnapshotIDs(ctx, "nas-primary")
 	if err != nil {
-		t.Fatalf("SnapshotRunBySnapshotID: %v", err)
+		t.Fatalf("DomainSnapshotIDs: %v", err)
 	}
-	if got.RunID != "run-1" {
-		t.Errorf("RunID = %q, want run-1", got.RunID)
+	if ids["kopia-manifest-1"] != "run-1" {
+		t.Errorf("manifest kopia-manifest-1 in nas-primary resolves to %q, want run-1", ids["kopia-manifest-1"])
 	}
-
-	if _, err := j.SnapshotRunBySnapshotID(ctx, "nas-secondary", "kopia-manifest-1"); !errors.Is(err, ErrSnapshotRunNotFound) {
-		t.Errorf("same manifest id in another domain: error = %v, want ErrSnapshotRunNotFound", err)
-	}
-	if _, err := j.SnapshotRunBySnapshotID(ctx, "nas-primary", "some-other-manifest"); !errors.Is(err, ErrSnapshotRunNotFound) {
-		t.Errorf("unknown manifest: error = %v, want ErrSnapshotRunNotFound", err)
+	if len(ids) != 1 {
+		t.Errorf("DomainSnapshotIDs = %v, want exactly the one committed manifest: a run with no manifest yet carries '' and is not a manifest id", ids)
 	}
 
-	// An empty manifest id is every run that has not committed one yet, so
-	// answering it would attribute an unrelated run to a snapshot.
-	if _, err := j.SnapshotRunBySnapshotID(ctx, "nas-primary", ""); err == nil {
-		t.Error("SnapshotRunBySnapshotID with an empty snapshot id = nil error, want a refusal")
+	other, err := j.DomainSnapshotIDs(ctx, "nas-secondary")
+	if err != nil {
+		t.Fatalf("DomainSnapshotIDs(nas-secondary): %v", err)
+	}
+	if _, ok := other["kopia-manifest-1"]; ok {
+		t.Error("the same manifest id is claimed in another domain: one repository's snapshot must not be attributed to a run against another")
+	}
+
+	// The creation guard's question, asked of a domain rather than of a
+	// set: a domain holding a committed manifest already has a
+	// repository, whoever put it there.
+	has, err := j.DomainHasSnapshot(ctx, "nas-primary")
+	if err != nil {
+		t.Fatalf("DomainHasSnapshot: %v", err)
+	}
+	if !has {
+		t.Error("DomainHasSnapshot(nas-primary) = false, want true: run-1 committed a manifest there")
+	}
+
+	empty, err := j.DomainHasSnapshot(ctx, "nas-secondary")
+	if err != nil {
+		t.Fatalf("DomainHasSnapshot(nas-secondary): %v", err)
+	}
+	if empty {
+		t.Error("DomainHasSnapshot(nas-secondary) = true, want false: nothing has ever committed a manifest there")
+	}
+
+	// An unnamed domain is refused rather than answered for every row in
+	// the table at once.
+	if _, err := j.DomainSnapshotIDs(ctx, ""); err == nil {
+		t.Error("DomainSnapshotIDs with no domain = nil error, want a refusal")
+	}
+	if _, err := j.DomainHasSnapshot(ctx, ""); err == nil {
+		t.Error("DomainHasSnapshot with no domain = nil error, want a refusal")
 	}
 
 	// One manifest, one run. A second run claiming the same manifest in the
@@ -725,9 +929,9 @@ func TestSnapshotRunBySnapshotID_IsScopedToItsDomain(t *testing.T) {
 	if err == nil {
 		t.Error("a second run claiming a manifest another run already recorded = nil error, want a refusal")
 	}
-	mine, err := j.SnapshotRunBySnapshotID(ctx, "nas-primary", "kopia-manifest-1")
-	if err != nil || mine.RunID != "run-1" {
-		t.Errorf("after the refusal, manifest kopia-manifest-1 resolves to %q (err %v), want run-1", mine.RunID, err)
+	after, err := j.DomainSnapshotIDs(ctx, "nas-primary")
+	if err != nil || after["kopia-manifest-1"] != "run-1" {
+		t.Errorf("after the refusal, manifest kopia-manifest-1 resolves to %q (err %v), want run-1", after["kopia-manifest-1"], err)
 	}
 
 	elsewhere := testSnapshotRunRequest(t, "run-3", "idem-3", set, snapshotRunAt.Add(3*time.Hour))
@@ -825,7 +1029,7 @@ func TestListSnapshotRuns_NewestFirstPerSetAndRefusesAnUnboundedRead(t *testing.
 	}
 	beginRun(t, j, testSnapshotRunRequest(t, "beta-1", "idem-beta-1", beta, snapshotRunAt.Add(9*time.Hour)))
 
-	runs, err := j.ListSnapshotRuns(ctx, alpha, 10)
+	runs, err := j.ListSnapshotRuns(ctx, testSetUUID(alpha), 10)
 	if err != nil {
 		t.Fatalf("ListSnapshotRuns: %v", err)
 	}
@@ -843,7 +1047,7 @@ func TestListSnapshotRuns_NewestFirstPerSetAndRefusesAnUnboundedRead(t *testing.
 		}
 	}
 
-	limited, err := j.ListSnapshotRuns(ctx, alpha, 2)
+	limited, err := j.ListSnapshotRuns(ctx, testSetUUID(alpha), 2)
 	if err != nil {
 		t.Fatalf("ListSnapshotRuns(limit 2): %v", err)
 	}
@@ -852,7 +1056,7 @@ func TestListSnapshotRuns_NewestFirstPerSetAndRefusesAnUnboundedRead(t *testing.
 	}
 
 	for _, limit := range []int{0, -1} {
-		if _, err := j.ListSnapshotRuns(ctx, alpha, limit); err == nil {
+		if _, err := j.ListSnapshotRuns(ctx, testSetUUID(alpha), limit); err == nil {
 			t.Errorf("ListSnapshotRuns(limit %d) = nil error, want a refusal", limit)
 		}
 	}
@@ -871,6 +1075,7 @@ func TestBeginSnapshotRun_RefusesARunNobodyCouldFindAgain(t *testing.T) {
 		"no run id":          func(r *SnapshotRunRequest) { r.RunID = "" },
 		"no idempotency key": func(r *SnapshotRunRequest) { r.IdempotencyKey = "" },
 		"no set":             func(r *SnapshotRunRequest) { r.Set = model.BackupSetID{} },
+		"no set uuid":        func(r *SnapshotRunRequest) { r.SetUUID = "" },
 		"no engine":          func(r *SnapshotRunRequest) { r.Engine = "" },
 		"no domain":          func(r *SnapshotRunRequest) { r.Domain = "" },
 		"no source identity": func(r *SnapshotRunRequest) { r.SourceIdentity = "" },
@@ -959,14 +1164,14 @@ func TestRepointLastKnownGood_MovesTheFlagAndRefusesAnIneligibleRun(t *testing.T
 
 	// The set is now exactly in the state this call exists for: its newest
 	// success is lost and nothing holds the flag.
-	if _, err := j.LastKnownGoodSnapshot(ctx, set); !errors.Is(err, ErrSnapshotRunNotFound) {
+	if _, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(set)); !errors.Is(err, ErrSnapshotRunNotFound) {
 		t.Fatalf("LastKnownGoodSnapshot before the repoint: error = %v, want ErrSnapshotRunNotFound", err)
 	}
 
-	if err := j.RepointLastKnownGood(ctx, set, "newer"); err != nil {
+	if err := j.RepointLastKnownGood(ctx, testSetUUID(set), "newer"); err != nil {
 		t.Fatalf("RepointLastKnownGood: %v", err)
 	}
-	lkg, err := j.LastKnownGoodSnapshot(ctx, set)
+	lkg, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(set))
 	if err != nil {
 		t.Fatalf("LastKnownGoodSnapshot after the repoint: %v", err)
 	}
@@ -977,7 +1182,7 @@ func TestRepointLastKnownGood_MovesTheFlagAndRefusesAnIneligibleRun(t *testing.T
 	// And it moves rather than adds: repointing again at the older run
 	// takes the flag off the newer one, which the partial unique index
 	// would refuse outright if it did not.
-	if err := j.RepointLastKnownGood(ctx, set, "older"); err != nil {
+	if err := j.RepointLastKnownGood(ctx, testSetUUID(set), "older"); err != nil {
 		t.Fatalf("RepointLastKnownGood to the older run: %v", err)
 	}
 	moved, err := j.GetSnapshotRun(ctx, "newer")
@@ -996,21 +1201,21 @@ func TestRepointLastKnownGood_MovesTheFlagAndRefusesAnIneligibleRun(t *testing.T
 		"a run this journal has never had": "nobody",
 	}
 	for what, runID := range refusals {
-		if err := j.RepointLastKnownGood(ctx, set, runID); err == nil {
+		if err := j.RepointLastKnownGood(ctx, testSetUUID(set), runID); err == nil {
 			t.Errorf("RepointLastKnownGood at %s = nil error, want a refusal", what)
 		}
 	}
-	if err := j.RepointLastKnownGood(ctx, set, "nobody"); !errors.Is(err, ErrSnapshotRunNotFound) {
+	if err := j.RepointLastKnownGood(ctx, testSetUUID(set), "nobody"); !errors.Is(err, ErrSnapshotRunNotFound) {
 		t.Errorf("RepointLastKnownGood at an unknown run: error = %v, want ErrSnapshotRunNotFound", err)
 	}
 
 	// Every one of those refusals left the flag exactly where it was, and
 	// left the other set's own restore point alone.
-	after, err := j.LastKnownGoodSnapshot(ctx, set)
+	after, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(set))
 	if err != nil || after.RunID != "older" {
 		t.Errorf("after the refusals, last-known-good = %q (err %v), want older", after.RunID, err)
 	}
-	elsewhere, err := j.LastKnownGoodSnapshot(ctx, other)
+	elsewhere, err := j.LastKnownGoodSnapshot(ctx, testSetUUID(other))
 	if err != nil || elsewhere.RunID != "elsewhere" {
 		t.Errorf("the other set's last-known-good = %q (err %v), want elsewhere", elsewhere.RunID, err)
 	}

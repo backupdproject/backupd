@@ -96,6 +96,14 @@ type OperationSnapshot struct {
 	VerificationLevel    string
 	VerificationAchieved string
 
+	// EntriesScanned is every source entry the pass considered, of every
+	// kind, including the ones it deliberately skipped. It is the source
+	// side's own census and not Files + Directories below: a pass that
+	// refused two hundred sockets considered them, and adding the two
+	// counts a client already has would be a derivation dressed up as a
+	// measurement.
+	EntriesScanned int64
+
 	// Files and Directories are what the snapshot holds.
 	Files       int64
 	Directories int64
@@ -158,6 +166,7 @@ func toOperationSnapshot(run state.SnapshotRun) OperationSnapshot {
 		VerificationStatus:     run.VerificationStatus,
 		VerificationLevel:      run.VerificationLevel,
 		VerificationAchieved:   run.VerificationLevelAchieved,
+		EntriesScanned:         counterOf(run.EntriesScanned),
 		Files:                  counterOf(run.Files),
 		Directories:            counterOf(run.Directories),
 		LogicalBytes:           counterOf(run.LogicalBytes),

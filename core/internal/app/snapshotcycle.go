@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -163,7 +164,7 @@ func (s *Service) processIncrementalSet(ctx context.Context, src config.Source, 
 		return result
 	}
 
-	repo, err := s.openRepository(ctx, catalog, bs, loc)
+	repo, err := s.openRepository(ctx, catalog, loc)
 	if err != nil {
 		result.Err = err
 
@@ -219,6 +220,7 @@ func (s *Service) reconcileSnapshots(
 
 	report, err := rec.Reconcile(ctx, snapshotlifecycle.ReconcileRequest{
 		Set:            bs.ID,
+		SetUUID:        snapshotLineage(bs),
 		Domain:         bs.Repository.Domain,
 		Source:         identity,
 		SourceIdentity: bs.SourceIdentity,
@@ -274,6 +276,7 @@ func (s *Service) runSnapshot(
 		IdempotencyKey:    snapshotIdempotencyKey(bs.ID, operationFrom(ctx), runID),
 		OperationID:       operationFrom(ctx),
 		Set:               bs.ID,
+		SetUUID:           snapshotLineage(bs),
 		Engine:            bs.Engine,
 		Domain:            bs.Repository.Domain,
 		SourceIdentity:    bs.SourceIdentity,
@@ -620,15 +623,24 @@ func snapshotProgress(res *SnapshotSetResult) CycleProgress {
 // repository is not -- and the first anybody would hear of it is a
 // restore.
 //
-// So creation requires the catalog to hold NO snapshot this set has ever
-// committed. A set with history and no repository is a refusal, loudly,
-// because the two durable stores disagree in the one direction that
-// cannot be repaired by writing anything: the snapshots are somewhere
-// this process cannot see, and the correct action is an operator's.
+// So creation requires the catalog to hold NO snapshot committed to this
+// DOMAIN, by any backup set. A repository serves a domain, several sets
+// may share one (model.RepositoryDomain.MayShare), and evidence from a
+// co-tenant is evidence: asking only about the set that happens to be
+// running answers "no history" for a brand new set in a populated domain,
+// and the answer is used to create a second, empty repository on top of a
+// live one. The question is also asked of the whole table rather than of
+// a bounded window of recent rows, because a window says "no history" for
+// a set whose newest few hundred runs all failed before uploading -- one
+// bad fortnight and the guard opens.
+//
+// A domain with history and no repository is a refusal, loudly, because
+// the two durable stores disagree in the one direction that cannot be
+// repaired by writing anything: the snapshots are somewhere this process
+// cannot see, and the correct action is an operator's.
 func (s *Service) openRepository(
 	ctx context.Context,
 	catalog snapshotlifecycle.Catalog,
-	bs config.BackupSet,
 	loc backupengine.RepositoryLocation,
 ) (backupengine.Repository, error) {
 	repo, err := s.Repositories.OpenRepository(ctx, loc)
@@ -640,17 +652,17 @@ func (s *Service) openRepository(
 		return nil, fmt.Errorf("opening repository %s: %w", loc.Domain, err)
 	}
 
-	committed, histErr := hasCommittedSnapshot(ctx, catalog, bs.ID)
+	held, histErr := catalog.DomainHasSnapshot(ctx, loc.Domain.String())
 	if histErr != nil {
-		return nil, histErr
+		return nil, fmt.Errorf("asking whether repository domain %s already holds snapshots: %w", loc.Domain, histErr)
 	}
 
-	if committed {
+	if held {
 		return nil, fmt.Errorf(
-			"repository %s holds no repository at this deployment's backup root, but backup set %s has already committed snapshots to it: "+
+			"domain %s holds no repository at this deployment's backup root, but this journal has already recorded snapshots committed to it: "+
 				"refusing to create a second, empty repository over a history this process cannot see. "+
 				"Check that the storage is mounted and reachable before running again: %w",
-			loc.Domain, bs.ID, err)
+			loc.Domain, err)
 	}
 
 	if err := s.Repositories.CreateRepository(ctx, loc); err != nil {
@@ -665,33 +677,18 @@ func (s *Service) openRepository(
 	return repo, nil
 }
 
-// hasCommittedSnapshot reports whether this set has ever recorded a
-// snapshot in a repository.
+// snapshotLineage is the durable key a set's snapshot rows are grouped
+// by: its configured uuid, lower-cased.
 //
-// The question is "did a manifest ever exist", so it counts rows carrying
-// a snapshot id in ANY phase rather than only the successful ones: a run
-// that committed a manifest and then failed verification is still
-// evidence that a repository existed and holds content, which is exactly
-// what the creation guard above must not overwrite.
-//
-// The window is bounded (DefaultHistoryLimit) for ListSnapshotRuns' own
-// reason, and the bound is safe in the direction that matters: it can only
-// fail to find history that is older than the newest few hundred runs of
-// a set whose newest few hundred runs all recorded nothing, which is a set
-// that has never stored a snapshot.
-func hasCommittedSnapshot(ctx context.Context, catalog snapshotlifecycle.Catalog, set model.BackupSetID) (bool, error) {
-	runs, err := catalog.ListSnapshotRuns(ctx, set, snapshotlifecycle.DefaultHistoryLimit)
-	if err != nil {
-		return false, fmt.Errorf("reading %s's snapshot history: %w", set, err)
-	}
-
-	for _, run := range runs {
-		if run.SnapshotID != "" {
-			return true, nil
-		}
-	}
-
-	return false, nil
+// Lower-cased because a uuid's letter case carries no information and an
+// operator who retypes one in a different case has not created a second
+// backup set -- but a lineage key compared byte for byte would say they
+// had, and the set would lose its history and grow a second
+// last-known-good row. internal/config already compares uuids for
+// uniqueness this way, and model.NewSourceIdentity already digests them
+// this way.
+func snapshotLineage(bs config.BackupSet) string {
+	return strings.ToLower(bs.UUID)
 }
 
 // snapshotHealth is the incremental engine's half of one backup set's
@@ -712,7 +709,14 @@ func hasCommittedSnapshot(ctx context.Context, catalog snapshotlifecycle.Catalog
 // set is refused"). This is not one of those: the newest run's byte
 // counts are a measurement, not a safety claim, and an unavailable
 // measurement is exactly what nil says.
-func (s *Service) snapshotHealth(ctx context.Context, bs config.BackupSet) *health.SnapshotHealth {
+//
+// The unfinished-run count is passed IN rather than read here. It is one
+// deployment-wide query whose answer is the same for every set in the
+// report, and reading it per set made `backupd status` re-run it once per
+// configured backup set. BuildHealthReport loads it once and hands each
+// set its own count, exactly as it already does for the relocation
+// journal (movesBySet).
+func (s *Service) snapshotHealth(ctx context.Context, bs config.BackupSet, unfinished unfinishedBySet) *health.SnapshotHealth {
 	if bs.Engine != model.EngineKopia {
 		return nil
 	}
@@ -722,7 +726,9 @@ func (s *Service) snapshotHealth(ctx context.Context, bs config.BackupSet) *heal
 		return nil
 	}
 
-	runs, err := catalog.ListSnapshotRuns(ctx, bs.ID, 1)
+	lineage := snapshotLineage(bs)
+
+	runs, err := catalog.ListSnapshotRuns(ctx, lineage, 1)
 	if err != nil || len(runs) == 0 {
 		return nil
 	}
@@ -730,10 +736,15 @@ func (s *Service) snapshotHealth(ctx context.Context, bs config.BackupSet) *heal
 	newest := runs[0]
 
 	out := &health.SnapshotHealth{
-		RunID:                  newest.RunID,
-		SnapshotID:             newest.SnapshotID,
-		Phase:                  string(newest.Phase),
-		EntriesScanned:         counterOf(newest.Files) + counterOf(newest.Directories),
+		RunID:      newest.RunID,
+		SnapshotID: newest.SnapshotID,
+		Phase:      string(newest.Phase),
+
+		// The source side's own census, as the run recorded it. It used
+		// to be files + directories, which is a different number: it
+		// leaves out every entry a pass deliberately skipped, and it
+		// reads as a confident zero for a snapshot nobody measured.
+		EntriesScanned:         counterOf(newest.EntriesScanned),
 		LogicalBytes:           counterOf(newest.LogicalBytes),
 		SourceBytesRead:        counterOf(newest.SourceBytesRead),
 		RepositoryBytesWritten: counterOf(newest.RepositoryBytesWritten),
@@ -741,18 +752,49 @@ func (s *Service) snapshotHealth(ctx context.Context, bs config.BackupSet) *heal
 		Measured:               newest.SourceBytesRead != nil && newest.RepositoryBytesWritten != nil,
 		VerificationStatus:     newest.VerificationStatus,
 		VerificationLevel:      newest.VerificationLevel,
+
+		// What the run actually PROVED, beside what its set asked for.
+		// Without it a surface has the configured level and the pass/fail
+		// and no way to say that a set configured for a restore drill got
+		// a content verification.
+		VerificationAchieved: newest.VerificationLevelAchieved,
+		UnfinishedRuns:       unfinished[lineage],
 	}
 
-	if lkg, err := catalog.LastKnownGoodSnapshot(ctx, bs.ID); err == nil {
+	if lkg, err := catalog.LastKnownGoodSnapshot(ctx, lineage); err == nil {
 		out.LastKnownGoodAt = lkg.CompletedAt
 	}
 
-	if unfinished, err := catalog.UnfinishedSnapshotRuns(ctx); err == nil {
-		for _, run := range unfinished {
-			if run.Set == bs.ID {
-				out.UnfinishedRuns++
-			}
-		}
+	return out
+}
+
+// unfinishedBySet is how many non-terminal snapshot runs each lineage
+// has, keyed by the set uuid the rows carry.
+type unfinishedBySet map[string]int
+
+// unfinishedSnapshotRuns counts the crash reconciler's worklist once for
+// a whole health report.
+//
+// A failure is an empty map and not an error, which is the same
+// judgement snapshotHealth makes about every count it reports: this is a
+// measurement of work in flight, not a safety claim, and the report it
+// feeds must not start failing because one deployment's journal was busy.
+// A journal that cannot hold snapshot runs at all returns the same empty
+// map, because it has none.
+func (s *Service) unfinishedSnapshotRuns(ctx context.Context) unfinishedBySet {
+	catalog, ok := s.Journal.(snapshotlifecycle.Catalog)
+	if !ok {
+		return nil
+	}
+
+	runs, err := catalog.UnfinishedSnapshotRuns(ctx)
+	if err != nil {
+		return nil
+	}
+
+	out := make(unfinishedBySet, len(runs))
+	for _, run := range runs {
+		out[run.SetUUID]++
 	}
 
 	return out
