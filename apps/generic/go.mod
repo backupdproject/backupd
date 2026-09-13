@@ -140,6 +140,7 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.58.0 // indirect
 	moul.io/http2curl/v2 v2.3.0 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 

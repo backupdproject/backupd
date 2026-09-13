@@ -14,6 +14,7 @@ import (
 	"github.com/backupdproject/backupd/core/internal/config"
 	"github.com/backupdproject/backupd/core/internal/hostrunner"
 	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/backupdproject/backupd/core/internal/workflowlint"
 	"github.com/google/uuid"
 )
 
@@ -183,6 +184,123 @@ type WorkflowValidatedScript struct {
 	TimeoutMillis int64
 
 	ExecutionConnectionRef string
+
+	// Lint is what this product's own shell verification established
+	// about these exact bytes: whether they parse, and what its rules
+	// found (#906). It is per script rather than on the report, because
+	// a set with four hooks and one broken one is the ordinary case and a
+	// single list of findings would leave a client joining them back up
+	// by basename.
+	Lint WorkflowScriptLint
+}
+
+// WorkflowLintFinding is one thing this product's shell rules reported
+// about one script.
+//
+// The code is internal/workflowlint's own BSH namespace, and the
+// severities are that package's four. Neither is translated here: a
+// code an operator reads in the UI and greps in the CLI has to be the
+// code the rule carries, and a severity that travelled through a mapping
+// table is one nobody can cross-check against the rule that produced it.
+type WorkflowLintFinding struct {
+	Code     string
+	Severity string
+
+	// Line and Col are 1-based, so "BSH003 at 2:8" is a place an
+	// operator can go to. That position is the whole point of this
+	// surface: `bash -n` through a runner could only ever say "it does
+	// not parse".
+	Line int
+	Col  int
+
+	// Message is the rule's sentence: what is wrong, what happens when
+	// it goes wrong, and what to write instead. It may quote a variable
+	// NAME or a literal from the script -- the script's own text -- and
+	// never a resolved secret, because nothing on this path resolves
+	// one.
+	Message string
+}
+
+// WorkflowScriptLint is the static verification of one script.
+//
+// Three states and they are deliberately distinguishable: examined and
+// parsed (Parsed true), examined and refused (Parsed false with a
+// ParseError), and NOT EXAMINED, which is a script larger than the
+// verification will read. A client that folded the third into either of
+// the others would either report a pass nobody proved or a fault nobody
+// found.
+type WorkflowScriptLint struct {
+	// Examined says the bytes were read and checked.
+	Examined bool
+
+	// NotExaminedReason is why they were not, and is never empty when
+	// Examined is false.
+	NotExaminedReason string
+
+	// Parsed says the bytes are a shell program. False with Examined
+	// true means ParseError says where and why.
+	Parsed         bool
+	ParseError     string
+	ParseErrorLine int
+	ParseErrorCol  int
+
+	// Findings is what the rules reported, in position order. It carries
+	// every severity, including the ones that do not block a save, for
+	// the reason the report's own vocabulary has four: a client that only
+	// saw the blocking ones could not show an operator the warning they
+	// are about to introduce.
+	Findings []WorkflowLintFinding
+}
+
+// BlockingLintFindings is the subset of one script's findings that would
+// refuse a save: the error-severity ones.
+//
+// The THRESHOLD is not re-implemented here -- internal/workflowlint owns
+// it -- and this is the same predicate applied to the reported shape, so
+// a surface holding a report can say which findings are the blocking ones
+// without asking the engine again.
+func (l WorkflowScriptLint) BlockingLintFindings() []WorkflowLintFinding {
+	var out []WorkflowLintFinding
+	for _, f := range l.Findings {
+		if f.Severity == workflowlint.SeverityError {
+			out = append(out, f)
+		}
+	}
+
+	return out
+}
+
+// toWorkflowScriptLint renders one engine report onto the reported shape.
+//
+// Field by field rather than by embedding the engine's type, which is the
+// discipline every boundary in this package keeps: a field added to the
+// engine has to be given a name here by somebody, rather than arriving on
+// an API surface because a struct grew.
+func toWorkflowScriptLint(r workflowlint.ScriptReport) WorkflowScriptLint {
+	out := WorkflowScriptLint{
+		Examined:          r.Examined,
+		NotExaminedReason: r.NotExaminedReason,
+		Parsed:            r.Examined && r.ParseError == nil,
+		Findings:          make([]WorkflowLintFinding, 0, len(r.Findings)),
+	}
+
+	if r.ParseError != nil {
+		out.ParseError = r.ParseError.Message
+		out.ParseErrorLine = r.ParseError.Line
+		out.ParseErrorCol = r.ParseError.Col
+	}
+
+	for _, f := range r.Findings {
+		out.Findings = append(out.Findings, WorkflowLintFinding{
+			Code:     f.Code,
+			Severity: f.Severity,
+			Line:     f.Line,
+			Col:      f.Col,
+			Message:  f.Message,
+		})
+	}
+
+	return out
 }
 
 // ErrWorkflowValidationUnavailable is what validation reports when it
@@ -296,7 +414,7 @@ func (v *workflowValidator) run(ctx context.Context) {
 		return
 	}
 
-	v.checkPlan(stages)
+	v.checkPlan(ctx, stages)
 	v.checkTimeouts()
 	v.checkExecutors(ctx)
 	v.settle()
@@ -329,7 +447,7 @@ func (v *workflowValidator) settle() {
 }
 
 // checkPlan is the six on-disk checks, taken from one Snapshot.
-func (v *workflowValidator) checkPlan(stages []workflow.StageSpec) {
+func (v *workflowValidator) checkPlan(ctx context.Context, stages []workflow.StageSpec) {
 	spool, cleanup, err := v.tempSpool()
 	if err != nil {
 		for _, check := range planChecks() {
@@ -381,6 +499,139 @@ func (v *workflowValidator) checkPlan(stages []workflow.StageSpec) {
 	v.ok(WorkflowCheckTarget, "every script's target is decided by its own file name and cannot be overridden")
 	v.ok(WorkflowCheckScriptHash, "every script was read and hashed; a run re-verifies these hashes before it executes anything")
 	v.ok(WorkflowCheckPermissionAncestry, "no stage directory, and no ancestor of one inside the root, is a symbolic link or writable by group or other")
+
+	// Last, and inside this function rather than beside it, because the
+	// bytes it reads come out of the spool cleanup removes on the way
+	// out: the verification is about the CAPTURED bytes, which are the
+	// ones a run would execute and the ones the hashes above cover.
+	v.checkScriptLint(ctx)
+}
+
+// checkScriptLint is #906's half of the two syntax checks: this
+// product's own shell verification of every captured script, reported
+// against the same two check ids the runner's `bash -n` answers under.
+//
+// # Why it shares the check id rather than adding two more
+//
+// Because it is the same question with a better answer. `local_bash_
+// syntax` has always meant "would a shell accept this script", and an
+// operator scanning for it wants one verdict rather than two that can
+// disagree about the same bytes. What changes is what produces it: a
+// parse by mvdan.cc/sh, in this process, with a LINE AND COLUMN --
+// where the runner could only ever report that `bash -n` exited
+// non-zero, and only when there was a runner to ask.
+//
+// The runner's and the far side's `bash -n` are still asked
+// (workflowpreflight.go) and still report under these ids, because they
+// answer the other half: whether the executor that will run the script
+// exists, answers, and accepts it. A validation that dropped them would
+// stop noticing an SFTP-only source or a dead runner socket.
+//
+// # Why one finding per script and the detail is not the findings list
+//
+// The structured findings live on the script (WorkflowValidatedScript.
+// Lint), because that is where a client can render them per script with
+// their positions. A findings LIST that also carried every rule hit
+// would put forty lines of style advice into a CLI report whose job is
+// to say which of fifteen checks is wrong. So each script contributes
+// one sentence -- refused, blocking, reported-but-not-blocking, not
+// examined, or nothing -- and the positions are one field away.
+func (v *workflowValidator) checkScriptLint(ctx context.Context) {
+	examined := map[string]int{}
+	clean := map[string]int{}
+
+	for i := range v.report.Scripts {
+		script := &v.report.Scripts[i]
+		check := scriptSyntaxCheck(script.Target)
+		examined[check]++
+
+		spooled, err := v.plan.OpenScript(script.StepID)
+		if err != nil {
+			// The bytes the plan recorded could not be re-read. Reported
+			// against this check rather than swallowed, because a
+			// verification that silently examined nothing is the one
+			// output worse than a failure.
+			v.scriptFinding(check, WorkflowSeverityError, *script, err.Error())
+
+			continue
+		}
+
+		report := workflowlint.Report(ctx, script.ScriptName, spooled.Body)
+		script.Lint = toWorkflowScriptLint(report)
+
+		switch {
+		case !report.Examined:
+			v.scriptFinding(check, WorkflowSeveritySkipped, *script, report.NotExaminedReason)
+		case report.ParseError != nil:
+			v.scriptFinding(check, WorkflowSeverityError, *script, fmt.Sprintf(
+				"%s is not a shell program: at line %d, column %d, %s. A run would refuse it, and this product's own parser answered without needing a shell, a runner or the source host",
+				script.ScriptName, report.ParseError.Line, report.ParseError.Col, report.ParseError.Message))
+		case len(report.Blocking()) > 0:
+			v.scriptFinding(check, WorkflowSeverityError, *script,
+				lintDetail(script.ScriptName, "does not pass", report.Blocking(), len(report.Findings)))
+		case len(report.Findings) > 0:
+			v.scriptFinding(check, WorkflowSeverityWarning, *script,
+				lintDetail(script.ScriptName, "parses, and", report.Findings, len(report.Findings)))
+		default:
+			clean[check]++
+		}
+	}
+
+	// One pass line per target whose every script was clean. A per-script
+	// "this one is fine" line for each of sixty-four hooks would bury the
+	// one that is not.
+	for _, check := range []string{WorkflowCheckLocalBashSyntax, WorkflowCheckRemoteBashSyntax} {
+		if examined[check] == 0 || clean[check] != examined[check] {
+			continue
+		}
+		v.ok(check, fmt.Sprintf(
+			"%d script(s) parse, and this product's own shell rules report nothing about them. Nothing was executed: the bytes were parsed and walked in this process",
+			clean[check]))
+	}
+}
+
+// lintDetail renders the sentence one script contributes to the findings
+// list.
+//
+// It names the FIRST finding with its code and position and counts the
+// rest, rather than listing them: this string is one line of a report an
+// operator reads to find out which check is unhappy, and the full list
+// with every position is carried structurally on the script itself.
+func lintDetail(name, verb string, shown []workflowlint.Finding, total int) string {
+	first := shown[0]
+
+	detail := fmt.Sprintf("%s %s backupd's shell rules: %s at %d:%d (%s) %s",
+		name, verb, first.Code, first.Line, first.Col, first.Severity, first.Message)
+
+	if total > 1 {
+		detail += fmt.Sprintf(" (and %d more finding(s) on this script)", total-1)
+	}
+
+	return detail
+}
+
+// scriptSyntaxCheck says which of the two syntax checks a script's
+// verdict belongs under.
+func scriptSyntaxCheck(target string) string {
+	if target == string(workflow.TargetRemote) {
+		return WorkflowCheckRemoteBashSyntax
+	}
+
+	return WorkflowCheckLocalBashSyntax
+}
+
+// scriptFinding adds a finding narrowed to one step, so a client can
+// group it under the script it is about.
+func (v *workflowValidator) scriptFinding(check, severity string, script WorkflowValidatedScript, detail string) {
+	v.add(WorkflowFinding{
+		Check:    check,
+		Severity: severity,
+		Detail:   detail,
+		Scope:    script.Scope,
+		Phase:    script.Phase,
+		Target:   script.Target,
+		Script:   script.ScriptName,
+	})
 }
 
 // planChecks are the checks one Snapshot answers, in report order.

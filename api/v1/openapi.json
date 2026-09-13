@@ -122,6 +122,7 @@
           "REPOSITORY_DOMAIN_EXISTS",
           "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
           "WORKFLOWS_NOT_CONFIGURED",
+          "WORKFLOW_SCRIPT_REJECTED",
           "WORKFLOW_ENV_NOT_FOUND",
           "WORKFLOW_RUN_NOT_FOUND",
           "WORKFLOW_STEP_NOT_FOUND",
@@ -196,6 +197,7 @@
           "REPOSITORY_DOMAIN_EXISTS": "wire",
           "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE": "wire",
           "WORKFLOWS_NOT_CONFIGURED": "wire",
+          "WORKFLOW_SCRIPT_REJECTED": "wire",
           "WORKFLOW_ENV_NOT_FOUND": "wire",
           "WORKFLOW_RUN_NOT_FOUND": "wire",
           "WORKFLOW_STEP_NOT_FOUND": "wire",
@@ -247,7 +249,8 @@
             "INCREMENTAL_ENGINE_DISABLED",
             "REPOSITORY_DOMAIN_EXISTS",
             "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
-            "WORKFLOWS_NOT_CONFIGURED"
+            "WORKFLOWS_NOT_CONFIGURED",
+            "WORKFLOW_SCRIPT_REJECTED"
           ],
           "not-found": [
             "BACKUP_SET_NOT_FOUND",
@@ -2147,6 +2150,77 @@
         "required": [
           "error",
           "config_revision"
+        ]
+      },
+      "WorkflowRefusedScript": {
+        "type": "object",
+        "description": "One hook script that refused a workflow configuration write, and why. Only the BLOCKING half is here -- a parse error, or the error-severity findings -- because a refusal that also listed the warnings would read as though they had refused it.",
+        "additionalProperties": false,
+        "properties": {
+          "script_name": {
+            "type": "string",
+            "description": "The script's basename."
+          },
+          "dir": {
+            "type": "string",
+            "description": "The stage directory as it is CONFIGURED rather than as it resolves, because that is the string the operator typed and the one they will recognise."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "set"
+            ],
+            "description": "Whose configuration declares the stage this script is in."
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "before",
+              "after"
+            ],
+            "description": "Which side of the backup that stage runs on."
+          },
+          "parse_error": {
+            "type": "string",
+            "description": "The parser's message when the script is not a shell program at all, empty otherwise."
+          },
+          "parse_error_line": {
+            "type": "integer",
+            "description": "The 1-based line the parser stopped at."
+          },
+          "parse_error_col": {
+            "type": "integer",
+            "description": "The 1-based column the parser stopped at."
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowLintFinding"
+            },
+            "description": "The error-severity findings that refused the save, each with its position."
+          }
+        }
+      },
+      "WorkflowScriptRejectedResponse": {
+        "type": "object",
+        "description": "The WORKFLOW_SCRIPT_REJECTED 409 body. It carries the blocking scripts and their findings as structured fields, for the reason CONFIG_REVISION_STALE carries the current revision as one: a client that had to parse a position out of the message would be parsing prose this contract explicitly does not promise to keep stable. The message says the same thing in one string, for a terminal.",
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          },
+          "blocking_scripts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRefusedScript"
+            },
+            "description": "Every script that refused this write, in stage order then by name, so two attempts at the same save produce the same body."
+          }
+        },
+        "required": [
+          "error",
+          "blocking_scripts"
         ]
       },
       "AuthErrorResponse": {
@@ -5759,9 +5833,80 @@
           }
         }
       },
+      "WorkflowLintFinding": {
+        "type": "object",
+        "description": "One thing backupd's own shell rules reported about one hook script. These are this product's own checks, carrying its own BSH codes, and they are NOT ShellCheck: ShellCheck is GPL-3.0 and this product is Apache-2.0, so the analysis is implemented here against a Go shell parser's syntax tree rather than shipped as somebody else's tool. The set is deliberately small and conservative; an operator who wants a general shell linter should run one.",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Which rule this is, e.g. BSH003, from a closed vocabulary rather than free text: a client that groups by it, or an operator who greps for one, needs the id to be a value. The MESSAGE is free to be reworded and this is not."
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning",
+              "info",
+              "style"
+            ],
+            "description": "How bad it is, and it decides one thing besides colour: `error` refuses a workflow SAVE, the other three are reported and saved. That threshold is documented rather than tunable, because a gate that refused a warning would be a gate operators work around by not using this product's configuration surfaces."
+          },
+          "line": {
+            "type": "integer",
+            "description": "The 1-based line the finding is about. This position is the whole value of this check over `bash -n` through a runner, which could only ever report that a script did not parse."
+          },
+          "col": {
+            "type": "integer",
+            "description": "The 1-based column, counted the way an editor counts."
+          },
+          "message": {
+            "type": "string",
+            "description": "The rule's sentence: what is wrong, what it does when it goes wrong, and what to write instead. It may quote a variable NAME or a literal from the script -- the script's own text -- and never a resolved secret, because nothing on the path that produces it resolves one."
+          }
+        }
+      },
+      "WorkflowScriptLint": {
+        "type": "object",
+        "description": "What backupd's own shell verification established about one hook script's exact bytes, without running any of them. Three states, kept distinguishable on purpose: examined and parsed, examined and refused (a parse error with its position), and NOT EXAMINED, which is a script larger than the verification reads. A client that folded the third into either of the others would report either a pass nobody proved or a fault nobody found.",
+        "additionalProperties": false,
+        "properties": {
+          "examined": {
+            "type": "boolean",
+            "description": "Whether the bytes were read and checked at all."
+          },
+          "not_examined_reason": {
+            "type": "string",
+            "description": "Why they were not, and it is never empty when `examined` is false: \"not examined\" without a reason is the finding an operator cannot act on. Render it as \"not examined\" and never as a pass."
+          },
+          "parsed": {
+            "type": "boolean",
+            "description": "Whether the bytes are a shell program. The verdict comes from a shell parser linked into this product rather than from a `bash -n` on the far side of a socket or an SSH connection, which is what lets it be a precondition of saving on a deployment whose runner is unreachable."
+          },
+          "parse_error": {
+            "type": "string",
+            "description": "The parser's own message, empty when the script parses."
+          },
+          "parse_error_line": {
+            "type": "integer",
+            "description": "The 1-based line the parser stopped at, 0 when the script parses."
+          },
+          "parse_error_col": {
+            "type": "integer",
+            "description": "The 1-based column the parser stopped at, 0 when the script parses."
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowLintFinding"
+            },
+            "description": "Every finding, in position order, at every severity -- including the ones that do not block a save. A client that was only given the blocking ones could not show an operator the warning they are about to introduce."
+          }
+        }
+      },
       "WorkflowValidatedScript": {
         "type": "object",
-        "description": "One hook this backup set would run, as validation found it on disk. Nothing here was executed: the only things validation ever hands an interpreter are `bash -n`, which parses and never runs, and this product's own fixed remote capability probe.",
+        "description": "One hook this backup set would run, as validation found it on disk, with what backupd's own shell verification established about its bytes. Nothing here was executed: the syntax verdict and the findings come from parsing and walking the bytes in this process, and the only things validation ever hands an interpreter are `bash -n`, which parses and never runs, and this product's own fixed remote capability probe.",
         "additionalProperties": false,
         "properties": {
           "step_id": {
@@ -5817,6 +5962,9 @@
           "execution_connection_ref": {
             "type": "string",
             "description": "The connection a remote script would run over, empty for a local one."
+          },
+          "lint": {
+            "$ref": "#/components/schemas/WorkflowScriptLint"
           }
         }
       },
@@ -13862,6 +14010,26 @@
               "CSRF_TOKEN_MISMATCH"
             ]
           },
+          "409": {
+            "description": "Refused: WORKFLOW_SCRIPT_REJECTED. WORKFLOW_SCRIPT_REJECTED is the save gate: a hook script in the deployment-wide stage directories this write points at does not pass backupd's own shell verification -- it is not a shell program, or one of this product's own shell rules reported something at `error` severity -- so the configuration was NOT written. The request is well-formed and a FILE is wrong, which is why it is a 409 with its own code rather than an INVALID_REQUEST that would send an operator back to a form they filled in correctly. The body carries the blocking scripts and their positions as structured fields, so a client renders them beside the save it refused rather than parsing a line number out of prose. `warning`, `info` and `style` findings are reported by GET .../workflow/validation and do NOT refuse a save.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkflowScriptRejectedResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            },
+            "x-error-codes": [
+              "WORKFLOW_SCRIPT_REJECTED"
+            ]
+          },
           "500": {
             "description": "Refused: INTERNAL.",
             "content": {
@@ -14404,15 +14572,23 @@
             ]
           },
           "409": {
-            "description": "Refused: WORKFLOWS_NOT_CONFIGURED. This deployment configures no workflow root, so there is no approved tree for hook scripts to live in and a per-set workflow block would name directories inside nothing. It is its own code rather than INVALID_REQUEST because the request is fine and the deployment is not ready: the remedy is a deployment-wide PATCH /settings/workflow naming a root, which is a different action from correcting a field.",
+            "description": "Refused: WORKFLOW_SCRIPT_REJECTED, WORKFLOWS_NOT_CONFIGURED. WORKFLOW_SCRIPT_REJECTED is the save gate: a hook script in this set's own stage directories this write points at does not pass backupd's own shell verification -- it is not a shell program, or one of this product's own shell rules reported something at `error` severity -- so the configuration was NOT written. The request is well-formed and a FILE is wrong, which is why it is a 409 with its own code rather than an INVALID_REQUEST that would send an operator back to a form they filled in correctly. The body carries the blocking scripts and their positions as structured fields, so a client renders them beside the save it refused rather than parsing a line number out of prose. `warning`, `info` and `style` findings are reported by GET .../workflow/validation and do NOT refuse a save. WORKFLOWS_NOT_CONFIGURED is the other refusal this status carries: this deployment configures no workflow root, so there is no approved tree for hook scripts to live in and a per-set workflow block would name directories inside nothing. It is its own code rather than INVALID_REQUEST because the request is fine and the deployment is not ready: the remedy is a deployment-wide PATCH /settings/workflow naming a root, which is a different action from correcting a field. The body is one of two shapes and the code decides which, which is the shape the 409 on /backup-sets/{source}/{set} already has for CONFIG_REVISION_STALE: a client reading .blocking_scripts after a WORKFLOW_SCRIPT_REJECTED gets a field the type system guarantees is there.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkflowScriptRejectedResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
                 }
               }
             },
             "x-error-codes": [
+              "WORKFLOW_SCRIPT_REJECTED",
               "WORKFLOWS_NOT_CONFIGURED"
             ]
           },

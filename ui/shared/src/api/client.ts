@@ -119,6 +119,7 @@ import type {
   WireWorkflowFinding,
   WireWorkflowRecoveryResponse,
   WireWorkflowRun,
+  WireWorkflowScriptLint,
   WireWorkflowSettingsResponse,
   WireWorkflowStage,
   WireWorkflowStep,
@@ -165,6 +166,7 @@ import type {
   WorkflowRun,
   WorkflowRunState,
   WorkflowScope,
+  WorkflowScriptLint,
   WorkflowSettings,
   WorkflowSettingsPatch,
   WorkflowStage,
@@ -2606,6 +2608,50 @@ function fromWireFinding(f: WireWorkflowFinding): WorkflowFinding {
   };
 }
 
+/**
+ * One script's shell-verification result (#906).
+ *
+ * Every default here is the conservative direction, and each one is a
+ * claim this build must not make on a field it did not receive:
+ *
+ *   - `examined` and `parsed` default FALSE. An absent `examined` reads
+ *     as "nothing looked at this", which renders as "not examined" with
+ *     no reason rather than as a pass; an absent `parsed` reads as "this
+ *     build was not told it parses".
+ *   - the findings default to an EMPTY list, which is honest because the
+ *     list is only ever drawn beside the two booleans above: an
+ *     unexamined script with no findings renders as unexamined, not as
+ *     clean.
+ *   - a severity this build cannot read becomes "warning", exactly as
+ *     fromWireFinding does it and for the same reason — a finding whose
+ *     severity is unreadable has not been established as a mere note.
+ *     It deliberately does not become "error": an error is what refuses
+ *     a save, and inventing one would tell an operator their
+ *     configuration cannot be written when the service would write it.
+ *   - a position of 0 is dropped to undefined. Zero is not a place in a
+ *     file, and "line 0, column 0" is a link no editor can follow.
+ */
+function fromWireScriptLint(lint: WireWorkflowScriptLint | undefined): WorkflowScriptLint {
+  return {
+    examined: lint?.examined === true,
+    notExaminedReason: lint?.not_examined_reason || undefined,
+    parsed: lint?.parsed === true,
+    parseError: lint?.parse_error || undefined,
+    parseErrorLine: lint?.parse_error_line || undefined,
+    parseErrorCol: lint?.parse_error_col || undefined,
+    findings: (lint?.findings ?? []).map((f) => ({
+      code: f.code ?? "",
+      severity:
+        f.severity === "error" || f.severity === "info" || f.severity === "style"
+          ? f.severity
+          : "warning",
+      line: f.line ?? 0,
+      col: f.col ?? 0,
+      message: f.message ?? ""
+    }))
+  };
+}
+
 function fromWireValidatedScript(s: WireWorkflowValidatedScript): WorkflowValidatedScript {
   return {
     stepId: s.step_id ?? "",
@@ -2617,7 +2663,8 @@ function fromWireValidatedScript(s: WireWorkflowValidatedScript): WorkflowValida
     executionConnectionRef: s.execution_connection_ref || undefined,
     sha256: s.sha256 ?? "",
     sizeBytes: s.size_bytes ?? 0,
-    timeoutMs: s.timeout_ms ?? 0
+    timeoutMs: s.timeout_ms ?? 0,
+    lint: fromWireScriptLint(s.lint)
   };
 }
 

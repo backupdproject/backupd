@@ -24,7 +24,12 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { ApiProvider } from "@shared/api/ApiContext";
 import { BackupdError } from "@shared/api/contracts";
-import type { BackupdApi } from "@shared/api/contracts";
+import type {
+  BackupdApi,
+  WorkflowLintFinding,
+  WorkflowScriptLint,
+  WorkflowValidatedScript
+} from "@shared/api/contracts";
 import { createMockApi } from "@shared/api/mock";
 import { BackupSetDetailPage } from "@shared/pages/BackupSetDetailPage";
 import { BackupSetWorkflowCard } from "@shared/pages/BackupSetWorkflowCard";
@@ -375,5 +380,357 @@ describe("an unresolved recovery hold", () => {
     expect(
       screen.getByText(/Whether a workflow run is holding this backup set could not be read/)
     ).toBeTruthy();
+  });
+});
+
+/**
+ * Backupd's own shell verification on this card (issue #906).
+ *
+ * The rules these cases exist for, in order of how badly they read when
+ * broken:
+ *
+ *   - a script NOBODY READ must never draw as clean. Its findings list is
+ *     empty because no rule ran, and a surface that tests "no findings"
+ *     before "not examined" paints an unread hook green. That is this
+ *     product claiming it proved something it never looked at.
+ *   - a script that DOES NOT PARSE must say so with its position. The
+ *     findings list is empty there too, for a second unrelated reason.
+ *   - the ERROR group comes first. Only a parse error and an
+ *     error-severity finding refuse a save; a panel in arrival order
+ *     buries the one row an operator came to find under three that do
+ *     not block anything.
+ *   - a refused save has to name every blocking script, its directory and
+ *     each finding's position, because that is what the operator has to
+ *     go and edit. A one-line "not saved" is a dead end.
+ */
+const RICH_FINDINGS: WorkflowLintFinding[] = [
+  {
+    code: "BSH001",
+    severity: "info",
+    line: 14,
+    col: 12,
+    message: "this variable expansion is not quoted, so the shell splits its value on whitespace"
+  },
+  {
+    code: "BSH003",
+    severity: "error",
+    line: 12,
+    col: 8,
+    message: "this recursive, forced delete targets /var whenever the expansion in it is empty"
+  },
+  {
+    code: "BSH002",
+    severity: "warning",
+    line: 9,
+    col: 1,
+    message: "this cd does not check whether it worked, and nothing in this script does either"
+  },
+  {
+    code: "BSH006",
+    severity: "style",
+    line: 1,
+    col: 1,
+    message: "this script has no #! interpreter line"
+  }
+];
+
+/** One discovered script carrying the verification result a case is
+ *  about. Every other field is the shape a remote hook's row has, so the
+ *  case is about the lint and nothing else. */
+function scriptWith(scriptName: string, lint: WorkflowScriptLint): WorkflowValidatedScript {
+  return {
+    stepId: "step_" + scriptName,
+    scriptName,
+    phase: "before",
+    scope: "set",
+    order: 1,
+    target: "remote",
+    executionConnectionRef: "postgres-exec",
+    sha256: "7c9f1a77b4e05d2286aa4f1c9de0b7318c5ad4419e6f0b2c7d8e91a0f3b6c245",
+    sizeBytes: 1_024,
+    timeoutMs: 300_000,
+    lint
+  };
+}
+
+/**
+ * The card with the check already run, over a report whose SCRIPTS are
+ * the case's and whose every other field is the mock's.
+ *
+ * The engine's own FINDINGS list is emptied, and that is the point: it
+ * carries one sentence per script that is not clean, so a case asserting
+ * "the panel says X" against the full report would pass on the findings
+ * list having said it. What each check contributes to that list is
+ * asserted separately, against the fixture that produces it.
+ */
+async function checkedWith(scripts: WorkflowValidatedScript[]) {
+  const api = createMockApi();
+  const report = await createMockApi().getBackupSetWorkflowValidation(HELD.source, HELD.set);
+  vi.spyOn(api, "getBackupSetWorkflowValidation").mockResolvedValue({
+    ...report,
+    scripts,
+    findings: []
+  });
+
+  const user = userEvent.setup();
+  renderCard(api, HELD);
+  await screen.findByText("Discovered scripts");
+  await user.click(screen.getByRole("button", { name: /Check this set's hooks/ }));
+  await screen.findByText(scripts[0].scriptName);
+  return { api, user };
+}
+
+/** Every BSH code the panel is currently showing, in the order it shows
+ *  them. getAllByText answers in document order, which is what makes this
+ *  an assertion about GROUPING rather than about membership. */
+function panelCodes(): string[] {
+  return screen.queryAllByText(/^BSH\d{3}$/).map((node) => node.textContent ?? "");
+}
+
+describe("the shell verification's findings panel", () => {
+  it("lists every code, position, message and severity, with the error group first", async () => {
+    const { user } = await checkedWith([scriptWith("before/10-prune.remote.sh", {
+      examined: true,
+      parsed: true,
+      findings: RICH_FINDINGS
+    })]);
+
+    // Nothing is expanded until the badge is used: the panel is the
+    // badge's disclosure and not a second copy of the table.
+    expect(panelCodes()).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "1 error" }));
+
+    // Grouped error, warning, info, style — not the order the engine
+    // reported them in, which is the order they are declared above.
+    expect(panelCodes()).toEqual(["BSH003", "BSH002", "BSH001", "BSH006"]);
+    for (const finding of RICH_FINDINGS) {
+      expect(screen.getByText(finding.line + ":" + finding.col)).toBeTruthy();
+      expect(screen.getByText(finding.message)).toBeTruthy();
+    }
+    for (const label of ["error", "warning", "info", "style"]) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("reports a script that does not parse with its position, and never as clean", async () => {
+    const { user } = await checkedWith([scriptWith("before/10-broken.remote.sh", {
+      examined: true,
+      parsed: false,
+      parseError: "unexpected EOF while looking for matching `\"'",
+      parseErrorLine: 18,
+      parseErrorCol: 24,
+      findings: []
+    })]);
+
+    await user.click(screen.getByRole("button", { name: "does not parse" }));
+
+    expect(screen.getByText("18:24")).toBeTruthy();
+    expect(screen.getByText(/unexpected EOF while looking for matching/)).toBeTruthy();
+    // The consequence, not just the position: a file that is not a shell
+    // program does not partly run.
+    expect(screen.getByText(/nothing in it would run/)).toBeTruthy();
+    // The negative that matters. An empty findings list here means the
+    // rules never ran, and must not read as a pass anywhere on the card.
+    expect(screen.queryAllByText("clean")).toEqual([]);
+  });
+
+  it("reports a NOT EXAMINED script with its reason, and never as clean", async () => {
+    const { user } = await checkedWith([scriptWith("before/10-enormous.remote.sh", {
+      examined: false,
+      notExaminedReason: "this script is 4.1 MB, larger than the 1 MB the shell verification reads",
+      parsed: false,
+      findings: []
+    })]);
+
+    expect(screen.getByRole("button", { name: "not examined" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "not examined" }));
+
+    expect(screen.getByText(/larger than the 1 MB the shell verification reads/)).toBeTruthy();
+    // The honesty gate, stated on screen as well as implied by the badge.
+    expect(screen.getByText(/This is not a pass/)).toBeTruthy();
+    expect(screen.queryAllByText("clean")).toEqual([]);
+    expect(panelCodes()).toEqual([]);
+  });
+
+  it("reports a clean script as clean, with no findings rows", async () => {
+    const { user } = await checkedWith([scriptWith("before/10-fine.remote.sh", {
+      examined: true,
+      parsed: true,
+      findings: []
+    })]);
+
+    await user.click(screen.getByRole("button", { name: "clean" }));
+
+    expect(
+      screen.getByText(/This script parses, and backupd's own shell rules reported nothing about it/)
+    ).toBeTruthy();
+    expect(panelCodes()).toEqual([]);
+  });
+
+  it("counts the worst severity on the badge, and opens only that script's findings", async () => {
+    const { user } = await checkedWith([
+      scriptWith("before/10-mixed.remote.sh", {
+        examined: true,
+        parsed: true,
+        findings: [
+          RICH_FINDINGS[1],
+          RICH_FINDINGS[2],
+          { code: "BSH005", severity: "warning", line: 21, col: 6, message: "unquoted operand in [ ... ]" }
+        ]
+      }),
+      scriptWith("before/20-other.remote.sh", {
+        examined: true,
+        parsed: true,
+        findings: [{ code: "BSH004", severity: "warning", line: 6, col: 1, message: "set -e with a pipeline and no pipefail" }]
+      })
+    ]);
+
+    // One error beside two warnings is an ERROR badge: the error is what
+    // refuses a save, so a "2 warnings" badge would be counting the rows
+    // that do not matter.
+    expect(screen.getByRole("button", { name: "1 error" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "1 warning" })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "1 error" }));
+
+    expect(panelCodes()).toEqual(["BSH003", "BSH002", "BSH005"]);
+    // And not the other script's, which has its own badge and its own
+    // panel: a shared panel would show findings from a file the operator
+    // did not select.
+    expect(panelCodes()).not.toContain("BSH004");
+  });
+});
+
+describe("a workflow save the shell rules refused", () => {
+  it("names every blocking script, its directory, each code and position, and says nothing was saved", async () => {
+    const user = userEvent.setup();
+    const api = createMockApi();
+    vi.spyOn(api, "patchBackupSetWorkflow").mockRejectedValue(
+      new BackupdError({
+        code: "WORKFLOW_SCRIPT_REJECTED",
+        message:
+          "this configuration was not saved: 2 hook scripts it points at would not run",
+        correlationId: "cid_wfscript409",
+        status: 409,
+        blockingScripts: [
+          {
+            scriptName: "10-quiesce.remote.sh",
+            dir: "/srv/hooks/billing-mysql/before",
+            scope: "set",
+            phase: "before",
+            parseError: "unexpected EOF while looking for matching `\"'",
+            parseErrorLine: 18,
+            parseErrorCol: 24,
+            findings: []
+          },
+          {
+            scriptName: "20-prune-cache.local.sh",
+            dir: "/srv/hooks/billing-mysql/after",
+            scope: "set",
+            phase: "after",
+            findings: [
+              {
+                code: "BSH003",
+                severity: "error",
+                line: 12,
+                col: 8,
+                message: "this recursive, forced delete targets /var whenever the expansion in it is empty"
+              }
+            ]
+          }
+        ]
+      })
+    );
+
+    renderCard(api, SFTP_ONLY);
+    const picker = await screen.findByLabelText("Execute remote hooks over");
+    await user.selectOptions(picker, "billing-exec");
+    // The sentence an operator reads first: the write did not happen, and
+    // the warnings they can also see on this card are not why.
+    const notice = await screen.findByText(/This configuration was NOT saved/);
+    const banner = notice.closest(".banner");
+    if (banner === null) throw new Error("the refusal is not drawn in a banner");
+    expect(within(banner as HTMLElement).getByText(/does not block a save/)).toBeTruthy();
+
+    // Both scripts, both directories, IN THE BANNER: the set's own
+    // before directory is already a cell on this card, so an unscoped
+    // match would pass on the configuration rather than on the refusal.
+    const refusal = within(banner as HTMLElement);
+    expect(refusal.getByText("10-quiesce.remote.sh")).toBeTruthy();
+    expect(refusal.getByText("20-prune-cache.local.sh")).toBeTruthy();
+    expect(refusal.getByText("/srv/hooks/billing-mysql/before")).toBeTruthy();
+    expect(refusal.getByText("/srv/hooks/billing-mysql/after")).toBeTruthy();
+
+    // The parse error with its position, and the blocking finding with
+    // its code and position — read off the structured field rather than
+    // out of the service's sentence.
+    expect(refusal.getByText(/does not parse at 18:24/)).toBeTruthy();
+    expect(refusal.getByText("BSH003 at 12:8")).toBeTruthy();
+    expect(refusal.getByText(/this recursive, forced delete targets \/var/)).toBeTruthy();
+  });
+
+  it("falls back to the service's own sentence when the refusal carried no structured list", async () => {
+    const user = userEvent.setup();
+    const api = createMockApi();
+    // An engine that refuses with the code and the prose, and predates
+    // the structured field. The banner has to stay readable: a refusal
+    // rendered as an empty list is a save that silently did not happen.
+    vi.spyOn(api, "patchBackupSetWorkflow").mockRejectedValue(
+      new BackupdError({
+        code: "WORKFLOW_SCRIPT_REJECTED",
+        message: "10-quiesce.remote.sh does not parse: unexpected EOF at 18:24",
+        correlationId: "cid_wfscript409old",
+        status: 409
+      })
+    );
+
+    renderCard(api, SFTP_ONLY);
+    const picker = await screen.findByLabelText("Execute remote hooks over");
+    await user.selectOptions(picker, "billing-exec");
+
+    expect(await screen.findByText(/This configuration was NOT saved/)).toBeTruthy();
+    expect(screen.getByText(/10-quiesce.remote.sh does not parse: unexpected EOF at 18:24/)).toBeTruthy();
+  });
+});
+
+/**
+ * The masking rule, on the surface #906 adds.
+ *
+ * A finding carries the script's OWN text and a position in it, and that
+ * is all this card may draw. The risk the new panel introduces is not that
+ * it leaks a secret it was given — it is that a card showing what is
+ * inside a hook grows a habit of resolving things: an env reference, a
+ * script body. There is no endpoint that returns either, and this pins
+ * that the card asks for neither.
+ */
+describe("what the findings panel is allowed to show", () => {
+  it("renders a finding's own text verbatim and resolves nothing it was not given", async () => {
+    const secretish = "PGPASSWORD=$(cat /etc/backupd/secrets/pg)";
+    const { user } = await checkedWith([scriptWith("before/10-export.remote.sh", {
+      examined: true,
+      parsed: true,
+      findings: [
+        {
+          code: "BSH001",
+          severity: "info",
+          line: 7,
+          col: 3,
+          message: "this variable expansion is not quoted: " + secretish
+        }
+      ]
+    })]);
+
+    await user.click(screen.getByRole("button", { name: "1 note" }));
+
+    // The finding's text, exactly as handed over: not expanded, not
+    // executed, not interpreted as markup.
+    expect(screen.getByText(/this variable expansion is not quoted: PGPASSWORD=\$\(cat/)).toBeTruthy();
+
+    // And the environment beside it still states a secret as a LOCATION.
+    // The value is something no read on this API carries, so there is
+    // nothing for the card to show and no control that offers to.
+    expect(await screen.findByText(/from file \/etc\/backupd\/secrets\/pg/)).toBeTruthy();
+    expect(screen.getAllByText(/never shown/).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /reveal|show value/i })).toBeNull();
   });
 });

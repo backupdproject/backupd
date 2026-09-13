@@ -1,5 +1,5 @@
 import { BackupdError, RequestFailure, describeException } from "./contracts";
-import type { ApiError, FailureOrigin } from "./contracts";
+import type { ApiError, FailureOrigin, WorkflowBlockingScript } from "./contracts";
 import { API_BASE_PATH, API_VERSION } from "./generated/contract";
 
 /**
@@ -35,6 +35,31 @@ export function isNotConfigured(error: ApiError | null | undefined): boolean {
  *  connection) and so carries no code and no correlation id. */
 export function apiErrorOf(e: unknown): ApiError | null {
   return e instanceof BackupdError ? e.api : null;
+}
+
+/**
+ * The hook scripts a workflow write was refused over, or an empty array
+ * (#906).
+ *
+ * Both workflow PATCH routes answer 409 WORKFLOW_SCRIPT_REJECTED when a
+ * hook script the write points at does not parse, or carries an
+ * `error`-severity finding from backupd's own shell rules. A
+ * `warning`, an `info` and a `style` finding are reported and DO NOT
+ * block, which is why the list is the blocking half only and why a
+ * caller may say so in the banner without qualifying it.
+ *
+ * Empty is the answer for every other failure AND for a
+ * WORKFLOW_SCRIPT_REJECTED whose body carried no structured list — an
+ * engine older than this field. A caller therefore reads an empty array
+ * as "no structured list to draw" and falls back to `describeFailure`'s
+ * message, which is the service's own multi-line sentence and is
+ * readable on its own. Returning null for the two cases separately would
+ * buy a caller a distinction neither branch can act on differently.
+ */
+export function workflowScriptRefusalOf(e: unknown): WorkflowBlockingScript[] {
+  const api = apiErrorOf(e);
+  if (api === null || api.code !== "WORKFLOW_SCRIPT_REJECTED") return [];
+  return api.blockingScripts ?? [];
 }
 
 /**

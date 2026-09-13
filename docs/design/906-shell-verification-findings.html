@@ -1,0 +1,577 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Shell verification in the findings surface: three revisions to the workflow card (issue #906)</title>
+<style>
+:root{
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;
+  --radius-sm:4px;--radius-md:6px;--radius-lg:8px;--radius-xl:10px;--radius-pill:999px;
+  --bg:#f2f2f0;--surface:#fff;--surface-2:#fafaf9;--surface-3:#f0f0ed;
+  --border:#e0dfdc;--border-strong:#c8c7c3;
+  --text:#191a19;--text-2:#5b5d5b;--text-3:#8b8d8a;
+  --accent:oklch(0.52 0.09 255);--accent-quiet:oklch(0.95 0.02 255);
+  --ok:oklch(0.52 0.10 155);--ok-quiet:oklch(0.955 0.025 155);
+  --warn:oklch(0.56 0.11 70);--warn-quiet:oklch(0.96 0.035 75);
+  --danger:oklch(0.52 0.15 25);--danger-quiet:oklch(0.955 0.03 25);
+  --shadow:0 1px 2px rgba(20,20,18,.05),0 1px 1px rgba(20,20,18,.04);
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --term-bg:#14150f;--term-text:#d7d8d2;--term-time:#6f736a;--term-info:#9aa39b;
+  --term-ok:oklch(0.72 0.11 155);--term-warn:oklch(0.78 0.12 75);--term-danger:oklch(0.72 0.16 25);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:var(--space-6)}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:var(--space-5)}
+h1{font-size:15px;font-weight:600;margin:0 0 var(--space-1);letter-spacing:-.01em}
+.sub{color:var(--text-2);font-size:13px;margin:0}
+.caption{color:var(--text-3);font-size:12px;margin:var(--space-4) 0 var(--space-2);
+  text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);
+  box-shadow:var(--shadow);overflow:hidden}
+.pagehead{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-4);
+  padding:var(--space-4) var(--space-5);border-bottom:1px solid var(--border);background:var(--surface-2)}
+.crumb{color:var(--text-3);font-size:11.5px;margin-bottom:2px}
+.title{font-size:17px;font-weight:640;letter-spacing:-.01em;display:flex;align-items:center;gap:var(--space-3)}
+.pathline{color:var(--text-3);font-size:12px;font-family:var(--font-mono);margin-top:3px}
+.actions{display:flex;gap:var(--space-2);flex-wrap:wrap;justify-content:flex-end}
+.btn{height:28px;padding:0 11px;border:1px solid var(--border-strong);border-radius:var(--radius-md);
+  background:var(--surface);color:var(--text);font:inherit;font-size:12.5px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn--primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn--off{background:var(--surface-3);border-color:var(--border);color:var(--text-3);cursor:not-allowed}
+.btn--caution{border-color:var(--warn);color:var(--warn)}
+.pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 10px;
+  border-radius:var(--radius-pill);font-size:11.5px;font-weight:600;letter-spacing:.02em}
+.pill--run{background:var(--accent-quiet);color:var(--accent)}
+.pill--ok{background:var(--ok-quiet);color:var(--ok)}
+.pill--warn{background:var(--warn-quiet);color:var(--warn)}
+.pill--err{background:var(--danger-quiet);color:var(--danger)}
+.pill--none{background:var(--surface-3);color:var(--text-3)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.card__header{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);
+  padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--border)}
+.card__body{padding:var(--space-4) var(--space-5)}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--text-3);margin:0}
+.meta{font-size:11.5px;color:var(--text-3)}
+.note{margin:0;padding:var(--space-3) var(--space-5);border-top:1px solid var(--border);
+  background:var(--surface-2);font-size:12.5px;color:var(--text-2)}
+.note strong{color:var(--text)}
+code{font-family:var(--font-mono);font-size:12px;background:var(--surface-3);
+  padding:1px 4px;border-radius:var(--radius-sm)}
+.banner{display:flex;gap:var(--space-3);padding:var(--space-3) var(--space-5);
+  border-bottom:1px solid var(--border);font-size:13px;align-items:flex-start}
+.banner--warn{background:var(--warn-quiet);color:var(--warn)}
+.banner--err{background:var(--danger-quiet);color:var(--danger)}
+.banner--info{background:var(--accent-quiet);color:var(--accent)}
+.banner .body{display:block;color:var(--text-2);margin-top:3px;font-size:12.5px}
+.banner .glyph{font-size:12px;line-height:20px}
+.banner__actions{margin-left:auto;display:flex;gap:var(--space-2);flex-shrink:0}
+.tag{display:inline-flex;align-items:center;height:19px;padding:0 7px;border-radius:var(--radius-sm);
+  font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.tag--local{background:var(--accent-quiet);color:var(--accent)}
+.tag--remote{background:var(--surface-3);color:var(--text-2)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--text-3);padding:8px var(--space-5);border-bottom:1px solid var(--border);background:var(--surface-2)}
+td{padding:8px var(--space-5);border-bottom:1px solid var(--border);vertical-align:top}
+td.mono,th.mono{font-family:var(--font-mono);font-size:12px}
+tr.sel td{background:var(--accent-quiet)}
+tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:var(--space-4)}
+.field label{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)}
+.field .in{height:30px;border:1px solid var(--border-strong);border-radius:var(--radius-md);
+  background:var(--surface);display:flex;align-items:center;padding:0 9px;font-family:var(--font-mono);font-size:12px}
+.field .in--edited{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-quiet)}
+.field .hint{font-size:11.5px;color:var(--text-3)}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 var(--space-5);padding:var(--space-4) var(--space-5)}
+.findings{display:flex;flex-direction:column;gap:6px;padding:var(--space-4) var(--space-5)}
+.finding{display:grid;grid-template-columns:100px 150px minmax(0,1fr);gap:var(--space-3);
+  align-items:baseline;font-size:12.5px}
+.finding .c{font-family:var(--font-mono);font-size:11.5px;color:var(--text-2)}
+.finding .d{color:var(--text-2)}
+.reason{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);
+  padding:var(--space-5);font-size:13px;color:var(--text-2);box-shadow:var(--shadow)}
+.reason h2{font-size:13px;margin:0 0 var(--space-3);color:var(--text)}
+.reason h3{font-size:12.5px;margin:var(--space-4) 0 var(--space-2);color:var(--text)}
+.reason p{margin:0 0 var(--space-3)}
+.reason li{margin-bottom:6px}
+.reason ul{margin:0 0 var(--space-3);padding-left:18px}
+.dateline{font-size:11.5px;color:var(--text-3);font-family:var(--font-mono)}
+
+/* revision 1: the per-script findings cell is a control, not a label */
+.fbtn{border:1px solid var(--border-strong);border-radius:var(--radius-md);background:var(--surface);
+  font:inherit;cursor:pointer;height:26px;padding:0 6px 0 3px;display:inline-flex;align-items:center;gap:5px}
+.fbtn .ch{color:var(--text-3);font-size:13px;line-height:1}
+.fbtn--on{border-color:var(--accent);background:var(--surface)}
+.fbtn--off{border-style:dashed;border-color:var(--border);cursor:default}
+
+/* revision 2: one script's findings, grouped by severity, with its own source line */
+.grp{display:flex;align-items:baseline;gap:var(--space-3);padding:7px var(--space-5);
+  background:var(--surface-2);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.grp__k{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-2)}
+.grp__w{font-size:11.5px;color:var(--text-3)}
+.lint{display:flex;flex-direction:column}
+.f2{padding:var(--space-3) var(--space-5) var(--space-4);border-bottom:1px solid var(--border)}
+.f2__head{display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap}
+.f2__code{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--text)}
+.f2__pos{font-family:var(--font-mono);font-size:11.5px;color:var(--text-3)}
+.f2__rule{font-size:11.5px;color:var(--text-3)}
+.f2__msg{margin:7px 0 var(--space-3);font-size:12.5px;color:var(--text-2);max-width:88ch}
+.src{background:var(--term-bg);border-radius:var(--radius-md);padding:7px 0;overflow:hidden}
+.srow{display:flex;font-family:var(--font-mono);font-size:11.5px;line-height:1.65;color:var(--term-text)}
+.sln{flex:0 0 46px;text-align:right;padding-right:12px;color:var(--term-time);
+  border-right:1px solid #2b2c25;margin-right:12px;user-select:none}
+.scode{white-space:pre}
+.srow--caret .scode{color:var(--term-danger)}
+.srow--caret.w .scode{color:var(--term-warn)}
+.srow--caret.i .scode{color:var(--term-info)}
+.srow--drop .sln,.srow--drop .scode{color:var(--term-time)}
+.pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-5)}
+.mini{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+.mini__h{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-3) var(--space-4);
+  border-bottom:1px solid var(--border);background:var(--surface-2)}
+.mini__h .n{font-family:var(--font-mono);font-size:12px}
+.mini__b{padding:var(--space-3) var(--space-4);font-size:12.5px;color:var(--text-2)}
+.mini__b p{margin:0 0 var(--space-2);max-width:60ch}
+.mini__b p:last-child{margin:0}
+.savebar{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-5);
+  border-top:1px solid var(--border);background:var(--surface-2)}
+.savebar .meta{margin-right:auto}
+.refused{padding:var(--space-2) var(--space-5) var(--space-4)}
+.refused__s{border-left:3px solid var(--danger);padding:var(--space-2) 0 var(--space-2) var(--space-4);
+  margin-top:var(--space-3)}
+.refused__n{font-family:var(--font-mono);font-size:12.5px;font-weight:700}
+.refused__d{font-size:11.5px;color:var(--text-3);font-family:var(--font-mono);margin-top:2px}
+.refused__f{display:flex;align-items:baseline;gap:var(--space-2);margin-top:7px;font-size:12.5px;
+  color:var(--text-2);flex-wrap:wrap}
+</style>
+<div class="wrap">
+
+<div>
+  <h1>Shell verification in the findings surface: three revisions to the workflow card</h1>
+  <p class="sub">Issue #906 (EPIC-L, L7.5) &middot; design note for the static shell verification layered over
+    L7's shipped Workflow panel. <span class="dateline">2026-09-13</span></p>
+</div>
+
+<!-- ============ 1. the table gains a findings column ============ -->
+<p class="caption">1 &middot; revision one: the discovered-scripts table gains a findings column, and the cell is a control</p>
+<section class="card">
+  <div class="card__header"><h2 class="eyebrow">Workflow</h2>
+    <span class="meta">/srv/hooks/api-server &middot; 5 scripts discovered</span></div>
+  <div class="card__body" style="padding-bottom:var(--space-3)">
+    <div style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap">
+      <span class="pill pill--ok"><span class="dot"></span>Valid for backup</span>
+      <span class="pill pill--warn"><span class="dot"></span>Hooks not valid</span>
+      <span class="dateline">read 02:41:07</span>
+      <span style="margin-left:auto"><button class="btn">Check again</button></span>
+    </div>
+    <p class="meta" style="margin:7px 0 0;max-width:80ch">Checking reads every script, hashes it, parses it
+      with this product's own parser and walks the result against backupd's shell rules. It executes no
+      hook &mdash; not one line, not in a sandbox &mdash; and it is read on demand rather than on a timer
+      because it also opens a connection to the source host and to the Host Workflow Runner.</p>
+  </div>
+  <table>
+    <thead><tr><th>Order</th><th>Script</th><th>Where</th><th>Runs on</th><th>Findings</th>
+      <th class="mono">size</th><th class="mono">sha256</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">1</td><td class="mono">before/10-quiesce.local.sh</td>
+        <td><span class="tag tag--local">Local Host</span></td><td>Host Workflow Runner</td>
+        <td><button class="fbtn"><span class="pill pill--warn"><span class="dot"></span>2 warnings</span><span class="ch">&rsaquo;</span></button></td>
+        <td class="mono">1.9 KiB</td><td class="mono">4f21ab9c</td></tr>
+      <tr class="sel"><td class="mono">2</td><td class="mono">before/20-dump.remote.sh</td>
+        <td><span class="tag tag--remote">Remote</span></td><td>api-server-exec &mdash; exec capable</td>
+        <td><button class="fbtn fbtn--on"><span class="pill pill--err"><span class="dot"></span>1 error, 4 more</span><span class="ch">&rsaquo;</span></button></td>
+        <td class="mono">3.4 KiB</td><td class="mono">b70c1d55</td></tr>
+      <tr><td class="mono">3</td><td class="mono">before/30-tag-snapshot.remote.sh</td>
+        <td><span class="tag tag--remote">Remote</span></td><td>api-server-exec &mdash; exec capable</td>
+        <td><button class="fbtn"><span class="pill pill--err"><span class="dot"></span>does not parse</span><span class="ch">&rsaquo;</span></button></td>
+        <td class="mono">880 B</td><td class="mono">0ce41f7a</td></tr>
+      <tr><td class="mono">4</td><td class="mono">after/10-thaw.local.sh</td>
+        <td><span class="tag tag--local">Local Host</span></td><td>Host Workflow Runner</td>
+        <td><button class="fbtn"><span class="pill pill--ok"><span class="dot"></span>clean</span><span class="ch">&rsaquo;</span></button></td>
+        <td class="mono">2.2 KiB</td><td class="mono">99b2e0c3</td></tr>
+      <tr><td class="mono">5</td><td class="mono">after/20-purge-staging.local.sh</td>
+        <td><span class="tag tag--local">Local Host</span></td><td>Host Workflow Runner</td>
+        <td><button class="fbtn fbtn--off"><span class="pill pill--none">not examined</span></button></td>
+        <td class="mono">2.0 MiB</td><td class="mono">1d7fa044</td></tr>
+    </tbody>
+  </table>
+  <div class="findings">
+    <div class="finding"><span class="pill pill--err"><span class="dot"></span>error</span>
+      <span class="c">remote_bash_syntax</span>
+      <span class="d">30-tag-snapshot.remote.sh is not a shell program: at line 7, column 1, reached EOF
+        without matching if with fi. A run would refuse it, and this product's own parser answered without
+        needing a shell, a runner or the source host</span></div>
+    <div class="finding"><span class="pill pill--err"><span class="dot"></span>error</span>
+      <span class="c">remote_bash_syntax</span>
+      <span class="d">20-dump.remote.sh does not pass backupd's shell rules: BSH003 at 24:10 (error) this
+        recursive, forced delete targets /tmp whenever the expansion in it is empty, because an unset or
+        empty variable leaves the literal path behind. That is a root-level directory. Write
+        <code>${NAME:?}</code> so the script fails instead, give the expansion a default, or put
+        <code>set -u</code> at the top of the script (and 4 more finding(s) on this script)</span></div>
+    <div class="finding"><span class="pill pill--warn"><span class="dot"></span>warning</span>
+      <span class="c">local_bash_syntax</span>
+      <span class="d">10-quiesce.local.sh parses, and backupd's shell rules report: BSH002 at 14:3 (warning)
+        this cd does not check whether it worked, and nothing in this script does either. When it fails
+        &mdash; the directory is gone, the mount is not there &mdash; the commands after it run in the
+        directory the script was already in, against the wrong tree. Write <code>cd ... || exit 1</code>,
+        or put <code>set -e</code> at the top of the script (and 1 more finding(s) on this script)</span></div>
+    <div class="finding"><span class="pill pill--none">not examined</span>
+      <span class="c">local_bash_syntax</span>
+      <span class="d">not examined: 20-purge-staging.local.sh is 2097664 bytes and this check reads at most
+        1048576. A hook is a shell script; a prefix of one is a different program, so it is not examined
+        rather than partly examined</span></div>
+    <div class="finding"><span class="pill pill--ok"><span class="dot"></span>ok</span>
+      <span class="c">exec_capability</span>
+      <span class="d">api-server-exec accepted an exec channel and proved it runs the bytes it is sent</span></div>
+  </div>
+  <p class="note"><strong>One cell per script, and it is a button.</strong> The shipped table already
+    carries Order, Script, Where, Runs on, size and sha256 for every discovered hook; the only column
+    #906 adds is the verdict of the shell rules on that one file, and the only thing it has to do is get an
+    operator to the findings. So it is a real button with a chevron, not a coloured label: it is reachable
+    by keyboard, announced as pressed for the selected row, and the row it belongs to is marked by an inset
+    rule as well as a tint.<br><br>
+    <strong>The cell states the worst severity and counts the rest.</strong> <code>1 error, 4 more</code>
+    rather than <code>5 findings</code>, because the number an operator needs from a table is whether this
+    file has something that blocks a save. A cell that added five findings into one neutral number would
+    make the error and the missing shebang look like the same fact.<br><br>
+    <strong>"Not examined" is not "clean", and its cell does not open.</strong> A hook above the byte
+    ceiling the rules read (this deployment has raised <code>workflows.max_script_size_bytes</code>) was
+    never walked, so there is nothing to open and nothing to claim: the cell is a dashed, inert pill and the
+    findings list carries the engine's own sentence saying how many bytes it is and how many were read. The
+    L7 rule holds unchanged &mdash; a green tick for a check nobody ran would be this product claiming it
+    proved something it never looked at.<br><br>
+    <strong>The findings list keeps its L7 shape and its L7 check ids.</strong> The per-script sentences
+    arrive under <code>local_bash_syntax</code> and <code>remote_bash_syntax</code>, the ids that already
+    existed, with the first finding named by code and position and the rest counted. One line per script,
+    never one line per finding: a deployment with sixty-four hooks and an unquoted expansion in each of them
+    would bury the one <code>rm -rf</code> that matters.</p>
+</section>
+
+<!-- ============ 2. the findings panel for one script ============ -->
+<p class="caption">2 &middot; revision two: one script's findings, grouped and sorted by severity, each on the line it is about</p>
+<section class="card">
+  <div class="pagehead">
+    <div>
+      <div class="crumb">Backup sets &rsaquo; api-server / var-backups &rsaquo; Workflow &rsaquo; Findings</div>
+      <div class="title">20-dump.remote.sh
+        <span class="pill pill--err"><span class="dot"></span>1 ERROR</span>
+        <span class="tag tag--remote">Remote</span>
+      </div>
+      <div class="pathline">/srv/hooks/api-server/before &middot; set before &middot; 3.4 KiB &middot;
+        sha256 b70c1d55 &middot; parses &middot; 5 findings from backupd's shell rules</div>
+    </div>
+    <div class="actions">
+      <button class="btn">&lsaquo; Back to the script list</button>
+      <button class="btn">10-quiesce.local.sh &rsaquo;</button>
+    </div>
+  </div>
+  <div class="banner banner--info">
+    <span class="glyph">&#9432;</span>
+    <span><strong>These are backupd's own shell rules, not ShellCheck.</strong>
+      <span class="body">The <code>BSH</code> codes below are this product's checks, written against a
+      parsed syntax tree in the engine process: six rules, chosen because each one names a shape that is
+      wrong rather than unusual. They are deliberately not <code>SC</code> codes, because a code that looked
+      like ShellCheck's would send an operator to a wiki page describing different analysis. Nothing here
+      ran the script.</span></span>
+  </div>
+
+  <div class="lint">
+    <div class="grp"><span class="grp__k">Error</span>
+      <span class="grp__w">this is what refuses a save of the configuration that points at this script</span></div>
+    <div class="f2">
+      <div class="f2__head">
+        <span class="pill pill--err"><span class="dot"></span>error</span>
+        <span class="f2__code">BSH003</span>
+        <span class="f2__pos">24:10</span>
+        <span class="f2__rule">an <code>rm -rf</code> that becomes a recursive delete of a root-level path
+          the moment an expansion is empty</span>
+      </div>
+      <p class="f2__msg">this recursive, forced delete targets /tmp whenever the expansion in it is empty,
+        because an unset or empty variable leaves the literal path behind. That is a root-level directory.
+        Write <code>${NAME:?}</code> so the script fails instead, give the expansion a default, or put
+        <code>set -u</code> at the top of the script</p>
+      <div class="src">
+        <div class="srow"><span class="sln">23</span><span class="scode">  # clear anything the last run left behind</span></div>
+        <div class="srow"><span class="sln">24</span><span class="scode">  rm -rf "$STAGING/tmp"</span></div>
+        <div class="srow srow--caret"><span class="sln"></span><span class="scode">         ^ column 10</span></div>
+      </div>
+    </div>
+
+    <div class="grp"><span class="grp__k">Warnings</span>
+      <span class="grp__w">reported here and saved anyway: a warning does not block a save</span></div>
+    <div class="f2">
+      <div class="f2__head">
+        <span class="pill pill--warn"><span class="dot"></span>warning</span>
+        <span class="f2__code">BSH005</span>
+        <span class="f2__pos">19:9</span>
+        <span class="f2__rule">an unquoted expansion inside <code>[ ... ]</code>, which is a syntax error at
+          run time when it is empty</span>
+      </div>
+      <p class="f2__msg">this expansion of $dest is not quoted inside <code>[ ... ]</code>. When it is empty
+        the test sees one operand fewer than it was written for and fails with a syntax error rather than a
+        false &mdash; which is the case the condition is usually there to handle. Put it in double quotes, or
+        use <code>[[ ... ]]</code>, which does not split</p>
+      <div class="src">
+        <div class="srow"><span class="sln">19</span><span class="scode">if [ -n $dest ]; then</span></div>
+        <div class="srow srow--caret w"><span class="sln"></span><span class="scode">        ^ column 9</span></div>
+      </div>
+    </div>
+    <div class="f2">
+      <div class="f2__head">
+        <span class="pill pill--warn"><span class="dot"></span>warning</span>
+        <span class="f2__code">BSH004</span>
+        <span class="f2__pos">31:3</span>
+        <span class="f2__rule"><code>set -e</code> without <code>pipefail</code>, with a pipeline whose
+          earlier commands can therefore fail unnoticed</span>
+      </div>
+      <p class="f2__msg">this script uses <code>set -e</code> and a pipeline, without
+        <code>set -o pipefail</code>. A pipeline's exit status is its LAST command's, so a failure earlier in
+        this pipeline &mdash; the dump, not the compressor &mdash; leaves <code>set -e</code> with nothing to
+        trip on: the script continues and the hook reports success. Write <code>set -euo pipefail</code>, or
+        check <code>${PIPESTATUS[@]}</code></p>
+      <div class="src">
+        <div class="srow"><span class="sln">2</span><span class="scode">set -e</span></div>
+        <div class="srow srow--drop"><span class="sln">&nbsp;</span><span class="scode">&hellip;</span></div>
+        <div class="srow"><span class="sln">31</span><span class="scode">  pg_dump "$PGDATABASE" | gzip -9 &gt; "$dest"</span></div>
+        <div class="srow srow--caret w"><span class="sln"></span><span class="scode">  ^ column 3</span></div>
+      </div>
+    </div>
+
+    <div class="grp"><span class="grp__k">Information</span>
+      <span class="grp__w">the most common finding by a wide margin, and usually harmless in a hook whose paths hold no spaces</span></div>
+    <div class="f2">
+      <div class="f2__head">
+        <span class="pill pill--run"><span class="dot"></span>info</span>
+        <span class="f2__code">BSH001</span>
+        <span class="f2__pos">36:7</span>
+        <span class="f2__rule">an expansion in a command argument that will word-split and glob</span>
+      </div>
+      <p class="f2__msg">this expansion of $dest is not quoted, so the shell splits its value on whitespace
+        and expands any glob characters in it before the command sees it: a path with a space in it becomes
+        two arguments, and one with a <code>*</code> becomes whatever that matched. Put it in double
+        quotes</p>
+      <div class="src">
+        <div class="srow"><span class="sln">36</span><span class="scode">  scp $dest "$REMOTE_HOST:/var/backups/"</span></div>
+        <div class="srow srow--caret i"><span class="sln"></span><span class="scode">      ^ column 7</span></div>
+      </div>
+    </div>
+
+    <div class="grp"><span class="grp__k">Style</span>
+      <span class="grp__w">a fact about the file, so its position is 1:1 rather than a place no editor can go to</span></div>
+    <div class="f2" style="border-bottom:none">
+      <div class="f2__head">
+        <span class="pill pill--none">style</span>
+        <span class="f2__code">BSH006</span>
+        <span class="f2__pos">1:1</span>
+        <span class="f2__rule">no interpreter line</span>
+      </div>
+      <p class="f2__msg">this script has no <code>#!</code> interpreter line. This product runs a hook by
+        handing its bytes to bash, so this changes nothing about how it runs here; it changes what happens
+        when somebody runs the file by hand to test it. Start the file with
+        <code>#!/usr/bin/env bash</code></p>
+      <div class="src">
+        <div class="srow"><span class="sln">1</span><span class="scode"># 20-dump.remote.sh -- dump the application database into the stage directory</span></div>
+        <div class="srow srow--caret i"><span class="sln"></span><span class="scode">^ column 1</span></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="note"><strong>Grouped by severity, sorted by severity, and the order is the product's order.</strong>
+    Error, warning, info, style &mdash; the four severities the rules emit, each with a heading that says what
+    that severity DOES rather than how bad it feels. "Blocks a save" and "reported here and saved anyway" is
+    the only distinction an operator has to act on, and a flat list sorted by line number would hide it
+    behind whichever mistake happens to be near the top of the file.<br><br>
+    <strong>Every finding shows the line it is about, from the script an operator wrote.</strong> A code and
+    a <code>24:10</code> is a coordinate; the line with a gutter and a caret under the column is the
+    finding. The excerpt is the script's own bytes as they were captured and hashed for this report, elided
+    where a rule is about two distant lines (BSH004 is about the <code>set -e</code> at the top and the
+    pipeline at line 31, so both are shown). It is inert text in a dark panel, never an editor: this
+    product does not write an operator's hook, and in particular never injects <code>set -e</code> into
+    one.<br><br>
+    <strong>A message may quote the script's own text and a variable NAME, never a value.</strong>
+    <code>$STAGING</code>, <code>$dest</code> and <code>$PGDATABASE</code> appear because they are what is
+    written in the file. Nothing on this screen resolves a variable, so there is no path by which a
+    credential passed through the workflow environment could arrive in a finding.<br><br>
+    <strong>The header says "parses" before it says anything else.</strong> A script that does not parse has
+    no findings at all &mdash; the rules walk a tree, and there is no tree &mdash; so the panel for
+    <code>30-tag-snapshot.remote.sh</code> shows the parse position and the parser's own sentence instead of
+    this list, and does not imply the rules found nothing.</p>
+</section>
+
+<!-- ============ 2b. clean and not examined ============ -->
+<p class="caption">2b &middot; the two states that are not a list of findings, and are not each other</p>
+<div class="pair">
+  <div class="mini">
+    <div class="mini__h"><span class="pill pill--ok"><span class="dot"></span>clean</span>
+      <span class="n">after/10-thaw.local.sh</span></div>
+    <div class="mini__b">
+      <p>This script parses, and backupd's shell rules report nothing about it. Nothing was executed: the
+        bytes were parsed and walked in this process.</p>
+      <p class="meta">Read at 02:41:07 &middot; sha256 99b2e0c3 &middot; six rules applied: BSH001 to
+        BSH006.</p>
+    </div>
+  </div>
+  <div class="mini">
+    <div class="mini__h"><span class="pill pill--none">not examined</span>
+      <span class="n">after/20-purge-staging.local.sh</span></div>
+    <div class="mini__b">
+      <p>not examined: 20-purge-staging.local.sh is 2097664 bytes and this check reads at most 1048576. A
+        hook is a shell script; a prefix of one is a different program, so it is not examined rather than
+        partly examined.</p>
+      <p class="meta">No verdict is offered and none is implied. This does not refuse the save either: a
+        deployment that legitimately raised its script-size limit would otherwise be unconfigurable because
+        this check declined to look.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 3. the save refusal ============ -->
+<p class="caption">3 &middot; revision three: the Workflow tab refuses the save, and says which script and which findings</p>
+<section class="card">
+  <div class="banner banner--err">
+    <span class="glyph">&#10005;</span>
+    <span><strong>This change was not saved. A hook script it points at does not pass shell
+      verification.</strong>
+      <span class="body">Your edits are still in the form below and nothing on disk changed. Two of the
+      scripts in the directories this change points at carry something that would make a run refuse the
+      plan or delete the wrong tree, so the configuration was refused here rather than at 02:00 with a
+      database already quiesced.</span></span>
+  </div>
+  <div class="refused">
+    <div class="refused__s">
+      <div class="refused__n">30-tag-snapshot.remote.sh</div>
+      <div class="refused__d">/etc/backupd/workflows/before &middot; global-before stage</div>
+      <div class="refused__f"><span class="pill pill--err"><span class="dot"></span>does not parse</span>
+        <span class="f2__pos">7:1</span>
+        <span>reached EOF without matching if with fi. This product's own parser answered without needing a
+          shell, a runner or the source host, and a run would refuse this plan before the first script.</span></div>
+      <div class="src" style="margin-top:var(--space-2)">
+        <div class="srow"><span class="sln">7</span><span class="scode">if [ -n "$TAG" ]; then</span></div>
+        <div class="srow srow--caret"><span class="sln"></span><span class="scode">^ column 1 &mdash; nothing closes this</span></div>
+      </div>
+    </div>
+    <div class="refused__s">
+      <div class="refused__n">20-dump.remote.sh</div>
+      <div class="refused__d">/srv/hooks/api-server/before &middot; set-before stage</div>
+      <div class="refused__f"><span class="pill pill--err"><span class="dot"></span>error</span>
+        <span class="f2__code">BSH003</span><span class="f2__pos">24:10</span>
+        <span>this recursive, forced delete targets /tmp whenever the expansion in it is empty, because an
+          unset or empty variable leaves the literal path behind. That is a root-level directory. Write
+          <code>${NAME:?}</code> so the script fails instead, give the expansion a default, or put
+          <code>set -u</code> at the top of the script</span></div>
+    </div>
+    <p class="meta" style="margin:var(--space-4) 0 0;max-width:88ch">Warnings, information and style
+      findings do not block a save. The other four findings on
+      <code>20-dump.remote.sh</code> &mdash; BSH004, BSH005, BSH001 and BSH006 &mdash; are reported on the
+      Findings panel and would have been saved as they are. Only a script that does not parse, or one
+      carrying an error-severity finding, is refused.</p>
+  </div>
+  <div class="card__header" style="border-top:1px solid var(--border)">
+    <h2 class="eyebrow">Workflow</h2>
+    <span class="meta">the edit that was refused is still here</span></div>
+  <div class="two">
+    <div>
+      <div class="field"><label>Before directory</label>
+        <div class="in in--edited">/srv/hooks/api-server/before</div>
+        <span class="hint">Changed in this edit. This is the directory holding the script that was
+          refused.</span></div>
+      <div class="field"><label>After directory</label><div class="in">/srv/hooks/api-server/after</div>
+        <span class="hint">Unchanged. Its two scripts pass.</span></div>
+    </div>
+    <div>
+      <div class="field"><label>Script timeout</label><div class="in in--edited">180 seconds</div>
+        <span class="hint">Changed in this edit, and not saved: the refusal is for the whole change, because
+          half a configuration is a state nobody asked for.</span></div>
+      <div class="field"><label>Remote exec connection</label><div class="in">api-server-exec</div>
+        <span class="hint">Unchanged.</span></div>
+    </div>
+  </div>
+  <div class="savebar">
+    <span class="meta">Fix the two scripts on disk, then check again. Nothing here edits a hook.</span>
+    <button class="btn">Open findings for 20-dump.remote.sh</button>
+    <button class="btn">Check this set's hooks again</button>
+    <button class="btn btn--primary">Save</button>
+  </div>
+  <p class="note"><strong>The refusal names the script, its stage directory and its scope, because that is
+    what an operator has to go and open.</strong> "A script does not pass" with no path is a message that
+    sends somebody looking through two directories by hand. Each refused script is drawn with its file name,
+    the directory it was discovered in, whether that is the deployment's <code>global-before</code> stage or
+    this set's own, and each blocking finding with its code and its <code>line:column</code>.<br><br>
+    <strong>The sentence about what does not block is part of the refusal, not a footnote.</strong> An
+    operator whose save was refused with five findings on screen will otherwise read all five as the reason
+    and go and fix an unquoted expansion that was never the problem. So the panel says which four were
+    saved-and-reported and which one was not, in those words.<br><br>
+    <strong>The form keeps the edit.</strong> The refusal is a rejected write, not a navigation: the fields
+    stay as they were typed, marked as changed, so an operator can fix the script on disk, check again and
+    press Save without retyping anything. And the whole change is refused rather than the parts of it that
+    are unrelated to the bad script &mdash; a partly-applied workflow configuration is a shape neither this
+    surface nor the API promises.<br><br>
+    <strong>There is no override.</strong> No "save anyway", no checkbox, no confirm-twice. The two things
+    that are refused are a file bash cannot parse, which a run refuses anyway, and a recursive forced delete
+    of a root-level path, whose failure mode is instantaneous and unrecoverable and whose fix is one
+    character. A control that let an operator past those would exist for no case worth having.</p>
+</section>
+
+<!-- ============ reasoning ============ -->
+<p class="caption">the decisions this note was asking for a verdict on</p>
+<div class="reason">
+  <h2>Why three revisions to one card and not a new screen</h2>
+  <p>Everything here is a fact about a script that is already a row in a table an operator is already
+    looking at. The shipped Workflow panel discovers the hooks, hashes them, and reports two verdicts and a
+    findings list; L7.5 adds one more thing known about each of those rows. So the table gains a column, the
+    column opens a panel about one script, and the save path gains a refusal &mdash; and nothing gains a
+    second place to look. A separate "Shell verification" area would be a screen whose relationship to the
+    set's own hook list an operator has to work out, and two lists of the same scripts that can disagree
+    about what was discovered.</p>
+  <p>The findings panel is the one part that is a screen of its own rather than an expansion in place, and
+    it is a screen for one reason: a finding needs the line it is about. Five findings, each with a source
+    excerpt, inside a table row would push the rest of the set's page off the screen every time somebody
+    clicked a cell out of curiosity.</p>
+
+  <h3>Decisions taken</h3>
+  <ul>
+    <li><strong>The findings cell states the worst severity and counts the rest.</strong>
+      <code>1 error, 4 more</code>, not <code>5 findings</code>, and not a bare colour.</li>
+    <li><strong>Four severities, four groups, in the product's order</strong> &mdash; error, warning, info,
+      style &mdash; each headed by what that severity does to a save rather than by how serious it
+      sounds.</li>
+    <li><strong>Every finding carries the script's own line, with a gutter and a marked column.</strong>
+      Inert text on the dark surface the run terminal uses, never an editor: nothing in this product
+      rewrites somebody's hook.</li>
+    <li><strong>"Not examined" has its own state, its own reason sentence, and no verdict.</strong> Its cell
+      does not open, because there is nothing behind it, and it does not refuse a save.</li>
+    <li><strong>"Clean" says what was applied and that nothing ran.</strong> Six rules, named, over bytes
+      that were parsed and walked in the engine process.</li>
+    <li><strong>A script that does not parse shows the parse position, not an empty findings list.</strong>
+      The rules walk a tree; with no tree there is no claim to make.</li>
+    <li><strong>The refusal names script, stage directory, scope and each blocking finding with its
+      position</strong>, and says in the same panel that warnings, info and style did not block.</li>
+    <li><strong>The refused save keeps the operator's edit in the form</strong>, marked as changed, and
+      refuses the change as a whole rather than applying the parts of it that are innocent.</li>
+    <li><strong>No override on the refusal.</strong> The two blocking conditions are a file a run would
+      refuse anyway and a root-level <code>rm -rf</code>.</li>
+    <li><strong>The copy says these are backupd's own rules.</strong> <code>BSH</code>, never
+      <code>SC</code>, and the word ShellCheck does not appear on any surface: these are six rules of this
+      product's own, and a code that looked like somebody else's would send an operator to documentation for
+      analysis this product does not perform.</li>
+  </ul>
+
+  <h3>What this inherits rather than invents</h3>
+  <p>No new component vocabulary and no new tokens: the card, header, pill, tag, table, banner and
+    finding-row shapes are #814's, the source excerpt reuses the run terminal's
+    <code>--term-*</code> surface from #815, and the two verdict badges, the on-demand
+    <em>Check this set's hooks</em> button and the <code>local_bash_syntax</code> /
+    <code>remote_bash_syntax</code> check ids are the shipped ones, carrying one more sentence each. Colour
+    is never the message: every severity pairs a word with a shape, which is the reading a colour-blind
+    operator gets. The findings column collapses under the script name at narrow widths, and each cell is a
+    real button so the panel is reachable by keyboard and the selected row is announced as pressed.</p>
+  <p>On the wire this is one added object on each discovered script &mdash;
+    <code>lint: { examined, not_examined_reason, parsed, parse_error, parse_error_line, parse_error_col,
+    findings[{ code, severity, line, col, message }] }</code> &mdash; and the refusal is an HTTP 409 with
+    the error code <code>WORKFLOW_SCRIPT_REJECTED</code> carrying the blocking findings as fields. The
+    screens above draw those fields and compose no sentence of their own out of them, so the CLI's
+    <code>validate workflow</code> and this panel cannot end up describing the same script
+    differently.</p>
+</div>
+</div>

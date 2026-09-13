@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/backupdproject/backupd/core/cliecho"
+	"github.com/backupdproject/backupd/core/internal/workflowlint"
 	"github.com/backupdproject/backupd/core/service"
 )
 
@@ -149,20 +151,35 @@ func printWorkflowFindings(findings []service.WorkflowFinding) {
 		return
 	}
 
-	checkWidth, severityWidth := 0, 0
-	for _, f := range findings {
-		if len(f.Check) > checkWidth {
-			checkWidth = len(f.Check)
-		}
-		if len(f.Severity) > severityWidth {
-			severityWidth = len(f.Severity)
-		}
-	}
+	checkWidth := widestColumn(findings, func(f service.WorkflowFinding) string { return f.Check })
+	severityWidth := widestColumn(findings, func(f service.WorkflowFinding) string { return f.Severity })
 
 	fmt.Println("  findings:")
 	for _, f := range findings {
 		fmt.Printf("    %-*s  %-*s  %s%s\n", checkWidth, f.Check, severityWidth, f.Severity, f.Detail, workflowFindingScope(f))
 	}
+}
+
+// widestColumn is how wide a column has to be to hold every value that
+// will go in it.
+//
+// Extracted rather than written once per printer because this file now
+// has two aligned tables over two different row types -- the findings
+// list and one script's shell findings -- and both want the same
+// property: a vocabulary that grows in core/service or in
+// internal/workflowlint lines up here without a format string being
+// edited. Generic over the row with the cell as a function, because the
+// alternative is an interface every report type would have to implement
+// to be printable, which is a lot of ceremony for `len`.
+func widestColumn[Row any](rows []Row, cell func(Row) string) int {
+	widest := 0
+	for _, r := range rows {
+		if n := len(cell(r)); n > widest {
+			widest = n
+		}
+	}
+
+	return widest
 }
 
 // workflowFindingScope names the step a per-script finding belongs to, or
@@ -206,6 +223,18 @@ func workflowFindingScope(f service.WorkflowFinding) string {
 // comparison people actually make is by eye and sixty-four hex characters
 // per line would wrap every terminal; the full value is in --json, which
 // is what a script would compare with.
+//
+// # Why every row is followed by a verification verdict
+//
+// Because the row says which bytes would run and says nothing about
+// whether they are a program. #906 put that answer on the script
+// (service.WorkflowValidatedScript.Lint) with a line and a column for
+// every finding, and the findings LIST above deliberately carries one
+// sentence per script instead of all of them, so this is the only place
+// in the text report where an operator reads "BSH003 at 4:3" for the
+// hook they are looking at. Printing the rows without it would leave the
+// most actionable half of this command's own answer reachable only
+// through --json.
 func printWorkflowValidatedScripts(stages []service.WorkflowStage, scripts []service.WorkflowValidatedScript) {
 	if len(stages) > 0 {
 		fmt.Println("  stages, in execution order:")
@@ -229,8 +258,209 @@ func printWorkflowValidatedScripts(stages []service.WorkflowStage, scripts []ser
 		if s.ExecutionConnectionRef != "" {
 			fmt.Printf("       over: %s\n", s.ExecutionConnectionRef)
 		}
+		printWorkflowScriptVerification(s.Lint)
 	}
-	fmt.Printf("  nothing above was executed: `%s validate workflow` parses scripts and probes reachability, and never runs a hook body\n", cliecho.Binary)
+
+	printWorkflowVerificationSummary(scripts)
+	fmt.Printf("  nothing above was executed: `%s validate workflow` parses scripts, walks each parse tree against this product's own shell rules -- the BSH codes above, which are %s's rules and not ShellCheck's -- and probes reachability, and never runs a hook body\n", cliecho.Binary, cliecho.Binary)
+}
+
+// printWorkflowScriptVerification prints what this product's own shell
+// verification established about one script's exact bytes, indented under
+// the row that names it.
+//
+// # The three states are printed as three different things
+//
+// Examined and parsed, examined and REFUSED by the parser, and NOT
+// EXAMINED -- a script larger than the verification will read
+// (internal/workflowlint.MaxScriptBytes). The third one gets the
+// service's reason sentence verbatim and never a tick, for the same
+// reason the findings vocabulary has a "skipped" severity: a green line
+// about bytes nobody looked at is the one output that would actively
+// mislead, and an operator who raised max_script_size_bytes past the
+// verification's own ceiling has to be able to see that this is what
+// happened.
+//
+// # Why the blocking findings are printed first
+//
+// The service reports them in position order, which is the order to READ
+// a script in, and it is not the order to act in: one BSH003 at line 40
+// is the reason a save would be refused and four style findings above it
+// are not. So the error-severity ones lead and each group keeps the
+// service's position order, which means the first line under a refused
+// script is always the finding that refused it.
+//
+// # These are this product's rules, and nothing ran
+//
+// The codes are internal/workflowlint's own BSH namespace: this
+// repository's rules, walked over a parse tree in this process. An
+// operator who read "shell verification" and assumed ShellCheck would go
+// looking for SC codes, a config file and a suppression syntax, none of
+// which exist here, so the summary below says whose rules these are
+// rather than leaving the codes to be guessed at.
+func printWorkflowScriptVerification(lint service.WorkflowScriptLint) {
+	const indent = "       "
+
+	switch {
+	case !lint.Examined:
+		reason := lint.NotExaminedReason
+		if reason == "" {
+			// The service promises a reason whenever it examined
+			// nothing, and there is one path that leaves neither: a
+			// plan whose captured bytes could not be re-read, which
+			// reports itself as an error finding under the syntax check
+			// above. Said as an absence rather than printed as a blank,
+			// because a script row with nothing under it reads exactly
+			// like a clean one.
+			reason = "this validation recorded no verdict for these bytes; the findings list above is where the reason for that is reported"
+		}
+		fmt.Printf("%snot examined: %s\n", indent, reason)
+
+		return
+	case !lint.Parsed:
+		// The position is the whole point of this surface: a `bash -n`
+		// through a runner could only ever report that a script was
+		// refused, and this says where.
+		fmt.Printf("%sdoes not parse at %d:%d: %s\n", indent, lint.ParseErrorLine, lint.ParseErrorCol, lint.ParseError)
+
+		return
+	case len(lint.Findings) == 0:
+		fmt.Printf("%sparses, and this product's own shell rules reported nothing about it\n", indent)
+
+		return
+	}
+
+	ordered := workflowLintFindingOrder(lint)
+	codeWidth := widestColumn(ordered, func(f service.WorkflowLintFinding) string { return f.Code })
+	severityWidth := widestColumn(ordered, func(f service.WorkflowLintFinding) string { return f.Severity })
+	positionWidth := widestColumn(ordered, workflowLintPosition)
+
+	for _, f := range ordered {
+		fmt.Printf("%s%-*s  %-*s  %-*s  %s\n",
+			indent, codeWidth, f.Code, severityWidth, f.Severity,
+			positionWidth, workflowLintPosition(f), f.Message)
+	}
+}
+
+// workflowLintPosition is a finding's place in the script, as one column.
+//
+// One column rather than two, because line and column are read together
+// and always have been: `file:4:3` is the shape every compiler and every
+// editor uses, and splitting it would give this report two numeric
+// columns an operator has to recombine by eye.
+func workflowLintPosition(f service.WorkflowLintFinding) string {
+	return fmt.Sprintf("%d:%d", f.Line, f.Col)
+}
+
+// workflowLintFindingOrder puts the findings that would refuse a save
+// first and leaves every group in the order the service reported it.
+//
+// The blocking subset comes from WorkflowScriptLint.BlockingLintFindings
+// rather than from a severity comparison written here, because the
+// threshold that decides what refuses a save is owned by
+// internal/workflowlint and a CLI that re-derived it could come to hold a
+// second opinion about it -- which would print an error-severity finding
+// under a summary saying the save would be accepted.
+func workflowLintFindingOrder(lint service.WorkflowScriptLint) []service.WorkflowLintFinding {
+	blocking := lint.BlockingLintFindings()
+	if len(blocking) == 0 || len(blocking) == len(lint.Findings) {
+		return lint.Findings
+	}
+
+	ordered := make([]service.WorkflowLintFinding, 0, len(lint.Findings))
+	ordered = append(ordered, blocking...)
+	for _, f := range lint.Findings {
+		if f.Severity != workflowlint.SeverityError {
+			ordered = append(ordered, f)
+		}
+	}
+
+	return ordered
+}
+
+// printWorkflowVerificationSummary is where the save gate's threshold is
+// stated rather than left to be inferred.
+//
+// # Why a summary under a report that already printed every finding
+//
+// Because the per-script lines answer "what is wrong with this hook",
+// and an operator who runs this command before editing a workflow is
+// asking a different question: "will this be accepted". A set with sixty
+// style findings and no errors saves; a set with one BSH003 does not,
+// because core/service refuses the save on a parse error or an
+// error-severity finding and reports the other three severities without
+// blocking on them. Nothing in a column of severities says which of
+// those two situations an operator is in, so this counts them and says
+// the rule in one sentence.
+//
+// # Why the counts are of scripts and of findings, separately
+//
+// A script is what gets refused and a finding is what refuses it, and
+// the two numbers answer different questions: "how many of my hooks are
+// a problem" is a triage question, "how much is there to fix" is a work
+// estimate. Reporting only one of them would leave the other to be
+// counted off the screen.
+func printWorkflowVerificationSummary(scripts []service.WorkflowValidatedScript) {
+	var examined, parsed, blocking, refused int
+	for _, s := range scripts {
+		if !s.Lint.Examined {
+			continue
+		}
+		examined++
+		if s.Lint.Parsed {
+			parsed++
+		}
+		if len(s.Lint.BlockingLintFindings()) > 0 {
+			blocking++
+			refused++
+		} else if !s.Lint.Parsed {
+			refused++
+		}
+	}
+
+	fmt.Printf("  shell verification: %d of %d script(s) examined, %d parse, %d carry an error-severity finding, %d not examined\n",
+		examined, len(scripts), parsed, blocking, len(scripts)-examined)
+	fmt.Printf("  findings by severity: %s\n", workflowLintSeverityTotals(scripts))
+	fmt.Printf("  a parse error or an error-severity finding is what would refuse a workflow save; warning, info and style are reported only, and never block one. %d of the script(s) above would be refused today\n", refused)
+}
+
+// workflowLintSeverityTotals counts every finding on every script, by
+// severity.
+//
+// The VALUES are internal/workflowlint's, because it owns the vocabulary
+// and a fifth severity added there must not turn into a count this file
+// silently drops -- so anything the loop below has never heard of is
+// printed after the four rather than skipped. The ORDER is a display
+// decision and belongs here: most serious first, so the number that
+// decides whether a save is accepted is the first one read.
+func workflowLintSeverityTotals(scripts []service.WorkflowValidatedScript) string {
+	counts := map[string]int{}
+	for _, s := range scripts {
+		for _, f := range s.Lint.Findings {
+			counts[f.Severity]++
+		}
+	}
+
+	known := []string{
+		workflowlint.SeverityError,
+		workflowlint.SeverityWarning,
+		workflowlint.SeverityInfo,
+		workflowlint.SeverityStyle,
+	}
+
+	totals := make([]string, 0, len(known)+len(counts))
+	for _, severity := range known {
+		totals = append(totals, fmt.Sprintf("%d %s", counts[severity], severity))
+		delete(counts, severity)
+	}
+
+	rest := make([]string, 0, len(counts))
+	for severity, n := range counts {
+		rest = append(rest, fmt.Sprintf("%d %s", n, severity))
+	}
+	slices.Sort(rest)
+
+	return strings.Join(append(totals, rest...), ", ")
 }
 
 // workflowHashPrefix is how much of a sha256 goes in a column.

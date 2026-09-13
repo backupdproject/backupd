@@ -17,7 +17,7 @@
  *     field, because that is how an operator disables a stage.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
@@ -223,5 +223,65 @@ describe("the deployment-wide workflow card", () => {
 
     expect(await screen.findByText(/the workflow engine is not answering/)).toBeTruthy();
     expect(screen.getByText(/cid_wfs503/)).toBeTruthy();
+  });
+
+  /**
+   * The save gate, on the card whose stage directories wrap EVERY backup
+   * set (#906).
+   *
+   * Driven through the mock's own refusal rather than a stubbed rejection,
+   * because the parity this feature is about is that the CLI and the web
+   * UI report the same refusal: a mock that could never produce one is a
+   * panel nobody can develop or demonstrate against.
+   */
+  it("names every blocking script and says the configuration was not saved", async () => {
+    const user = userEvent.setup();
+    const api = createMockApi();
+
+    renderCard(api);
+    const before = await screen.findByLabelText("Global before directory");
+    await user.clear(before);
+    // createMockApi's documented known-broken stage directory: the one
+    // path its workflow patches refuse.
+    await user.type(before, "/srv/hooks/known-broken");
+
+    const saves = screen.getAllByRole("button", { name: "Save" });
+    await waitFor(() => expect(saves[0]).toBeEnabled());
+    await user.click(saves[0]);
+
+    const notice = await screen.findByText(/This configuration was NOT saved/);
+    const banner = notice.closest(".banner");
+    if (banner === null) throw new Error("the refusal is not drawn in a banner");
+    const refusal = within(banner as HTMLElement);
+
+    // What an operator has to go and edit: the file, the directory it is
+    // in, and where in it the rule fired.
+    expect(refusal.getByText("10-quiesce.remote.sh")).toBeTruthy();
+    expect(refusal.getByText("20-prune-cache.local.sh")).toBeTruthy();
+    expect(refusal.getAllByText("/srv/hooks/known-broken").length).toBe(2);
+    expect(refusal.getByText(/does not parse at 18:24/)).toBeTruthy();
+    expect(refusal.getByText("BSH003 at 12:8")).toBeTruthy();
+    // And the half a refusal must never overstate: warnings save fine.
+    expect(refusal.getByText(/does not block a save/)).toBeTruthy();
+  });
+
+  it("leaves the persisted value alone when the write was refused", async () => {
+    const user = userEvent.setup();
+    const api = createMockApi();
+    const before = (await createMockApi().getWorkflowSettings()).beforeDir;
+
+    renderCard(api);
+    const box = await screen.findByLabelText("Global before directory");
+    await user.clear(box);
+    await user.type(box, "/srv/hooks/known-broken");
+    const saves = screen.getAllByRole("button", { name: "Save" });
+    await waitFor(() => expect(saves[0]).toBeEnabled());
+    await user.click(saves[0]);
+    await screen.findByText(/This configuration was NOT saved/);
+
+    // The read the card does after a successful save is the one thing
+    // that must not happen here: a refused write changed nothing, so the
+    // service still holds the old directory.
+    expect((await api.getWorkflowSettings()).beforeDir).toBe(before);
   });
 });

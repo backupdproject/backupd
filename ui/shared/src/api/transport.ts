@@ -31,7 +31,12 @@
  * bundle can request.
  */
 import { BackupdError, RequestFailure, toApiErrorCode } from "./contracts";
-import type { ApiError, FailureOrigin } from "./contracts";
+import type {
+  ApiError,
+  FailureOrigin,
+  WorkflowBlockingScript,
+  WorkflowLintFinding
+} from "./contracts";
 import { debugEnvironment, debugLog, describeError } from "./debug";
 
 /**
@@ -238,8 +243,74 @@ export async function apiErrorFromResponse(
         ? undefined
         : (body?.correlationId as string | undefined)) ?? headerCorrelationId,
     status: res.status,
-    origin
+    origin,
+    // #906's 409. Decoded here and nowhere else, so a panel never parses
+    // a position back out of the sentence. Every field is read
+    // defensively and nothing here throws: this function already
+    // tolerates a bodyless 502 from serve-ui's ErrorHandler, and a
+    // refusal that crashed the client while decoding the refusal would
+    // be the worst failure on this path.
+    ...(Array.isArray(body?.blocking_scripts)
+      ? { blockingScripts: blockingScriptsOf(body.blocking_scripts) }
+      : {})
   };
+}
+
+/** One refused script per entry, with every field defaulted rather than
+ *  trusted. An entry that is not an object at all is dropped: a row with
+ *  no script name and no findings names nothing an operator could go and
+ *  fix, and a banner listing it would be inventing a refusal. */
+function blockingScriptsOf(raw: unknown[]): WorkflowBlockingScript[] {
+  const scripts: WorkflowBlockingScript[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const s = entry as Record<string, unknown>;
+    scripts.push({
+      scriptName: str(s.script_name),
+      dir: str(s.dir),
+      scope: str(s.scope),
+      phase: str(s.phase),
+      parseError: typeof s.parse_error === "string" && s.parse_error !== "" ? s.parse_error : undefined,
+      parseErrorLine: num(s.parse_error_line),
+      parseErrorCol: num(s.parse_error_col),
+      findings: Array.isArray(s.findings) ? lintFindingsOf(s.findings) : []
+    });
+  }
+  return scripts;
+}
+
+/** The findings on a refused script. A severity this build cannot read
+ *  becomes "error", which is the opposite of the default
+ *  api/client.ts's own lint mapper takes and is right for the same
+ *  reason: these findings arrived ON A REFUSAL, so every one of them is
+ *  something the service treated as blocking. Drawing an unreadable one
+ *  as a note would describe a save that went through. */
+function lintFindingsOf(raw: unknown[]): WorkflowLintFinding[] {
+  const findings: WorkflowLintFinding[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const f = entry as Record<string, unknown>;
+    const severity = f.severity;
+    findings.push({
+      code: str(f.code),
+      severity:
+        severity === "warning" || severity === "info" || severity === "style" ? severity : "error",
+      line: num(f.line) ?? 0,
+      col: num(f.col) ?? 0,
+      message: str(f.message)
+    });
+  }
+  return findings;
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/** A number, or absent. NaN and a non-number are both absent rather than
+ *  zero: a position of 0 renders as a place no editor can go to. */
+function num(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 /** The refusal, thrown, with the debug line that joins it to the

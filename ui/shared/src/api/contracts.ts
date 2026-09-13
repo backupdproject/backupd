@@ -186,6 +186,28 @@ export interface ApiError {
    *  (§37). Absent when the service named its own reason, which is already
    *  in `message` and says more than a class name would. */
   detail?: string;
+  /**
+   * The hook scripts that REFUSED a workflow configuration write, present
+   * only on a WORKFLOW_SCRIPT_REJECTED refusal (#906).
+   *
+   * A structured field rather than something a surface digs out of
+   * `message`, for exactly the reason CONFIG_REVISION_STALE carries the
+   * current revision as one. The refusal's sentence names each script,
+   * its stage directory and each blocking finding as
+   * `CODE at line:col: message`, because a terminal has nothing else to
+   * print — but that sentence is PROSE, and the contract explicitly does
+   * not promise to keep its wording stable. A panel that parsed "at 4:1"
+   * back out of it would be a screen whose findings list breaks when
+   * somebody rewrites a sentence, which is the defect this field exists
+   * to make impossible.
+   *
+   * Absent on every other refusal, and absent on a
+   * WORKFLOW_SCRIPT_REJECTED from an engine too old to send the list:
+   * `workflowScriptRefusalOf` answers an empty array there and the
+   * banner falls back to the message, so an older engine still produces
+   * a readable refusal rather than an empty panel.
+   */
+  blockingScripts?: WorkflowBlockingScript[];
 }
 
 /** The typed envelope, thrown. It extends Error so an unprepared caller
@@ -2310,10 +2332,93 @@ export interface WorkflowFinding {
   target?: string;
 }
 
+/**
+ * One thing backupd's OWN shell rules reported about one hook script
+ * (#906).
+ *
+ * These are this product's checks, carrying its own BSH codes, and they
+ * are NOT ShellCheck: ShellCheck is GPL-3.0 and this product is
+ * Apache-2.0, so the analysis is implemented against a Go shell parser's
+ * syntax tree rather than shipped as somebody else's tool. No copy on any
+ * surface may name ShellCheck, and no code here may imply the set is a
+ * general shell linter's: it is deliberately small and conservative, and
+ * an operator who wants a general linter should run one.
+ *
+ * `line` and `col` are 1-based positions in the script's own text, which
+ * is why they are rendered as `line:col` everywhere rather than prettied
+ * up: that is the form an editor jumps to.
+ */
+export interface WorkflowLintFinding {
+  code: string;
+  severity: "error" | "warning" | "info" | "style";
+  line: number;
+  col: number;
+  message: string;
+}
+
+/**
+ * What the shell verification established about one hook script's exact
+ * bytes, without running any of them.
+ *
+ * THREE states, kept distinguishable on purpose, because collapsing any
+ * pair of them is a lie a surface then repeats:
+ *
+ *   - examined and parsed: `examined` and `parsed`, findings possibly
+ *     empty, which is the only state that may be drawn as clean;
+ *   - examined and refused: `examined` with `parsed` false, and a
+ *     `parseError` with its position. The file is not a shell program, so
+ *     nothing in it would run;
+ *   - NOT examined: `examined` false with a `notExaminedReason` — a
+ *     script larger than the verification reads. This is never a pass. A
+ *     green tick for a check nobody ran would be this product claiming it
+ *     proved something it never looked at, which is the same rule
+ *     WorkflowFinding's "skipped" severity exists for.
+ *
+ * Both booleans default FALSE when the service sent neither, for the
+ * reason the two validation verdicts do: a verdict this build did not
+ * receive has not passed.
+ */
+export interface WorkflowScriptLint {
+  examined: boolean;
+  notExaminedReason?: string;
+  parsed: boolean;
+  parseError?: string;
+  parseErrorLine?: number;
+  parseErrorCol?: number;
+  findings: WorkflowLintFinding[];
+}
+
+/**
+ * One hook script that refused a workflow configuration write, and why.
+ *
+ * Only the BLOCKING half is carried — a parse error, or the
+ * error-severity findings — because a refusal that also listed the
+ * warnings would read as though the warnings had refused it. They did
+ * not: `warning`, `info` and `style` are reported and save fine, and
+ * that distinction is the whole reason the gate is usable at all.
+ *
+ * `dir` is the stage directory the write pointed at, which is the fact an
+ * operator needs to find the file: the script name alone does not say
+ * which of the four stage directories it came out of.
+ */
+export interface WorkflowBlockingScript {
+  scriptName: string;
+  dir: string;
+  scope: string;
+  phase: string;
+  parseError?: string;
+  parseErrorLine?: number;
+  parseErrorCol?: number;
+  findings: WorkflowLintFinding[];
+}
+
 /** One hook this backup set would run, as validation found it on disk.
- *  Nothing here was executed: the only things validation hands an
- *  interpreter are `bash -n`, which parses and never runs, and this
- *  product's own fixed remote capability probe. */
+ *  Nothing here was executed. Two different things look at a script and
+ *  neither runs it: `lint` below is backupd's own in-process shell
+ *  verification, which parses the exact bytes with a Go shell parser and
+ *  applies this product's BSH rules to the syntax tree, and the
+ *  capability half of validation hands the script to `bash -n` on the
+ *  target, which parses and never runs. */
 export interface WorkflowValidatedScript {
   stepId: string;
   scriptName: string;
@@ -2325,6 +2430,11 @@ export interface WorkflowValidatedScript {
   sha256: string;
   sizeBytes: number;
   timeoutMs: number;
+  /** What backupd's own shell verification established about these
+   *  bytes. Always present on a script the report carries, including in
+   *  its not-examined form, because "nothing looked at this" is an
+   *  answer a surface has to be able to draw. */
+  lint: WorkflowScriptLint;
 }
 
 /** Everything this product can establish about one backup set's hooks

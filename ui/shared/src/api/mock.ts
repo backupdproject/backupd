@@ -30,6 +30,7 @@ import type {
   UpdateSettingsRequest,
   ValidatorCatalogEntry,
   BackupSetWorkflow,
+  WorkflowBlockingScript,
   WorkflowEnvironment,
   WorkflowEnvVariable,
   WorkflowEnvVariableInput,
@@ -3028,7 +3029,26 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
           executionConnectionRef: WORKFLOW_SFTP_SET,
           sha256: "3f9c1a77b4e05d2286aa4f1c9de0b7318c5ad4419e6f0b2c7d8e91a0f3b6c245",
           sizeBytes: 1_408,
-          timeoutMs: 300_000
+          timeoutMs: 300_000,
+          // Examined, parses, and carries the finding that is a warning
+          // rather than a refusal: an unquoted operand in `[ ... ]`.
+          lint: {
+            examined: true,
+            parsed: true,
+            findings: [
+              {
+                code: "BSH005",
+                severity: "warning",
+                line: 11,
+                col: 9,
+                message:
+                  "this variable expansion is not quoted inside `[ ... ]`. When it is empty the " +
+                  "test sees one operand fewer than it was written for and fails with a syntax " +
+                  "error rather than a false -- which is the case the condition is usually there " +
+                  "to handle. Put it in double quotes, or use `[[ ... ]]`, which does not split"
+              }
+            ]
+          }
         },
         {
           stepId: "step_sftp_thaw",
@@ -3040,7 +3060,8 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
           executionConnectionRef: WORKFLOW_SFTP_SET,
           sha256: "b70c1d5546e2a0f9c3812d7b5eaf4019c26d83bb7f1ea4c095d2386af17c0e9b",
           sizeBytes: 2_944,
-          timeoutMs: 300_000
+          timeoutMs: 300_000,
+          lint: { examined: true, parsed: true, findings: [] }
         }
       ],
       findings: [
@@ -3096,7 +3117,18 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
           target: "local",
           sha256: "7a1c9e02b8d4f36150ae82c7f9d0b4318c5ad4419e6f0b2c7d8e91a0f3b6c245",
           sizeBytes: 512,
-          timeoutMs: 300_000
+          timeoutMs: 300_000,
+          // The PARSE-ERROR state: examined, and not a shell program.
+          // Nothing in it would run, and a save pointed at this stage
+          // directory is refused.
+          lint: {
+            examined: true,
+            parsed: false,
+            parseError: "unexpected EOF while looking for matching `\"'",
+            parseErrorLine: 18,
+            parseErrorCol: 24,
+            findings: []
+          }
         },
         {
           stepId: "step_auth_sync",
@@ -3108,7 +3140,25 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
           executionConnectionRef: "postgres-exec",
           sha256: "e38b5510c7a92f04186de3b5f0c1a4429d6ba8317f2e0c5948da1b60e39c7f12",
           sizeBytes: 744,
-          timeoutMs: 300_000
+          timeoutMs: 300_000,
+          lint: {
+            examined: true,
+            parsed: true,
+            findings: [
+              {
+                code: "BSH004",
+                severity: "warning",
+                line: 6,
+                col: 1,
+                message:
+                  "this script uses `set -e` and a pipeline, without `set -o pipefail`. A " +
+                  "pipeline's exit status is its LAST command's, so a failure earlier in this " +
+                  "pipeline -- the dump, not the compressor -- leaves `set -e` with nothing to " +
+                  "trip on: the script continues and the hook reports success. Write " +
+                  "`set -euo pipefail`, or check ${PIPESTATUS[@]}"
+              }
+            ]
+          }
         }
       ],
       findings: [
@@ -3167,7 +3217,61 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
         executionConnectionRef: "postgres-exec",
         sha256: "4f21ab9c6d0e5b7382c1af94de0b73186c5ad4419e6f0b2c7d8e91a0f3b6c245",
         sizeBytes: 1_402,
-        timeoutMs: 120_000
+        timeoutMs: 120_000,
+        // The rich one: all four severities at once, which is the only
+        // fixture that proves the panel groups them rather than printing
+        // them in arrival order. BSH003 is the ERROR, and it is the
+        // finding that refuses a save.
+        lint: {
+          examined: true,
+          parsed: true,
+          findings: [
+            {
+              code: "BSH001",
+              severity: "info",
+              line: 14,
+              col: 12,
+              message:
+                "this variable expansion is not quoted, so the shell splits its value on " +
+                "whitespace and expands any glob characters in it before the command sees it: a " +
+                "path with a space in it becomes two arguments, and one with a `*` becomes " +
+                "whatever that matched. Put it in double quotes"
+            },
+            {
+              code: "BSH003",
+              severity: "error",
+              line: 12,
+              col: 8,
+              message:
+                "this recursive, forced delete targets /var whenever the expansion in it is " +
+                "empty, because an unset or empty variable leaves the literal path behind. That " +
+                "is a root-level directory. Write ${NAME:?} so the script fails instead, give " +
+                "the expansion a default, or put `set -u` at the top of the script"
+            },
+            {
+              code: "BSH006",
+              severity: "style",
+              line: 1,
+              col: 1,
+              message:
+                "this script has no #! interpreter line. This product runs a hook by handing " +
+                "its bytes to bash, so this changes nothing about how it runs here; it changes " +
+                "what happens when somebody runs the file by hand to test it. Start the file " +
+                "with #!/usr/bin/env bash"
+            },
+            {
+              code: "BSH002",
+              severity: "warning",
+              line: 9,
+              col: 1,
+              message:
+                "this cd does not check whether it worked, and nothing in this script does " +
+                "either. When it fails -- the directory is gone, the mount is not there -- the " +
+                "commands after it run in the directory the script was already in, against the " +
+                "wrong tree. Write `cd ... || exit 1`, or put `set -e` at the top of the script"
+            }
+          ]
+        }
       },
       {
         stepId: "step_freeze",
@@ -3178,7 +3282,9 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
         target: "local",
         sha256: "b70c1d5546e2a0f9c3812d7b5eaf40119c26d83bb7f1ea4c095d2386af17c0e9",
         sizeBytes: 2_902,
-        timeoutMs: 120_000
+        timeoutMs: 120_000,
+        // The CLEAN one. Read, parsed, nothing reported.
+        lint: { examined: true, parsed: true, findings: [] }
       },
       {
         stepId: "step_quiesce",
@@ -3190,7 +3296,41 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
         executionConnectionRef: "postgres-exec",
         sha256: "0ce41f7a2b9d8c6540e31a7f5bc2d0498a6e13cf7205bd9e4a1c86f30d7b2e51",
         sizeBytes: 884,
-        timeoutMs: 120_000
+        timeoutMs: 120_000,
+        // The NOT-EXAMINED one, which is never a pass: the verification
+        // reads a bounded number of bytes, and this hook is past it.
+        lint: {
+          examined: false,
+          notExaminedReason:
+            "this script is 4.1 MB, larger than the 1 MB the shell verification reads. Nothing " +
+            "looked at its contents",
+          parsed: false,
+          findings: []
+        }
+      },
+      {
+        // The PARSE-ERROR state, on a GLOBAL hook: this set's stages
+        // include the deployment's own after directory, and a broken
+        // script there is the case worth being able to see, because it
+        // breaks every backup set rather than this one.
+        stepId: "step_global_notify",
+        scriptName: "after/90-notify.remote.sh",
+        phase: "after",
+        scope: "global",
+        order: 2,
+        target: "remote",
+        executionConnectionRef: "postgres-exec",
+        sha256: "c41d7e05a9b3f2860d5e1a7c4b03f9812d6ba8317f2e0c5948da1b60e39c7f12",
+        sizeBytes: 612,
+        timeoutMs: 120_000,
+        lint: {
+          examined: true,
+          parsed: false,
+          parseError: "unexpected EOF while looking for matching `\"'",
+          parseErrorLine: 18,
+          parseErrorCol: 24,
+          findings: []
+        }
       }
     ],
     findings: [
@@ -3208,15 +3348,56 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
           "it is sent rather than a program of its own",
         scope: "set"
       },
+      // The two syntax checks, as checkScriptLint emits them (#906): one
+      // pass line per target whose every examined script was clean, and
+      // one line per script that was not. The local target has exactly
+      // one hook and it is clean; the remote target has an error, a
+      // refusal and a script nothing read, so it gets no pass line at
+      // all.
       {
         check: "local_bash_syntax",
         severity: "ok",
-        detail: "1 local hook parsed by bash -n through the host workflow runner"
+        detail:
+          "1 script(s) parse, and this product's own shell rules report nothing about them. " +
+          "Nothing was executed: the bytes were parsed and walked in this process"
       },
       {
         check: "remote_bash_syntax",
-        severity: "ok",
-        detail: "2 remote hook(s) parse with /bin/bash on the far side. Nothing was executed: each script was sent to bash -n"
+        severity: "error",
+        detail:
+          "before/10-flush-cache.remote.sh does not pass backupd's shell rules: BSH003 at 12:8 " +
+          "(error) this recursive, forced delete targets /var whenever the expansion in it is " +
+          "empty, because an unset or empty variable leaves the literal path behind. That is a " +
+          "root-level directory. Write ${NAME:?} so the script fails instead, give the expansion " +
+          "a default, or put `set -u` at the top of the script (and 3 more finding(s) on this " +
+          "script)",
+        scope: "set",
+        phase: "before",
+        target: "remote",
+        script: "before/10-flush-cache.remote.sh"
+      },
+      {
+        check: "remote_bash_syntax",
+        severity: "skipped",
+        detail:
+          "this script is 4.1 MB, larger than the 1 MB the shell verification reads. Nothing " +
+          "looked at its contents",
+        scope: "set",
+        phase: "after",
+        target: "remote",
+        script: "after/40-quiesce-remote.remote.sh"
+      },
+      {
+        check: "remote_bash_syntax",
+        severity: "error",
+        detail:
+          "after/90-notify.remote.sh is not a shell program: at line 18, column 24, unexpected " +
+          "EOF while looking for matching `\"'. A run would refuse it, and this product's own " +
+          "parser answered without needing a shell, a runner or the source host",
+        scope: "global",
+        phase: "after",
+        target: "remote",
+        script: "after/90-notify.remote.sh"
       },
       {
         check: "environment_conflicts",
@@ -3230,8 +3411,91 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
       }
     ],
     validForBackup: true,
-    workflowValid: true
+    // FALSE, because two of this set's hooks carry an error-severity
+    // finding: core/service settles the verdict from the findings list
+    // and an error anywhere in it makes the hooks invalid. A fixture
+    // pairing a green hook verdict with a BSH003 would be modelling a
+    // report the engine cannot produce.
+    workflowValid: false
   };
+}
+
+/**
+ * The mock's KNOWN-BROKEN stage directory (#906).
+ *
+ * Point either workflow patch — the deployment-wide one or a set's — at
+ * this path and the write is refused with the same 409
+ * WORKFLOW_SCRIPT_REJECTED the service answers, carrying the same
+ * structured blocking list. Any other directory saves.
+ *
+ * A magic path is a blunt instrument and it is the right one here. The
+ * real gate reads the scripts in the directory the write points at, and a
+ * mock that answers from memory has no directory to read; the
+ * alternative is a mock that can NEVER show the refusal, which means the
+ * refusal banner is a surface nobody can develop or demonstrate against
+ * without a running engine. The CLI shows this refusal and the web UI has
+ * to show the same one, so both need a way to produce it.
+ */
+const WORKFLOW_BROKEN_DIR = "/srv/hooks/known-broken";
+
+/**
+ * The refusal, shaped exactly as the 409 arrives: the service's own
+ * multi-line sentence in `message`, and the blocking half — a parse
+ * error, and the error-severity findings — as structured fields.
+ *
+ * TWO scripts, because one of each is what a client has to render: a file
+ * that is not a shell program at all, and a file that parses and holds
+ * the one finding this product refuses a save over. The warnings those
+ * scripts also carry are deliberately NOT here: a refusal that listed
+ * them would read as though the warnings had refused it.
+ */
+function workflowScriptRefusal(dir: string, scope: "global" | "set", phase: "before" | "after"): BackupdError {
+  const blocking: WorkflowBlockingScript[] = [
+    {
+      scriptName: "10-quiesce.remote.sh",
+      dir,
+      scope,
+      phase,
+      parseError: "unexpected EOF while looking for matching `\"'",
+      parseErrorLine: 18,
+      parseErrorCol: 24,
+      findings: []
+    },
+    {
+      scriptName: "20-prune-cache.local.sh",
+      dir,
+      scope,
+      phase,
+      findings: [
+        {
+          code: "BSH003",
+          severity: "error",
+          line: 12,
+          col: 8,
+          message:
+            "this recursive, forced delete targets /var whenever the expansion in it is empty, " +
+            "because an unset or empty variable leaves the literal path behind. That is a " +
+            "root-level directory. Write ${NAME:?} so the script fails instead, give the " +
+            "expansion a default, or put `set -u` at the top of the script"
+        }
+      ]
+    }
+  ];
+  return new BackupdError({
+    code: "WORKFLOW_SCRIPT_REJECTED",
+    message:
+      "this configuration was not saved: 2 hook scripts it points at would not run.\n" +
+      dir +
+      "/10-quiesce.remote.sh does not parse: unexpected EOF while looking for matching `\"' " +
+      "at 18:24.\n" +
+      dir +
+      "/20-prune-cache.local.sh: BSH003 at 12:8: this recursive, forced delete targets /var " +
+      "whenever the expansion in it is empty.",
+    correlationId: "cid_mockwfscript409",
+    status: 409,
+    origin: "service",
+    blockingScripts: blocking
+  });
 }
 
 /** The one outstanding hold: the reason WORKFLOW_HELD_SET is refusing to
@@ -4801,6 +5065,18 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
 
     getWorkflowSettings: () => delay(structuredClone(workflowSettings)),
     patchWorkflowSettings: (patch) => {
+      // The save GATE, before anything is written. A write that points a
+      // stage directory at the known-broken fixture is refused whole:
+      // the service verifies every script the write would make live and
+      // either takes the configuration or does not, so a mock that
+      // applied the other fields and then refused would model a
+      // half-saved block that cannot happen.
+      if (patch.beforeDir === WORKFLOW_BROKEN_DIR) {
+        return Promise.reject(workflowScriptRefusal(patch.beforeDir, "global", "before"));
+      }
+      if (patch.afterDir === WORKFLOW_BROKEN_DIR) {
+        return Promise.reject(workflowScriptRefusal(patch.afterDir, "global", "after"));
+      }
       // An absent key leaves the value alone and an empty string clears
       // it, which for a stage directory DISABLES that stage. Modelled
       // rather than described, because a form that could not express the
@@ -4834,6 +5110,12 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
     // value, because that is how a set stops following a later change to
     // it.
     patchBackupSetWorkflow: (source, set, patch) => {
+      if (patch.beforeDir === WORKFLOW_BROKEN_DIR) {
+        return Promise.reject(workflowScriptRefusal(patch.beforeDir, "set", "before"));
+      }
+      if (patch.afterDir === WORKFLOW_BROKEN_DIR) {
+        return Promise.reject(workflowScriptRefusal(patch.afterDir, "set", "after"));
+      }
       const id = source + "/" + set;
       const current = setWorkflows.get(id) ?? unconfiguredSetWorkflow(id);
       const next: BackupSetWorkflow = {
