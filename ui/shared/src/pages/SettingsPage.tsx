@@ -35,6 +35,7 @@ import { RetentionPolicyCard } from "@shared/pages/RetentionPolicyCard";
 import { CapacityCard } from "@shared/pages/CapacityCard";
 import { ServiceBehaviourCard } from "@shared/pages/ServiceBehaviourCard";
 import { StorageDestinationsCard } from "@shared/pages/StorageDestinationsCard";
+import { WorkflowSettingsCard } from "@shared/pages/WorkflowSettingsCard";
 import { HelpField } from "@shared/components/FieldHelp";
 import { PasswordInput } from "@shared/components/PasswordInput";
 import { FIELD_HELP } from "@shared/components/fieldHelpCopy";
@@ -159,6 +160,15 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
             readOnly={readOnly}
             onChanged={() => setDestinationsRevision((n) => n + 1)}
           />
+
+          {/* EPIC L (issue #814). Beside the destinations card rather
+              than on a page of its own: a hook directory is deployment
+              policy in the same sense a retention chain is, and an
+              operator who has just declared where backups go is in the
+              right place to say what runs either side of one. The
+              per-set half lives on each backup set's own page, because
+              what a set pins is a fact about that set. */}
+          <WorkflowSettingsCard readOnly={readOnly} />
 
           <section className="card">
             <div className="card__header">

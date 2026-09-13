@@ -1753,7 +1753,7 @@
   },
   "snapshots.reused": {
     "label": "Reused",
-    "html": "Content this run offered the repository that it already held, so it was not stored again. When the engine cannot account for it the panel says <em>not measured</em> rather than <code>0</code> \u2014 a zero would read as a backup that deduplicated nothing."
+    "html": "Content this run offered the repository that it already held, so it was not stored again. When the engine cannot account for it the panel says <em>not measured</em> rather than <code>0</code> — a zero would read as a backup that deduplicated nothing."
   },
   "snapshots.achieved-level": {
     "label": "Verification achieved",
@@ -1766,5 +1766,181 @@
   "repositories.maintenance-owner": {
     "label": "Maintenance owner",
     "html": "Exactly one instance maintains a repository domain. Another instance reads and writes snapshots here but will not compact or reclaim, so a domain whose owner is switched off stops being maintained until ownership is <strong>transferred</strong>."
+  },
+  "sets.detail.workflow": {
+    "label": "Workflow",
+    "html": "The scripts this backup set runs <strong>before</strong> and <strong>after</strong> its backup, and the deployment-wide ones that wrap it either side. A script named <code>*.local.sh</code> runs on this machine through the Host Workflow Runner; anything else runs on the source host."
+  },
+  "settings.workflow": {
+    "label": "Workflow",
+    "html": "Hook directories, the default script timeout and the environment every hook receives. <strong>Global scripts wrap every backup-set run.</strong>"
+  },
+  "workflow.run.page": {
+    "label": "Workflow run",
+    "html": "One backup set's pass, wrapped in the five-stage hook lifecycle. A run is recorded independently of the configuration that produced it, so it stays readable after that configuration changes or is removed."
+  },
+  "workflow.run.state": {
+    "label": "Run state",
+    "html": "Where this run got to as a whole. It is <strong>not</strong> the verdict on the backup, nor on the hooks: those are the three statuses below, and none of the four is derived from another."
+  },
+  "workflow.run.bypassed": {
+    "label": "Scripts bypassed",
+    "html": "This run was asked to skip its hooks, so <strong>no hook was executed</strong>. Its workflow verdict says nothing about whether anybody's scripts work."
+  },
+  "workflow.run.reread": {
+    "label": "Re-read",
+    "html": "Re-reads this run and its steps now. A live run re-reads itself every two seconds anyway; a finished one never does."
+  },
+  "workflow.run.stages": {
+    "label": "Stages",
+    "html": "The five stages in the fixed order a run executes them: global before, this set's before, the backup, this set's after, global after. A stage with no directory configured is shown greyed rather than hidden — <em>did not run</em> and <em>not configured</em> are different facts."
+  },
+  "workflow.run.termination-unconfirmed": {
+    "label": "Termination unconfirmed",
+    "html": "A step was signalled on its timeout and the execution channel closed before the process reported its own exit. The script <strong>may still be running</strong> on the machine it was sent to, and nothing in this product can end it."
+  },
+  "workflow.run.no-selection": {
+    "label": "No step selected",
+    "html": "One log terminal is open at a time. It is created when a step is selected and closed when the selection moves, so a run with dozens of scripts does not hold dozens of readers open."
+  },
+  "workflow.status.backup": {
+    "label": "Backup status",
+    "html": "Whether the archive transferred and verified. Reported on its own, because <strong>the backup can succeed while the hooks fail</strong> — and that case is the whole reason these three are kept apart."
+  },
+  "workflow.status.workflow": {
+    "label": "Workflow status",
+    "html": "Whether every hook this run planned ran and succeeded. When one failed, the script that ended the run is named beside this verdict."
+  },
+  "workflow.status.cleanup": {
+    "label": "Cleanup status",
+    "html": "Whether the <em>after</em> hooks this run owed were completed. A failed cleanup means the source may still be quiesced, mounted or paused, which is why it holds the backup set until somebody settles it."
+  },
+  "workflow.step.output": {
+    "label": "Step output",
+    "html": "What this script printed, read by cursor so a dropped connection resumes where it left off. The view is read-only and renders nothing the script emitted as markup or as a control sequence."
+  },
+  "workflow.recovery.hold": {
+    "label": "Workflow recovery",
+    "html": "A workflow run whose cleanup could not be finished. Its <em>after</em> hooks may never have run, so the engine refuses the next run of this backup set until the cleanup is resumed or the run is acknowledged."
+  },
+  "workflow.recovery.resume": {
+    "label": "Resume cleanup",
+    "html": "Runs the <em>after</em> hooks that run still owes, from its own retained scripts — each one re-verified against the hash recorded when the run was planned, so nothing edited since decides what executes."
+  },
+  "workflow.recovery.acknowledge": {
+    "label": "Acknowledge",
+    "html": "Records that <strong>you</strong> have dealt with this run by hand, in words that are kept, and unblocks the backup set. It executes nothing and changes nothing on the source machine."
+  },
+  "workflow.recovery.acknowledge-confirm": {
+    "label": "Record acknowledgement",
+    "html": "Writes the reason against the run, with the account that wrote it. There is deliberately no way to dismiss a hold without saying what was done: a run in recovery may have left a machine quiesced."
+  },
+  "workflow.set.before-dir": {
+    "label": "Before directory",
+    "html": "Where this set's <em>before</em> hooks live. They run after the deployment's global before stage and ahead of this set's transfer. Empty means this set runs none of its own."
+  },
+  "workflow.set.after-dir": {
+    "label": "After directory",
+    "html": "Where this set's <em>after</em> hooks live. They run whatever the backup did, including when it failed — which is what makes them the right place to un-quiesce a source."
+  },
+  "workflow.set.timeout": {
+    "label": "Script timeout",
+    "html": "How long one hook may run before it is signalled. <strong>Pinned</strong> means this set carries its own bound; <strong>inherited</strong> means it follows the deployment default and will move when that moves."
+  },
+  "workflow.set.exec-connection": {
+    "label": "Remote exec connection",
+    "html": "Which connection a remote hook for this set executes over. A backup set's own source connection is used only when it can execute a command."
+  },
+  "workflow.set.exec-picker": {
+    "label": "Execute remote hooks over",
+    "html": "An <strong>SFTP-only</strong> source can move bytes and cannot run a hook. That is a supported setup, not a fault: name another connection here, and the hook check proves whether it actually works."
+  },
+  "workflow.set.discovered": {
+    "label": "Discovered scripts",
+    "html": "Every hook this set would run, in the order it would run them, as found on disk right now. Nothing here has been executed."
+  },
+  "workflow.set.validate": {
+    "label": "Check this set's hooks",
+    "html": "Reads every script, hashes it and parses it with <code>bash -n</code>, which never runs it. Read on demand rather than on a timer, because it opens a connection to the source host and to the Host Workflow Runner."
+  },
+  "workflow.set.valid-for-backup": {
+    "label": "Valid for backup",
+    "html": "Whether this backup set's own configuration is sound: its source, its destination, its retention. Kept separate from the hook verdict beside it."
+  },
+  "workflow.set.workflow-valid": {
+    "label": "Hooks valid",
+    "html": "Whether this set's hooks are sound. A set whose backups are fine and whose hook directory nobody has created yet is <strong>valid for backup and invalid for workflows</strong> — the ordinary state during setup."
+  },
+  "workflow.set.environment": {
+    "label": "Environment",
+    "html": "Variables this set's hooks receive, on top of the deployment-wide ones. A name set here <strong>shadows</strong> the deployment's value of the same name."
+  },
+  "workflow.set.runs": {
+    "label": "Recent workflow runs",
+    "html": "The last few passes recorded for this set, each with both verdicts: a green backup beside a failed workflow is the state this history exists to surface."
+  },
+  "workflow.env.configured": {
+    "label": "Configured variables",
+    "html": "What is configured at this scope, and editable here. A variable whose value comes from a secret reference shows <strong>where</strong> the value is read from and never the value."
+  },
+  "workflow.env.add": {
+    "label": "Set a variable",
+    "html": "Writes one variable at this scope. Every <code>BACKUPD_*</code> name is reserved: those are set by this product from the run a hook belongs to."
+  },
+  "workflow.env.save": {
+    "label": "Save variable",
+    "html": "Saves this one entry. A literal is stored as written, including an empty one; a location is stored as a location, and the value behind it is read only when a hook is about to run."
+  },
+  "workflow.env.unset": {
+    "label": "Unset",
+    "html": "Removes this variable at this scope. A set-scope entry that was shadowing a deployment-wide one stops shadowing it, so the deployment's value takes effect again."
+  },
+  "workflow.env.preview": {
+    "label": "What a hook will see",
+    "html": "The merged environment, in precedence order: the sanitized baseline, then the deployment's variables, then this backup set's, then the <code>BACKUPD_*</code> built-ins, which win outright and cannot be overridden."
+  },
+  "workflow.settings.before-dir": {
+    "label": "Global before directory",
+    "html": "Runs ahead of every backup set's own before stage. <strong>Clearing this disables the stage</strong>: no global before hooks run for any set."
+  },
+  "workflow.settings.after-dir": {
+    "label": "Global after directory",
+    "html": "Runs after every backup set's own after stage, whatever the backup did. <strong>Clearing this disables the stage</strong> for every set."
+  },
+  "workflow.settings.timeout": {
+    "label": "Default script timeout",
+    "html": "The bound a hook gets when its backup set pins none of its own. A set that pins one does not follow this value."
+  },
+  "workflow.settings.timeout-source": {
+    "label": "Timeout source",
+    "html": "Whether the bound above is a value somebody configured or this product's own default. A form that could not tell them apart would write today's default into the file and stop following a later change to it."
+  },
+  "workflow.settings.runner": {
+    "label": "Host Workflow Runner",
+    "html": "The component that executes a <code>*.local.sh</code> hook <strong>on the machine Backupd is installed on</strong>. While it is not answering, every local hook fails and every check that needs it reports as <em>not examined</em> rather than as passing."
+  },
+  "workflow.settings.runner-status": {
+    "label": "Runner status",
+    "html": "Whether this process can reach the Host Workflow Runner, and over which socket. Reported and not editable: the path differs between a container and a bare-metal install of the same deployment, so the installer writes it."
+  },
+  "workflow.settings.runner-token": {
+    "label": "Runner credential",
+    "html": "The file this process reads its runner credential from. Reported and not editable, like the socket beside it, and never its contents."
+  },
+  "workflow.settings.execution-user": {
+    "label": "Runner version and execution user",
+    "html": "Not carried on this API. <code>backupd workflow-runner status</code> reports the runner's build and the account it executes a hook as, on the machine the runner is installed on. There is <strong>no</strong> control anywhere in this product that raises a hook's privileges."
+  },
+  "workflow.settings.max-size": {
+    "label": "Maximum script size",
+    "html": "A hook larger than this is refused by validation rather than executed."
+  },
+  "workflow.settings.environment": {
+    "label": "Global environment",
+    "html": "Variables every hook in this deployment receives, before any backup set's own. A secret is recorded as a location and is read only when a hook is about to run."
+  },
+  "workflow.settings.runner-socket": {
+    "label": "Runner socket",
+    "html": "The unix socket this process reaches the Host Workflow Runner over. Reported and not editable: the path differs between a container and a bare-metal install of the same deployment, so the installer writes it."
   }
 }

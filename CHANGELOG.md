@@ -4,6 +4,63 @@
 
 ### Added
 
+- **Workflow hooks have a web UI: what ran, what it printed, and the hold
+  that stops a set running** (EPIC L, #814, over #813's API). Five surfaces,
+  all of them inside the existing shell and its design system: a workflow-run
+  screen at `/workflow-runs/{run}`, that screen while a run is live, a
+  Workflow panel on each backup set, a workflow environment editor with a
+  merged inheritance preview, and a Workflow card in Settings.
+
+  **The three statuses stay three, on screen as well as on the wire.** Backup,
+  Workflow and Cleanup are drawn side by side and none is derived from the
+  others, because "the backup succeeded and the cleanup did not" means a
+  machine may be sitting quiesced with a good backup beside it, and a page
+  with one verdict would make that unsayable. A failed workflow names the
+  script that ended it; a run whose hooks were bypassed reports its workflow
+  status as skipped and says the hooks were bypassed, rather than showing a
+  green verdict for scripts nothing executed.
+
+  **All five stages, always, including the ones with no directory.** An
+  ineligible stage is drawn greyed and said out loud instead of omitted:
+  "the global after stage did not run" and "this deployment has no global
+  after directory" are opposite facts when a source has been left quiesced.
+  The stage that is executing is ranked above its own rows by an inset rule
+  and a tint as well as a badge, so which of the five is running is legible
+  without reading.
+
+  **A step killed on its timeout whose exit was never confirmed gets a
+  page-level warning**, naming the script, because the consequence is a
+  process that may still be running on a machine this product cannot reach.
+
+  **`recovery_required` blocks the per-set Run control** and offers exactly
+  two ways out, both of them the API's: resume the cleanup, which runs the
+  hooks that run still owes from its own retained spool, or acknowledge it in
+  words that are recorded. There is no dismiss. An unreadable hold list is
+  reported and also blocks the control, since treating it as "no holds" would
+  offer a run the engine is about to refuse.
+
+  **A `.local.sh` hook is "Local Host", executed by the Host Workflow
+  Runner**, on every surface that names one. Nothing implies the engine's own
+  container grew a shell.
+
+  **No surface can show a secret, and none has a reveal control.** The
+  environment editor shows a variable's name and the LOCATION its value comes
+  from — a file, an environment variable, an argv — because that is all the
+  contract carries; the merged preview shows precedence (deployment < backup
+  set < reserved `BACKUPD_*` built-ins, which are read-only) and says where a
+  secret will be read from rather than what it is. An empty literal stays
+  distinct from no literal at all in both directions.
+
+  **A backup set that configures no hooks shows one sentence and nothing
+  else** — no empty table, no findings, no run history. The hook check is a
+  button and never a poll, because it hashes every script and opens both a
+  runner socket and an SSH connection to the source; a check that could not
+  run reports "not examined" rather than a green tick, and the two verdicts
+  (`valid_for_backup`, `workflow_valid`) stay apart. Settings reports the
+  runner's socket and credential path as read-only deployment facts, says
+  outright that its build version and execution user are not on this API and
+  which command reports them, and offers no elevation control of any kind.
+
 - **A repository domain can be declared from the UI, the API and a terminal**
   (#862). `POST /repositories` persists a new `repository_domains:` entry —
   id, isolation, passphrase REFERENCE, description — into `config.yaml`

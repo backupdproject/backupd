@@ -28,7 +28,17 @@ import type {
   SSHKeyDiscovery,
   ConnectionCheck,
   UpdateSettingsRequest,
-  ValidatorCatalogEntry
+  ValidatorCatalogEntry,
+  BackupSetWorkflow,
+  WorkflowEnvironment,
+  WorkflowEnvVariable,
+  WorkflowEnvVariableInput,
+  WorkflowRecoveryHold,
+  WorkflowRun,
+  WorkflowSettings,
+  WorkflowStepLogPage,
+  WorkflowStepLogRecord,
+  WorkflowValidation
 } from "./contracts";
 import { BackupdError, LOCAL_DESTINATION_ID } from "./contracts";
 import type { BackupArtifact, BackupSet, RetentionPlan } from "@shared/types/backup";
@@ -2312,6 +2322,705 @@ function refusingWhileUnconfigured(api: BackupdApi, isConfigured: () => boolean)
 }
 
 /**
+ * EPIC L's workflow fixtures (issue #814).
+ *
+ * # Why the interesting ones are failures
+ *
+ * A workflow that ran cleanly is the case every screen already draws
+ * correctly by accident. What these screens exist for is the four states
+ * an operator has to act on, and a fixture set without them is a fixture
+ * set no page's hard branches are ever rendered against:
+ *
+ *   - a SUCCEEDED backup beside a FAILED workflow, which is the whole
+ *     reason the three statuses stay three;
+ *   - a step killed on its timeout whose exit was never confirmed, which
+ *     means a script may still be running on a machine this product
+ *     cannot reach;
+ *   - a run held in recovery_required, which BLOCKS its backup set's Run
+ *     control until somebody resumes the cleanup or acknowledges it;
+ *   - a run whose hooks were bypassed, so a green workflow verdict does
+ *     not mean hooks ran.
+ *
+ * # Why two of the four sets have no workflow configuration at all
+ *
+ * Because that is the majority case in a real deployment and it is the
+ * one this UI wave can most easily break: a set with no hooks must show
+ * no new panel, no empty table and no findings. Leaving every fixture set
+ * configured would mean the quiet path never renders in dev.
+ */
+const WORKFLOW_SET = "production/postgres-primary";
+const WORKFLOW_HELD_SET = "production/billing-mysql";
+
+/** The deployment's execution connections, as the settings read reports
+ *  them. Two, because the picker's whole point is that a set's own source
+ *  connection may not be one of them. */
+const WORKFLOW_EXEC_CONNECTIONS = ["postgres-exec", "billing-exec"];
+
+/** One step of one fixture run. Spelled out rather than generated: what
+ *  each screen is being checked against is the exact combination of
+ *  target, state, exit code and confirmation, and a generator would make
+ *  those the one thing a reader has to reconstruct. */
+const WORKFLOW_RUN_FAILED: WorkflowRun = {
+  runId: "wfr_2f91a4",
+  backupSetId: WORKFLOW_SET,
+  state: "failed",
+  // The pair this whole feature exists to be able to say.
+  backupStatus: "success",
+  workflowStatus: "failed",
+  cleanupStatus: "success",
+  recoveryState: "none",
+  bypassed: false,
+  startedAt: "2026-09-12T02:14:03Z",
+  finishedAt: "2026-09-12T02:16:41Z",
+  durationMs: 158_000,
+  scriptCount: 6,
+  failedStep: "step_freeze",
+  failedScript: "20-freeze-db.sh",
+  steps: [
+    {
+      stepId: "step_notify_start",
+      scriptName: "10-notify-start.local.sh",
+      phase: "before",
+      scope: "global",
+      order: 1,
+      target: "local",
+      state: "success",
+      exitCode: 0,
+      durationMs: 420,
+      startedAt: "2026-09-12T02:14:03Z",
+      finishedAt: "2026-09-12T02:14:04Z",
+      timeoutMs: 300_000,
+      terminationConfirmed: true
+    },
+    {
+      stepId: "step_flush",
+      scriptName: "10-flush-cache.sh",
+      phase: "before",
+      scope: "set",
+      order: 1,
+      target: "remote",
+      executionConnectionRef: "postgres-exec",
+      state: "success",
+      exitCode: 0,
+      durationMs: 2_800,
+      startedAt: "2026-09-12T02:14:05Z",
+      finishedAt: "2026-09-12T02:14:08Z",
+      timeoutMs: 120_000,
+      terminationConfirmed: true
+    },
+    {
+      stepId: "step_freeze",
+      scriptName: "20-freeze-db.sh",
+      phase: "before",
+      scope: "set",
+      order: 2,
+      target: "local",
+      state: "failed",
+      exitCode: 1,
+      durationMs: 6_200,
+      startedAt: "2026-09-12T02:14:08Z",
+      finishedAt: "2026-09-12T02:14:14Z",
+      timeoutMs: 120_000,
+      terminationConfirmed: true
+    },
+    {
+      stepId: "step_tag",
+      scriptName: "30-tag-snapshot.sh",
+      phase: "before",
+      scope: "set",
+      order: 3,
+      target: "remote",
+      executionConnectionRef: "postgres-exec",
+      // Never ran, so there is no exit code and no duration. Both are
+      // absent rather than zero: "skipped" and "succeeded instantly" are
+      // the pair of facts this shape must never confuse.
+      state: "skipped",
+      exitCode: null,
+      timeoutMs: 120_000
+    },
+    {
+      stepId: "step_quiesce",
+      scriptName: "40-quiesce-remote.sh",
+      phase: "after",
+      scope: "set",
+      order: 1,
+      target: "remote",
+      executionConnectionRef: "postgres-exec",
+      // The state the page has to say out loud: signalled on its bound,
+      // and the channel closed before the process reported an exit, so
+      // this product cannot claim the script stopped.
+      state: "timed_out",
+      exitCode: null,
+      durationMs: 120_000,
+      startedAt: "2026-09-12T02:14:20Z",
+      finishedAt: "2026-09-12T02:16:20Z",
+      timeoutMs: 120_000,
+      terminationConfirmed: false
+    },
+    {
+      stepId: "step_notify_end",
+      scriptName: "90-notify-end.local.sh",
+      phase: "after",
+      scope: "global",
+      order: 1,
+      target: "local",
+      state: "success",
+      exitCode: 0,
+      durationMs: 380,
+      startedAt: "2026-09-12T02:16:40Z",
+      finishedAt: "2026-09-12T02:16:41Z",
+      timeoutMs: 300_000,
+      terminationConfirmed: true
+    }
+  ]
+};
+
+/** The held run: its cleanup did not finish, so its "after" hooks may
+ *  never have run and its backup set is refusing to run at all. */
+const WORKFLOW_RUN_HELD: WorkflowRun = {
+  runId: "wfr_7b03d9",
+  backupSetId: WORKFLOW_HELD_SET,
+  state: "recovery_required",
+  backupStatus: "success",
+  workflowStatus: "failed",
+  cleanupStatus: "failed",
+  recoveryState: "required",
+  bypassed: false,
+  startedAt: "2026-09-12T01:02:00Z",
+  finishedAt: "2026-09-12T01:05:12Z",
+  durationMs: 192_000,
+  scriptCount: 3,
+  failedStep: "step_held_thaw",
+  failedScript: "10-thaw-db.sh",
+  steps: [
+    {
+      stepId: "step_held_freeze",
+      scriptName: "10-freeze.sh",
+      phase: "before",
+      scope: "set",
+      order: 1,
+      target: "remote",
+      executionConnectionRef: "billing-exec",
+      state: "success",
+      exitCode: 0,
+      durationMs: 1_900,
+      startedAt: "2026-09-12T01:02:00Z",
+      finishedAt: "2026-09-12T01:02:02Z",
+      timeoutMs: 120_000,
+      terminationConfirmed: true
+    },
+    {
+      stepId: "step_held_thaw",
+      scriptName: "10-thaw-db.sh",
+      phase: "after",
+      scope: "set",
+      order: 1,
+      target: "remote",
+      executionConnectionRef: "billing-exec",
+      state: "interrupted",
+      exitCode: null,
+      durationMs: 4_100,
+      startedAt: "2026-09-12T01:05:08Z",
+      finishedAt: "2026-09-12T01:05:12Z",
+      timeoutMs: 120_000,
+      terminationConfirmed: false
+    },
+    {
+      stepId: "step_held_unmount",
+      scriptName: "20-unmount.local.sh",
+      phase: "after",
+      scope: "set",
+      order: 2,
+      target: "local",
+      state: "pending",
+      exitCode: null,
+      timeoutMs: 120_000
+    }
+  ]
+};
+
+/** The live one: canceled mid-pass, with its "after" hooks running so the
+ *  source is not left quiesced. No finish time and no duration, because
+ *  it has neither yet. */
+const WORKFLOW_RUN_LIVE: WorkflowRun = {
+  runId: "wfr_a91f07",
+  backupSetId: WORKFLOW_SET,
+  state: "cleanup_running",
+  backupStatus: "skipped",
+  workflowStatus: "running",
+  cleanupStatus: "running",
+  recoveryState: "none",
+  bypassed: false,
+  // Relative to when this fixture was loaded, because it is the LIVE
+  // one: a fixed start time makes a running step's elapsed figure grow
+  // without bound, and every surface that reads it then renders a number
+  // that describes the fixture's age rather than a run.
+  startedAt: new Date(Date.now() - 291_000).toISOString(),
+  finishedAt: null,
+  durationMs: null,
+  scriptCount: 4,
+  steps: [
+    {
+      stepId: "step_live_notify",
+      scriptName: "10-notify-start.local.sh",
+      phase: "before",
+      scope: "global",
+      order: 1,
+      target: "local",
+      state: "success",
+      exitCode: 0,
+      durationMs: 400,
+      startedAt: new Date(Date.now() - 291_000).toISOString(),
+      finishedAt: new Date(Date.now() - 290_600).toISOString(),
+      timeoutMs: 300_000,
+      terminationConfirmed: true
+    },
+    {
+      stepId: "step_live_thaw",
+      scriptName: "10-thaw-db.sh",
+      phase: "after",
+      scope: "set",
+      order: 1,
+      target: "local",
+      state: "running",
+      exitCode: null,
+      startedAt: new Date(Date.now() - 19_000).toISOString(),
+      timeoutMs: 120_000
+    },
+    {
+      stepId: "step_live_unmount",
+      scriptName: "20-unmount-scratch.local.sh",
+      phase: "after",
+      scope: "set",
+      order: 2,
+      target: "local",
+      state: "pending",
+      exitCode: null,
+      timeoutMs: 120_000
+    },
+    {
+      stepId: "step_live_notify_end",
+      scriptName: "90-notify-end.local.sh",
+      phase: "after",
+      scope: "global",
+      order: 1,
+      target: "local",
+      state: "pending",
+      exitCode: null,
+      timeoutMs: 300_000
+    }
+  ]
+};
+
+/** The bypassed one. Its workflow status is "skipped" and not "success",
+ *  which is the honest answer for a run that executed no hook: a green
+ *  verdict here would say hooks ran and passed. */
+const WORKFLOW_RUN_BYPASSED: WorkflowRun = {
+  runId: "wfr_5c40b2",
+  backupSetId: WORKFLOW_SET,
+  state: "skipped",
+  backupStatus: "success",
+  workflowStatus: "skipped",
+  cleanupStatus: "skipped",
+  recoveryState: "none",
+  bypassed: true,
+  startedAt: "2026-09-11T02:14:00Z",
+  finishedAt: "2026-09-11T02:14:51Z",
+  durationMs: 51_000,
+  scriptCount: 6,
+  steps: []
+};
+
+const WORKFLOW_RUNS: WorkflowRun[] = [
+  WORKFLOW_RUN_LIVE,
+  WORKFLOW_RUN_FAILED,
+  WORKFLOW_RUN_HELD,
+  WORKFLOW_RUN_BYPASSED
+];
+
+/**
+ * One step's captured output.
+ *
+ * Keyed by step so the terminal reads a different log per selection
+ * rather than one shared script, and every page carries `complete` for a
+ * finished step: a follower stops on that flag and not on an empty page,
+ * because the sequence counter is per RUN and a page filtered to one step
+ * can legitimately be empty while the run's counter has moved.
+ *
+ * The failing step's last line is on stderr, and the timed-out step's log
+ * simply stops — there is no "killed" line, because the process never got
+ * to write one, which is exactly why the page has to say so itself.
+ */
+const WORKFLOW_STEP_LOGS: Record<string, WorkflowStepLogRecord[]> = {
+  step_notify_start: [
+    { seq: 1, stream: "stdout", at: "2026-09-12T02:14:03Z", text: "notifying ops channel" },
+    { seq: 2, stream: "stdout", at: "2026-09-12T02:14:04Z", text: "posted" }
+  ],
+  step_flush: [
+    { seq: 3, stream: "stdout", at: "2026-09-12T02:14:05Z", text: "flushing page cache on postgres-primary" },
+    { seq: 4, stream: "stdout", at: "2026-09-12T02:14:08Z", text: "flushed 1.2 GiB" }
+  ],
+  step_freeze: [
+    { seq: 5, stream: "stdout", at: "2026-09-12T02:14:08Z", text: "requesting checkpoint" },
+    { seq: 6, stream: "stdout", at: "2026-09-12T02:14:11Z", text: "checkpoint complete" },
+    {
+      seq: 7,
+      stream: "stderr",
+      at: "2026-09-12T02:14:14Z",
+      text: "pg_start_backup: another backup is already in progress"
+    }
+  ],
+  step_quiesce: [
+    { seq: 8, stream: "stdout", at: "2026-09-12T02:14:20Z", text: "quiescing replica set" },
+    { seq: 9, stream: "stdout", at: "2026-09-12T02:15:02Z", text: "waiting for writers to drain" }
+  ],
+  step_notify_end: [
+    { seq: 10, stream: "stdout", at: "2026-09-12T02:16:40Z", text: "posted run summary" }
+  ],
+  step_held_thaw: [
+    { seq: 2, stream: "stdout", at: "2026-09-12T01:05:08Z", text: "thawing billing-mysql" },
+    { seq: 3, stream: "stderr", at: "2026-09-12T01:05:12Z", text: "connection reset by peer" }
+  ],
+  step_live_thaw: [
+    { seq: 2, stream: "stdout", at: "2026-09-13T03:04:44Z", text: "thawing postgres-primary" }
+  ]
+};
+
+/** The deployment-wide environment. One literal and one secret-backed
+ *  entry, because a fixture with only literals never renders the case the
+ *  whole editor is built around: a value no read can ever show. */
+function defaultWorkflowEnvironment(): WorkflowEnvVariable[] {
+  return [
+    { name: "PGHOST", value: "postgres-primary.internal", hasValue: true },
+    { name: "PGPASSWORD", hasValue: false, secret: { file: "/etc/backupd/secrets/pg" } }
+  ];
+}
+
+/** One set's own layer: an override of a deployment value, and a
+ *  deliberately EMPTY literal, which is a different configuration from a
+ *  variable that has no literal at all. */
+function defaultSetWorkflowEnvironment(): WorkflowEnvVariable[] {
+  return [
+    { name: "PGHOST", value: "postgres-replica.internal", hasValue: true },
+    { name: "DUMP_LEVEL", value: "", hasValue: true }
+  ];
+}
+
+function defaultWorkflowSettings(): WorkflowSettings {
+  return {
+    configured: true,
+    root: "/etc/backupd/workflows",
+    beforeDir: "/etc/backupd/workflows/before",
+    afterDir: "/etc/backupd/workflows/after",
+    scriptTimeoutSeconds: 300,
+    scriptTimeoutConfigured: true,
+    maxScriptSizeBytes: 65_536,
+    environment: defaultWorkflowEnvironment(),
+    execConnections: [...WORKFLOW_EXEC_CONNECTIONS],
+    runner: {
+      configured: true,
+      socket: "/run/backupd/hooks.sock",
+      tokenFile: "/etc/backupd/hooks.token"
+    }
+  };
+}
+
+/** The two sets that configure hooks, and what each pins. The held set
+ *  INHERITS its timeout, so a surface that cannot tell a pinned bound
+ *  from an inherited one has something to get wrong. */
+function defaultSetWorkflows(): Map<string, BackupSetWorkflow> {
+  return new Map([
+    [
+      WORKFLOW_SET,
+      {
+        backupSetId: WORKFLOW_SET,
+        configured: true,
+        beforeDir: "/srv/hooks/postgres-primary/before",
+        afterDir: "/srv/hooks/postgres-primary/after",
+        scriptTimeoutSeconds: 120,
+        effectiveScriptTimeoutSeconds: 120,
+        remoteExecConnectionRef: "postgres-exec",
+        environment: defaultSetWorkflowEnvironment(),
+        resolvedEnvironmentNames: ["PGHOST", "PGPASSWORD", "DUMP_LEVEL"],
+        stages: [
+          { scope: "global", phase: "before", dir: "/etc/backupd/workflows/before" },
+          { scope: "set", phase: "before", dir: "/srv/hooks/postgres-primary/before" },
+          { scope: "set", phase: "after", dir: "/srv/hooks/postgres-primary/after" },
+          { scope: "global", phase: "after", dir: "/etc/backupd/workflows/after" }
+        ]
+      }
+    ],
+    [
+      WORKFLOW_HELD_SET,
+      {
+        backupSetId: WORKFLOW_HELD_SET,
+        configured: true,
+        beforeDir: "/srv/hooks/billing-mysql/before",
+        afterDir: "/srv/hooks/billing-mysql/after",
+        // Pins nothing, so it follows the deployment's 300s.
+        effectiveScriptTimeoutSeconds: 300,
+        remoteExecConnectionRef: "",
+        environment: [],
+        resolvedEnvironmentNames: ["PGHOST", "PGPASSWORD"],
+        stages: [
+          { scope: "set", phase: "before", dir: "/srv/hooks/billing-mysql/before" },
+          { scope: "set", phase: "after", dir: "/srv/hooks/billing-mysql/after" }
+        ]
+      }
+    ]
+  ]);
+}
+
+/** A set with no workflow block at all: every field empty, `configured`
+ *  false. This is what the majority of sets answer, and the shape the
+ *  quiet path is rendered against. */
+function unconfiguredSetWorkflow(backupSetId: string): BackupSetWorkflow {
+  return {
+    backupSetId,
+    configured: false,
+    beforeDir: "",
+    afterDir: "",
+    effectiveScriptTimeoutSeconds: 300,
+    remoteExecConnectionRef: "",
+    environment: [],
+    resolvedEnvironmentNames: [],
+    stages: []
+  };
+}
+
+/**
+ * One set's validation report.
+ *
+ * The held set's report is the adversarial one: its own source connection
+ * is SFTP-only and therefore cannot execute a hook, so `exec_connection`
+ * is an ERROR naming that, `exec_capability` and `remote_bash_syntax` are
+ * SKIPPED rather than green — nothing looked, and a tick there would be
+ * this product claiming it proved something it never ran — and
+ * `workflow_valid` is false while `valid_for_backup` stays true, which is
+ * the two-verdict case in its sharpest form.
+ */
+function workflowValidationFor(backupSetId: string): WorkflowValidation {
+  if (backupSetId === WORKFLOW_HELD_SET) {
+    return {
+      backupSetId,
+      configured: true,
+      root: "/srv/hooks/billing-mysql",
+      stages: [
+        { scope: "set", phase: "before", dir: "/srv/hooks/billing-mysql/before" },
+        { scope: "set", phase: "after", dir: "/srv/hooks/billing-mysql/after" }
+      ],
+      scripts: [
+        {
+          stepId: "step_held_freeze",
+          scriptName: "before/10-freeze.sh",
+          phase: "before",
+          scope: "set",
+          order: 1,
+          target: "remote",
+          sha256: "3f9c1a77b4e05d2286aa4f1c9de0b7318c5ad4419e6f0b2c7d8e91a0f3b6c245",
+          sizeBytes: 1_408,
+          timeoutMs: 300_000
+        },
+        {
+          stepId: "step_held_thaw",
+          scriptName: "after/10-thaw-db.sh",
+          phase: "after",
+          scope: "set",
+          order: 1,
+          target: "remote",
+          sha256: "b70c1d5546e2a0f9c3812d7b5eaf4019c26d83bb7f1ea4c095d2386af17c0e9b",
+          sizeBytes: 2_944,
+          timeoutMs: 300_000
+        }
+      ],
+      findings: [
+        {
+          check: "exec_connection",
+          severity: "error",
+          detail:
+            "this set's source connection is SFTP-only on this host, so it cannot execute a hook. " +
+            "Name an execution connection whose capability probe passes.",
+          scope: "set"
+        },
+        {
+          check: "exec_capability",
+          severity: "skipped",
+          detail: "not examined: no execution connection resolved",
+          scope: "set"
+        },
+        {
+          check: "remote_bash_syntax",
+          severity: "skipped",
+          detail: "not examined: no execution connection resolved",
+          scope: "set"
+        },
+        {
+          check: "runner_health",
+          severity: "ok",
+          detail: "the Host Workflow Runner answered on /run/backupd/hooks.sock"
+        },
+        {
+          check: "script_hash",
+          severity: "ok",
+          detail: "2 scripts captured and hashed"
+        }
+      ],
+      // A backup set whose backups are fine and whose hooks are not.
+      validForBackup: true,
+      workflowValid: false
+    };
+  }
+  return {
+    backupSetId,
+    configured: true,
+    root: "/srv/hooks/postgres-primary",
+    stages: [
+      { scope: "global", phase: "before", dir: "/etc/backupd/workflows/before" },
+      { scope: "set", phase: "before", dir: "/srv/hooks/postgres-primary/before" },
+      { scope: "set", phase: "after", dir: "/srv/hooks/postgres-primary/after" },
+      { scope: "global", phase: "after", dir: "/etc/backupd/workflows/after" }
+    ],
+    scripts: [
+      {
+        stepId: "step_flush",
+        scriptName: "before/10-flush-cache.sh",
+        phase: "before",
+        scope: "set",
+        order: 1,
+        target: "remote",
+        executionConnectionRef: "postgres-exec",
+        sha256: "4f21ab9c6d0e5b7382c1af94de0b73186c5ad4419e6f0b2c7d8e91a0f3b6c245",
+        sizeBytes: 1_402,
+        timeoutMs: 120_000
+      },
+      {
+        stepId: "step_freeze",
+        scriptName: "before/20-freeze-db.sh",
+        phase: "before",
+        scope: "set",
+        order: 2,
+        target: "local",
+        sha256: "b70c1d5546e2a0f9c3812d7b5eaf40119c26d83bb7f1ea4c095d2386af17c0e9",
+        sizeBytes: 2_902,
+        timeoutMs: 120_000
+      },
+      {
+        stepId: "step_quiesce",
+        scriptName: "after/40-quiesce-remote.sh",
+        phase: "after",
+        scope: "set",
+        order: 1,
+        target: "remote",
+        executionConnectionRef: "postgres-exec",
+        sha256: "0ce41f7a2b9d8c6540e31a7f5bc2d0498a6e13cf7205bd9e4a1c86f30d7b2e51",
+        sizeBytes: 884,
+        timeoutMs: 120_000
+      }
+    ],
+    findings: [
+      {
+        check: "exec_capability",
+        severity: "ok",
+        detail: "postgres-exec: the capability probe ran and returned 0",
+        scope: "set"
+      },
+      {
+        check: "local_bash_syntax",
+        severity: "ok",
+        detail: "1 local script parsed by bash -n through the Host Workflow Runner"
+      },
+      {
+        check: "remote_bash_syntax",
+        severity: "ok",
+        detail: "2 remote scripts parsed by bash -n over postgres-exec"
+      },
+      {
+        check: "environment_conflicts",
+        severity: "warning",
+        detail: "PGHOST is set at both scopes; this set's value wins"
+      },
+      {
+        check: "runner_health",
+        severity: "ok",
+        detail: "the Host Workflow Runner answered on /run/backupd/hooks.sock"
+      }
+    ],
+    validForBackup: true,
+    workflowValid: true
+  };
+}
+
+/** The one outstanding hold: the reason WORKFLOW_HELD_SET is refusing to
+ *  run at all. */
+const WORKFLOW_HOLDS: WorkflowRecoveryHold[] = [
+  {
+    runId: WORKFLOW_RUN_HELD.runId,
+    backupSetId: WORKFLOW_HELD_SET,
+    scope: "set",
+    enteredAt: "2026-09-12T01:05:12Z",
+    spoolRef: "/var/lib/backupd/workflow-spool/wfr_7b03d9"
+  }
+];
+
+function workflowRunNotFound(): BackupdError {
+  return new BackupdError({
+    code: "WORKFLOW_RUN_NOT_FOUND",
+    message: "this deployment has no workflow run with that id",
+    correlationId: "cid_mockwfr404"
+  });
+}
+
+/**
+ * A PUT of one environment entry, at whichever scope, answering with the
+ * whole list.
+ *
+ * One function for both scopes because core/service has one method for
+ * both and the API has one pair of shapes: a second copy here would be a
+ * second place the secret-reference rule has to be kept. The entry
+ * REPLACES any existing one of the same name rather than merging with it,
+ * which is what a PUT means and is the half that matters: an operator
+ * moving a variable from a literal to a secret reference must not end up
+ * with both, since the service refuses that as a contradiction.
+ */
+function mockEnvSet(
+  scopes: Map<string, WorkflowEnvVariable[]>,
+  scope: string,
+  name: string,
+  entry: WorkflowEnvVariableInput
+): WorkflowEnvironment {
+  const variables = scopes.get(scope) ?? [];
+  const written: WorkflowEnvVariable = {
+    name,
+    value: entry.value,
+    // A literal was named, even an empty one. `hasValue` is what tells a
+    // deliberately empty variable from one whose value comes from a
+    // reference, so it follows the presence of the field and not its
+    // truthiness.
+    hasValue: entry.value !== undefined,
+    secret: entry.secret
+  };
+  const next = variables.filter((v) => v.name !== name);
+  next.push(written);
+  next.sort((a, b) => a.name.localeCompare(b.name));
+  scopes.set(scope, next);
+  return { backupSetId: scope, variables: structuredClone(next) };
+}
+
+/** The DELETE, answering with what is left — which is the reason it
+ *  answers with a list at all: an operator clearing a credential needs to
+ *  see what remains. Unsetting a name that is not there is a success, the
+ *  same way the real route treats it. */
+function mockEnvUnset(
+  scopes: Map<string, WorkflowEnvVariable[]>,
+  scope: string,
+  name: string
+): WorkflowEnvironment {
+  const next = (scopes.get(scope) ?? []).filter((v) => v.name !== name);
+  scopes.set(scope, next);
+  return { backupSetId: scope, variables: structuredClone(next) };
+}
+
+/**
  * A whole BackupdApi, in memory, for one scenario.
  *
  * This is a second implementation of the contract rather than a bag of
@@ -2435,6 +3144,22 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
       passwordSet: true
     }
   };
+
+  // EPIC L's state, per mock instance for the reason `settings` and
+  // `recovery` above are: a write has to be visible to the next read,
+  // which is what the real backend's hot reload does, and a write in one
+  // test must not be visible to the next.
+  const workflowSettings = defaultWorkflowSettings();
+  const setWorkflows = defaultSetWorkflows();
+  const workflowEnv = new Map<string, WorkflowEnvVariable[]>([
+    ["", workflowSettings.environment],
+    [WORKFLOW_SET, defaultSetWorkflowEnvironment()]
+  ]);
+  const workflowRuns = WORKFLOW_RUNS.map((run) => structuredClone(run));
+  // The holds, mutable: resuming or acknowledging one REMOVES it, which
+  // is the whole observable effect of both actions and the thing the Run
+  // control's gate reads.
+  let workflowHolds = WORKFLOW_HOLDS.map((hold) => structuredClone(hold));
 
   const api: BackupdApi = {
     getVersion: () =>
@@ -3699,7 +4424,183 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
             correlationId: "cid_mockpw401"
           }))
         : delay(undefined),
-    logout: () => delay(undefined)
+    logout: () => delay(undefined),
+
+    // EPIC L (issue #814). Reads answer from the fixtures above; the two
+    // recovery actions and the five writes mutate this instance, so a
+    // screen that resumes a cleanup sees the hold go and the Run control
+    // come back rather than having to be told it worked.
+    workflowRuns: (query) =>
+      delay(
+        workflowRuns
+          .filter((run) => !query?.backupSetId || run.backupSetId === query.backupSetId)
+          .slice(0, query?.limit && query.limit > 0 ? query.limit : undefined)
+          .map((run) => structuredClone(run))
+      ),
+    workflowRun: (runId) => {
+      const run = workflowRuns.find((r) => r.runId === runId);
+      return run ? delay(structuredClone(run)) : Promise.reject(workflowRunNotFound());
+    },
+    workflowSteps: (runId) => {
+      const run = workflowRuns.find((r) => r.runId === runId);
+      return run ? delay(structuredClone(run.steps)) : Promise.reject(workflowRunNotFound());
+    },
+    // `after` is honoured rather than ignored, because that is the one
+    // behaviour a follower depends on: a fixture that re-sent every
+    // record on each poll would let a terminal that never advanced its
+    // cursor look correct. `complete` follows the step's own state, so a
+    // running step keeps a follower polling and a finished one stops it.
+    workflowStepLogs: (runId, stepId, options) => {
+      const run = workflowRuns.find((r) => r.runId === runId);
+      if (!run) return Promise.reject(workflowRunNotFound());
+      const step = run.steps.find((s) => s.stepId === stepId);
+      if (!step) {
+        return Promise.reject(new BackupdError({
+          code: "WORKFLOW_STEP_NOT_FOUND",
+          message: "this workflow run has no step with that id",
+          correlationId: "cid_mockwfs404"
+        }));
+      }
+      const all = WORKFLOW_STEP_LOGS[stepId] ?? [];
+      const after = options?.after ?? 0;
+      const records = all.filter((rec) => rec.seq > after);
+      const page: WorkflowStepLogPage = {
+        records: structuredClone(records),
+        // The cursor is the last sequence ANSWERED, so an empty page
+        // leaves the follower's cursor where it was rather than rewinding
+        // it to zero.
+        cursor: records.length > 0 ? records[records.length - 1].seq : after,
+        complete: step.state !== "running" && step.state !== "pending",
+        truncated: false
+      };
+      return delay(page);
+    },
+
+    workflowRecovery: () => delay(workflowHolds.map((hold) => structuredClone(hold))),
+    // Resuming runs the owed hooks and clears the hold, which is what
+    // the real action does when the cleanup completes. The run's own row
+    // moves with it: its state becomes "recovered" and its cleanup
+    // status "success", while its BACKUP and WORKFLOW verdicts are left
+    // exactly as they were — a resumed cleanup does not retroactively
+    // make a failed workflow succeed.
+    resumeWorkflowCleanup: (runId) => {
+      const run = workflowRuns.find((r) => r.runId === runId);
+      if (!run) return Promise.reject(workflowRunNotFound());
+      run.state = "recovered";
+      run.cleanupStatus = "success";
+      run.recoveryState = "resolved";
+      workflowHolds = workflowHolds.filter((hold) => hold.runId !== runId);
+      return delay(structuredClone(run), 600);
+    },
+    // The reason is required by the service, so it is required here: a
+    // fixture that accepted an empty one would let a dialog ship without
+    // the field the record exists for.
+    acknowledgeWorkflowRecovery: (runId, reason) => {
+      const run = workflowRuns.find((r) => r.runId === runId);
+      if (!run) return Promise.reject(workflowRunNotFound());
+      if (reason.trim() === "") {
+        return Promise.reject(new BackupdError({
+          code: "WORKFLOW_ACKNOWLEDGEMENT_REASON_REQUIRED",
+          message: "an acknowledgement has to say what was done about this run",
+          correlationId: "cid_mockwfack400"
+        }));
+      }
+      run.state = "recovered";
+      run.recoveryState = "resolved";
+      workflowHolds = workflowHolds.filter((hold) => hold.runId !== runId);
+      return delay(undefined, 400);
+    },
+
+    getWorkflowSettings: () => delay(structuredClone(workflowSettings)),
+    patchWorkflowSettings: (patch) => {
+      // An absent key leaves the value alone and an empty string clears
+      // it, which for a stage directory DISABLES that stage. Modelled
+      // rather than described, because a form that could not express the
+      // difference would silently stop hooks running.
+      if (patch.root !== undefined) workflowSettings.root = patch.root;
+      if (patch.beforeDir !== undefined) workflowSettings.beforeDir = patch.beforeDir;
+      if (patch.afterDir !== undefined) workflowSettings.afterDir = patch.afterDir;
+      if (patch.scriptTimeoutSeconds !== undefined) {
+        workflowSettings.scriptTimeoutSeconds = patch.scriptTimeoutSeconds;
+        workflowSettings.scriptTimeoutConfigured = patch.scriptTimeoutSeconds > 0;
+      }
+      if (patch.maxScriptSizeBytes !== undefined) {
+        workflowSettings.maxScriptSizeBytes = patch.maxScriptSizeBytes;
+      }
+      return delay(structuredClone(workflowSettings), 400);
+    },
+
+    listWorkflowEnvironment: () =>
+      delay({ backupSetId: "", variables: structuredClone(workflowEnv.get("") ?? []) }),
+    setWorkflowEnvironment: (name, entry) =>
+      delay(mockEnvSet(workflowEnv, "", name, entry), 300),
+    unsetWorkflowEnvironment: (name) => delay(mockEnvUnset(workflowEnv, "", name), 300),
+
+    getBackupSetWorkflow: (source, set) => {
+      const id = source + "/" + set;
+      return delay(structuredClone(setWorkflows.get(id) ?? unconfiguredSetWorkflow(id)));
+    },
+    // A patch against a set with no block CREATES one carrying only the
+    // fields named, and nothing else: a set given a before_dir must not
+    // silently acquire a pinned timeout copied from today's deployment
+    // value, because that is how a set stops following a later change to
+    // it.
+    patchBackupSetWorkflow: (source, set, patch) => {
+      const id = source + "/" + set;
+      const current = setWorkflows.get(id) ?? unconfiguredSetWorkflow(id);
+      const next: BackupSetWorkflow = {
+        ...current,
+        configured: true,
+        beforeDir: patch.beforeDir ?? current.beforeDir,
+        afterDir: patch.afterDir ?? current.afterDir,
+        scriptTimeoutSeconds:
+          patch.scriptTimeoutSeconds === undefined
+            ? current.scriptTimeoutSeconds
+            : patch.scriptTimeoutSeconds > 0
+              ? patch.scriptTimeoutSeconds
+              : undefined,
+        remoteExecConnectionRef: patch.remoteExecConnectionRef ?? current.remoteExecConnectionRef
+      };
+      next.effectiveScriptTimeoutSeconds =
+        next.scriptTimeoutSeconds ?? workflowSettings.scriptTimeoutSeconds;
+      setWorkflows.set(id, next);
+      return delay(structuredClone(next), 400);
+    },
+
+    listBackupSetWorkflowEnvironment: (source, set) => {
+      const id = source + "/" + set;
+      return delay({ backupSetId: id, variables: structuredClone(workflowEnv.get(id) ?? []) });
+    },
+    setBackupSetWorkflowEnvironment: (source, set, name, entry) =>
+      delay(mockEnvSet(workflowEnv, source + "/" + set, name, entry), 300),
+    unsetBackupSetWorkflowEnvironment: (source, set, name) =>
+      delay(mockEnvUnset(workflowEnv, source + "/" + set, name), 300),
+
+    getBackupSetWorkflowValidation: (source, set) => {
+      const id = source + "/" + set;
+      const configured = setWorkflows.get(id)?.configured === true;
+      return delay(
+        configured
+          ? workflowValidationFor(id)
+          : {
+              // An unconfigured set is valid for BACKUP and has no
+              // workflow verdict to give, which is the two-verdict split
+              // in its quietest form.
+              backupSetId: id,
+              configured: false,
+              root: "",
+              stages: [],
+              scripts: [],
+              findings: [],
+              validForBackup: true,
+              workflowValid: false
+            },
+        // Slower than the reads beside it on purpose: this one hashes
+        // every script and opens two connections in a real deployment,
+        // so a screen that polled it would be visibly wrong here too.
+        700
+      );
+    }
   };
 
   return refusingWhileUnconfigured(api, () => configured);
