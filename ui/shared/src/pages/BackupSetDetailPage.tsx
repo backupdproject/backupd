@@ -71,6 +71,7 @@ import type { EditField, EditFieldKey } from "./backupSetEditFields";
 import type { BackupSetPatch, RunningWork } from "@shared/api/contracts";
 import { apiErrorOf, describeFailure } from "@shared/api/failure";
 import { bytes, clock, relativeAge } from "@shared/utilities/format";
+import { snapshotRetentionPath, snapshotsPath } from "@shared/utilities/routes";
 
 /**
  * How often an open edit form renews its hold (issue #350).
@@ -809,6 +810,26 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                   CANCEL &amp; EXIT EDIT MODE
                 </button>
               </InfoTooltip>
+            ) : null}
+            {/* EPIC K's per-set screens (issue #788), and only for the
+                engine that has them: every incremental read is refused
+                outright for an artifact set
+                (BACKUP_SET_NOT_INCREMENTAL), so offering the link here
+                would be offering a page that can only explain itself.
+                The set's own engine is on the list read, which is why
+                this needs no probe of its own. */}
+            {s.engine === "kopia" ? (
+              <>
+                <button className="btn" onClick={() => navigate(snapshotsPath(s.source, s.set))}>
+                  Snapshots
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => navigate(snapshotRetentionPath(s.source, s.set))}
+                >
+                  Snapshot retention
+                </button>
+              </>
             ) : null}
             <InfoTooltip id="sets.detail.preview-retention" alignEnd>
               <button className="btn" disabled={readOnly} onClick={() => setPreviewOpen(true)}>Preview retention</button>

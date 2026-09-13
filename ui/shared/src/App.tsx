@@ -44,6 +44,16 @@ import { BackupSetDetailPage } from "@shared/pages/BackupSetDetailPage";
 import { BackupSetWizardPage } from "@shared/pages/BackupSetWizardPage";
 import { BackupsPage } from "@shared/pages/BackupsPage";
 import { BackupDetailPage } from "@shared/pages/BackupDetailPage";
+// EPIC K's operational screens (issue #788). Every one of them is a
+// sub-resource of something already routed: snapshots and their retention
+// hang off a backup set, and the two fleet screens off the repository
+// domains the deployment declares.
+import { SnapshotsPage } from "@shared/pages/SnapshotsPage";
+import { SnapshotDetailPage } from "@shared/pages/SnapshotDetailPage";
+import { SnapshotRestorePage } from "@shared/pages/SnapshotRestorePage";
+import { SnapshotRetentionPage } from "@shared/pages/SnapshotRetentionPage";
+import { RepositoryHealthPage } from "@shared/pages/RepositoryHealthPage";
+import { RepositoryMaintenancePage } from "@shared/pages/RepositoryMaintenancePage";
 import { ActivityPage } from "@shared/pages/ActivityPage";
 import { QuarantinePage } from "@shared/pages/QuarantinePage";
 import { SettingsPage } from "@shared/pages/SettingsPage";
@@ -307,6 +317,27 @@ export function App() {
             {set}/... shape (router.go). A single :setId segment cannot
             match a path with that extra segment in it (issue #285). */}
         <Route path="/sets/:source/:set" element={<BackupSetDetailPage readOnly={readOnly} />} />
+        {/* EPIC K's per-set screens (issue #788), under the set they
+            belong to and with the same two-segment id the route above
+            takes. A snapshot is addressed by RUN id, which is what the
+            API's own `.../snapshots/{run}` route takes and the only name
+            a run that never committed a manifest has. */}
+        <Route path="/sets/:source/:set/snapshots" element={<SnapshotsPage readOnly={readOnly} />} />
+        <Route
+          path="/sets/:source/:set/snapshots/:runId"
+          element={<SnapshotDetailPage readOnly={readOnly} />}
+        />
+        <Route path="/sets/:source/:set/restore" element={<SnapshotRestorePage readOnly={readOnly} />} />
+        <Route
+          path="/sets/:source/:set/snapshot-retention"
+          element={<SnapshotRetentionPage readOnly={readOnly} />}
+        />
+        {/* The two fleet-wide screens. Repository health is a different
+            question from any backup set's, and maintenance is a different
+            one again: a domain can be perfectly healthy and unmaintained
+            because nobody has claimed it. */}
+        <Route path="/repositories/health" element={<RepositoryHealthPage />} />
+        <Route path="/repositories/maintenance" element={<RepositoryMaintenancePage />} />
         <Route path="/backups" element={<BackupsPage readOnly={readOnly} />} />
         {/* And three, not one, for the same reason one route up: an
             artifact id (model.ArtifactID.String()) is a backup set id

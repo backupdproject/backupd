@@ -1630,5 +1630,21 @@
   "sets.source-delete.read-only": {
     "label": "Delete from source unavailable",
     "html": "The SSH credentials for this source are <strong>read-only</strong>: the write test could not create a file on the server, so Backupd cannot delete there either. Grant this account write permission on the source path and re-run the connection test to enable source deletion."
+  },
+  "snapshots.reused": {
+    "label": "Reused",
+    "html": "Content this run offered the repository that it already held, so it was not stored again. When the engine cannot account for it the panel says <em>not measured</em> rather than <code>0</code> \u2014 a zero would read as a backup that deduplicated nothing."
+  },
+  "snapshots.achieved-level": {
+    "label": "Verification achieved",
+    "html": "What the check actually <strong>performed</strong>, which is not always what was asked for. A failed verification proves nothing and carries no level at all."
+  },
+  "snapshots.restore.step": {
+    "label": "Step",
+    "html": "One of the four questions a restore answers: which snapshot, what inside it, where it goes, and what happens to a file already there. Any of them can be reopened; nothing is submitted until <strong>Start restore</strong>."
+  },
+  "repositories.maintenance-owner": {
+    "label": "Maintenance owner",
+    "html": "Exactly one instance maintains a repository domain. Another instance reads and writes snapshots here but will not compact or reclaim, so a domain whose owner is switched off stops being maintained until ownership is <strong>transferred</strong>."
   }
 }
