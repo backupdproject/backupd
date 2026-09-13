@@ -441,22 +441,23 @@ if [ "$FAST" = "1" ]; then
   gate_docker_step "core/ go test -race ./internal/... (CI_LOCAL_FAST=1: skipping ./tests/... Docker suites)"
   (cd core && GOWORK=off go test -race ./internal/...)
 else
-  # tests/crashmatrix, tests/sftpintegration, tests/sshexecintegration and
-  # tests/miniointegration
+  # tests/crashmatrix, tests/sftpintegration, tests/sshexecintegration,
+  # tests/miniointegration and tests/containerhooks
   # run separately, under cmd/gotestwatch instead of `go test`'s own
-  # default -timeout (10m per package). All three drive real Docker work
+  # default -timeout (10m per package). All of them drive real Docker work
   # through a real subprocess (tests/crashmatrix's own harness, a real
-  # rclone transfer against the SFTP fixture container, or a real S3
-  # round trip against the MinIO one), so their wall-clock time tracks
-  # real machine load rather than a fixed budget; issue #256 is a real
-  # gate run hitting go test's fixed 10m default under load. On a machine
-  # that has to PULL a fixture image first, the pull alone can eat most
-  # of that budget. gotestwatch bounds them with a no-progress window
+  # rclone transfer against the SFTP fixture container, a real S3
+  # round trip against the MinIO one, or -- for tests/containerhooks --
+  # an ephemeral container per workflow hook), so their wall-clock time
+  # tracks real machine load rather than a fixed budget; issue #256 is a
+  # real gate run hitting go test's fixed 10m default under load. On a
+  # machine that has to PULL a fixture image first, the pull alone can eat
+  # most of that budget. gotestwatch bounds them with a no-progress window
   # derived from this run's own measured pace instead (issue #247's
   # reasoning, one layer out; see core/cmd/gotestwatch/doc.go), so there
   # is no fixed number to outgrow.
-  gate_docker_step "core/ go test -race ./... (excluding tests/crashmatrix + tests/sftpintegration + tests/sshexecintegration + tests/miniointegration + tests/conformance + tests/machinegate and cmd/gotestwatch, all run next)"
-  (cd core && GOWORK=off go test -race $(GOWORK=off go list ./... | grep -vE '/(tests/(crashmatrix|sftpintegration|sshexecintegration|miniointegration|conformance|machinegate)|cmd/gotestwatch)$'))
+  gate_docker_step "core/ go test -race ./... (excluding tests/crashmatrix + tests/sftpintegration + tests/sshexecintegration + tests/miniointegration + tests/conformance + tests/machinegate + tests/containerhooks and cmd/gotestwatch, all run next)"
+  (cd core && GOWORK=off go test -race $(GOWORK=off go list ./... | grep -vE '/(tests/(crashmatrix|sftpintegration|sshexecintegration|miniointegration|conformance|machinegate|containerhooks)|cmd/gotestwatch)$'))
 
   # cmd/gotestwatch is compiled and run rather than handed to `go test`,
   # and the reason is the same three-outcome honesty this gate is built on
@@ -492,8 +493,8 @@ else
       ;;
   esac
 
-  gate_docker_step "core/ tests/crashmatrix + tests/sftpintegration + tests/sshexecintegration + tests/miniointegration + tests/conformance + tests/machinegate under gotestwatch, -race (issue #256: no fixed go test -timeout)"
-  (cd core && GOWORK=off go run ./cmd/gotestwatch -race -count=1 ./tests/crashmatrix/... ./tests/sftpintegration/... ./tests/sshexecintegration/... ./tests/miniointegration/... ./tests/conformance/... ./tests/machinegate/...)
+  gate_docker_step "core/ tests/crashmatrix + tests/sftpintegration + tests/sshexecintegration + tests/miniointegration + tests/conformance + tests/machinegate + tests/containerhooks under gotestwatch, -race (issue #256: no fixed go test -timeout)"
+  (cd core && GOWORK=off go run ./cmd/gotestwatch -race -count=1 ./tests/crashmatrix/... ./tests/sftpintegration/... ./tests/sshexecintegration/... ./tests/miniointegration/... ./tests/conformance/... ./tests/machinegate/... ./tests/containerhooks/...)
 fi
 
 gate_step "apps/common go build, vet, test -race"

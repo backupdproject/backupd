@@ -2,37 +2,44 @@ package hostrunner
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
-// Running one captured script, and the four things that make it a
-// workflow runner rather than an exec wrapper.
+// Running one captured script in an ephemeral container, and the five
+// things that make it a workflow runner rather than a `docker run`
+// wrapper.
 //
 // # 1. The bytes are proved before anything is created
 //
 // Size and sha256 are re-checked here against what the request claimed,
-// before a directory exists, before a file is written, before bash is
-// invoked. internal/workflow already verified the same bytes against the
-// plan when it opened them (Plan.OpenScript), so this is the second check
-// of the same fact -- deliberately, because the hop in between is a
+// before a directory exists, before a file is written, before a container
+// is started. internal/workflow already verified the same bytes against
+// the plan when it opened them (Plan.OpenScript), so this is the second
+// check of the same fact -- deliberately, because the hop in between is a
 // socket, and a check on the far side of a boundary is not a check on
 // this side of it.
 //
-// # 2. The script is this process's private file, not the hook's
+// # 2. The script is this process's private file, mounted read-only
 //
 // The verified bytes are written to <run>/<step>.script, mode 0500, a
-// SIBLING of the working directory rather than a file in it. bash reads a
-// script incrementally, so a script the running hook could rewrite is a
-// script whose second half is not the half that was hashed. The hook gets
-// its own directory to write in, and does not get this file.
+// SIBLING of the working directory rather than a file in it, and the
+// container gets it as a READ-ONLY bind mount at the same path. bash
+// reads a script incrementally, so a script the running hook could
+// rewrite is a script whose second half is not the half that was hashed.
+// The hook gets its own directory to write in; the script is mounted in a
+// way the kernel refuses to let it write, which is stronger than the file
+// mode was (a hook running as the same account could have chmod'ed its
+// own copy).
 //
 // This is the one documented divergence from core/internal/remoteexec
 // (#810), which sends the bytes on stdin because it may leave no residue
@@ -41,27 +48,40 @@ import (
 // pipes in through their own mechanism) works here, and would silently
 // get the script's own text as its input if the script arrived that way.
 //
-// # 3. One session per script
+// # 3. One container per script, and this runner owns its name
 //
-// Setsid puts the child in a new session and a new process group of its
-// own. Everything the hook starts inherits that group unless it goes out
-// of its way not to, so "kill the hook" is one signal to the negated
-// group id rather than a best-effort walk of a process tree that is
-// changing while it is walked.
+// The container's name is minted HERE, before it exists
+// (containerName), and everything that happens to it afterwards happens
+// by that name. That is the container-era replacement for the setsid
+// process group this file used to create, and it is strictly stronger in
+// the case that mattered: a hook that ran `pg_dump | gzip > x` left both
+// halves running when only the child was killed, and a hook that
+// re-parents or changes its process group escaped a group-wide signal
+// entirely. A container's cgroup holds everything the hook started, with
+// no walk and no window.
 //
-// Without it, killing the child kills the child: a hook that ran
-// `pg_dump | gzip > x` leaves both halves running, still holding the
-// database connection the timeout was supposed to release.
+// A name rather than the id docker prints: the id only exists once the
+// container does, and a launch that was killed between fork and the
+// client's first output would leave a container this runner could not
+// address. The name is a fact before the container is.
 //
 // # 4. Termination is proved, not assumed
 //
-// SIGTERM, then a grace period, then SIGKILL, then a LOOK. The look is
-// the part that is easy to leave out and the part the journal actually
-// records (internal/workflow's Step.TerminationConfirmed): a process
-// group that is still there after SIGKILL is a process stuck in
+// SIGTERM to the container, then a grace period, then SIGKILL, then a
+// LOOK -- and the look asks the DAEMON whether the container still
+// exists. internal/workflow's Step.TerminationConfirmed is the field this
+// feeds, and the distinction is worth the round trip: a container that is
+// still there after a kill is a daemon that is wedged or a task in
 // uninterruptible I/O, which does happen to a hook talking to a NAS
 // share, and reporting that honestly is the difference between "the hook
 // was killed" and "we stopped waiting for the hook".
+//
+// # 5. There is no path that does not go through a container
+//
+// Execute refuses when no capability was proven. It does not resolve a
+// host bash, and this package no longer has the code to: see
+// container.go's preamble for why a fallback would make every property
+// in this file conditional on a daemon nobody checked.
 
 // DefaultStepTimeout mirrors internal/workflow's default for a step whose
 // request carries no bound. The engine normally resolves the timeout at
@@ -69,8 +89,8 @@ import (
 // not, because "no timeout" is not a thing this package will do.
 const DefaultStepTimeout = 5 * time.Minute
 
-// DefaultGracePeriod is how long a signalled process group has to exit
-// before SIGKILL.
+// DefaultGracePeriod is how long a signalled container has to exit before
+// it is killed.
 //
 // Five seconds. Long enough for a trap handler to unmount something or
 // release a database lock, which is the reason SIGTERM is sent first at
@@ -78,28 +98,44 @@ const DefaultStepTimeout = 5 * time.Minute
 // hook that is never going to handle the signal.
 const DefaultGracePeriod = 5 * time.Second
 
-// killConfirmWindow is how long this runner watches for a signalled
-// process group to disappear after SIGKILL before reporting the
-// termination as unconfirmed.
-const killConfirmWindow = 2 * time.Second
+// killConfirmWindow is how long this runner watches for a killed
+// container to disappear before reporting the termination as unconfirmed.
+//
+// Longer than the process-group window it replaces: this one includes a
+// round trip to the daemon, and the daemon is the same one that is at
+// that moment tearing the container down.
+const killConfirmWindow = 10 * time.Second
 
-// killPollInterval is how often the process group is probed while
-// waiting for it to go.
-const killPollInterval = 20 * time.Millisecond
+// killPollInterval is how often the daemon is asked while waiting for a
+// container to go.
+const killPollInterval = 100 * time.Millisecond
 
-// Executor runs verified bytes. One per server; it holds no per-step
-// state, which is what lets several steps run at once without them
-// sharing anything but the layout.
+// Executor runs verified bytes in ephemeral containers. One per server;
+// it holds no per-step state, which is what lets several steps run at
+// once without them sharing anything but the layout.
 type Executor struct {
 	// Layout is where working directories and scripts go.
 	Layout Layout
 
-	// Bash is the interpreter fixed at preflight.
-	Bash Bash
+	// Container is the capability proved at startup: which client, which
+	// daemon, which image, which interpreter inside it. A zero value is
+	// a runner that cannot execute anything, and says so.
+	Container Container
 
-	// Grace is how long a signalled group has before SIGKILL. Zero takes
-	// DefaultGracePeriod.
+	// Grace is how long a signalled container has before it is killed.
+	// Zero takes DefaultGracePeriod.
 	Grace time.Duration
+
+	// ConfirmWindow is how long the daemon is asked about a killed
+	// container before its termination is reported as unconfirmed. Zero
+	// takes killConfirmWindow.
+	//
+	// It is a field rather than a constant because it is the one
+	// duration a test has to WAIT OUT: the behaviour under assertion is
+	// the answer after the window, never its length, and a suite that
+	// endured ten seconds per unconfirmed case would be ten seconds
+	// somebody eventually deletes the test to get back.
+	ConfirmWindow time.Duration
 
 	// MaxScriptSize bounds one script's bytes. Zero takes
 	// MaxFrameSize's practical equivalent by way of the frame bound, so
@@ -151,12 +187,13 @@ func (e *Executor) Verify(req Request) error {
 	return nil
 }
 
-// Execute runs one step to completion and streams its output.
+// Execute runs one step to completion in its own container and streams
+// its output.
 //
 // ctx is the LEASE as well as the cancellation: the server cancels it
 // when the engine's connection goes away, and this function treats that
-// exactly as it treats an explicit cancel -- signal the process group,
-// prove it is gone, clean up. See Server.handleExecute.
+// exactly as it treats an explicit cancel -- signal the container, prove
+// it is gone, remove it, clean up. See Server.handleExecute.
 //
 // The returned error is a *Failure when the step could not be attempted.
 // A hook that exits non-zero is a Result with StateExited and a non-nil
@@ -166,7 +203,14 @@ func (e *Executor) Execute(ctx context.Context, req Request, sink Sink) (Result,
 	if err := e.Verify(req); err != nil {
 		return Result{}, err
 	}
-	if err := e.Bash.SyntaxCheck(ctx, req.Script); err != nil {
+	// Before anything is created, because it is the answer with no
+	// remedy the engine can apply mid-run: a host that cannot start a
+	// container cannot run this hook, and pretending otherwise is the
+	// silent host-bash fallback #865 forbids.
+	if !e.Container.Available() {
+		return Result{}, noCapability()
+	}
+	if err := e.Container.SyntaxCheck(ctx, req.Script); err != nil {
 		return Result{}, err
 	}
 
@@ -184,6 +228,9 @@ func (e *Executor) Execute(ctx context.Context, req Request, sink Sink) (Result,
 	// engine-supplied value would be a path to somewhere else, and a
 	// hook writing its dump there would write it outside the directory
 	// this runner cleans up.
+	//
+	// It is the same string inside the container as outside, because the
+	// mount is an identity mount: see Mount.
 	env := EnvSet{Vars: append(append([]EnvVar(nil), req.Env.Vars...), EnvVar{Name: "BACKUPD_WORK_DIR", Value: workDir})}
 	block, err := env.ProcessEnv(nil)
 	if err != nil {
@@ -191,12 +238,37 @@ func (e *Executor) Execute(ctx context.Context, req Request, sink Sink) (Result,
 		return Result{}, &Failure{Code: CodeRefused, Message: err.Error()}
 	}
 
+	// The two paths about to become bind mounts are checked one last
+	// time, as LINKS rather than as paths. prepareStep created them
+	// through descriptors that cannot be walked out of the workspace
+	// (paths.go), but what is handed to the daemon is a STRING, and the
+	// daemon resolves it itself, as root, with none of that discipline.
+	// A symbolic link that appeared in between would be a mount of
+	// wherever it points.
+	if err := refuseLink(workDir); err != nil {
+		e.cleanupStep(req.RunID, req.StepID)
+		return Result{}, err
+	}
+	if err := refuseLink(scriptPath); err != nil {
+		e.cleanupStep(req.RunID, req.StepID)
+		return Result{}, err
+	}
+
 	timeout := req.Timeout()
 	if timeout <= 0 {
 		timeout = DefaultStepTimeout
 	}
 
+	name, err := containerName(req.RunID, req.StepID)
+	if err != nil {
+		e.cleanupStep(req.RunID, req.StepID)
+		return Result{}, err
+	}
+
 	result, err := e.run(ctx, runSpec{
+		name:       name,
+		runID:      req.RunID,
+		stepID:     req.StepID,
 		scriptPath: scriptPath,
 		workDir:    workDir,
 		env:        block,
@@ -206,9 +278,9 @@ func (e *Executor) Execute(ctx context.Context, req Request, sink Sink) (Result,
 		// Even a failed operation obeys the invariant below. run
 		// returns a POPULATED result alongside its error when the
 		// engine's connection died mid-stream, and that path reaches
-		// here having already signalled a process group: removing a
-		// working directory whose termination could not be confirmed
-		// would be the exact deletion the next paragraph refuses.
+		// here having already signalled a container: removing a working
+		// directory whose termination could not be confirmed would be
+		// the exact deletion the next paragraph refuses.
 		if result.TerminationCertainty != CertaintyUnconfirmed {
 			e.cleanupStep(req.RunID, req.StepID)
 		}
@@ -217,10 +289,10 @@ func (e *Executor) Execute(ctx context.Context, req Request, sink Sink) (Result,
 	result.DroppedEnvNames = req.Env.DroppedEnvNames()
 
 	// "Removed after the step WHEN SAFE" (#809). Unsafe means exactly
-	// one thing: this runner signalled a process group and could not
-	// prove it was gone, so something may still be writing in there.
-	// Removing it anyway would turn a hook that survived its own kill
-	// into a half-written dump in a directory nobody can find.
+	// one thing: this runner killed a container and could not prove it
+	// was gone, so something may still be writing in there. Removing it
+	// anyway would turn a hook that survived its own kill into a
+	// half-written dump in a directory nobody can find.
 	if result.TerminationCertainty != CertaintyUnconfirmed {
 		e.cleanupStep(req.RunID, req.StepID)
 		result.WorkDirRemoved = true
@@ -228,36 +300,92 @@ func (e *Executor) Execute(ctx context.Context, req Request, sink Sink) (Result,
 	return result, nil
 }
 
-// runSpec is one exec's inputs, gathered so run's signature does not grow
-// five parameters of the same type.
+// refuseLink is the last look at a path before it becomes a bind mount.
+func refuseLink(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return &Failure{Code: CodeInternal, Message: fmt.Sprintf("this runner could not check %s before mounting it: %v", path, err)}
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return &Failure{Code: CodeRefused, Message: fmt.Sprintf("%s is a symbolic link, and this runner will not hand the daemon a path whose meaning something else chose", path)}
+	}
+	return nil
+}
+
+// containerName mints the name this runner owns for one step's container.
+//
+// <prefix><run>-<step>-<8 random hex>, and every piece of it is load
+// bearing. The prefix and the ids make an operator's `docker ps` legible.
+// The random suffix is what makes the name UNIQUE rather than derived: a
+// step that is retried after a termination this runner could not confirm
+// would otherwise collide with the container it could not remove, and
+// `docker run --name` fails on a collision -- turning "the last attempt
+// left something behind" into "this step can never run again".
+//
+// The ids are already held to ValidID by Verify, whose alphabet (letters,
+// digits, dot, dash, underscore) is a subset of what docker accepts in a
+// name. The truncation is docker's 255-byte limit on a name against
+// MaxIDLength twice over.
+func containerName(runID, stepID string) (string, error) {
+	var random [4]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", &Failure{Code: CodeInternal, Message: "this runner could not mint a container name: " + err.Error()}
+	}
+	name := containerNamePrefix + runID + "-" + stepID + "-" + hex.EncodeToString(random[:])
+	if len(name) > 200 {
+		name = name[:200]
+	}
+	return name, nil
+}
+
+// runSpec is one container's inputs, gathered so run's signature does not
+// grow six parameters of the same type.
 type runSpec struct {
+	name       string
+	runID      string
+	stepID     string
 	scriptPath string
 	workDir    string
 	env        []string
 	timeout    time.Duration
 }
 
-// run is the exec itself: start, pump, wait, and terminate on whichever
-// of the three endings arrives first.
+// run is the launch itself: start the container, pump its two streams,
+// wait, and terminate it on whichever of the three endings arrives first.
 func (e *Executor) run(ctx context.Context, spec runSpec, sink Sink) (Result, error) {
-	// NOT exec.CommandContext. Its cancellation kills the CHILD, and
-	// this package's whole termination argument is about the process
-	// GROUP: a context kill would leave the hook's own children running
-	// and would do it silently, since the Result would still say
-	// "canceled". The signalling below is done here instead.
-	cmd := exec.Command(e.Bash.Path, "--noprofile", "--norc", spec.scriptPath)
-	cmd.Dir = spec.workDir
+	// NOT exec.CommandContext. Its cancellation kills the CLIENT, and
+	// killing the docker client does not stop the container it started:
+	// the container is the daemon's child, not this process's, so a
+	// context kill would leave the hook running with nothing left that
+	// knows its name, and the Result would still say "canceled". The
+	// termination below is done through the daemon instead.
+	cmd := exec.Command(e.Container.Docker, e.Container.hookArgs(launchSpec{
+		name:       spec.name,
+		runID:      spec.runID,
+		stepID:     spec.stepID,
+		workDir:    spec.workDir,
+		scriptPath: spec.scriptPath,
+		envNames:   envNames(spec.env),
+	})...)
+
+	// The client's environment IS the hook's environment, and that is
+	// what makes `--env NAME` work: the client reads each named value
+	// out of its own block and sends it to the daemon over the socket,
+	// so no value ever appears in an argument vector, which on a NAS is
+	// world-readable through `ps`.
+	//
+	// It is the whole block and nothing else -- not this process's
+	// environment with the hook's merged in -- so a variable this
+	// runner's own service manager set cannot leak into a hook. The
+	// client's own settings travel as explicit flags for the same
+	// reason, in the other direction: see Container.clientArgs.
 	cmd.Env = spec.env
 
-	// A new session, so the child leads its own process group and
-	// nothing it starts shares this daemon's. Setctty is deliberately
-	// absent: there is no controlling terminal, which is what makes a
-	// hook that tries to prompt fail fast instead of blocking forever.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-
-	// nil Stdin is /dev/null. A hook that reads stdin gets EOF rather
-	// than this daemon's own input, and cannot block the run waiting for
-	// something nobody is going to type.
+	// nil Stdin is /dev/null, and the launch does not ask for -i, so
+	// the hook's stdin is closed inside the container too. A hook that
+	// reads stdin gets EOF rather than this daemon's own input, and
+	// cannot block the run waiting for something nobody is going to
+	// type. No -t either, anywhere: see the probe's tty assertion.
 	cmd.Stdin = nil
 
 	stdout, err := cmd.StdoutPipe()
@@ -272,12 +400,14 @@ func (e *Executor) run(ctx context.Context, spec runSpec, sink Sink) (Result, er
 	capture := NewCapture(sink)
 	started := time.Now()
 	if err := cmd.Start(); err != nil {
-		return Result{}, &Failure{Code: CodeInternal, Message: fmt.Sprintf("this runner could not start %s: %v", e.Bash.Path, err)}
+		return Result{}, &Failure{Code: CodeInternal, Message: fmt.Sprintf("this runner could not start %s: %v", e.Container.Docker, err)}
 	}
-	pgid := cmd.Process.Pid
 
 	var pumps sync.WaitGroup
 	pumps.Add(2)
+	// The two streams stay apart all the way from the container: docker
+	// demultiplexes them for a launch with no PTY, which is the other
+	// reason a PTY is refused -- it would merge them irrecoverably.
 	go pump(&pumps, stdout, capture.Writer(StreamStdout))
 	go pump(&pumps, stderr, capture.Writer(StreamStderr))
 
@@ -290,12 +420,12 @@ func (e *Executor) run(ctx context.Context, spec runSpec, sink Sink) (Result, er
 		// The consequence, stated because it looks like a bug the first
 		// time it is met: a hook that leaves a background process
 		// holding its stdout keeps this pipe open after the hook itself
-		// exits, so the step runs until its timeout and is then killed
-		// as a group. Every shell, every CI runner and every
-		// command-substitution in bash behaves the same way for the same
-		// reason, and the alternative -- returning while something is
-		// still writing output nobody is reading -- is the runaway this
-		// package exists to prevent.
+		// exits, so the step runs until its timeout and the container
+		// is then killed with everything in it. Every shell, every CI
+		// runner and every command-substitution in bash behaves the
+		// same way for the same reason, and the alternative --
+		// returning while something is still writing output nobody is
+		// reading -- is the runaway this package exists to prevent.
 		pumps.Wait()
 		waited <- cmd.Wait()
 	}()
@@ -310,15 +440,22 @@ func (e *Executor) run(ctx context.Context, spec runSpec, sink Sink) (Result, er
 	)
 	select {
 	case waitErr = <-waited:
+		// The container removed itself (--rm) on the way out. The
+		// removal is repeated anyway, because "--rm did not happen" is
+		// exactly the case a leftover is: a daemon restart between the
+		// exit and the removal leaves a dead container with this step's
+		// name on it, and the next attempt at the same step would find
+		// the name taken.
+		e.sweep(spec.name)
 	case <-timer.C:
 		state = StateTimedOut
-		waitErr, certainty = e.killGroup(pgid, waited)
+		waitErr, certainty = e.killContainer(spec.name, waited)
 	case <-ctx.Done():
 		state = StateCanceled
 		if errors.Is(context.Cause(ctx), errLeaseExpired) {
 			state = StateLeaseExpired
 		}
-		waitErr, certainty = e.killGroup(pgid, waited)
+		waitErr, certainty = e.killContainer(spec.name, waited)
 	}
 
 	result := Result{
@@ -335,28 +472,70 @@ func (e *Executor) run(ctx context.Context, spec runSpec, sink Sink) (Result, er
 			code := 0
 			result.ExitCode = &code
 		case errors.As(waitErr, &exitErr):
-			// A negative code is a process killed by a signal this
-			// runner did not send -- the OOM killer, or an operator with
-			// a terminal. There is no exit status to report and
-			// inventing 128+n would make it indistinguishable from a
-			// hook that returned that number itself, so ExitCode stays
-			// nil, which internal/workflow's Step.ExitCode already
-			// documents as "no process status was observed".
+			// The code is the CONTAINER's, as the client reports it:
+			// the hook's own exit status, or 125 when the container
+			// could not be created and 126/127 when the entrypoint
+			// could not be run.
+			//
+			// One honest limit, recorded because it is a real
+			// difference from the process this replaced: a hook killed
+			// by something inside the container (the kernel's OOM
+			// killer) arrives here as 137 rather than as "no status was
+			// observed", because that is the only thing the client
+			// reports. A hook that returned 137 itself is
+			// indistinguishable from one that was killed. The states
+			// this runner produces ITSELF -- timed out, canceled, lease
+			// expired -- carry no exit code at all, so the distinction
+			// that matters upstream is unaffected.
 			if code := exitErr.ExitCode(); code >= 0 {
 				result.ExitCode = &code
+			}
+			if code := exitErr.ExitCode(); code == 125 {
+				// Not a hook that failed: a container that was never
+				// created. Reporting it as an exit status would tell an
+				// operator their script returned 125.
+				return Result{}, &Failure{Code: CodeInternal, Message: fmt.Sprintf("the hook container could not be created in %s: %s", e.Container.Image, containerStartDetail(result.Chunks))}
 			}
 		default:
 			return Result{}, &Failure{Code: CodeInternal, Message: "this runner could not collect the hook's exit status: " + waitErr.Error()}
 		}
 	}
 
-	// A sink that failed is reported over the process's own outcome: the
-	// engine did not receive the output, so a Result claiming a clean
-	// stream would be a lie about evidence rather than about the hook.
+	// A sink that failed is reported over the container's own outcome:
+	// the engine did not receive the output, so a Result claiming a
+	// clean stream would be a lie about evidence rather than about the
+	// hook.
 	if err := capture.Err(); err != nil {
 		return result, &Failure{Code: CodeInternal, Message: "this runner lost the hook's output stream: " + err.Error()}
 	}
 	return result, nil
+}
+
+// containerStartDetail is what a failed creation has to say for itself.
+//
+// The client writes it on stderr, which the capture already streamed to
+// the engine, so this is a POINTER at those bytes rather than a copy of
+// them: they are in the step's log, and repeating them into a Failure
+// message would put whatever the daemon said into every place a refusal
+// is recorded -- including, for a bind-mount fault, a host path an
+// operator's configuration named.
+func containerStartDetail(chunks uint64) string {
+	if chunks == 0 {
+		return "the client said nothing"
+	}
+	return fmt.Sprintf("the client's own message is in this step's stderr (%d chunks)", chunks)
+}
+
+// envNames lists the names in a prepared environment block, in the order
+// ProcessEnv put them, for the `--env NAME` flags.
+func envNames(block []string) []string {
+	names := make([]string, 0, len(block))
+	for _, entry := range block {
+		if name, _, ok := strings.Cut(entry, "="); ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func (e *Executor) grace() time.Duration {
@@ -409,99 +588,91 @@ func (e *Executor) cleanupStep(runID, stepID string) {
 // is no longer there to be told.
 var errLeaseExpired = errors.New("hostrunner: the engine's lease expired")
 
-// killGroup terminates a step's process group and reports whether it is
+// killContainer terminates a step's container and reports whether it is
 // provably gone, in the ONE order that can answer that question.
-//
-// The order is the whole content of this function. Signal, then WAIT FOR
-// THE LEADER TO BE REAPED, then probe -- because a process that has
-// exited but not been waited on is a zombie, a zombie is still a member
-// of its process group, and kill(-pgid, 0) cannot tell one from a
-// running process. A probe taken before cmd.Wait therefore reports
-// "still there" for every termination, including the ones that worked
-// perfectly, and this runner would record TerminationConfirmed=false on
-// every timeout in the product's history.
-//
-// The signal goes to -pgid, which is the point of the Setsid in run: it
-// reaches the hook AND everything the hook started, in one call, with no
-// window in which a new child is spawned between a walk and a kill.
 //
 // SIGTERM first, with a grace period, so a hook that traps it can release
 // a database lock or unmount a snapshot -- which is the reason a hook
-// exists at all. SIGKILL after, because a grace period nobody enforces is
-// a hang.
+// exists at all. The signal goes to the CONTAINER, which means the
+// container's own process: an operator's `trap ... TERM` runs exactly as
+// it would if they had pressed Ctrl-C. Then SIGKILL, because a grace
+// period nobody enforces is a hang -- and a SIGKILL to a container takes
+// its whole cgroup, so the child that ignores SIGTERM, the child that
+// changed its process group and the grandchild nobody knew about all go
+// with it. That is the part the process-group signalling this replaced
+// could not promise.
 //
-// SIGKILL after BOTH ways of arriving at an unconfirmed group, which is
-// the part that is easy to miss. The leader being reaped does not mean
-// the group is empty: a hook that started a child which ignores SIGTERM
-// -- a `while :; do :; done` under `trap ” TERM`, or any daemon that
-// traps it to finish work first -- exits itself and leaves that child
-// holding the group. Reporting "unconfirmed" there and stopping would
-// leave a process running forever with nothing left that knows its pgid,
-// on a host where the operator's only clue is a load average. So the
-// probe failing is followed by the kill it exists to justify.
-func (e *Executor) killGroup(pgid int, waited chan error) (error, TerminationCertainty) {
-	if pgid <= 0 {
-		return <-waited, CertaintyUnconfirmed
-	}
+// Then the LOOK, and its position is the whole content of the rest of
+// this function. It happens after the client process has been WAITED FOR,
+// because until then `docker run --rm` has not had its chance to remove
+// the container and every termination would look unconfirmed. And it asks
+// the daemon, not the kernel: a container that is gone from `docker ps
+// --all` is gone, while a client that exited proves only that a client
+// exited.
+//
+// The removal at the end is why the lease is a guarantee rather than an
+// intention. --rm covers the ordinary exit; a container that was killed
+// while the daemon was busy, or whose client was itself killed, is
+// removed here, by name. "An engine that went away leaves no runaway" is
+// half of it; "and no leftover" is this call.
+func (e *Executor) killContainer(name string, waited chan error) (error, TerminationCertainty) {
+	_ = e.Container.signal(name, "TERM")
 
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	var err error
 	select {
-	case err := <-waited:
-		if certainty := confirmGone(pgid, killConfirmWindow); certainty == CertaintyConfirmed {
-			return err, certainty
+	case err = <-waited:
+		// The client returned, which for `--rm` normally means the
+		// container is already gone. If it is not -- a daemon that has
+		// not finished the teardown, or a container that outlived the
+		// client that started it -- the kill it exists to justify
+		// follows, exactly as the SIGTERM-then-look path did.
+		if e.sweep(name) {
+			return err, CertaintyConfirmed
 		}
-		// The leader is reaped and the group is not empty. Nothing is
-		// left to wait for -- the survivors are not this process's
-		// children -- so this is a signal and a second look, and the
-		// answer after it is the honest one.
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		return err, confirmGone(pgid, killConfirmWindow)
+		_ = e.Container.signal(name, "KILL")
+		return err, e.confirmGone(name)
 	case <-time.After(e.grace()):
 	}
 
-	_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	// No timeout on this receive, and that is not an oversight: SIGKILL
-	// is not deliverable-or-not, and a leader that has been sent one and
-	// is still not reaped is a process in uninterruptible I/O, which is
-	// exactly the case where returning early would leave this runner
-	// reporting a step as finished while its process is still writing to
-	// the thing it was quiescing. It blocks, honestly, until the kernel
-	// lets go.
-	err := <-waited
-	return err, confirmGone(pgid, killConfirmWindow)
+	_ = e.Container.signal(name, "KILL")
+	// No timeout on this receive, and that is not an oversight: a
+	// container that has been sent SIGKILL and whose client is still
+	// running is a task the daemon cannot reap, which is exactly the
+	// case where returning early would leave this runner reporting a
+	// step as finished while something is still writing to the thing it
+	// was quiescing. It blocks, honestly, until the client lets go.
+	err = <-waited
+	return err, e.confirmGone(name)
 }
 
-// confirmGone watches a process group for a bounded time and reports
-// whether it disappeared.
-func confirmGone(pgid int, window time.Duration) TerminationCertainty {
-	if groupGone(pgid, window) {
-		return CertaintyConfirmed
+// sweep removes a container by name and reports whether it is gone
+// afterwards. It is the ordinary end of every step: --rm has usually done
+// it already, and a removal that finds nothing is a success.
+func (e *Executor) sweep(name string) bool {
+	_ = e.Container.remove(name)
+	return e.confirmGone(name) == CertaintyConfirmed
+}
+
+// confirmGone watches a container for a bounded time and reports whether
+// the daemon stopped knowing about it.
+//
+// A daemon that cannot be asked answers UNCONFIRMED, which is the safe
+// direction and the reason containerExists returns an error separately
+// from its answer: reporting "gone" because a question failed is how a
+// runaway gets recorded as a clean kill.
+func (e *Executor) confirmGone(name string) TerminationCertainty {
+	window := e.ConfirmWindow
+	if window <= 0 {
+		window = killConfirmWindow
 	}
-	return CertaintyUnconfirmed
-}
-
-// groupGone polls until the process group has no members left, or the
-// window elapses.
-//
-// kill(-pgid, 0) is the probe: it delivers nothing and answers ESRCH when
-// no process is in the group. The leader is reaped by cmd.Wait before
-// this is called in the paths that matter, because a zombie is still a
-// member of its group and would make every termination look unconfirmed.
-//
-// A pgid can in principle be recycled by the kernel between the last
-// member exiting and this probe, which would report a group that is gone
-// as still present. That is a false UNCONFIRMED -- the safe direction,
-// and the reason this is a poll of a short window rather than a single
-// answer nobody re-checks.
-func groupGone(pgid int, window time.Duration) bool {
 	deadline := time.Now().Add(window)
 	for {
-		err := syscall.Kill(-pgid, 0)
-		if errors.Is(err, syscall.ESRCH) {
-			return true
+		exists, err := e.Container.containerExists(name)
+		if err == nil && !exists {
+			return CertaintyConfirmed
 		}
 		if !time.Now().Before(deadline) {
-			return false
+			return CertaintyUnconfirmed
 		}
 		time.Sleep(killPollInterval)
 	}

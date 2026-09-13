@@ -83,8 +83,12 @@ type Config struct {
 	// the secrets area (LoadToken).
 	Token []byte
 
-	// Bash is the interpreter fixed by preflight.
-	Bash Bash
+	// Container is the container capability proved at startup: the
+	// docker client, the daemon, the hook image and the interpreter
+	// inside it. A server cannot be created without one, which is the
+	// structural form of "#865 has no host-bash fallback": there is no
+	// field here that could hold one.
+	Container Container
 
 	// Grace is the SIGTERM-to-SIGKILL window. Zero takes
 	// DefaultGracePeriod.
@@ -181,14 +185,18 @@ func NewServer(cfg Config) (*Server, error) {
 	if len(cfg.Token) < MinTokenLength {
 		return nil, fmt.Errorf("%w: it was given no installation credential", ErrServer)
 	}
-	if cfg.Bash.Path == "" {
-		return nil, fmt.Errorf("%w: no bash was fixed by preflight, so there is nothing to run a hook with", ErrServer)
+	if !cfg.Container.Available() {
+		// The refusal that makes the containment unconditional. A
+		// runner that started here and discovered the daemon later
+		// would be a runner whose first hook is the preflight, in the
+		// middle of somebody's backup window.
+		return nil, fmt.Errorf("%w: no container capability was proved by preflight, so there is nothing to run a hook in. Local hooks run in ephemeral containers (#865) and this runner has no other path", ErrServer)
 	}
 	return &Server{
 		cfg: cfg,
 		exec: &Executor{
 			Layout:        cfg.Layout,
-			Bash:          cfg.Bash,
+			Container:     cfg.Container,
 			Grace:         cfg.Grace,
 			MaxScriptSize: cfg.MaxScriptSize,
 		},
@@ -466,7 +474,7 @@ func (s *Server) handleSyntaxCheck(ctx context.Context, conn net.Conn, req Reque
 		writeFailure(conn, err)
 		return
 	}
-	if err := s.exec.Bash.SyntaxCheck(ctx, req.Script); err != nil {
+	if err := s.exec.Container.SyntaxCheck(ctx, req.Script); err != nil {
 		writeFailure(conn, err)
 		return
 	}
@@ -601,16 +609,33 @@ func (s *Server) status() Status {
 	}
 	s.mu.Unlock()
 
+	mounts := make([]string, 0, len(s.cfg.Container.Mounts))
+	for _, mount := range s.cfg.Container.Mounts {
+		mounts = append(mounts, mount.String())
+	}
+
 	return Status{
 		Version:      s.cfg.Version,
-		BashPath:     s.cfg.Bash.Path,
-		BashVersion:  s.cfg.Bash.Version,
+		BashPath:     s.cfg.Container.Bash.Path,
+		BashVersion:  s.cfg.Container.Bash.Version,
 		User:         s.cfg.Username,
 		UID:          s.cfg.EUID,
 		SocketPath:   s.cfg.Layout.SocketPath(),
 		RuntimeDir:   s.cfg.Layout.RuntimeDir,
 		WorkspaceDir: s.cfg.Layout.WorkspaceDir,
 		Active:       active,
+
+		// The facts #865 added, reported for the reason the bash path
+		// is: an operator debugging "why did my hook not see
+		// /volume1/photos" cannot answer it from anything they can
+		// see, and the answer is always one of these lines.
+		DockerPath:          s.cfg.Container.Docker,
+		DockerServerVersion: s.cfg.Container.ServerVersion,
+		HookImage:           s.cfg.Container.Image,
+		HookImageID:         s.cfg.Container.ImageID,
+		HookNetwork:         s.cfg.Container.Network,
+		HookUser:            s.cfg.Container.User,
+		HookMounts:          mounts,
 	}
 }
 

@@ -174,6 +174,20 @@ const (
 	// CodeInternal is this runner failing at its own job: a directory it
 	// could not create, a pipe it could not open.
 	CodeInternal Code = "internal"
+
+	// CodeContainerUnavailable is this host being unable to run a hook
+	// in a container: no docker client, no reachable daemon, no hook
+	// image, or a probe container that did not come back (#865).
+	//
+	// Its own code rather than CodeInternal, because it is the one
+	// refusal an OPERATOR can act on and because the engine has to be
+	// able to tell it from a hook that failed: "this deployment cannot
+	// run local hooks until Docker is reachable" and "your script
+	// exited 1" lead to completely different actions. It is also what
+	// makes the absence of a fallback legible -- a runner that quietly
+	// ran the hook on the host instead would report success, and
+	// nothing anywhere would say the containment was not applied.
+	CodeContainerUnavailable Code = "container_unavailable"
 )
 
 // State is what became of an execution.
@@ -259,11 +273,32 @@ type Status struct {
 	// Version is the runner's product version.
 	Version string `json:"version"`
 
-	// BashPath is the absolute path preflight fixed on, and BashVersion
-	// is what it reported. Both are observable by an operator precisely
-	// so that "which bash ran my hook" is answerable.
+	// BashPath is the absolute path of the interpreter INSIDE the hook
+	// image, and BashVersion is what it reported for itself when the
+	// capability probe ran it. Both are observable by an operator
+	// precisely so that "which bash ran my hook" is answerable -- and
+	// since #865 the honest answer is about the image rather than about
+	// this host, because no hook runs on the host's own shell.
 	BashPath    string `json:"bash_path"`
 	BashVersion string `json:"bash_version"`
+
+	// The container facts (#865): which client and daemon this runner
+	// proved at startup, which image a hook runs in and what id that
+	// tag resolved to, which network it joins, which uid:gid it runs as
+	// inside, and every host path an operator has allowed a hook to
+	// see.
+	//
+	// HookMounts is rendered rather than structured because it is read
+	// by a person: "which directories can my hook touch" is the
+	// question an operator asks before writing one, and it is otherwise
+	// answerable only by reading a unit file.
+	DockerPath          string   `json:"docker_path,omitempty"`
+	DockerServerVersion string   `json:"docker_server_version,omitempty"`
+	HookImage           string   `json:"hook_image,omitempty"`
+	HookImageID         string   `json:"hook_image_id,omitempty"`
+	HookNetwork         string   `json:"hook_network,omitempty"`
+	HookUser            string   `json:"hook_user,omitempty"`
+	HookMounts          []string `json:"hook_mounts,omitempty"`
 
 	// User and UID are the account hooks run as. An operator writing a
 	// hook needs to know this before they write it, not after it fails

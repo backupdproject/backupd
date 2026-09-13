@@ -145,9 +145,46 @@ extracted from the same image by the installer, and it:
 - accepts four operations (`syntax-check`, `execute`, `cancel`, `status`) and
   **captured script bytes, never a path**, re-checking size and SHA-256 against
   what the engine's plan recorded;
-- refuses to run as root, runs each script in its own session and process group
-  with a private 0700 working directory, and terminates that process group when
-  the engine's connection — the lease — goes away.
+- refuses to run as root, runs each script in an **ephemeral Docker container**
+  with a private 0700 working directory on the host, and stops and removes that
+  container when the engine's connection — the lease — goes away.
+
+### The runner holds Docker access; this container never does (#865)
+
+A local hook does not run on the host's shell either. Since #865 the runner
+launches one ephemeral container per hook:
+
+```text
+docker run --rm --network none --security-opt no-new-privileges --cap-drop ALL
+           --read-only --tmpfs /tmp --pids-limit 512 --user <uid>:<gid>
+           --platform <the daemon's own> --entrypoint <bash in the image>
+           --env NAME ... (names only; values travel over the daemon socket)
+           -v <per-step work dir>:<itself> -v <captured script>:<itself>:ro
+           <hook image> --noprofile --norc <the script>
+```
+
+No Docker socket is mounted into a hook container, under any name — the runner
+refuses a configured `--hook-mount` that names one. A hook reaches nothing else
+on the host unless an operator declared it with `--hook-mount PATH[:ro|:rw]`,
+read-only by default; the ENGINE cannot ask for a mount, because the protocol
+between them has no field that can hold a path.
+
+This does move one privilege onto the host: the runner needs to reach the
+Docker daemon, which on a NAS is root-equivalent. That is the trade #865 makes
+deliberately, and the containment is that the privilege belongs to the small
+version-pinned process that launches hook containers and to nothing else:
+
+- the unit adds `SupplementaryGroups=<the socket's group>` and the socket to
+  `ReadWritePaths`, and nothing else;
+- **this container gains nothing.** No socket, no `group_add`, no capability,
+  no `DOCKER_HOST`. It still has no shell and still cannot exec.
+
+The capability is PROVEN at the runner's startup — docker present, daemon
+reachable, hook image present for this platform, and a probe container that
+emits the runner's own marker — and a host that cannot do all four refuses to
+serve local hooks. There is no fall back to running a hook on the host's own
+shell: a fallback would make every property above conditional on a daemon
+nobody checked.
 
 The prohibition list above is unchanged and still passes against the canonical
 definition and every derived artifact: no privileged container, no Docker
