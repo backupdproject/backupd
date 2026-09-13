@@ -231,6 +231,18 @@ func TestMutatingARealPackagedFileTripsTheHardRules(t *testing.T) {
 		{CheckNoFloatingTag, "no-floating-tag", "\n    image: ghcr.io/backupdproject/backupd:latest\n"},
 		{CheckNoPrivilegedMode, "no-privileged-mode", "\n    privileged: true\n"},
 		{CheckNoMandatoryTelemetry, "no-mandatory-telemetry", "\n      TELEMETRY_ENDPOINT: https://collector.example.invalid/ingest\n"},
+		// Three rows for one rule, because there are three real
+		// spellings of "this container may talk to the Docker daemon"
+		// and they live in different formats: a Compose key, the
+		// docker-run flag an Unraid template passes through
+		// ExtraParams, and a client environment variable that needs no
+		// mount and no group at all. A fixture proves the rule can
+		// fire; these prove it fires on the shapes this repository's
+		// own packages take, which is the same gap `\bpassword`
+		// missing ADMIN_PASSWORD left open.
+		{CheckNoContainerDockerAccess, "no-container-docker-access (compose group_add)", "\n    group_add:\n      - docker\n"},
+		{CheckNoContainerDockerAccess, "no-container-docker-access (template ExtraParams)", "\n  <ExtraParams>--group-add docker</ExtraParams>\n"},
+		{CheckNoContainerDockerAccess, "no-container-docker-access (daemon env)", "\n      DOCKER_HOST: tcp://127.0.0.1:2375\n"},
 	}
 
 	for id, sp := range s.Providers {

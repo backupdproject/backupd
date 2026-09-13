@@ -146,7 +146,7 @@
         "storage-picker": { "declared": "blocked", "blocker": "#83", "expectedDetail": "ships no deployable artifact at all", "reason": "Same as native-auth: declared in a bridge no shipped artifact loads." },
         "local-workflow-hooks": {
           "declared": "unsupported",
-          "reason": "UGOS Pro is a closed appliance: it offers no supported way to install a host unit or to add an account to the Docker socket's group. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-workflow-execution.md) and needs no Docker on the NAS.",
+          "reason": "UGOS Pro is a closed appliance: it offers no supported way to install a host unit or to add an account to the Docker socket's group. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
           "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
         }
       }
@@ -229,7 +229,7 @@
         "storage-picker": { "declared": "unsupported", "reason": "Tier B. The shared folder is chosen once at install time through DSM, not browsed from inside the app." },
         "local-workflow-hooks": {
           "declared": "unsupported",
-          "reason": "A DSM package cannot install a systemd unit or grant a supplementary group, and Container Manager's socket is root-owned; either step would be the host-management-plane modification §4A/§75 forbids. That holds for both ways of installing on DSM, the .spk and the Container Manager project. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-workflow-execution.md) and needs no Docker on the NAS.",
+          "reason": "A DSM package cannot install a systemd unit or grant a supplementary group, and Container Manager's socket is root-owned; either step would be the host-management-plane modification §4A/§75 forbids. That holds for both ways of installing on DSM, the .spk and the Container Manager project. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
           "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
         }
       }
@@ -271,7 +271,7 @@
         "storage-picker": { "declared": "unsupported", "reason": "Tier B. questions.yaml asks for the dataset paths at install time; the running app does not browse pools." },
         "local-workflow-hooks": {
           "declared": "unsupported",
-          "reason": "TrueNAS's host is vendor-managed: applications run under the middleware's own container runtime, a third-party systemd unit is unsupported and does not survive an upgrade, and there is no supported way to add an account to the Docker socket's group. Provisioning the Host Workflow Runner anyway would be the host-management-plane modification §4A/§75 forbids this product, and host-management-plane-untouched is a capability this same column already claims. So local hooks are refused out loud instead, at the installer's preflight and at the runner's own startup. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-workflow-execution.md) and needs no Docker on the NAS.",
+          "reason": "TrueNAS's host is vendor-managed: applications run under the middleware's own container runtime, a third-party systemd unit is unsupported and does not survive an upgrade, and there is no supported way to add an account to the Docker socket's group. Provisioning the Host Workflow Runner anyway would be the host-management-plane modification §4A/§75 forbids this product, and host-management-plane-untouched is a capability this same column already claims. So local hooks are refused out loud instead: the capability contract answers unavailable for this platform, and the engine refuses a NAME.local.sh step that has no host workflow runner behind it (core/internal/workflowrun/engine.go) rather than skipping it. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
           "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
         }
       }
@@ -313,7 +313,7 @@
         "storage-picker": { "declared": "unsupported", "reason": "Tier B. Community Applications collects the paths at install time; the app does not browse shares." },
         "local-workflow-hooks": {
           "declared": "unsupported",
-          "reason": "Unraid rebuilds its operating system from the flash device on every boot, so there is no persistent host unit for the runner to be, and its Docker runs everything as root while the runner refuses to run as root at all. Two independent reasons, either one sufficient. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-workflow-execution.md) and needs no Docker on the NAS.",
+          "reason": "Unraid rebuilds its operating system from the flash device on every boot, so there is no persistent host unit for the runner to be, and its Docker runs everything as root while the runner refuses to run as root at all. Two independent reasons, either one sufficient. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
           "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
         }
       }
@@ -851,7 +851,7 @@
         },
         "local-workflow-hooks": {
           "declared": "not-applicable",
-          "reason": "This provider ships no frontend bridge and no runtime profile of its own: it selects the generic profile (canonical.json's uiBridge \"none\"), so the running process reports generic's capabilities and cannot tell this host apart from any other Docker host. There is therefore no per-provider runtime answer for the contract to hold it to. ZimaOS is where that matters most: it ships as a complete appliance OS rather than as a layer over a distribution the operator administers, so unlike CasaOS there is no host session in which to install a unit or grant a group, and the running process cannot tell the difference. Its acceptance procedure is the only place that answer can be given, and it gives it: local hooks are unavailable here. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-workflow-execution.md) and needs no Docker on the NAS.",
+          "reason": "This provider ships no frontend bridge and no runtime profile of its own: it selects the generic profile (canonical.json's uiBridge \"none\"), so the running process reports generic's capabilities and cannot tell this host apart from any other Docker host. There is therefore no per-provider runtime answer for the contract to hold it to. ZimaOS is where that matters most: it ships as a complete appliance OS rather than as a layer over a distribution the operator administers, so unlike CasaOS there is no host session in which to install a unit or grant a group, and the running process cannot tell the difference. Its acceptance procedure is the only place that answer can be given, and it gives it: local hooks are unavailable here. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
           "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
         }
       }

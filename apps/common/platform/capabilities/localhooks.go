@@ -165,7 +165,7 @@ var localHookSupport = map[PlatformID]LocalHookSupport{
 			"there is no supported way to add an account to the Docker socket's group. Doing it anyway " +
 			"is the host-management-plane modification §4A/§75 forbids this product.",
 		Instead: "Run the hook remotely: a workflow step with a remote target runs over SSH " +
-			"(docs/adr/0021-remote-workflow-execution.md) and needs no Docker on the NAS.",
+			"(docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
 	},
 	PlatformUnraid: {
 		Available:    false,
@@ -174,7 +174,7 @@ var localHookSupport = map[PlatformID]LocalHookSupport{
 			"persistent host unit for the runner to be, and its Docker runs everything as root while " +
 			"the runner refuses to run as root at all.",
 		Instead: "Run the hook remotely: a workflow step with a remote target runs over SSH " +
-			"(docs/adr/0021-remote-workflow-execution.md) and needs no Docker on the NAS.",
+			"(docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
 	},
 	PlatformSynology: {
 		Available:    false,
@@ -183,7 +183,7 @@ var localHookSupport = map[PlatformID]LocalHookSupport{
 			"Manager's socket is root-owned; either step would be the host-management-plane " +
 			"modification §4A/§75 forbids this product.",
 		Instead: "Run the hook remotely: a workflow step with a remote target runs over SSH " +
-			"(docs/adr/0021-remote-workflow-execution.md) and needs no Docker on the NAS.",
+			"(docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
 	},
 	PlatformUGOS: {
 		Available:    false,
@@ -191,7 +191,7 @@ var localHookSupport = map[PlatformID]LocalHookSupport{
 		Reason: "UGOS Pro is a closed appliance: it offers no supported way to install a host unit or to " +
 			"add an account to the Docker socket's group.",
 		Instead: "Run the hook remotely: a workflow step with a remote target runs over SSH " +
-			"(docs/adr/0021-remote-workflow-execution.md) and needs no Docker on the NAS.",
+			"(docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
 	},
 }
 

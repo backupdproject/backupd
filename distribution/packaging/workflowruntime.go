@@ -183,12 +183,23 @@ var (
 	// before a hook can run, because the runner refuses to pull one.
 	hookImageRe = regexp.MustCompile(`WORKFLOW_RUNNER_HOOK_IMAGE|--hook-image|hook image`)
 	// hooksUnavailableRe: the sentence an appliance's document must
-	// carry.
+	// carry, and the sentence a supporting platform's document must NOT.
 	hooksUnavailableRe = regexp.MustCompile(`(?i)local (workflow )?hooks (are )?(not available|unavailable)`)
-	// refusedRe: and the fact that makes it safe — the refusal is
-	// explicit, at preflight or at the runner's own startup, rather than
-	// a hook that quietly never runs.
-	refusedRe = regexp.MustCompile(`(?i)refus|preflight`)
+	// refusalMechanismRe: the fact that makes an unavailable answer safe
+	// rather than silent, and it has to be attributed.
+	//
+	// It used to be `refus|preflight`, which the review caught: five
+	// procedures satisfied it by saying the INSTALLER'S PREFLIGHT
+	// refuses to provision a runner on that platform, and no such
+	// refusal exists. scripts/install/install_docker_host.py has no
+	// platform gate at all — it refuses when the runner's account cannot
+	// reach a daemon (exit 12) and merely STAGES the unit on a host with
+	// no systemd. A gate satisfied by a mechanism that does not exist is
+	// worse than no gate, because it certifies the sentence that sends
+	// an operator looking for it. So the document has to name something
+	// that really does refuse: the capability contract's answer, or the
+	// engine's own refusal of a local step with no runner behind it.
+	refusalMechanismRe = regexp.MustCompile(`(?i)capability contract|capabilities\.LocalHooks|LocalHooks\(|no host workflow runner|engine refuses|workflowrun/engine\.go`)
 	// remoteInsteadRe: what the operator gets instead.
 	remoteInsteadRe = regexp.MustCompile(`(?i)remote (workflow )?(hook|step|target)|over SSH`)
 )
@@ -198,15 +209,25 @@ var (
 //
 // The two branches ask for different things on purpose. A platform that
 // CAN run the runner needs an install: the unit, the group grant and the
-// image. A platform that cannot needs the opposite — that local hooks are
-// unavailable, that the refusal is explicit rather than silent, and what
-// works in their place.
+// image. A platform that cannot needs the opposite — that local hooks
+// are unavailable, which mechanism refuses them, and what works in
+// their place.
+//
+// Each branch also FORBIDS the other's headline sentence, and that half
+// is what makes this a gate rather than a checklist. Without it the
+// check was one-directional: flipping a contract row to `available`
+// while its operator procedure still said "local workflow hooks are
+// unavailable on this platform" left every requirement satisfied — the
+// three install facts can perfectly well sit in a document that then
+// tells the operator not to bother — so the one reader who matters would
+// have been told the opposite of the truth by a green build.
 func LocalHookDocStates(path, doc, answer string) (bool, string) {
 	type requirement struct {
 		re   *regexp.Regexp
 		what string
 	}
 	var required []requirement
+	var forbidden []requirement
 	switch answer {
 	case LocalHooksAvailable:
 		required = []requirement{
@@ -214,23 +235,31 @@ func LocalHookDocStates(path, doc, answer string) (bool, string) {
 			{dockerGroupRe, "say that the runner's account needs the Docker socket's group (the `usermod -aG` grant)"},
 			{hookImageRe, "name the hook image local hooks run in, which has to be present because the runner refuses to pull one"},
 		}
+		forbidden = []requirement{
+			{hooksUnavailableRe, "still tells the operator that local workflow hooks are unavailable on this platform, which is now the opposite of what the capability contract answers for it"},
+		}
 	case LocalHooksUnavailable:
 		required = []requirement{
 			{hooksUnavailableRe, "state that local workflow hooks are unavailable on this platform"},
-			{refusedRe, "say that the unavailability is an explicit refusal (at preflight, or at the runner's startup) rather than a hook that silently never runs"},
+			{refusalMechanismRe, "name the mechanism that actually refuses them (the capability contract's answer, or the engine's refusal of a local step with no host workflow runner) rather than asserting a refusal nothing performs"},
 			{remoteInsteadRe, "name what the operator gets instead: a remote workflow step, which runs over SSH and needs no Docker on the NAS"},
 		}
 	default:
 		return false, fmt.Sprintf("declares localHooks %q, want %q or %q", answer, LocalHooksAvailable, LocalHooksUnavailable)
 	}
-	var missing []string
+	var findings []string
 	for _, r := range required {
 		if !r.re.MatchString(doc) {
-			missing = append(missing, r.what)
+			findings = append(findings, "does not "+r.what)
 		}
 	}
-	if len(missing) > 0 {
-		return false, fmt.Sprintf("%s does not %s", path, strings.Join(missing, "; and does not "))
+	for _, f := range forbidden {
+		if f.re.MatchString(doc) {
+			findings = append(findings, f.what)
+		}
+	}
+	if len(findings) > 0 {
+		return false, fmt.Sprintf("%s %s", path, strings.Join(findings, "; and "))
 	}
 	return true, fmt.Sprintf("%s states the %s answer, the Docker prerequisite and the local-hook consequence", path, answer)
 }

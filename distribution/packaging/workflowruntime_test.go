@@ -170,22 +170,43 @@ func TestTheLocalHookDocRequirementWouldNoticeASilentDocument(t *testing.T) {
 				t.Errorf("a document that omits one of the three prerequisites passed:\n%s", missing)
 			}
 		}
+
+		// The other direction, and the review finding that put it here.
+		// The three install facts sit perfectly happily in a document
+		// that goes on to tell the operator local hooks are unavailable
+		// here: nothing about the requirements above is contradicted by
+		// that sentence, so a contract row flipped to `available` over a
+		// stale procedure was green. The one reader who matters would
+		// have been told the opposite of the truth.
+		stale := full + " Note that local workflow hooks are unavailable on this platform."
+		ok, detail := LocalHookDocStates("fixture.md", stale, LocalHooksAvailable)
+		if ok {
+			t.Error("a document that says local hooks are unavailable passed as an `available` provider's")
+		}
+		if !strings.Contains(detail, "opposite of what the capability contract answers") {
+			t.Errorf("the refusal does not say what is wrong with it: %s", detail)
+		}
 	})
 
 	t.Run("unavailable", func(t *testing.T) {
-		full := "Local workflow hooks are unavailable on this platform: the runner refuses at preflight. Use a remote workflow step instead."
+		full := "Local workflow hooks are unavailable on this platform: the capability contract answers so, and the engine refuses a step with no host workflow runner behind it. Use a remote workflow step instead."
 		if ok, detail := LocalHookDocStates("fixture.md", full, LocalHooksUnavailable); !ok {
 			t.Fatalf("a document stating all three facts was refused: %s", detail)
 		}
 		for _, missing := range []string{
 			// Says nothing about availability at all: the silent case.
-			"The runner refuses at preflight. Use a remote workflow step instead.",
-			// Says it is unavailable but not that the refusal is explicit,
-			// which is the difference between a told operator and a hook
-			// that quietly never ran.
+			"The capability contract answers so. Use a remote workflow step instead.",
+			// Says it is unavailable and attributes the refusal to
+			// nothing, which is the difference between a told operator
+			// and a hook that quietly never ran.
 			"Local workflow hooks are unavailable here. Use a remote workflow step instead.",
+			// Attributes it to a mechanism that does not exist. This is
+			// the exact sentence five procedures carried until the
+			// review: the installer has no platform gate, so nothing
+			// there refuses on these grounds.
+			"Local workflow hooks are unavailable here: the installer's preflight refuses to provision a runner. Use a remote workflow step instead.",
 			// Says no and names no alternative (§22).
-			"Local workflow hooks are unavailable on this platform: the runner refuses at preflight.",
+			"Local workflow hooks are unavailable on this platform: the capability contract answers so.",
 		} {
 			if ok, _ := LocalHookDocStates("fixture.md", missing, LocalHooksUnavailable); ok {
 				t.Errorf("a document that omits one of the three statements passed:\n%s", missing)
