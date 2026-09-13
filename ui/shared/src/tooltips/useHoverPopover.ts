@@ -75,6 +75,21 @@ export interface HoverPopover<T extends HTMLElement = HTMLElement> {
   /** Goes on the wrapping element, which must be the one `hostProps` is
    *  spread onto: "outside" is decided by `contains` against this. */
   ref: MutableRefObject<T | null>;
+  /** Goes on the pop-up itself, and is not optional for a caller whose
+   *  pop-up leaves the host's subtree.
+   *
+   *  "Outside" and "focus moved away" are DOM containment questions, and
+   *  since issue #847 the registry pop-up is portalled to a layer at the
+   *  end of <body> to escape the cards that clipped it. Its own close
+   *  button is then not inside the host by `contains`, and neither is the
+   *  copy an operator clicks to pin — so without this ref, reading a
+   *  pop-up closes it. The React tree is unchanged by a portal and every
+   *  synthetic handler still arrives here; it is only the two rules that
+   *  consult the DOM directly that need telling.
+   *
+   *  A caller whose pop-up is a real descendant (FieldHelp) may leave it
+   *  unset: `contains` already answers for it. */
+  popRef: MutableRefObject<HTMLElement | null>;
   hostProps: HoverPopoverHostProps;
   /** Clicking the pop-up pins it. Belongs on the pop-up itself. */
   pin(): void;
@@ -104,6 +119,13 @@ export function useHoverPopover<T extends HTMLElement = HTMLElement>(options: {
 }): HoverPopover<T> {
   const { enabled } = options;
   const ref = useRef<T | null>(null);
+  const popRef = useRef<HTMLElement | null>(null);
+
+  /** Whether a node is part of this pop-up's own furniture — the host and
+   *  the pop-up, which are one thing to the operator and two subtrees to
+   *  the DOM since #847 portalled the second one out of the first. */
+  const ours = (node: Node) =>
+    ref.current?.contains(node) === true || popRef.current?.contains(node) === true;
 
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -120,8 +142,7 @@ export function useHoverPopover<T extends HTMLElement = HTMLElement>(options: {
   useEffect(() => {
     if (!pinned) return;
     const onDocumentClick = (event: MouseEvent) => {
-      const node = ref.current;
-      if (node && event.target instanceof Node && node.contains(event.target)) return;
+      if (event.target instanceof Node && ours(event.target)) return;
       setPinned(false);
       setDismissed(true);
     };
@@ -146,15 +167,18 @@ export function useHoverPopover<T extends HTMLElement = HTMLElement>(options: {
   /** Focus moving between the control and the close button is movement
    *  WITHIN this pop-up, not away from it. relatedTarget is the element
    *  focus is arriving at (on focusout) or leaving from (on focusin), and
-   *  it is null when focus came from or went to nowhere. */
+   *  it is null when focus came from or went to nowhere. The close button
+   *  is in the portalled pop-up rather than in the host's subtree, so
+   *  `contains` alone no longer answers this. */
   const staysInside = (event: FocusEvent<HTMLElement>) => {
     const other = event.relatedTarget;
-    return other instanceof Node && event.currentTarget.contains(other);
+    return other instanceof Node && (event.currentTarget.contains(other) || ours(other));
   };
 
   return {
     shown,
     ref,
+    popRef,
     pin: () => setPinned(true),
     toggle: () => {
       // Reads `pinned` rather than `shown`: the state this takes back is
