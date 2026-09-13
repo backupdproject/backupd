@@ -132,7 +132,7 @@ want to see happening, has to show up live.
 ### Tooltips
 
 Every control the epic adds is a control somebody meets without having read
-anything. 425 entries say this product takes that seriously, and the rules
+anything. 493 entries say this product takes that seriously, and the rules
 around them are stricter than "write some help text".
 
 - [ ] **Every new control, field and page heading that needs explaining gets a
