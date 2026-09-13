@@ -73,6 +73,7 @@ export type RemovedClass =
   | "escape"
   | "control"
   | "bidi"
+  | "invisible"
   | "clipped";
 
 /** Every class, in the order the notice lists them. */
@@ -84,6 +85,7 @@ export const REMOVED_CLASSES: readonly RemovedClass[] = [
   "escape",
   "control",
   "bidi",
+  "invisible",
   "format",
   "clipped"
 ];
@@ -98,6 +100,7 @@ const CLASS_WORDS: Record<RemovedClass, string> = {
   escape: "other escape sequence",
   control: "control character",
   bidi: "text-direction override",
+  invisible: "invisible formatting character",
   format: "colour sequence",
   clipped: "over-long line clipped"
 };
@@ -116,6 +119,7 @@ export function noRemovals(): RemovedCounts {
     escape: 0,
     control: 0,
     bidi: 0,
+    invisible: 0,
     clipped: 0
   };
 }
@@ -410,6 +414,46 @@ export function sanitizeText(raw: string, maxLineChars: number = HARDENED_PROFIL
       // Unicode's own line and paragraph separators. Invisible breaks in
       // the middle of a log line are a spoof, not a formatting choice.
       removed.control++;
+      put(PLACEHOLDER);
+      i++;
+
+      continue;
+    }
+    // The zero-width and invisible-format class. None of them draw
+    // anything, and all of them change what a line APPEARS to say:
+    // ZWSP and ZWNJ break a word an operator is searching for or
+    // reading as one token (`/srv/back\u200bups` reads as the real
+    // path and is not it), ZWJ and the word joiner glue tokens
+    // together, a soft hyphen vanishes until the line wraps, a BOM in
+    // the middle of a line is a zero-width nothing, and the TAG range
+    // U+E0000..U+E007F is a whole invisible ASCII alphabet — the
+    // "smuggled text" trick — that can carry a second, unreadable
+    // message inside a line this product will be quoted on. A log line
+    // is evidence, so every code point in it has to be visible.
+    //
+    // The TAG range is above the BMP, so it arrives as a surrogate
+    // pair: this is the one place the scan has to read a code point
+    // rather than a code unit, and it consumes both halves.
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const point = raw.codePointAt(i) ?? code;
+      if (point >= 0xe0000 && point <= 0xe007f) {
+        removed.invisible++;
+        put(PLACEHOLDER);
+        i += 2;
+
+        continue;
+      }
+    }
+    if (
+      code === 0x200b ||
+      code === 0x200c ||
+      code === 0x200d ||
+      code === 0x2060 ||
+      code === 0xfeff ||
+      code === 0x00ad ||
+      code === 0x180e
+    ) {
+      removed.invisible++;
       put(PLACEHOLDER);
       i++;
 

@@ -54,6 +54,51 @@ describe("the corpus", () => {
       expect(text, hostile.name).not.toMatch(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029]/);
     }
   });
+
+  it("leaves no zero-width, invisible-format or tag character anywhere in the corpus", () => {
+    for (const hostile of HOSTILE_CASES) {
+      const { text } = sanitizeText(hostile.raw);
+      // None of these draw anything, and every one of them changes what
+      // a line appears to say. The tag range is the sharpest: it is an
+      // invisible ASCII alphabet that can carry a second message inside
+      // a line this product will be quoted on.
+      expect(text, hostile.name).not.toMatch(/[\u200b-\u200d\u2060\ufeff\u00ad\u180e]/);
+      expect([...text].some((ch) => {
+        const point = ch.codePointAt(0) ?? 0;
+
+        return point >= 0xe0000 && point <= 0xe007f;
+      }), hostile.name).toBe(false);
+    }
+  });
+});
+
+describe("invisible characters", () => {
+  it("neutralises the zero-width and invisible-format class, keeping the words either side", () => {
+    const { text, removed } = sanitizeText("/srv/back\u200bups\u00ad ok\ufeff");
+
+    expect(text).toBe("/srv/back" + PLACEHOLDER + "ups" + PLACEHOLDER + " ok" + PLACEHOLDER);
+    expect(removed.invisible).toBe(3);
+  });
+
+  it("neutralises a tag-range smuggled word, both halves of each surrogate pair", () => {
+    const { text, removed } = sanitizeText("user bob\u{E0041}\u{E004E} signed in");
+
+    expect(text).toBe("user bob" + PLACEHOLDER + PLACEHOLDER + " signed in");
+    expect(removed.invisible).toBe(2);
+  });
+
+  it("leaves ordinary astral characters alone, pair intact", () => {
+    // The surrogate branch must not eat an emoji or a CJK extension
+    // character a hook legitimately printed.
+    expect(sanitizeText("done \u{1F600} \u{20000}").text).toBe("done \u{1F600} \u{20000}");
+  });
+
+  it("names the class in the notice", () => {
+    const counts = noRemovals();
+    counts.invisible = 2;
+
+    expect(removalNotice(counts)).toBe("Removed before drawing: 2 invisible formatting characters.");
+  });
 });
 
 describe("hyperlinks", () => {

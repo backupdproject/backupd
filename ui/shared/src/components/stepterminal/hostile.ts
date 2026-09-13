@@ -212,6 +212,25 @@ export const HOSTILE_CASES: readonly HostileCase[] = [
     forbids: ["\u202e", "\u2066"]
   },
   {
+    name: "zero-width and invisible formatting",
+    raw:
+      "restored to /srv/back\u200bups \u200c\u200d\u2060 ok\ufeff \u00adnow" +
+      " and \u180e done",
+    danger:
+      "breaks or glues the tokens a reader searches on, so a path that is not the real one reads as the real one",
+    keeps: ["restored to /srv/back", "ups", "done"],
+    forbids: ["\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u00ad", "\u180e"]
+  },
+  {
+    name: "tag-range smuggled text",
+    // U+E0041 U+E0044 U+E004D U+E0049 U+E004E: an invisible "ADMIN"
+    // riding inside a line this product will be quoted on.
+    raw: "user bob\u{E0041}\u{E0044}\u{E004D}\u{E0049}\u{E004E} signed in",
+    danger: "carries a second, unreadable message inside a visible line",
+    keeps: ["user bob", "signed in"],
+    forbids: ["\u{E0041}", "\u{E004E}"]
+  },
+  {
     name: "unicode line separator",
     raw: "one line\u2028pretending to be two\u2029and three",
     danger: "an invisible line break, so one record looks like several",

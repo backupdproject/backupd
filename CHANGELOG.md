@@ -369,7 +369,10 @@
   Sequence classes an emulator cannot be trusted with are swallowed BEFORE
   drawing — OSC 8 hyperlinks, window and icon titles, clipboard writes, window
   manipulation, device reports, DCS/SOS/PM/APC payloads, cursor movement and
-  erase, and the bidi overrides that are the cheapest spoof on a web surface —
+  erase, and the two classes that are the cheapest spoofs on a web surface:
+  the bidi overrides, and the zero-width and tag characters that draw nothing
+  while changing what a line appears to say (a broken path that reads as the
+  real one, or an invisible second message smuggled inside a visible line) —
   and what was removed is reported in a line under the log rather than quietly
   shown as less than the hook wrote. A carriage return is a line break, not a
   repaint: forty repaints are the forty lines the script actually wrote.

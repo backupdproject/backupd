@@ -257,8 +257,21 @@ describe("the hardened profile", () => {
 
       // Nothing became a link, and nothing is clickable.
       expect(log.querySelectorAll("a, [href], [onclick], iframe, img, script, object, embed")).toHaveLength(0);
-      // No escape introducer survived into the DOM.
+      // No escape introducer survived into the DOM, and neither did any
+      // character that draws nothing: a bidi override, a zero-width
+      // joiner, a BOM, a soft hyphen or a tag-range smuggled letter is
+      // invisible on screen and changes what the line appears to say.
       expect(log.textContent).not.toMatch(/[\u001b\u009b\u009d\u0007\u0000]/);
+      expect(log.textContent).not.toMatch(
+        /[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff\u00ad\u180e\u2028\u2029]/
+      );
+      expect(
+        [...(log.textContent ?? "")].some((ch) => {
+          const point = ch.codePointAt(0) ?? 0;
+
+          return point >= 0xe0000 && point <= 0xe007f;
+        })
+      ).toBe(false);
       // The hook's own words did survive: a filter that ate the log is
       // its own failure.
       for (const hostile of HOSTILE_CASES) {

@@ -244,6 +244,7 @@ table.cls td:first-child{font-family:var(--font-mono);white-space:nowrap;color:v
       <tr><td>CR</td><td>repaints a line so earlier text is never seen</td><td>a line break: forty repaints are the forty lines the hook wrote</td></tr>
       <tr><td>C0/C1/DEL</td><td>backspace overwrite, BEL, shift-out</td><td>one <code>?</code> each, the same placeholder <code>workflow run log</code> prints</td></tr>
       <tr><td>bidi overrides</td><td>reverses reading order so a word says its opposite</td><td>one <code>?</code> each (web-specific, and no log line needs them)</td></tr>
+      <tr><td>zero-width &amp; tag</td><td>breaks or glues the tokens a reader searches on (ZWSP, ZWNJ, ZWJ, word joiner, BOM, soft hyphen), or smuggles an invisible second message inside a visible line (U+E0000&ndash;E007F)</td><td>one <code>?</code> each &mdash; a log line is evidence, so every code point in it has to be visible</td></tr>
       <tr><td>very long line</td><td>locks up layout</td><td>clipped at 4 000 characters with a visible notice</td></tr>
     </table>
     <div class="note"><strong>Nothing is removed silently.</strong> The footer's tally is aggregated rather than
