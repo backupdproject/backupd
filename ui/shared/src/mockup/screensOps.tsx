@@ -22,6 +22,7 @@ import { useState } from "react";
 import { Banner } from "@shared/components/Banner";
 import { MetricCard } from "@shared/components/MetricCard";
 import { PageHeader } from "@shared/components/PageHeader";
+import { RetentionTierBadges } from "@shared/components/RetentionBadge";
 import { StatusBadge } from "@shared/components/StatusBadge";
 import { WarningBanner } from "@shared/components/WarningBanner";
 import { Icon } from "@shared/design-system/icons";
@@ -37,6 +38,7 @@ import {
   SNAPSHOTS,
   VERIFICATION_COPY
 } from "@shared/mockup/data";
+import { measured } from "@shared/mockup/format";
 import {
   Cell,
   CellGrid,
@@ -133,14 +135,19 @@ export function SnapshotsScreen() {
                   <td className="mono" style={{ fontSize: "var(--text-sm)" }}>
                     {snapshot.id}
                   </td>
-                  <td className="mono">{snapshot.entries.toLocaleString()}</td>
-                  <td className="mono">{bytes(snapshot.logicalBytes)}</td>
-                  <td className="mono">{bytes(snapshot.sourceReadBytes)}</td>
-                  <td className="mono">{bytes(snapshot.writtenBytes)}</td>
-                  <td className="mono" style={{ color: snapshot.reuseMeasured ? undefined : "var(--text-3)" }}>
-                    {snapshot.reuseMeasured ? bytes(snapshot.reusedBytes) : "not measured"}
+                  <td className="mono">{measured(snapshot.entries, (n) => n.toLocaleString())}</td>
+                  <td className="mono">{measured(snapshot.logicalBytes, bytes)}</td>
+                  <td className="mono">{measured(snapshot.sourceReadBytes, bytes)}</td>
+                  <td className="mono">{measured(snapshot.writtenBytes, bytes)}</td>
+                  {/* Absent is drawn quietly rather than as a figure: it is
+                      the one cell in the row that is not a number, and it
+                      must not be mistaken for one. */}
+                  <td className="mono" style={{ color: snapshot.reusedBytes === null ? "var(--text-3)" : undefined }}>
+                    {measured(snapshot.reusedBytes, bytes)}
                   </td>
-                  <td className="mono">{Math.round(snapshot.durationSeconds / 60) + "m " + (snapshot.durationSeconds % 60) + "s"}</td>
+                  <td className="mono" style={{ color: snapshot.durationSeconds === null ? "var(--text-3)" : undefined }}>
+                    {measured(snapshot.durationSeconds, (n) => Math.floor(n / 60) + "m " + (n % 60) + "s")}
+                  </td>
                   <td>
                     <VerificationBadge
                       status={snapshot.verification}
@@ -197,17 +204,25 @@ export function SnapshotScreen() {
 
       <section className="card" aria-label="What this run did">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(196px, 1fr))" }}>
-          <MetricCard label="Entries scanned" value={snapshot.entries.toLocaleString()} detail={snapshot.files.toLocaleString() + " files"} />
-          <MetricCard label="Logical size" value={bytes(snapshot.logicalBytes)} detail="the tree as described" />
-          <MetricCard label="Read from source" value={bytes(snapshot.sourceReadBytes)} detail="every byte offered" />
-          <MetricCard label="Written to repository" value={bytes(snapshot.writtenBytes)} detail="after deduplication" />
+          <MetricCard
+            label="Entries scanned"
+            value={measured(snapshot.entries, (n) => n.toLocaleString())}
+            detail={measured(snapshot.files, (n) => n.toLocaleString() + " files")}
+          />
+          <MetricCard label="Logical size" value={measured(snapshot.logicalBytes, bytes)} detail="the tree as described" />
+          <MetricCard label="Read from source" value={measured(snapshot.sourceReadBytes, bytes)} detail="every byte offered" />
+          <MetricCard label="Written to repository" value={measured(snapshot.writtenBytes, bytes)} detail="after deduplication" />
           <MetricCard
             label="Reused"
             tip="snapshots.reused"
-            value={snapshot.reuseMeasured ? bytes(snapshot.reusedBytes) : "not measured"}
-            detail={snapshot.reuseMeasured ? "content already stored" : "not accounted for on this run"}
+            value={measured(snapshot.reusedBytes, bytes)}
+            detail={snapshot.reusedBytes === null ? "not accounted for on this run" : "content already stored"}
           />
-          <MetricCard label="Duration" value="3m 34s" detail="04:00 to 04:03" />
+          <MetricCard
+            label="Duration"
+            value={measured(snapshot.durationSeconds, (n) => Math.floor(n / 60) + "m " + (n % 60) + "s")}
+            detail="04:00 to 04:03"
+          />
         </div>
       </section>
 
@@ -219,8 +234,18 @@ export function SnapshotScreen() {
           <Row label="Backup set" wire="backup_set_id" value={set.source + "/" + set.set} mono />
           <Row label="Repository domain" wire="repository_domain" value={set.domain ?? ""} mono />
           <Row label="State" wire="phase" value={<StatusBadge tone="ok" icon="success">Stored and verified</StatusBadge>} />
-          <Row label="Directories" value={snapshot.directories.toLocaleString()} mono />
-          <Row label="Source complete" wire="source_complete" value="Yes — every entry the walk found was captured" />
+          <Row label="Directories" value={measured(snapshot.directories, (n) => n.toLocaleString())} mono />
+          <Row
+            label="Source complete"
+            wire="source_complete"
+            value={
+              snapshot.sourceComplete === null
+                ? "not measured — this run did not report whether the walk captured everything"
+                : snapshot.sourceComplete
+                  ? "Yes — every entry the walk found was captured"
+                  : "No — the walk did not capture every entry it found"
+            }
+          />
         </Rows>
       </MockCard>
 
@@ -316,7 +341,11 @@ const RESTORE_STEPS = ["Snapshot", "What to restore", "Where", "Confirm"] as con
  *  durable operation at the end of it. */
 export function RestoreScreen() {
   const [step, setStep] = useState(1);
-  const [overwrite, setOverwrite] = useState(false);
+  // Three answers, not a checkbox, and the default is the one that
+  // cannot lose data. "Skip" is what makes a half-finished restore
+  // resumable without asking an operator to choose between starting
+  // again and overwriting what already landed.
+  const [conflict, setConflict] = useState<"refuse" | "skip" | "overwrite">("refuse");
   const set = INCREMENTAL_SET;
   const selectedBytes = RESTORE_TREE.filter((entry) => entry.selected && entry.kind === "file").reduce(
     (n, entry) => n + entry.size,
@@ -328,7 +357,7 @@ export function RestoreScreen() {
       <PageHeader
         back={{ label: "Cancel restore", onClick: () => undefined }}
         title="Restore from a snapshot"
-        subtitle={set.source + "/" + set.set + DOT + "restores never overwrite unless you say so"}
+        subtitle={set.source + "/" + set.set + DOT + "a restore refuses to overwrite unless you choose otherwise"}
       />
 
       <StepRail steps={RESTORE_STEPS} step={step} onSelect={setStep} />
@@ -349,12 +378,12 @@ export function RestoreScreen() {
                     key={snapshot.id}
                     name="restore-snapshot"
                     title={(WHEN[snapshot.startedAt] ?? snapshot.startedAt) + (snapshot.lastKnownGood ? " — newest known-good" : "")}
-                    wire={"run_id=" + snapshot.id}
+                    wire={"snapshot_id=" + snapshot.id}
                     detail={
-                      snapshot.entries.toLocaleString() +
+                      measured(snapshot.entries, (n) => n.toLocaleString()) +
                       " entries" +
                       DOT +
-                      bytes(snapshot.logicalBytes) +
+                      measured(snapshot.logicalBytes, bytes) +
                       DOT +
                       "verified " +
                       VERIFICATION_COPY[snapshot.achievedLevel ?? "structural"].name
@@ -422,19 +451,20 @@ export function RestoreScreen() {
                 </p>
               </div>
               <FormGrid>
-                <Field label="Restore into" value="/data/restores/file-server-2026-09-13" wire="destination_path" mono />
+                <Field label="Restore into" value="/data/restores/file-server-2026-09-13" wire="target_path" mono />
                 <Select
                   label="If a file is already there"
-                  wire="overwrite"
-                  value={overwrite ? "overwrite" : "refuse"}
+                  wire="conflict"
+                  value={conflict}
                   options={[
-                    { value: "refuse", label: "Refuse and stop" },
+                    { value: "refuse", label: "Refuse and stop (default)" },
+                    { value: "skip", label: "Skip it and carry on" },
                     { value: "overwrite", label: "Overwrite it" }
                   ]}
-                  onChange={(next) => setOverwrite(next === "overwrite")}
+                  onChange={(next) => setConflict(next as "refuse" | "skip" | "overwrite")}
                 />
               </FormGrid>
-              {overwrite ? (
+              {conflict === "overwrite" ? (
                 <WarningBanner
                   tone="warn"
                   eyebrow="Overwriting"
@@ -443,6 +473,18 @@ export function RestoreScreen() {
                 >
                   Nothing outside the paths this snapshot names is touched, but a file of the same
                   name inside them is overwritten without a second prompt.
+                </WarningBanner>
+              ) : null}
+              {conflict === "skip" ? (
+                <WarningBanner
+                  tone="info"
+                  eyebrow="Skipping"
+                  title="A file already there is left exactly as it is"
+                  dismissible={false}
+                >
+                  This is the setting for finishing a restore that was interrupted: what already
+                  landed stays, what is missing is written, and nothing has to be chosen between
+                  starting again and overwriting.
                 </WarningBanner>
               ) : null}
             </div>
@@ -457,11 +499,16 @@ export function RestoreScreen() {
                 </p>
               </div>
               <CellGrid min={220}>
-                <Cell label="Snapshot" value={SNAPSHOTS[0].id} mono tone="quiet" />
-                <Cell label="Paths" value="2 selected" tone="quiet" />
+                <Cell label="Snapshot" value={SNAPSHOTS[0].id} wire="snapshot_id" mono tone="quiet" />
+                <Cell label="Paths" value="2 selected" wire="source_path" tone="quiet" />
                 <Cell label="To restore" value={bytes(selectedBytes)} tone="quiet" />
-                <Cell label="Destination" value="/data/restores/file-server-2026-09-13" mono tone="quiet" />
-                <Cell label="If a file exists" value={overwrite ? "Overwrite" : "Refuse and stop"} tone="quiet" />
+                <Cell label="Destination" value="/data/restores/file-server-2026-09-13" wire="target_path" mono tone="quiet" />
+                <Cell
+                  label="If a file exists"
+                  value={conflict === "overwrite" ? "Overwrite" : conflict === "skip" ? "Skip it" : "Refuse and stop"}
+                  wire={"conflict=" + conflict}
+                  tone="quiet"
+                />
                 <Cell label="Free space after" value={bytes(402 * 1024 ** 3)} tone="quiet" />
               </CellGrid>
 
@@ -530,8 +577,15 @@ export function HealthScreen() {
           title={domain.id}
           actions={
             <>
-              <StatusBadge tone={domain.health === "ok" ? "ok" : "warn"} icon={domain.health === "ok" ? "status-active" : "warning"}>
-                {domain.health === "ok" ? "Healthy" : "Attention"}
+              {/* HEALTHY / DEGRADED / FAILING, the same three words a
+                  backup set's health uses. One severity scale per
+                  dashboard: a second vocabulary here would leave an
+                  operator working out which "degraded" is the worse one. */}
+              <StatusBadge
+                tone={domain.state === "HEALTHY" ? "ok" : domain.state === "DEGRADED" ? "warn" : "danger"}
+                icon={domain.state === "HEALTHY" ? "status-active" : domain.state === "DEGRADED" ? "warning" : "failure"}
+              >
+                {domain.state.charAt(0) + domain.state.slice(1).toLowerCase()}
               </StatusBadge>
               <button className="btn btn--sm">Check now</button>
             </>
@@ -542,15 +596,25 @@ export function HealthScreen() {
             <Cell label="Readable" value="Yes" wire="readable" tone="quiet" />
             <Cell label="Writable" value="Yes" wire="writable" tone="quiet" />
             <Cell label="Credentials" value="Valid" wire="credentials_valid" tone="quiet" />
+            {/* Signed, and the sign is the message. Behind is the
+                dangerous direction: it dates a new snapshot before one
+                already stored. Unmeasured says so rather than reading as
+                a perfect zero. */}
             <Cell
               label="Clock"
-              value="Within 2 s"
+              value={
+                domain.clockSkewSeconds === null
+                  ? "not measured"
+                  : domain.clockSkewSeconds < 0
+                    ? Math.abs(domain.clockSkewSeconds) + " s behind the repository"
+                    : "within " + domain.clockSkewSeconds + " s"
+              }
               wire="clock_skew_seconds"
               tone="quiet"
             />
             <Cell
               label="Maintenance"
-              value={domain.health === "ok" ? "On schedule" : "3 days overdue"}
+              value={domain.state === "HEALTHY" ? "On schedule" : "3 days overdue"}
               wire="maintenance_overdue"
               tone="quiet"
             />
@@ -628,7 +692,8 @@ export function RetentionScreen() {
               <tr>
                 <th>Taken</th>
                 <th>Snapshot</th>
-                <th>Verdict</th>
+                <th>Action</th>
+                <th>Kept by</th>
                 <th>Why</th>
                 <th />
               </tr>
@@ -641,15 +706,37 @@ export function RetentionScreen() {
                     {row.id}
                   </td>
                   <td>
-                    {row.verdict === "keep" ? (
+                    {row.action === "KEEP" ? (
                       <StatusBadge tone="ok" icon="success">
                         Keep
                       </StatusBadge>
-                    ) : (
+                    ) : row.action === "DELETE" ? (
                       <StatusBadge tone="warn" icon="warning">
                         Delete
                       </StatusBadge>
+                    ) : (
+                      // REFUSE is not a third severity of delete: the pass
+                      // decided nothing could be removed, so the snapshot
+                      // is still here and nothing is pending.
+                      <StatusBadge tone="neutral" icon="status-idle">
+                        Refused
+                      </StatusBadge>
                     )}
+                  </td>
+                  <td>
+                    {/* The product's own badges, from components/
+                        RetentionBadge.tsx, over the wire's {tier,
+                        selected_by} pairs. Last-known-good protection
+                        carries no placement and is badged bare, because a
+                        parenthesised word after it would read as one. */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-start" }}>
+                      <RetentionTierBadges tiers={row.tiers} />
+                      {row.holdReason ? (
+                        <StatusBadge tone="accent" icon="quarantine">
+                          {"Hold: " + row.holdReason}
+                        </StatusBadge>
+                      ) : null}
+                    </div>
                   </td>
                   <td style={{ fontSize: 13, color: "var(--text-2)" }}>{row.reason}</td>
                   <td>

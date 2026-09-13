@@ -134,15 +134,18 @@ export function DomainsScreen() {
                   <td className="mono">{bytes(domain.physicalBytes)}</td>
                   <td style={{ fontSize: "var(--text-sm)" }}>{domain.maintenanceOwner}</td>
                   <td>
-                    {domain.health === "ok" ? (
-                      <StatusBadge tone="ok" icon="status-active">
-                        Healthy
-                      </StatusBadge>
-                    ) : (
-                      <StatusBadge tone="warn" icon="warning">
-                        Attention
-                      </StatusBadge>
-                    )}
+                    <StatusBadge
+                      tone={domain.state === "HEALTHY" ? "ok" : domain.state === "DEGRADED" ? "warn" : "danger"}
+                      icon={
+                        domain.state === "HEALTHY"
+                          ? "status-active"
+                          : domain.state === "DEGRADED"
+                            ? "warning"
+                            : "failure"
+                      }
+                    >
+                      {domain.state.charAt(0) + domain.state.slice(1).toLowerCase()}
+                    </StatusBadge>
                   </td>
                   <td>
                     <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>

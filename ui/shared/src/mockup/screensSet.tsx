@@ -36,6 +36,7 @@ import {
   VERIFICATION_COPY
 } from "@shared/mockup/data";
 import type { MockConsistencyMode, MockEngine, MockVerificationLevel } from "@shared/mockup/data";
+import { measured } from "@shared/mockup/format";
 import {
   Cell,
   CellGrid,
@@ -357,17 +358,25 @@ export function SetDetailIncrementalScreen() {
 
       <section className="card" aria-label="Last snapshot">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(196px, 1fr))" }}>
-          <MetricCard label="Entries scanned" value={newest.entries.toLocaleString()} detail="files and directories" />
-          <MetricCard label="Logical size" value={bytes(newest.logicalBytes)} detail="as the source describes it" />
-          <MetricCard label="Read from source" value={bytes(newest.sourceReadBytes)} detail="this run" />
-          <MetricCard label="Written to repository" value={bytes(newest.writtenBytes)} detail="after deduplication" />
+          <MetricCard
+            label="Entries scanned"
+            value={measured(newest.entries, (n) => n.toLocaleString())}
+            detail="files and directories"
+          />
+          <MetricCard label="Logical size" value={measured(newest.logicalBytes, bytes)} detail="as the source describes it" />
+          <MetricCard label="Read from source" value={measured(newest.sourceReadBytes, bytes)} detail="this run" />
+          <MetricCard label="Written to repository" value={measured(newest.writtenBytes, bytes)} detail="after deduplication" />
           <MetricCard
             label="Reused"
             tip="snapshots.reused"
-            value={newest.reuseMeasured ? bytes(newest.reusedBytes) : "not measured"}
-            detail={newest.reuseMeasured ? "already in the repository" : "the engine could not account for it"}
+            value={measured(newest.reusedBytes, bytes)}
+            detail={newest.reusedBytes === null ? "the engine could not account for it" : "already in the repository"}
           />
-          <MetricCard label="Duration" value={Math.round(newest.durationSeconds / 60) + " min"} detail="2 hours ago" />
+          <MetricCard
+            label="Duration"
+            value={measured(newest.durationSeconds, (n) => Math.round(n / 60) + " min")}
+            detail="2 hours ago"
+          />
         </div>
       </section>
 

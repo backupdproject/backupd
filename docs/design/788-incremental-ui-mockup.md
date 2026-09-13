@@ -84,13 +84,46 @@ metrics. An operator who runs both should not have to learn two
 interfaces; an operator who runs one should never wonder which they are
 looking at.
 
-**Four byte counts, never one.** Every surface that reports a run shows
-entries scanned, logical size, read from source, written to repository
-and reused, as five separate figures (`backupengine.TreeSnapshotInfo`).
-A single "backed up" total would report a deduplicating repository as
-growing by the size of the source every night. Where the engine could not
-account for reuse the screen says **not measured**; it never draws a
-zero, because a zero is a claim that nothing deduplicated.
+**Four byte counts, never one, and absent is not zero.** Every surface
+that reports a run shows entries scanned, logical size, read from source,
+written to repository and reused as five separate figures
+(`backupengine.TreeSnapshotInfo`). A single "backed up" total would
+report a deduplicating repository as growing by the size of the source
+every night. Every one of those counters is nullable on the wire, along
+with `source_complete` and `duration_seconds`, and absent means nobody
+measured it: the screens print **not measured**, never `0`, because a
+zero is a measurement and "reused 0 bytes" sends an operator hunting a
+fault in a backup that is working. One fixture snapshot carries absent
+counters so the mock-up shows that row rather than only describing it.
+`src/mockup/format.ts` is the single place the rule is applied.
+
+**A retention verdict names its tiers, not the chain.** Each verdict
+carries `{tier, selected_by}` pairs and an action of KEEP, DELETE or
+REFUSE; the tier's granularity and window are stated once above the
+table, where the chain is, rather than repeated per row. The badges are
+the product's own `RetentionTierBadges`, which already draws the
+placement in brackets and draws last-known-good protection **bare** — a
+parenthesised word after "Protected" would read as a placement, and
+protection is not one. REFUSE is drawn neutral rather than as a third
+shade of delete: the pass removed nothing, so nothing is pending.
+
+**A restore names a snapshot and answers conflicts three ways.** The
+parameters are `snapshot_id`, an optional `source_path`, `target_path`
+and `conflict` of refuse / skip / overwrite, defaulting to refuse. It is
+the snapshot id rather than a run id because the repository, not the
+catalog, decides whether the id names anything — which is what keeps a
+restore working when the journal has lost the row, and that is precisely
+the situation somebody is restoring in. "Skip" is what makes an
+interrupted restore resumable without choosing between starting again and
+overwriting.
+
+**Repository health speaks the backup-set health vocabulary.** `state` is
+HEALTHY / DEGRADED / FAILING, the same three words and the same severity
+scale a set uses, so one dashboard does not carry two. `clock_skew_seconds`
+is nullable and **signed**, and the sign is the message: negative means
+this machine is behind the history already stored, the direction that
+dates a new snapshot before an older one, so the mock-up spells "184 s
+behind the repository" rather than an unsigned magnitude.
 
 **Asked-for and achieved verification are both shown.** ADR 0014's
 achieved level is the answer, and a failed check carries no level at all.
@@ -142,8 +175,17 @@ a reviewer can check the words and the contract in one pass. The contract
 is #788's own (`engine`, `repository_domain`, `source_consistency`,
 `verification_level`, `verification_level_achieved`, `entries_scanned`,
 `logical_bytes`, `source_bytes_read`, `repository_bytes_written`,
-`content_reused_bytes`, `last_known_good`, snapshot holds, the
-`/repositories` health resource and `/repositories/{domain}/maintenance`).
+`content_reused_bytes`, `source_complete`, `last_known_good`, snapshot
+holds, the snapshot-retention verdicts, the `/repositories` health
+resource and `/repositories/{domain}/maintenance`).
+
+Every mutating control on these screens is one `POST /operations` with an
+idempotency key and a single nested parameter object — `run_backup_set`,
+`restore_snapshot`, `verify_snapshot`, `hold_snapshot`,
+`release_snapshot_hold` — followed by polling that operation. There is no
+new mutating route, which is what makes CLI and Web parity a property of
+the contract rather than a thing to remember.
+
 Those annotations are a review aid and go with the mock-up.
 
 No vendor jargon reaches an operator: "repository domain", "snapshot",
