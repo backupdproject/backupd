@@ -54,6 +54,11 @@ import { SnapshotRestorePage } from "@shared/pages/SnapshotRestorePage";
 import { SnapshotRetentionPage } from "@shared/pages/SnapshotRetentionPage";
 import { RepositoryHealthPage } from "@shared/pages/RepositoryHealthPage";
 import { RepositoryMaintenancePage } from "@shared/pages/RepositoryMaintenancePage";
+// EPIC L's run screen (issue #814). Routed top-level rather than under a
+// backup set, matching the API's own /workflow-runs/{run}: a run outlives
+// the configuration that produced it, and "what is stuck in this
+// deployment" is not a question any one set's page can be asked.
+import { WorkflowRunPage } from "@shared/pages/WorkflowRunPage";
 import { ActivityPage } from "@shared/pages/ActivityPage";
 import { QuarantinePage } from "@shared/pages/QuarantinePage";
 import { SettingsPage } from "@shared/pages/SettingsPage";
@@ -341,6 +346,11 @@ export function App() {
             because nobody has claimed it. */}
         <Route path="/repositories/health" element={<RepositoryHealthPage />} />
         <Route path="/repositories/maintenance" element={<RepositoryMaintenancePage />} />
+        {/* EPIC L (#814). One segment, because a workflow run id is
+            opaque and single-segment — the engine mints it — unlike a
+            backup set id, which is source and set joined by "/". Callers
+            build the URL with workflowRunPath() (utilities/routes.ts). */}
+        <Route path="/workflow-runs/:runId" element={<WorkflowRunPage readOnly={readOnly} />} />
         <Route path="/backups" element={<BackupsPage readOnly={readOnly} />} />
         {/* And three, not one, for the same reason one route up: an
             artifact id (model.ArtifactID.String()) is a backup set id

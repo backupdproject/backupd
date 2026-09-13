@@ -1,0 +1,572 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>The workflow web UI: five screens, three statuses, one terminal (issue #814)</title>
+<style>
+:root{
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;
+  --radius-sm:4px;--radius-md:6px;--radius-lg:8px;--radius-xl:10px;--radius-pill:999px;
+  --bg:#f2f2f0;--surface:#fff;--surface-2:#fafaf9;--surface-3:#f0f0ed;
+  --border:#e0dfdc;--border-strong:#c8c7c3;
+  --text:#191a19;--text-2:#5b5d5b;--text-3:#8b8d8a;
+  --accent:oklch(0.52 0.09 255);--accent-quiet:oklch(0.95 0.02 255);
+  --ok:oklch(0.52 0.10 155);--ok-quiet:oklch(0.955 0.025 155);
+  --warn:oklch(0.56 0.11 70);--warn-quiet:oklch(0.96 0.035 75);
+  --danger:oklch(0.52 0.15 25);--danger-quiet:oklch(0.955 0.03 25);
+  --shadow:0 1px 2px rgba(20,20,18,.05),0 1px 1px rgba(20,20,18,.04);
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:var(--space-6)}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:var(--space-5)}
+h1{font-size:15px;font-weight:600;margin:0 0 var(--space-1);letter-spacing:-.01em}
+.sub{color:var(--text-2);font-size:13px;margin:0}
+.caption{color:var(--text-3);font-size:12px;margin:var(--space-4) 0 var(--space-2);
+  text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);
+  box-shadow:var(--shadow);overflow:hidden}
+.pagehead{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-4);
+  padding:var(--space-4) var(--space-5);border-bottom:1px solid var(--border);background:var(--surface-2)}
+.crumb{color:var(--text-3);font-size:11.5px;margin-bottom:2px}
+.title{font-size:17px;font-weight:640;letter-spacing:-.01em;display:flex;align-items:center;gap:var(--space-3)}
+.pathline{color:var(--text-3);font-size:12px;font-family:var(--font-mono);margin-top:3px}
+.actions{display:flex;gap:var(--space-2);flex-wrap:wrap;justify-content:flex-end}
+.btn{height:28px;padding:0 11px;border:1px solid var(--border-strong);border-radius:var(--radius-md);
+  background:var(--surface);color:var(--text);font:inherit;font-size:12.5px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn--primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn--off{background:var(--surface-3);border-color:var(--border);color:var(--text-3);cursor:not-allowed}
+.btn--caution{border-color:var(--warn);color:var(--warn)}
+.pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 10px;
+  border-radius:var(--radius-pill);font-size:11.5px;font-weight:600;letter-spacing:.02em}
+.pill--run{background:var(--accent-quiet);color:var(--accent)}
+.pill--ok{background:var(--ok-quiet);color:var(--ok)}
+.pill--warn{background:var(--warn-quiet);color:var(--warn)}
+.pill--err{background:var(--danger-quiet);color:var(--danger)}
+.pill--none{background:var(--surface-3);color:var(--text-3)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.dot--pulse{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+.card__header{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);
+  padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--border)}
+.card__body{padding:var(--space-4) var(--space-5)}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--text-3);margin:0}
+.meta{font-size:11.5px;color:var(--text-3)}
+.note{margin:0;padding:var(--space-3) var(--space-5);border-top:1px solid var(--border);
+  background:var(--surface-2);font-size:12.5px;color:var(--text-2)}
+.note strong{color:var(--text)}
+code{font-family:var(--font-mono);font-size:12px;background:var(--surface-3);
+  padding:1px 4px;border-radius:var(--radius-sm)}
+.banner{display:flex;gap:var(--space-3);padding:var(--space-3) var(--space-5);
+  border-bottom:1px solid var(--border);font-size:13px;align-items:flex-start}
+.banner--warn{background:var(--warn-quiet);color:var(--warn)}
+.banner--err{background:var(--danger-quiet);color:var(--danger)}
+.banner--info{background:var(--accent-quiet);color:var(--accent)}
+.banner .body{display:block;color:var(--text-2);margin-top:3px;font-size:12.5px}
+.banner .glyph{font-size:12px;line-height:20px}
+.banner__actions{margin-left:auto;display:flex;gap:var(--space-2);flex-shrink:0}
+
+/* the three-status split */
+.split{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border-bottom:1px solid var(--border)}
+.split>div{padding:var(--space-3) var(--space-5);border-right:1px solid var(--border)}
+.split>div:last-child{border-right:none}
+.split .k{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3)}
+.split .v{margin-top:5px;display:flex;align-items:center;gap:var(--space-2)}
+.split .why{display:block;margin-top:4px;font-size:12px;color:var(--text-2)}
+
+/* the stage / step ladder */
+.stage{border-top:1px solid var(--border)}
+.stage__head{display:flex;align-items:center;gap:var(--space-3);padding:8px var(--space-5);
+  background:var(--surface-2);font-size:11.5px;font-weight:700;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--text-2)}
+.stage__head .n{color:var(--text-3);font-weight:600;font-family:var(--font-mono)}
+.stage--skip .stage__head{color:var(--text-3)}
+.step{display:grid;grid-template-columns:18px minmax(0,1.6fr) 92px minmax(0,1.5fr) 96px 72px 64px 82px;
+  gap:var(--space-2);align-items:center;padding:9px var(--space-5);border-top:1px solid var(--border);
+  font-size:12.5px}
+.step--sel{background:var(--accent-quiet);box-shadow:inset 3px 0 0 var(--accent)}
+.step .name{font-family:var(--font-mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step .who{color:var(--text-2);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step .num{font-family:var(--font-mono);font-size:11.5px;color:var(--text-3);text-align:right}
+.tag{display:inline-flex;align-items:center;height:19px;padding:0 7px;border-radius:var(--radius-sm);
+  font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.tag--local{background:var(--accent-quiet);color:var(--accent)}
+.tag--remote{background:var(--surface-3);color:var(--text-2)}
+.g{color:var(--text-3);text-align:center}
+
+/* terminal slot */
+.slot{margin:var(--space-4) var(--space-5);border:1px dashed var(--border-strong);
+  border-radius:var(--radius-lg);padding:var(--space-4);background:var(--surface-2)}
+.slot .t{font-size:12.5px;font-weight:600}
+.slot .b{font-size:12px;color:var(--text-2);margin-top:4px}
+.slot code{background:var(--surface-3)}
+
+/* tables */
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--text-3);padding:8px var(--space-5);border-bottom:1px solid var(--border);background:var(--surface-2)}
+td{padding:8px var(--space-5);border-bottom:1px solid var(--border);vertical-align:top}
+td.mono,th.mono{font-family:var(--font-mono);font-size:12px}
+tr.ro td{color:var(--text-3)}
+.masked{font-family:var(--font-mono);color:var(--text-3);font-size:12px}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:var(--space-4)}
+.field label{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)}
+.field .in{height:30px;border:1px solid var(--border-strong);border-radius:var(--radius-md);
+  background:var(--surface);display:flex;align-items:center;padding:0 9px;font-family:var(--font-mono);font-size:12px}
+.field .hint{font-size:11.5px;color:var(--text-3)}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 var(--space-5);padding:var(--space-4) var(--space-5)}
+.findings{display:flex;flex-direction:column;gap:6px;padding:var(--space-4) var(--space-5)}
+.finding{display:grid;grid-template-columns:74px 150px minmax(0,1fr);gap:var(--space-3);
+  align-items:baseline;font-size:12.5px}
+.finding .c{font-family:var(--font-mono);font-size:11.5px;color:var(--text-2)}
+.finding .d{color:var(--text-2)}
+.reason{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);
+  padding:var(--space-5);font-size:13px;color:var(--text-2);box-shadow:var(--shadow)}
+.reason h2{font-size:13px;margin:0 0 var(--space-3);color:var(--text)}
+.reason h3{font-size:12.5px;margin:var(--space-4) 0 var(--space-2);color:var(--text)}
+.reason p{margin:0 0 var(--space-3)}
+.reason li{margin-bottom:6px}
+.reason ul{margin:0 0 var(--space-3);padding-left:18px}
+.dateline{font-size:11.5px;color:var(--text-3);font-family:var(--font-mono)}
+</style>
+<div class="wrap">
+
+<div>
+  <h1>The workflow web UI: five screens, three statuses, one terminal</h1>
+  <p class="sub">Issue #814 (EPIC-L, L7) &middot; design note for the UI wave over L6's api/v1 workflow surface.
+    <span class="dateline">2026-09-13</span></p>
+</div>
+
+<!-- ============ 1. run detail ============ -->
+<p class="caption">1 &middot; one workflow run: five stages, one row per script, three verdicts that never collapse</p>
+<section class="card">
+  <div class="pagehead">
+    <div>
+      <div class="crumb">Backup sets &rsaquo; api-server / var-backups &rsaquo; Workflow runs</div>
+      <div class="title">Workflow run
+        <span class="pill pill--err"><span class="dot"></span>FAILED</span>
+        <span class="pill pill--warn"><span class="dot"></span>SCRIPTS BYPASSED</span>
+      </div>
+      <div class="pathline">wfr_8c21e4 &middot; started 02:14:03 &middot; finished 02:16:41 &middot; 2m 38s &middot; 7 scripts planned</div>
+    </div>
+    <div class="actions">
+      <button class="btn">Backup set</button>
+      <button class="btn">Workflow settings</button>
+    </div>
+  </div>
+
+  <div class="split">
+    <div>
+      <div class="k">Backup</div>
+      <div class="v"><span class="pill pill--ok"><span class="dot"></span>SUCCESS</span></div>
+      <span class="why">The archive transferred and verified. This verdict is not derived from the two beside it.</span>
+    </div>
+    <div>
+      <div class="k">Workflow</div>
+      <div class="v"><span class="pill pill--err"><span class="dot"></span>FAILED</span></div>
+      <span class="why">Cause: <code>20-freeze-db.local.sh</code> (set / before, Local Host) exited 1.</span>
+    </div>
+    <div>
+      <div class="k">Cleanup</div>
+      <div class="v"><span class="pill pill--warn"><span class="dot"></span>FAILED</span></div>
+      <span class="why">After hooks were attempted and did not finish. This set is held &mdash; see the banner.</span>
+    </div>
+  </div>
+
+  <div class="banner banner--warn">
+    <span class="glyph">&#9650;</span>
+    <span><strong>One step was killed on its timeout and this product cannot confirm it stopped.</strong>
+      <span class="body"><code>40-quiesce-remote.remote.sh</code> ran on <code>api-server.example.net</code> and was
+      signalled at its 120s bound. The remote exec channel closed before the process reported its own exit,
+      so the script may still be running on that host. Nothing here can end it.</span></span>
+  </div>
+
+  <!-- global before -->
+  <div class="stage">
+    <div class="stage__head"><span class="n">1</span> Global before <span class="meta">/etc/backupd/workflows/before</span>
+      <span class="pill pill--ok" style="margin-left:auto"><span class="dot"></span>2 of 2 succeeded</span></div>
+    <div class="step">
+      <span class="g">&#10003;</span>
+      <span class="name">10-notify-start.local.sh</span>
+      <span><span class="tag tag--local">Local Host</span></span>
+      <span class="who">Host Workflow Runner &middot; backupd-hooks</span>
+      <span><span class="pill pill--ok"><span class="dot"></span>Success</span></span>
+      <span class="num">0.4s</span><span class="num">exit 0</span><span class="num">&mdash;</span>
+    </div>
+    <div class="step">
+      <span class="g">&#10003;</span>
+      <span class="name">20-mount-scratch.local.sh</span>
+      <span><span class="tag tag--local">Local Host</span></span>
+      <span class="who">Host Workflow Runner &middot; backupd-hooks</span>
+      <span><span class="pill pill--ok"><span class="dot"></span>Success</span></span>
+      <span class="num">1.1s</span><span class="num">exit 0</span><span class="num">&mdash;</span>
+    </div>
+  </div>
+
+  <!-- set before -->
+  <div class="stage">
+    <div class="stage__head"><span class="n">2</span> Backup set before <span class="meta">/srv/hooks/api-server/before</span>
+      <span class="pill pill--err" style="margin-left:auto"><span class="dot"></span>failed at step 2</span></div>
+    <div class="step">
+      <span class="g">&#10003;</span>
+      <span class="name">10-flush-cache.remote.sh</span>
+      <span><span class="tag tag--remote">Remote</span></span>
+      <span class="who">api-server.example.net &middot; conn <code>api-server-exec</code></span>
+      <span><span class="pill pill--ok"><span class="dot"></span>Success</span></span>
+      <span class="num">2.8s</span><span class="num">exit 0</span><span class="num">&mdash;</span>
+    </div>
+    <div class="step step--sel">
+      <span class="g">&#10007;</span>
+      <span class="name">20-freeze-db.local.sh</span>
+      <span><span class="tag tag--local">Local Host</span></span>
+      <span class="who">Host Workflow Runner &middot; backupd-hooks</span>
+      <span><span class="pill pill--err"><span class="dot"></span>Failed</span></span>
+      <span class="num">6.2s</span><span class="num">exit 1</span><span class="num">&mdash;</span>
+    </div>
+    <div class="step">
+      <span class="g">&ndash;</span>
+      <span class="name">30-tag-snapshot.remote.sh</span>
+      <span><span class="tag tag--remote">Remote</span></span>
+      <span class="who">api-server.example.net &middot; conn <code>api-server-exec</code></span>
+      <span><span class="pill pill--none">Skipped</span></span>
+      <span class="num">&mdash;</span><span class="num">&mdash;</span><span class="num">&mdash;</span>
+    </div>
+  </div>
+
+  <div class="slot">
+    <div class="t">&#9656; Step output &mdash; 20-freeze-db.local.sh</div>
+    <div class="b">The selected step's log terminal mounts here, and only here: one terminal on the page,
+      created when a step is selected and torn down when the selection moves. The slot is a component
+      boundary with a fixed shape &mdash; <code>{ runId, stepId, step, api }</code> &mdash; so the hardened
+      read-only terminal (#815) drops into it without this page knowing how it streams.</div>
+  </div>
+
+  <p class="note"><strong>Three verdicts, three columns, and none of them derived.</strong> "The backup
+    succeeded and the cleanup did not" is the single most operationally important thing this feature can
+    report &mdash; a machine may be sitting quiesced with a good backup beside it &mdash; so the header shows
+    <em>Backup: Success</em> next to <em>Workflow: Failed</em> and names the cause script. A page that showed
+    one badge would make that state unsayable, which is the same argument L6's handler doc makes for the
+    journal having three columns.<br><br>
+    <strong>Every <code>.local.sh</code> row says "Local Host" and names the Host Workflow Runner.</strong>
+    Never "engine container", never "inside backupd": the runner is a component on the machine backupd is
+    installed on, and a row that implied the engine container grew a shell would be describing a deployment
+    shape this product does not have.<br><br>
+    <strong>Every script name states where it runs.</strong> A hook is
+    <code>NAME.local.sh</code> or <code>NAME.remote.sh</code> and nothing else:
+    <code>core/internal/workflow/script.go</code> refuses a plain <code>*.sh</code> outright, because
+    "a hook that quiesces a database has to run on the machine holding the database, and guessing
+    wrong is silent". So the rows here carry the suffix, and the Local/Remote badge agrees with
+    it by construction rather than by convention.<br><br>
+    <strong>The short SHA column is an em dash on purpose.</strong> L6's run-step shape carries no
+    <code>sha256</code> &mdash; only the validation report does, for scripts as they are on disk right now.
+    Printing today's hash in a row describing a run from last night would be a lie about what executed, so
+    the column stays empty until the journal carries the planned hash.</p>
+</section>
+
+<!-- ============ 2. live ============ -->
+<p class="caption">2 &middot; the same page while the run is live: which of the five stages is executing, at a glance</p>
+<section class="card">
+  <div class="pagehead">
+    <div>
+      <div class="crumb">Backup sets &rsaquo; db-primary / dumps &rsaquo; Workflow runs</div>
+      <div class="title">Workflow run
+        <span class="pill pill--run"><span class="dot dot--pulse"></span>CANCELING &middot; CLEANUP RUNNING</span>
+      </div>
+      <div class="pathline">wfr_a91f07 &middot; started 03:00:12 &middot; running 4m 51s &middot; refreshing every 2s</div>
+    </div>
+    <div class="actions"><button class="btn btn--off">Run this backup set</button></div>
+  </div>
+  <div class="split">
+    <div><div class="k">Backup</div><div class="v"><span class="pill pill--warn"><span class="dot"></span>SKIPPED</span></div>
+      <span class="why">The run was canceled before the transfer started.</span></div>
+    <div><div class="k">Workflow</div><div class="v"><span class="pill pill--run"><span class="dot dot--pulse"></span>RUNNING</span></div>
+      <span class="why">After hooks are running now so the source is not left quiesced.</span></div>
+    <div><div class="k">Cleanup</div><div class="v"><span class="pill pill--run"><span class="dot dot--pulse"></span>RUNNING</span></div>
+      <span class="why">Stage 4 of 5. Two after hooks left.</span></div>
+  </div>
+  <div class="stage"><div class="stage__head"><span class="n">1</span> Global before
+    <span class="pill pill--ok" style="margin-left:auto"><span class="dot"></span>done</span></div></div>
+  <div class="stage"><div class="stage__head"><span class="n">2</span> Backup set before
+    <span class="pill pill--ok" style="margin-left:auto"><span class="dot"></span>done</span></div></div>
+  <div class="stage"><div class="stage__head"><span class="n">3</span> Backup
+    <span class="pill pill--warn" style="margin-left:auto"><span class="dot"></span>canceled</span></div></div>
+  <div class="stage">
+    <div class="stage__head"><span class="n">4</span> Backup set after <span class="meta">/srv/hooks/db-primary/after</span>
+      <span class="pill pill--run" style="margin-left:auto"><span class="dot dot--pulse"></span>running now</span></div>
+    <div class="step">
+      <span class="g">&#8226;</span>
+      <span class="name">10-thaw-db.local.sh</span>
+      <span><span class="tag tag--local">Local Host</span></span>
+      <span class="who">Host Workflow Runner &middot; backupd-hooks</span>
+      <span><span class="pill pill--run"><span class="dot dot--pulse"></span>Running</span></span>
+      <span class="num">19s</span><span class="num">&mdash;</span><span class="num">&mdash;</span>
+    </div>
+    <div class="step">
+      <span class="g">&ndash;</span><span class="name">20-unmount-scratch.local.sh</span>
+      <span><span class="tag tag--local">Local Host</span></span>
+      <span class="who">Host Workflow Runner &middot; backupd-hooks</span>
+      <span><span class="pill pill--none">Pending</span></span>
+      <span class="num">&mdash;</span><span class="num">&mdash;</span><span class="num">&mdash;</span>
+    </div>
+  </div>
+  <div class="stage stage--skip"><div class="stage__head"><span class="n">5</span> Global after
+    <span class="pill pill--none" style="margin-left:auto">pending</span></div></div>
+  <p class="note"><strong>The five stages are always all five, even the ones this configuration gives no
+    directory to.</strong> A stage rendered only when it has steps would make "global after did not run" and
+    "this deployment has no global after directory" the same picture, and those are opposite facts when a
+    source has been left quiesced. An ineligible stage is drawn greyed with "no directory configured" rather
+    than omitted.<br><br>
+    <strong>A canceling run is not a finished one.</strong> The header carries both words &mdash; canceling,
+    and cleanup running &mdash; because the interesting thing about a canceled workflow is that its after
+    hooks are still owed. The per-set Run control is unavailable while this is live, and says why.</p>
+</section>
+
+<!-- ============ 3. set workflow config ============ -->
+<p class="caption">3 &middot; one backup set's Workflow panel: what will run, and the hold that stops it running at all</p>
+<section class="card">
+  <div class="banner banner--err">
+    <span class="glyph">&#10005;</span>
+    <span><strong>This backup set will not run until a workflow run is accounted for.</strong>
+      <span class="body">Run <code>wfr_7b03d9</code> stopped before its "after" hooks finished, so this source
+      may still be quiesced, mounted or paused. Resume the cleanup to run the owed hooks from that run's own
+      retained spool, or acknowledge that you have dealt with it by hand.</span></span>
+    <span class="banner__actions">
+      <button class="btn btn--primary">Resume cleanup</button>
+      <button class="btn btn--caution">Acknowledge&hellip;</button>
+    </span>
+  </div>
+  <div class="card__header"><h2 class="eyebrow">Workflow</h2>
+    <span class="meta">/srv/hooks/api-server &middot; 5 scripts discovered</span></div>
+  <div class="two">
+    <div>
+      <div class="field"><label>Before directory</label><div class="in">/srv/hooks/api-server/before</div>
+        <span class="hint">Runs after the global before stage and before this set's transfer.</span></div>
+      <div class="field"><label>After directory</label><div class="in">/srv/hooks/api-server/after</div>
+        <span class="hint">Runs whatever the backup did, including when it failed.</span></div>
+    </div>
+    <div>
+      <div class="field"><label>Script timeout</label><div class="in">120 seconds</div>
+        <span class="hint">Pinned on this set. Clearing it inherits the deployment default (300s).</span></div>
+      <div class="field"><label>Remote exec connection</label><div class="in">api-server-exec</div>
+        <span class="hint">The set's own source connection is SFTP-only on this host, so it cannot execute a
+          hook. Pick a connection whose capability probe passes.</span></div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Order</th><th>Script</th><th>Where</th><th>Runs on</th><th>Bash -n</th>
+      <th class="mono">size</th><th class="mono">sha256</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">1</td><td class="mono">before/10-flush-cache.remote.sh</td>
+        <td><span class="tag tag--remote">Remote</span></td><td>api-server-exec &mdash; exec capable</td>
+        <td><span class="pill pill--ok"><span class="dot"></span>parses</span></td>
+        <td class="mono">1.4 KiB</td><td class="mono">4f21ab9c</td></tr>
+      <tr><td class="mono">2</td><td class="mono">before/20-freeze-db.local.sh</td>
+        <td><span class="tag tag--local">Local Host</span></td><td>Host Workflow Runner</td>
+        <td><span class="pill pill--ok"><span class="dot"></span>parses</span></td>
+        <td class="mono">2.9 KiB</td><td class="mono">b70c1d55</td></tr>
+      <tr><td class="mono">3</td><td class="mono">before/30-tag-snapshot.remote.sh</td>
+        <td><span class="tag tag--remote">Remote</span></td><td>api-server-exec &mdash; exec capable</td>
+        <td><span class="pill pill--err"><span class="dot"></span>syntax error line 12</span></td>
+        <td class="mono">880 B</td><td class="mono">0ce41f7a</td></tr>
+      <tr><td class="mono">4</td><td class="mono">after/10-thaw-db.local.sh</td>
+        <td><span class="tag tag--local">Local Host</span></td><td>Host Workflow Runner</td>
+        <td><span class="pill pill--ok"><span class="dot"></span>parses</span></td>
+        <td class="mono">2.2 KiB</td><td class="mono">99b2e0c3</td></tr>
+      <tr><td class="mono">5</td><td class="mono">after/20-unmount-scratch.local.sh</td>
+        <td><span class="tag tag--local">Local Host</span></td><td>Host Workflow Runner</td>
+        <td><span class="pill pill--ok"><span class="dot"></span>parses</span></td>
+        <td class="mono">640 B</td><td class="mono">1d7fa044</td></tr>
+    </tbody>
+  </table>
+  <div class="findings">
+    <div class="finding"><span class="pill pill--err"><span class="dot"></span>error</span>
+      <span class="c">remote_bash_syntax</span><span class="d">30-tag-snapshot.remote.sh: line 12: unexpected end of file</span></div>
+    <div class="finding"><span class="pill pill--ok"><span class="dot"></span>ok</span>
+      <span class="c">exec_connection</span><span class="d">api-server-exec resolved: hooks@api-server.example.net:22</span></div>
+    <div class="finding"><span class="pill pill--ok"><span class="dot"></span>ok</span>
+      <span class="c">exec_capability</span><span class="d">api-server-exec accepted an exec channel and proved it runs the bytes it is sent</span></div>
+    <div class="finding"><span class="pill pill--none">note</span>
+      <span class="c">exec_connection</span><span class="d">a set whose OWN source connection is SFTP-only resolves it and fails <code>exec_capability</code> instead — the connection is fine, the account cannot execute</span></div>
+    <div class="finding"><span class="pill pill--ok"><span class="dot"></span>ok</span>
+      <span class="c">runner_health</span><span class="d">Host Workflow Runner answered on /run/backupd/hooks.sock (version 0.4.1)</span></div>
+  </div>
+  <p class="note"><strong>The hold blocks the Run control and nothing else.</strong> A set in
+    <code>recovery_required</code> keeps every read on this page &mdash; an operator diagnosing a hold needs
+    the configuration, the validation and the run that caused it &mdash; but the ordinary per-set Run is
+    unavailable and the banner is the only thing that offers a way out of it. Two ways out, deliberately:
+    <em>Resume cleanup</em> executes the hooks that are already owed from that run's own retained spool
+    (re-verified against the sha256 recorded when it was planned, so nothing an operator edited since
+    decides what runs), and <em>Acknowledge</em> records a person taking responsibility in words that are
+    kept. There is no "dismiss" and no "ignore".<br><br>
+    <strong>A set with no workflow configuration shows none of this.</strong> No panel, no findings, no
+    empty table &mdash; one line saying hooks are not configured for this set and where they would go.
+    New noise on every existing set is the failure mode this whole screen is one edit away from.<br><br>
+    <strong>Two verdicts, kept apart.</strong> <code>valid_for_backup</code> and
+    <code>workflow_valid</code> are reported separately, because a set whose source connects and whose hook
+    directory nobody has created yet is valid for backup and invalid for workflows &mdash; the normal state
+    during setup, and reporting it as a broken backup set would tell an operator their backups are failing
+    when they are not.</p>
+</section>
+
+<!-- ============ 4. environment ============ -->
+<p class="caption">4 &middot; the environment editor: three scopes, one merged answer, and no resolved secret anywhere</p>
+<section class="card">
+  <div class="card__header"><h2 class="eyebrow">Workflow environment</h2>
+    <span class="meta">deployment-wide entries, this set's entries, and what a hook will actually see</span></div>
+  <table>
+    <thead><tr><th>Variable</th><th>Value</th><th>Scope</th><th></th></tr></thead>
+    <tbody>
+      <tr><td class="mono">PGHOST</td><td class="mono">db-primary.internal</td>
+        <td><span class="tag tag--remote">Global</span></td><td><button class="btn">Edit</button></td></tr>
+      <tr><td class="mono">PGPASSWORD</td>
+        <td><span class="masked">from file /etc/backupd/secrets/pg &middot; never shown</span></td>
+        <td><span class="tag tag--remote">Global</span></td><td><button class="btn">Edit</button></td></tr>
+      <tr><td class="mono">PGHOST</td><td class="mono">db-primary-replica.internal</td>
+        <td><span class="tag tag--local">Backup set</span></td><td><button class="btn">Unset</button></td></tr>
+      <tr><td class="mono">DUMP_LEVEL</td><td class="mono"><em>(empty)</em></td>
+        <td><span class="tag tag--local">Backup set</span></td><td><button class="btn">Unset</button></td></tr>
+      <tr class="ro"><td class="mono">BACKUPD_RUN_ID</td><td class="mono">set per run</td>
+        <td><span class="pill pill--none">Built-in</span></td><td><span class="meta">read-only</span></td></tr>
+      <tr class="ro"><td class="mono">BACKUPD_BACKUP_STATUS</td><td class="mono">set per run</td>
+        <td><span class="pill pill--none">Built-in</span></td><td><span class="meta">read-only</span></td></tr>
+    </tbody>
+  </table>
+  <div class="card__header" style="border-top:1px solid var(--border)">
+    <h2 class="eyebrow">What a hook will see</h2>
+    <span class="meta">sanitized baseline &lt; deployment &lt; backup set &lt; BACKUPD_* built-ins</span></div>
+  <table>
+    <thead><tr><th>Variable</th><th>Effective value</th><th>Comes from</th><th>Overrides</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">PGHOST</td><td class="mono">db-primary-replica.internal</td>
+        <td><span class="tag tag--local">Backup set</span></td><td class="meta">shadows the deployment value</td></tr>
+      <tr><td class="mono">PGPASSWORD</td><td><span class="masked">resolved from a file at run time</span></td>
+        <td><span class="tag tag--remote">Global</span></td><td class="meta">&mdash;</td></tr>
+      <tr><td class="mono">DUMP_LEVEL</td><td class="mono"><em>(empty)</em></td>
+        <td><span class="tag tag--local">Backup set</span></td><td class="meta">&mdash;</td></tr>
+      <tr class="ro"><td class="mono">BACKUPD_RUN_ID</td><td class="mono">set per run</td>
+        <td><span class="pill pill--none">Built-in</span></td>
+        <td class="meta">cannot be shadowed by either scope</td></tr>
+    </tbody>
+  </table>
+  <p class="note"><strong>No surface here can show the value of a secret, ever.</strong> The wire carries a
+    LOCATION &mdash; a file path, a variable name, an argv &mdash; and there is no field on the contract a
+    resolved secret could travel in. So the editor shows the name and where the value comes from, and the
+    merged preview shows "resolved from a file at run time" in the cell where a literal would be. A reveal
+    control would be a control an attacker holding one session could read every credential in the
+    deployment from.<br><br>
+    <strong>An empty literal is not a missing one.</strong> <code>value: ""</code> is a deliberately empty
+    variable, which operators write, and no literal at all is a variable whose value comes from a
+    reference. The table draws them differently and the write direction keeps them apart.<br><br>
+    <strong>The preview is source-aware because precedence is the whole question.</strong> Two tables, not
+    one: the top one is what is configured and editable, the bottom one is what a hook actually receives,
+    with the scope that won and what it shadowed. An operator who cannot see that a set-scope
+    <code>PGHOST</code> is hiding the deployment's has no way to explain a hook connecting to the wrong
+    host.</p>
+</section>
+
+<!-- ============ 5. global settings ============ -->
+<p class="caption">5 &middot; deployment-wide workflow settings, including a runner that is not answering</p>
+<section class="card">
+  <div class="card__header"><h2 class="eyebrow">Workflow</h2>
+    <span class="meta">Global scripts wrap every backup-set run.</span></div>
+  <div class="banner banner--warn">
+    <span class="glyph">&#9650;</span>
+    <span><strong>The Host Workflow Runner is not answering.</strong>
+      <span class="body">This is the component that executes a <code>.local.sh</code> hook on the machine
+      backupd is installed on. Until it answers, every local hook fails and every validation that needs it
+      is reported as unexamined rather than as passing. Its socket and token path are written by the
+      installer and are not editable here.</span></span>
+  </div>
+  <div class="two">
+    <div>
+      <div class="field"><label>Global before directory</label><div class="in">/etc/backupd/workflows/before</div>
+        <span class="hint">Runs before every backup set's own before stage.</span></div>
+      <div class="field"><label>Global after directory</label><div class="in">/etc/backupd/workflows/after</div>
+        <span class="hint">Runs after every backup set's own after stage, whatever the backup did.</span></div>
+      <div class="field"><label>Default script timeout</label><div class="in">300 seconds</div>
+        <span class="hint">Applies to any set that does not pin its own.</span></div>
+    </div>
+    <div>
+      <div class="field"><label>Host Workflow Runner</label>
+        <div class="in">not configured &middot; credential file missing</div>
+        <span class="hint">Reported, not configured: the two paths differ between a container and a
+          bare-metal install of the same deployment.</span></div>
+      <div class="field"><label>Runner liveness, version and execution user</label>
+        <div class="in">not on this read</div>
+        <span class="hint">Reported by a backup set's own hook check, which opens the socket, and by
+          <code>backupd workflow-runner status</code>. There is no elevation control here and there will
+          not be one.</span></div>
+      <div class="field"><label>Maximum script size</label><div class="in">65536 bytes</div>
+        <span class="hint">A hook larger than this is refused by validation rather than executed.</span></div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Order</th><th>Global script</th><th>Where</th><th>Bash -n</th>
+      <th class="mono">size</th><th class="mono">sha256</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">1</td><td class="mono">before/10-notify-start.local.sh</td>
+        <td><span class="tag tag--local">Local Host</span></td>
+        <td><span class="pill pill--warn"><span class="dot"></span>not examined</span></td>
+        <td class="mono">512 B</td><td class="mono">7a1c9e02</td></tr>
+      <tr><td class="mono">2</td><td class="mono">after/90-notify-end.local.sh</td>
+        <td><span class="tag tag--local">Local Host</span></td>
+        <td><span class="pill pill--warn"><span class="dot"></span>not examined</span></td>
+        <td class="mono">744 B</td><td class="mono">e38b5510</td></tr>
+    </tbody>
+  </table>
+  <p class="note"><strong>"Not examined" is not "passes".</strong> A local hook's syntax check runs through
+    the runner, so with the runner down the honest answer is that nothing looked &mdash; a green tick there
+    would be this product claiming it proved something it never ran. The same rule covers a deployment with
+    no remote hooks and an unexamined exec capability.<br><br>
+    <strong>No root-elevation control.</strong> The execution user is reported because an operator writing a
+    hook needs to know what account it runs as; there is no switch here that would raise it, because that
+    switch does not exist in the product and a UI offering one would be inventing a capability.</p>
+</section>
+
+<!-- ============ reasoning ============ -->
+<p class="caption">the decisions this note was asking for a verdict on</p>
+<div class="reason">
+  <h2>Why these five screens and not a "Workflows" section</h2>
+  <p>Every surface here is a sub-resource of something already on screen. A run belongs to a backup set;
+    the configuration that produced it belongs on that set's page beside its retention and its connection;
+    the deployment-wide half belongs in Settings next to the other deployment-wide policy. A separate
+    top-level "Workflows" area would be a second place to look for the state of one backup set, which is
+    how two screens end up disagreeing about what is configured.</p>
+  <p>The one exception is the run itself, which is routed top-level (<code>/workflow-runs/:runId</code>)
+    for the reason L6 made it a top-level resource: a run outlives the configuration that produced it, so a
+    set whose configuration has been removed still has runs an operator needs to read.</p>
+
+  <h3>Decisions taken</h3>
+  <ul>
+    <li><strong>Three statuses, three columns, never folded.</strong> Backup, Workflow and Cleanup are
+      shown side by side with the cause script named. This is the screen's reason to exist.</li>
+    <li><strong>One terminal, lazily mounted, in a slot with a fixed prop shape.</strong> Selecting a step
+      mounts it; changing the selection tears the old one down. A page that mounted a terminal per step
+      would hold one poll per script of a run that can have dozens.</li>
+    <li><strong>All five stages always, ineligible ones greyed.</strong> "Did not run" and "not configured"
+      must not look the same.</li>
+    <li><strong>"Local Host", via the Host Workflow Runner, everywhere.</strong> Never "engine container".</li>
+    <li><strong>The recovery hold gates the per-set Run only</strong>, and offers exactly two ways out:
+      Resume cleanup, or Acknowledge with a recorded reason.</li>
+    <li><strong>Termination-unconfirmed is a page-level banner, not a cell.</strong> A step that was
+      signalled and did not confirm is a fact about a remote machine, and a 12px cell in a table row is
+      not where that belongs.</li>
+    <li><strong>Secrets are locations in both directions</strong>, with no reveal control, and the merged
+      preview says where the value will come from instead of what it is.</li>
+    <li><strong>Nothing new on a set with no workflow configuration</strong> beyond one line saying so.</li>
+    <li><strong>The short SHA column stays empty for a run.</strong> The journal does not carry the planned
+      hash; the validation report's hash describes disk now. Rendering one as the other would be a lie.</li>
+  </ul>
+
+  <h3>Built inside the existing design system</h3>
+  <p>No new component vocabulary: <code>card</code>/<code>card__header</code>/<code>card__body</code>,
+    <code>PageHeader</code>, <code>Section</code>, <code>StatusBadge</code>, <code>WarningBanner</code>,
+    <code>EmptyState</code>, <code>Cell</code>/<code>Row</code> and the design-system tokens carry every
+    screen above. Colour is never the message: every status pill pairs a word with an icon, which is the
+    §9 rule and the reading a colour-blind operator gets. The step ladder collapses to a single column at
+    narrow widths, the selected step is marked by an inset rule as well as a tint, and the selection is a
+    real button so it is reachable by keyboard and announced as pressed. Every new control names a tooltip
+    registry id rather than carrying its own copy.</p>
+</div>
+</div>

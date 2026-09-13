@@ -108,6 +108,23 @@ import type {
   WireSettingsResponse,
   WireSmtpSettings,
   WireUpdateCapacitySettings,
+  WireUpdateWorkflowSettingsRequest,
+  WireUpdateBackupSetWorkflowRequest,
+  WireBackupSetWorkflowResponse,
+  WireListWorkflowEnvironmentResponse,
+  WireListWorkflowRunsResponse,
+  WireListWorkflowStepsResponse,
+  WireWorkflowEnvironmentVariable,
+  WireWorkflowEnvironmentVariableRequest,
+  WireWorkflowFinding,
+  WireWorkflowRecoveryResponse,
+  WireWorkflowRun,
+  WireWorkflowSettingsResponse,
+  WireWorkflowStage,
+  WireWorkflowStep,
+  WireWorkflowStepLogPage,
+  WireWorkflowValidatedScript,
+  WireWorkflowValidationResponse,
   WireVersionResponse
 } from "./generated/contract";
 import type {
@@ -137,7 +154,26 @@ import type {
   SSHKeyListing,
   SmtpSettingsInput,
   SnapshotOperationResult,
-  UpdateSettingsRequest
+  UpdateSettingsRequest,
+  BackupSetWorkflow,
+  BackupSetWorkflowPatch,
+  WorkflowEnvironment,
+  WorkflowEnvVariable,
+  WorkflowEnvVariableInput,
+  WorkflowFinding,
+  WorkflowPhase,
+  WorkflowRun,
+  WorkflowRunState,
+  WorkflowScope,
+  WorkflowSettings,
+  WorkflowSettingsPatch,
+  WorkflowStage,
+  WorkflowStatus,
+  WorkflowStepLogPage,
+  WorkflowStepState,
+  WorkflowStepSummary,
+  WorkflowValidatedScript,
+  WorkflowValidation
 } from "./contracts";
 import type {
   ArtifactRetentionPolicy,
@@ -2305,6 +2341,348 @@ function fromWireRecoverySettings(r: WireRecoverySettingsResponse): RecoverySett
 }
 
 /**
+ * EPIC L's mappers (issue #814), and the three rules all of them keep.
+ *
+ * A CLOSED union is narrowed and never cast. Every one of these fields is
+ * optional on the wire, and a state this build does not recognise is
+ * mapped to the value that says "somebody should look at this" rather
+ * than to a confident verdict: an unknown step state becomes
+ * "interrupted", an unknown run state becomes "interrupted", an unknown
+ * status becomes "unknown". A service newer than this build must not be
+ * able to make a screen claim success.
+ *
+ * A MISSING number stays missing. `exitCode` is `number | null` and
+ * `durationMs` is optional, because 0 is a real exit code and 0ms is a
+ * real duration: normalising an absent field to zero would turn "this
+ * never ran" into "this succeeded instantly", which is the one pair of
+ * facts a workflow surface must never confuse.
+ *
+ * A SECRET is a location. `fromWireEnvVariable` copies the reference
+ * field by field rather than spreading the wire object, so a field added
+ * to the generated type cannot arrive here unreviewed — a resolved value
+ * would have to be given a name in this function by somebody.
+ */
+
+const STEP_STATES: readonly string[] = [
+  "pending",
+  "running",
+  "success",
+  "failed",
+  "timed_out",
+  "canceled",
+  "skipped",
+  "interrupted"
+];
+
+const RUN_ONLY_STATES: readonly string[] = [
+  "recovery_required",
+  "cleanup_running",
+  "cleanup_failed",
+  "recovered"
+];
+
+function stepStateOf(value: string | undefined): WorkflowStepState {
+  return value && STEP_STATES.includes(value) ? (value as WorkflowStepState) : "interrupted";
+}
+
+function runStateOf(value: string | undefined): WorkflowRunState {
+  if (value && RUN_ONLY_STATES.includes(value)) return value as WorkflowRunState;
+  return stepStateOf(value);
+}
+
+/** "unknown" is a real value on this wire and is also the fallback, which
+ *  is the one place those two coincide honestly: a verdict this build
+ *  cannot read is a verdict nobody should draw as success or failure. */
+function workflowStatusOf(value: string | undefined): WorkflowStatus {
+  return value === "running" || value === "success" || value === "failed" || value === "skipped"
+    ? value
+    : "unknown";
+}
+
+const phaseOf = (value: string | undefined): WorkflowPhase => (value === "after" ? "after" : "before");
+const scopeOf = (value: string | undefined): WorkflowScope => (value === "global" ? "global" : "set");
+
+/**
+ * One step.
+ *
+ * `remoteHost` is derived and not read: the wire carries no host field,
+ * only the execution connection's reference, and a step's host is a
+ * property of that connection's configuration. So it is set only when the
+ * reference itself names one — a `user@host`-shaped reference — and left
+ * undefined otherwise, which every surface draws as the connection
+ * reference rather than as a hostname nobody reported.
+ */
+function fromWireWorkflowStep(s: WireWorkflowStep): WorkflowStepSummary {
+  const connection = s.execution_connection_ref || undefined;
+  const target = s.target === "remote" ? "remote" : "local";
+  return {
+    stepId: s.step_id ?? "",
+    scriptName: s.script_name ?? "",
+    phase: phaseOf(s.phase),
+    scope: scopeOf(s.scope),
+    order: s.order ?? 0,
+    target,
+    executionConnectionRef: connection,
+    remoteHost: target === "remote" ? hostOfConnectionRef(connection) : undefined,
+    state: stepStateOf(s.state),
+    // `?? null` and never `?? 0`: exit code 0 is a success and an absent
+    // one is a step that produced no code at all, which is what a
+    // signalled step whose channel closed looks like.
+    exitCode: s.exit_code ?? null,
+    durationMs: s.duration_ms,
+    startedAt: s.started_at || undefined,
+    finishedAt: s.finished_at || undefined,
+    timeoutMs: s.timeout_ms,
+    terminationConfirmed: s.termination_confirmed
+  };
+}
+
+/** The host half of a `user@host` execution connection reference, or
+ *  undefined for a reference that is an opaque name — which most are. A
+ *  guess dressed as a report is worse than the reference itself. */
+function hostOfConnectionRef(ref: string | undefined): string | undefined {
+  if (!ref) return undefined;
+  const at = ref.indexOf("@");
+  const host = at >= 0 ? ref.slice(at + 1) : "";
+  return host.includes(".") ? host : undefined;
+}
+
+function fromWireWorkflowRun(r: WireWorkflowRun): WorkflowRun {
+  return {
+    runId: r.run_id ?? "",
+    backupSetId: r.backup_set_id ?? "",
+    state: runStateOf(r.state),
+    backupStatus: workflowStatusOf(r.backup_status),
+    workflowStatus: workflowStatusOf(r.workflow_status),
+    cleanupStatus: workflowStatusOf(r.cleanup_status),
+    // Narrowed inline, and "none" is the fallback rather than a
+    // guess: a recovery state this build cannot read must not draw a
+    // hold that may not exist, and a hold that does exist is reported
+    // by workflowRecovery() as well, which is what the gate reads.
+    recoveryState:
+      r.recovery_state === "required" ||
+      r.recovery_state === "in_progress" ||
+      r.recovery_state === "resolved"
+        ? r.recovery_state
+        : "none",
+    bypassed: r.bypassed === true,
+    startedAt: stampOrNull(r.started_at),
+    finishedAt: stampOrNull(r.finished_at),
+    // null and not 0 for a run still going: a running run has no
+    // duration, and "0ms" beside a spinner is a number nobody measured.
+    durationMs: r.duration_ms ?? null,
+    scriptCount: r.script_count ?? 0,
+    failedStep: r.failed_step || undefined,
+    failedScript: r.failed_script || undefined,
+    steps: (r.steps ?? []).map(fromWireWorkflowStep)
+  };
+}
+
+function fromWireWorkflowStepLogPage(p: WireWorkflowStepLogPage): WorkflowStepLogPage {
+  return {
+    records: (p.records ?? []).map((rec) => ({
+      seq: rec.seq ?? 0,
+      stream: rec.stream === "stderr" ? "stderr" : "stdout",
+      at: rec.at ?? "",
+      text: rec.text ?? "",
+      kind: rec.kind
+    })),
+    cursor: p.cursor ?? 0,
+    // Both default FALSE, and that direction matters: a follower that
+    // read `complete` as true from a missing field would stop following a
+    // live step, and one that read `truncated` as true would print a
+    // "output was dropped" marker over a complete log.
+    complete: p.complete === true,
+    truncated: p.truncated === true
+  };
+}
+
+/** One environment entry. The secret is rebuilt field by field — see this
+ *  block's doc — and is left undefined when the wire carried no location
+ *  at all, so a plain literal does not acquire an empty reference. */
+function fromWireEnvVariable(v: WireWorkflowEnvironmentVariable): WorkflowEnvVariable {
+  const secret =
+    v.secret && (v.secret.file || v.secret.env || (v.secret.command ?? []).length > 0)
+      ? {
+          file: v.secret.file || undefined,
+          env: v.secret.env || undefined,
+          command: v.secret.command && v.secret.command.length > 0 ? [...v.secret.command] : undefined
+        }
+      : undefined;
+  return {
+    name: v.name ?? "",
+    // `value` is carried through EXACTLY, including "": an empty literal
+    // is a deliberately empty variable and `|| undefined` would turn it
+    // into a variable with no literal at all, which is a different
+    // configuration.
+    value: v.value,
+    hasValue: v.has_value === true,
+    secret
+  };
+}
+
+function fromWireEnvironment(r: WireListWorkflowEnvironmentResponse): WorkflowEnvironment {
+  return {
+    backupSetId: r.backup_set_id ?? "",
+    variables: (r.variables ?? []).map(fromWireEnvVariable)
+  };
+}
+
+/** The write direction. A caller that named neither a literal nor a
+ *  reference sends neither, which the service reads as "an empty
+ *  variable"; a caller that named both is refused server-side as the
+ *  contradiction it is, and this function does not paper over it. */
+function toWireEnvVariable(entry: WorkflowEnvVariableInput): WireWorkflowEnvironmentVariableRequest {
+  const body: WireWorkflowEnvironmentVariableRequest = {};
+  if (entry.value !== undefined) body.value = entry.value;
+  if (entry.secret) {
+    body.secret = {
+      file: entry.secret.file,
+      env: entry.secret.env,
+      command: entry.secret.command
+    };
+  }
+  return body;
+}
+
+function fromWireStage(s: WireWorkflowStage): WorkflowStage {
+  return { scope: scopeOf(s.scope), phase: phaseOf(s.phase), dir: s.dir ?? "" };
+}
+
+function fromWireWorkflowSettings(s: WireWorkflowSettingsResponse): WorkflowSettings {
+  return {
+    configured: s.configured === true,
+    root: s.root ?? "",
+    beforeDir: s.before_dir ?? "",
+    afterDir: s.after_dir ?? "",
+    scriptTimeoutSeconds: s.script_timeout_seconds ?? 0,
+    scriptTimeoutConfigured: s.script_timeout_configured === true,
+    maxScriptSizeBytes: s.max_script_size_bytes ?? 0,
+    environment: (s.environment ?? []).map(fromWireEnvVariable),
+    execConnections: [...(s.exec_connections ?? [])],
+    // Never null: a settings screen has to be able to say "the Host
+    // Workflow Runner is not answering", and an absent block is exactly
+    // that answer rather than a missing card.
+    runner: {
+      configured: s.runner?.configured === true,
+      socket: s.runner?.socket ?? "",
+      tokenFile: s.runner?.token_file ?? ""
+    }
+  };
+}
+
+function fromWireBackupSetWorkflow(s: WireBackupSetWorkflowResponse): BackupSetWorkflow {
+  return {
+    backupSetId: s.backup_set_id ?? "",
+    configured: s.configured === true,
+    beforeDir: s.before_dir ?? "",
+    afterDir: s.after_dir ?? "",
+    // Undefined rather than 0 when this set pins nothing: 0 would be
+    // rendered as a pinned bound of no seconds, and the whole point of
+    // reporting both halves is telling a pinned set from one that
+    // follows the deployment's value.
+    scriptTimeoutSeconds: s.script_timeout_seconds,
+    effectiveScriptTimeoutSeconds: s.effective_script_timeout_seconds ?? 0,
+    remoteExecConnectionRef: s.remote_exec_connection_ref ?? "",
+    environment: (s.environment ?? []).map(fromWireEnvVariable),
+    resolvedEnvironmentNames: [...(s.resolved_environment_names ?? [])],
+    stages: (s.stages ?? []).map(fromWireStage)
+  };
+}
+
+/** One finding. An unrecognised severity becomes "warning" rather than
+ *  "ok": a check whose verdict this build cannot read has not passed. */
+function fromWireFinding(f: WireWorkflowFinding): WorkflowFinding {
+  const severity =
+    f.severity === "ok" || f.severity === "skipped" || f.severity === "error" ? f.severity : "warning";
+  return {
+    check: f.check ?? "",
+    severity,
+    detail: f.detail ?? "",
+    phase: f.phase || undefined,
+    scope: f.scope || undefined,
+    script: f.script || undefined,
+    target: f.target || undefined
+  };
+}
+
+function fromWireValidatedScript(s: WireWorkflowValidatedScript): WorkflowValidatedScript {
+  return {
+    stepId: s.step_id ?? "",
+    scriptName: s.script_name ?? "",
+    phase: phaseOf(s.phase),
+    scope: scopeOf(s.scope),
+    order: s.order ?? 0,
+    target: s.target === "remote" ? "remote" : "local",
+    executionConnectionRef: s.execution_connection_ref || undefined,
+    sha256: s.sha256 ?? "",
+    sizeBytes: s.size_bytes ?? 0,
+    timeoutMs: s.timeout_ms ?? 0
+  };
+}
+
+function fromWireValidation(v: WireWorkflowValidationResponse): WorkflowValidation {
+  return {
+    backupSetId: v.backup_set_id ?? "",
+    configured: v.configured === true,
+    root: v.root ?? "",
+    stages: (v.stages ?? []).map(fromWireStage),
+    scripts: (v.scripts ?? []).map(fromWireValidatedScript),
+    findings: (v.findings ?? []).map(fromWireFinding),
+    // Both default FALSE. A verdict this build did not receive is not a
+    // pass, and the two are kept apart for the reason the response keeps
+    // them apart: a set can be valid for backup and invalid for
+    // workflows, which is the ordinary state during setup.
+    validForBackup: v.valid_for_backup === true,
+    workflowValid: v.workflow_valid === true
+  };
+}
+
+/** A PATCH body carrying only the fields a caller named. An absent key is
+ *  "leave this alone" and an empty string is "clear this" — and clearing
+ *  a stage directory DISABLES that stage, so the two must not be
+ *  collapsed here. */
+function wireWorkflowSettingsPatch(patch: WorkflowSettingsPatch): WireUpdateWorkflowSettingsRequest {
+  const body: WireUpdateWorkflowSettingsRequest = {};
+  if (patch.root !== undefined) body.root = patch.root;
+  if (patch.beforeDir !== undefined) body.before_dir = patch.beforeDir;
+  if (patch.afterDir !== undefined) body.after_dir = patch.afterDir;
+  if (patch.scriptTimeoutSeconds !== undefined) body.script_timeout_seconds = patch.scriptTimeoutSeconds;
+  if (patch.maxScriptSizeBytes !== undefined) body.max_script_size_bytes = patch.maxScriptSizeBytes;
+  return body;
+}
+
+function wireBackupSetWorkflowPatch(patch: BackupSetWorkflowPatch): WireUpdateBackupSetWorkflowRequest {
+  const body: WireUpdateBackupSetWorkflowRequest = {};
+  if (patch.beforeDir !== undefined) body.before_dir = patch.beforeDir;
+  if (patch.afterDir !== undefined) body.after_dir = patch.afterDir;
+  if (patch.scriptTimeoutSeconds !== undefined) body.script_timeout_seconds = patch.scriptTimeoutSeconds;
+  if (patch.remoteExecConnectionRef !== undefined) {
+    body.remote_exec_connection_ref = patch.remoteExecConnectionRef;
+  }
+  return body;
+}
+
+/**
+ * How long a log follower asks the service to hold for new output.
+ *
+ * The service's own ceiling (core/service/workflowinspect.go's
+ * workflowLogWaitCeiling), because it clamps DOWN and never up: asking
+ * for less is asking for a faster poll and nothing else.
+ */
+const WORKFLOW_LOG_WAIT_SECONDS = 5;
+
+/** /workflow-runs/{run}, and the two paths under it. The run id is
+ *  opaque and single-segment (the engine mints it), so one encode is the
+ *  whole of it — unlike a backup set id, which is composite. */
+const workflowRunPath = (runId: string) => "/workflow-runs/" + encodeURIComponent(runId);
+
+const workflowRecoveryPath = (runId: string) => "/workflow-recovery/" + encodeURIComponent(runId);
+
+/** /backup-sets/{source}/{set}/workflow, and its three sub-paths. */
+const setWorkflowPath = (source: string, set: string) => backupSetPath(source, set) + "/workflow";
+
+/**
  * The contract, implemented against a running service.
  *
  * Every method is one request and one mapping, and the object is flat on
@@ -2967,5 +3345,142 @@ export const httpApi: BackupdApi = {
 
   rotatePassword: (currentPassword, newPassword) =>
     post("/auth/password", { currentPassword, newPassword }),
-  logout: () => post("/auth/logout")
+  logout: () => post("/auth/logout"),
+
+  // EPIC L's eighteen workflow operations (issue #814), against the
+  // routes L6 landed. Read them in the order the API declares them: the
+  // journal, the recovery actions, then the configuration either side.
+
+  // Both query parameters are advisory, which is why they are appended
+  // only when present rather than sent as zeros: the route reads an
+  // absent, unparseable or non-positive value as "use your own default",
+  // and blanking a panel an operator went to look at over a query string
+  // is the one thing these reads exist not to do.
+  workflowRuns: (query) => {
+    const params = new URLSearchParams();
+    if (query?.backupSetId) params.set("backup_set", query.backupSetId);
+    if (query?.limit !== undefined && query.limit > 0) params.set("limit", String(query.limit));
+    const search = params.toString();
+    return request<WireListWorkflowRunsResponse>("/workflow-runs" + (search ? "?" + search : "")).then(
+      (r) => (r.runs ?? []).map(fromWireWorkflowRun)
+    );
+  },
+  workflowRun: (runId) =>
+    request<WireWorkflowRun>(workflowRunPath(runId)).then(fromWireWorkflowRun),
+  // Its own read rather than re-reading the whole run, because that is
+  // what a client following a live workflow polls: the run's own row
+  // moves twice, at the start and at the end, and the steps are what
+  // change in between.
+  workflowSteps: (runId) =>
+    request<WireListWorkflowStepsResponse>(workflowRunPath(runId) + "/steps").then((r) =>
+      (r.steps ?? []).map(fromWireWorkflowStep)
+    ),
+  // `wait` is sent in SECONDS because that is what the route parses, and
+  // it is a boolean on this side deliberately: a follower only ever wants
+  // "hold briefly rather than answering empty", and the service decides
+  // how long that is.
+  //
+  // The number matters, though, and getting it wrong is silent. The
+  // service only ever CLAMPS DOWN (workflowLogWaitCeiling, 5s, in
+  // core/service/workflowinspect.go): it never raises a smaller value. A
+  // client that sent 1 would therefore turn a terminal following a quiet
+  // step into a one-second poll against a service willing to hold for
+  // five, which is five times the requests for the same output. So the
+  // ceiling itself is what is asked for, and the clamp is what keeps that
+  // honest if the service's own limit ever drops.
+  workflowStepLogs: (runId, stepId, options) => {
+    const params = new URLSearchParams();
+    if (options?.after !== undefined && options.after > 0) params.set("after", String(options.after));
+    if (options?.wait) params.set("wait", String(WORKFLOW_LOG_WAIT_SECONDS));
+    if (options?.limit !== undefined && options.limit > 0) params.set("limit", String(options.limit));
+    const search = params.toString();
+    return request<WireWorkflowStepLogPage>(
+      workflowRunPath(runId) + "/steps/" + encodeURIComponent(stepId) + "/logs" +
+        (search ? "?" + search : "")
+    ).then(fromWireWorkflowStepLogPage);
+  },
+
+  workflowRecovery: () =>
+    request<WireWorkflowRecoveryResponse>("/workflow-recovery").then((r) =>
+      (r.holds ?? []).map((h) => ({
+        runId: h.run_id ?? "",
+        backupSetId: h.backup_set_id ?? "",
+        scope: scopeOf(h.scope),
+        enteredAt: h.entered_at ?? "",
+        spoolRef: h.spool_ref ?? ""
+      }))
+    ),
+  // No body. The whole content of the request is which run, and that is
+  // in the path; the scripts come out of that run's own retained spool
+  // and are re-verified against the hash recorded when it was planned,
+  // so there is nothing a caller could usefully send.
+  resumeWorkflowCleanup: (runId) =>
+    request<WireWorkflowRun>(workflowRecoveryPath(runId) + "/resume-cleanup", {
+      method: "POST"
+    }).then(fromWireWorkflowRun),
+  // The reason is the only field, and the actor is deliberately not one:
+  // it is read from the authenticated session, because an
+  // acknowledgement records who took responsibility and a
+  // caller-supplied name would be a claim rather than an answer. Answers
+  // 204, so there is nothing to map.
+  acknowledgeWorkflowRecovery: (runId, reason) =>
+    post(workflowRecoveryPath(runId) + "/acknowledge", { reason }),
+
+  getWorkflowSettings: () =>
+    request<WireWorkflowSettingsResponse>("/settings/workflow").then(fromWireWorkflowSettings),
+  patchWorkflowSettings: (patch) =>
+    request<WireWorkflowSettingsResponse>("/settings/workflow", {
+      method: "PATCH",
+      body: JSON.stringify(wireWorkflowSettingsPatch(patch))
+    }).then(fromWireWorkflowSettings),
+
+  listWorkflowEnvironment: () =>
+    request<WireListWorkflowEnvironmentResponse>("/settings/workflow/environment").then(
+      fromWireEnvironment
+    ),
+  // PUT, with the NAME in the path: a body that could name a second
+  // variable would be a request whose path and body can disagree. Every
+  // one of these three answers with the whole list, which is the route's
+  // shape and not a convenience — an operator clearing a credential
+  // needs to see what is left.
+  setWorkflowEnvironment: (name, entry) =>
+    request<WireListWorkflowEnvironmentResponse>(
+      "/settings/workflow/environment/" + encodeURIComponent(name),
+      { method: "PUT", body: JSON.stringify(toWireEnvVariable(entry)) }
+    ).then(fromWireEnvironment),
+  unsetWorkflowEnvironment: (name) =>
+    request<WireListWorkflowEnvironmentResponse>(
+      "/settings/workflow/environment/" + encodeURIComponent(name),
+      { method: "DELETE" }
+    ).then(fromWireEnvironment),
+
+  getBackupSetWorkflow: (source, set) =>
+    request<WireBackupSetWorkflowResponse>(setWorkflowPath(source, set)).then(
+      fromWireBackupSetWorkflow
+    ),
+  patchBackupSetWorkflow: (source, set, patch) =>
+    request<WireBackupSetWorkflowResponse>(setWorkflowPath(source, set), {
+      method: "PATCH",
+      body: JSON.stringify(wireBackupSetWorkflowPatch(patch))
+    }).then(fromWireBackupSetWorkflow),
+
+  listBackupSetWorkflowEnvironment: (source, set) =>
+    request<WireListWorkflowEnvironmentResponse>(
+      setWorkflowPath(source, set) + "/environment"
+    ).then(fromWireEnvironment),
+  setBackupSetWorkflowEnvironment: (source, set, name, entry) =>
+    request<WireListWorkflowEnvironmentResponse>(
+      setWorkflowPath(source, set) + "/environment/" + encodeURIComponent(name),
+      { method: "PUT", body: JSON.stringify(toWireEnvVariable(entry)) }
+    ).then(fromWireEnvironment),
+  unsetBackupSetWorkflowEnvironment: (source, set, name) =>
+    request<WireListWorkflowEnvironmentResponse>(
+      setWorkflowPath(source, set) + "/environment/" + encodeURIComponent(name),
+      { method: "DELETE" }
+    ).then(fromWireEnvironment),
+
+  getBackupSetWorkflowValidation: (source, set) =>
+    request<WireWorkflowValidationResponse>(setWorkflowPath(source, set) + "/validation").then(
+      fromWireValidation
+    )
 };

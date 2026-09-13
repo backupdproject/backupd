@@ -466,7 +466,47 @@ describe("every request the shared client makes is a declared operation", () => 
       ["updateRecoverySettings", () => httpApi.updateRecoverySettings({ currentPassword: "correct-horse-battery", recoveryEmail: "ops@example.com", smtp: SMTP })],
       ["sendRecoveryTestEmail", () => httpApi.sendRecoveryTestEmail()],
       ["rotatePassword", () => httpApi.rotatePassword("a", "b")],
-      ["logout", () => httpApi.logout()]
+      ["logout", () => httpApi.logout()],
+      // EPIC L's eighteen workflow operations (issue #814). Every one is
+      // listed here for the reason restoreCopy's own comment gives — a
+      // client method nobody drives from this list is invisible to the
+      // whole file — and each of them is also what deletes its own name
+      // from UNREACHED_SERVER_OPERATIONS below.
+      //
+      // The reads are driven WITH their query parameters, because those
+      // are the half a path assertion cannot see: `matcherFor` compares
+      // the path with the query string stripped, so a method that put a
+      // cursor in the path instead of the query would match nothing and
+      // be caught, which is the whole point of driving it.
+      ["workflowRuns", () => httpApi.workflowRuns({ backupSetId: "src/set-1", limit: 20 })],
+      ["workflowRun", () => httpApi.workflowRun("wfr_1")],
+      ["workflowSteps", () => httpApi.workflowSteps("wfr_1")],
+      ["workflowStepLogs", () =>
+        httpApi.workflowStepLogs("wfr_1", "step_1", { after: 12, wait: true, limit: 200 })],
+      ["workflowRecovery", () => httpApi.workflowRecovery()],
+      ["resumeWorkflowCleanup", () => httpApi.resumeWorkflowCleanup("wfr_1")],
+      ["acknowledgeWorkflowRecovery", () =>
+        httpApi.acknowledgeWorkflowRecovery("wfr_1", "thawed the database by hand")],
+      ["getWorkflowSettings", () => httpApi.getWorkflowSettings()],
+      ["patchWorkflowSettings", () => httpApi.patchWorkflowSettings({ scriptTimeoutSeconds: 300 })],
+      ["listWorkflowEnvironment", () => httpApi.listWorkflowEnvironment()],
+      // A LOCATION and never a value, in the one direction that could
+      // carry one: the write. A reference is what a browser sends, and
+      // the contract has no field a resolved secret could travel in.
+      ["setWorkflowEnvironment", () =>
+        httpApi.setWorkflowEnvironment("PGPASSWORD", { secret: { file: "/etc/backupd/secrets/pg" } })],
+      ["unsetWorkflowEnvironment", () => httpApi.unsetWorkflowEnvironment("PGPASSWORD")],
+      ["getBackupSetWorkflow", () => httpApi.getBackupSetWorkflow("src", "set-1")],
+      ["patchBackupSetWorkflow", () =>
+        httpApi.patchBackupSetWorkflow("src", "set-1", { beforeDir: "/srv/hooks/before" })],
+      ["listBackupSetWorkflowEnvironment", () =>
+        httpApi.listBackupSetWorkflowEnvironment("src", "set-1")],
+      ["setBackupSetWorkflowEnvironment", () =>
+        httpApi.setBackupSetWorkflowEnvironment("src", "set-1", "PGHOST", { value: "db.internal" })],
+      ["unsetBackupSetWorkflowEnvironment", () =>
+        httpApi.unsetBackupSetWorkflowEnvironment("src", "set-1", "PGHOST")],
+      ["getBackupSetWorkflowValidation", () =>
+        httpApi.getBackupSetWorkflowValidation("src", "set-1")]
     ];
     for (const [, call] of calls) {
       await call().catch(() => undefined);
@@ -613,35 +653,16 @@ describe("every request the shared client makes is a declared operation", () => 
     // wiring it FORCED an edit here — which is what makes this list a
     // gate that can only shrink.
     //
-    // The eighteen below are EPIC L's workflow surface (#813), whose API
-    // and CLI halves landed ahead of its UI wave. They are pinned here
-    // for exactly the reason #788's seven were, and the entry is the
-    // mechanism working rather than an exemption: adding a contract
-    // operation forces a line here on the commit that adds it, and
-    // wiring a screen to one forces that line back out. They are not a
-    // standing permission — nothing in ui/shared may call them without
-    // this list shrinking, which is the property the exact assertion
-    // below enforces in both directions.
-    "acknowledgeWorkflowRecovery",
-    "getBackupSetWorkflow",
-    "getBackupSetWorkflowValidation",
+    // The eighteen that used to sit here were EPIC L's workflow surface
+    // (#813), whose API and CLI halves landed ahead of its UI wave. They
+    // left with #814's screens, which is the mechanism working end to
+    // end: adding a contract operation forced a line here on the commit
+    // that added it, and wiring a screen to one forced that line back
+    // out. They were never a standing permission — nothing in ui/shared
+    // could call them without this list shrinking, which is the property
+    // the exact assertion below enforces in both directions.
     "getSession",
-    "getSystemCapabilities",
-    "getWorkflowRun",
-    "getWorkflowSettings",
-    "getWorkflowStepLogs",
-    "listBackupSetWorkflowEnvironment",
-    "listWorkflowEnvironment",
-    "listWorkflowRecovery",
-    "listWorkflowRunSteps",
-    "listWorkflowRuns",
-    "resumeWorkflowCleanup",
-    "setBackupSetWorkflowEnvironment",
-    "setWorkflowEnvironment",
-    "unsetBackupSetWorkflowEnvironment",
-    "unsetWorkflowEnvironment",
-    "updateBackupSetWorkflow",
-    "updateWorkflowSettings"
+    "getSystemCapabilities"
   ];
 
   it("pins the contract operations no client call reaches", () => {

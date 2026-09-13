@@ -1942,6 +1942,412 @@ export interface SnapshotOperationResult {
 }
 
 /**
+ * EPIC L's workflow vocabulary (issue #814), mapped off
+ * generated/contract.ts.
+ *
+ * # Why these are hand types at all
+ *
+ * The wire shapes are generated and every field on them is optional,
+ * because that is what an OpenAPI document without required-field
+ * annotations produces. A page cannot render `state?: string | undefined`
+ * into a badge without deciding what an absent state means, and deciding
+ * that in every component is how two screens end up drawing the same run
+ * differently. So the mapping happens once, in client.ts, onto the closed
+ * unions below.
+ *
+ * # The one rule that governs every shape here
+ *
+ * A secret is a LOCATION and never a value. `WorkflowSecretReference`
+ * carries a file path, a variable NAME or an argv, and there is no field
+ * anywhere below a resolved secret could be written into or read out of.
+ * That is the type rather than a convention: the engine resolves a
+ * reference at the moment a hook is about to run and nothing carries the
+ * result back, so no response this client can receive has one to leak.
+ * The consequence reads as a gap and is not one: no surface in this UI
+ * can show an operator the value of a secret variable, ever.
+ */
+
+/** One step's outcome. The eight the engine writes, and nothing else: a
+ *  state this build cannot read is mapped to "interrupted" rather than to
+ *  a confident verdict, because of the eight that is the one that says
+ *  "somebody should look at this". */
+export type WorkflowStepState =
+  | "pending"
+  | "running"
+  | "success"
+  | "failed"
+  | "timed_out"
+  | "canceled"
+  | "skipped"
+  | "interrupted";
+
+/** One RUN's own state, which is the step vocabulary plus the four a run
+ *  can be in that no single step can: held for recovery, running its
+ *  cleanup, having failed that cleanup, and having been recovered. */
+export type WorkflowRunState =
+  | WorkflowStepState
+  | "recovery_required"
+  | "cleanup_running"
+  | "cleanup_failed"
+  | "recovered";
+
+/** One of the three verdicts a run carries. They stay three and none is
+ *  derived from the others: "the backup succeeded and the cleanup did
+ *  not" is the single most operationally important thing this feature can
+ *  report, because it means a machine may be sitting quiesced with a good
+ *  backup beside it, and a surface that collapsed them would make exactly
+ *  that case unsayable. */
+export type WorkflowStatus = "unknown" | "running" | "success" | "failed" | "skipped";
+
+/** Whether this run is holding its backup set, and how far out of the
+ *  hold it has got. */
+export type WorkflowRecoveryState = "none" | "required" | "in_progress" | "resolved";
+
+/** Which of the five stages a step belongs to: the scope that configured
+ *  it, and which side of the backup it runs on. */
+export type WorkflowScope = "global" | "set";
+export type WorkflowPhase = "before" | "after";
+
+/**
+ * One step of one workflow run: one hook script, executed once.
+ *
+ * `target` is the field every surface's wording hangs off. "local" means
+ * the machine backupd is installed on, executed by the Host Workflow
+ * Runner — never the engine container, which has no shell for a hook and
+ * did not grow one. "remote" means the source host, over the execution
+ * connection named by `executionConnectionRef`.
+ *
+ * `scriptSha256` is optional and is usually absent, which is honest
+ * rather than incomplete: the run-step shape L6 serves carries no hash,
+ * so a row describing last night's run has no recorded hash to print. The
+ * validation report's hash describes the script on disk NOW, and
+ * rendering that as the run's would be a claim about what executed that
+ * nothing supports.
+ */
+export interface WorkflowStepSummary {
+  stepId: string;
+  scriptName: string;
+  phase: WorkflowPhase;
+  scope: WorkflowScope;
+  order: number;
+  target: "local" | "remote";
+  /** The execution connection a remote step ran over, as configured.
+   *  Absent on a local step, which has no connection at all. */
+  executionConnectionRef?: string;
+  /** The host a remote step ran on, when the client can name one.
+   *  Derived from the connection reference; the wire carries no separate
+   *  host field, so this is frequently undefined and the connection
+   *  reference is the identity a surface prints. */
+  remoteHost?: string;
+  state: WorkflowStepState;
+  /** null when the step produced no exit code: it never ran, or it was
+   *  signalled and the channel closed before the process reported one.
+   *  Distinct from 0, which is a real success. */
+  exitCode?: number | null;
+  durationMs?: number;
+  startedAt?: string;
+  finishedAt?: string;
+  timeoutMs?: number;
+  /**
+   * Whether this product SAW this step stop.
+   *
+   * False on a step that was killed on its timeout and whose exit was
+   * never confirmed, which is the state that has to be said out loud: the
+   * script may still be running on the machine it was sent to, and
+   * nothing in this product can end it. Absent means the engine reported
+   * nothing, which is not the same as "confirmed".
+   */
+  terminationConfirmed?: boolean;
+  scriptSha256?: string;
+}
+
+/**
+ * One workflow run: one backup set's pass, wrapped in the five-stage hook
+ * lifecycle.
+ *
+ * `steps` is empty on a list read and populated on a detail read, which
+ * is the server's shape rather than this client's: a client following a
+ * running workflow polls the STEPS, because the run's own row moves once
+ * at the start and once at the end and the steps are what change in
+ * between.
+ */
+export interface WorkflowRun {
+  runId: string;
+  backupSetId: string;
+  state: WorkflowRunState;
+  backupStatus: WorkflowStatus;
+  workflowStatus: WorkflowStatus;
+  cleanupStatus: WorkflowStatus;
+  recoveryState: WorkflowRecoveryState;
+  /** Whether this run was asked to skip its hooks. Prominent on every
+   *  surface that draws a run: a green workflow verdict on a run that
+   *  never executed a hook is a different fact from one that ran them
+   *  all. */
+  bypassed: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+  scriptCount: number;
+  /** The step and script that ended the workflow, when one did. Both,
+   *  because the id is what a link needs and the basename is what an
+   *  operator reads. */
+  failedStep?: string;
+  failedScript?: string;
+  steps: WorkflowStepSummary[];
+}
+
+/** Which slice of the run journal to read. Both fields are advisory: the
+ *  engine answers with its own defaults for anything absent, and a
+ *  backup set id it does not configure is NOT refused — a run outlives
+ *  the configuration that produced it, so "this set is gone and here is
+ *  what it did" is a real answer. */
+export interface WorkflowRunQuery {
+  backupSetId?: string;
+  limit?: number;
+}
+
+/** One captured record of one step's output. `kind` tells an ordinary
+ *  line from the engine's own note that output was dropped, which a
+ *  terminal renders differently: a truncation marker is not something the
+ *  script said. */
+export interface WorkflowStepLogRecord {
+  seq: number;
+  stream: "stdout" | "stderr";
+  at: string;
+  text: string;
+  kind?: "output" | "truncated";
+}
+
+/**
+ * One page of one step's captured output.
+ *
+ * A cursor read and not a stream: the follower sends the last sequence it
+ * PROCESSED and gets what is newer, so resume after a dropped connection
+ * is the ordinary read with the cursor the follower already had. That is
+ * also what makes authorization on replay structural — every page is one
+ * ordinary authenticated request — rather than something somebody has to
+ * remember.
+ *
+ * `complete` and not an empty page is what tells a follower it may stop:
+ * the sequence counter is per RUN, so a page filtered to one step can
+ * legitimately be empty while the run's counter has moved.
+ */
+export interface WorkflowStepLogPage {
+  records: WorkflowStepLogRecord[];
+  cursor: number;
+  complete: boolean;
+  truncated: boolean;
+}
+
+/** How a follower asks for the next page. `wait` asks the service to hold
+ *  briefly for new output rather than answering empty; it is CLAMPED
+ *  server-side, because an unbounded wait is a held-open response wearing
+ *  a different name. */
+export interface WorkflowStepLogOptions {
+  after?: number;
+  wait?: boolean;
+  limit?: number;
+}
+
+/** One reason a backup set is refusing to run: a workflow run whose
+ *  cleanup this product could not finish, and whose "after" hooks may
+ *  therefore never have run. */
+export interface WorkflowRecoveryHold {
+  runId: string;
+  backupSetId: string;
+  scope: WorkflowScope;
+  enteredAt: string;
+  /** Where the run's retained scripts are. Shown because a resume
+   *  executes from it, re-verified against the hash recorded when that
+   *  run was planned. */
+  spoolRef: string;
+}
+
+/** Where one workflow environment value comes from, when it is not a
+ *  literal. Exactly one of the three is set, and none of them is a value:
+ *  see this block's own doc. */
+export interface WorkflowSecretReference {
+  file?: string;
+  env?: string;
+  command?: string[];
+}
+
+/** One configured environment entry, as every read of either scope
+ *  reports it.
+ *
+ *  `value` and `hasValue` are two fields rather than one nullable string
+ *  because the difference is real and a surface renders it: an empty
+ *  literal is a deliberately empty variable, which operators write, and
+ *  no literal at all is a variable whose value comes from a reference. */
+export interface WorkflowEnvVariable {
+  name: string;
+  value?: string;
+  hasValue: boolean;
+  secret?: WorkflowSecretReference;
+}
+
+/** A PUT of one entry. The NAME is not here: it is the path segment, so a
+ *  body that could name a second variable cannot exist. Exactly one of
+ *  the two is meaningful — a literal and a reference at once is refused
+ *  as a contradiction. */
+export interface WorkflowEnvVariableInput {
+  value?: string;
+  secret?: WorkflowSecretReference;
+}
+
+/** One scope's configured environment, after a read or a write. The
+ *  writes answer with the whole list rather than the entry they touched,
+ *  because a set or an unset is only meaningful against what else is
+ *  there. */
+export interface WorkflowEnvironment {
+  backupSetId: string;
+  variables: WorkflowEnvVariable[];
+}
+
+/** One scope-and-phase pair that has a directory. A run executes five
+ *  stages in a fixed order; these are the ones a configuration actually
+ *  gives a directory to. */
+export interface WorkflowStage {
+  scope: WorkflowScope;
+  phase: WorkflowPhase;
+  dir: string;
+}
+
+/** How this process reaches the Host Workflow Runner: the component that
+ *  executes a `.local.sh` hook on the machine backupd is installed on.
+ *  Reported and never writable, because the two paths differ between a
+ *  container and a bare-metal install of the same deployment — a
+ *  deployment-shape fact the installer writes, like the SSH key and the
+ *  state database. */
+export interface WorkflowRunnerStatus {
+  configured: boolean;
+  socket: string;
+  tokenFile: string;
+}
+
+/** The deployment-wide workflow configuration, RESOLVED: the timeout a
+ *  hook will actually get, the stages that will actually run, the
+ *  environment a hook will actually see. That is why this read exists
+ *  rather than a client re-reading config.yaml — the file's whole point
+ *  is that it omits what is inherited or defaulted. */
+export interface WorkflowSettings {
+  configured: boolean;
+  root: string;
+  beforeDir: string;
+  afterDir: string;
+  scriptTimeoutSeconds: number;
+  /** Whether that timeout is a configured value or the product's own
+   *  default. A form that could not tell them apart would write today's
+   *  default into the file and stop following a later change to it. */
+  scriptTimeoutConfigured: boolean;
+  maxScriptSizeBytes: number;
+  environment: WorkflowEnvVariable[];
+  /** Every connection this deployment declares that a hook could execute
+   *  over. The picker's options; capability is proven per set by
+   *  validation, not asserted here. */
+  execConnections: string[];
+  runner: WorkflowRunnerStatus;
+}
+
+/** A PARTIAL write of the deployment-wide block. An absent field is
+ *  "leave this alone" and an empty string is "clear this", which are
+ *  different requests — clearing a stage directory DISABLES that stage,
+ *  so it has to be expressible. */
+export interface WorkflowSettingsPatch {
+  root?: string;
+  beforeDir?: string;
+  afterDir?: string;
+  scriptTimeoutSeconds?: number;
+  maxScriptSizeBytes?: number;
+}
+
+/** One backup set's workflow configuration, resolved against the
+ *  deployment's. Both halves of every inherited value are reported —
+ *  what this set PINS and what a hook will actually get — because an
+ *  operator changing the deployment default needs to know which sets are
+ *  pinned and which will follow. */
+export interface BackupSetWorkflow {
+  backupSetId: string;
+  configured: boolean;
+  beforeDir: string;
+  afterDir: string;
+  /** What this set pins, or undefined when it inherits. */
+  scriptTimeoutSeconds?: number;
+  /** What a hook will actually get, pinned or inherited. */
+  effectiveScriptTimeoutSeconds: number;
+  remoteExecConnectionRef: string;
+  environment: WorkflowEnvVariable[];
+  /** Every variable name a hook for this set will see, from both scopes
+   *  and the built-ins, as the engine resolved them. */
+  resolvedEnvironmentNames: string[];
+  stages: WorkflowStage[];
+}
+
+/** A PARTIAL write of one set's block, with the same absent/empty rule
+ *  the deployment-wide patch keeps. A patch against a set with no
+ *  workflow block creates one carrying only the fields named, so a set
+ *  given a before_dir does not silently acquire a pinned timeout copied
+ *  from today's deployment value. */
+export interface BackupSetWorkflowPatch {
+  beforeDir?: string;
+  afterDir?: string;
+  scriptTimeoutSeconds?: number;
+  remoteExecConnectionRef?: string;
+}
+
+/** One validation check's answer. `severity` has four values and
+ *  "skipped" earns its place: a deployment with no remote hooks has
+ *  nothing to say about its exec capability, and reporting that as OK
+ *  would be this product claiming it proved something it never looked
+ *  at. */
+export interface WorkflowFinding {
+  check: string;
+  severity: "ok" | "skipped" | "warning" | "error";
+  detail: string;
+  phase?: string;
+  scope?: string;
+  script?: string;
+  target?: string;
+}
+
+/** One hook this backup set would run, as validation found it on disk.
+ *  Nothing here was executed: the only things validation hands an
+ *  interpreter are `bash -n`, which parses and never runs, and this
+ *  product's own fixed remote capability probe. */
+export interface WorkflowValidatedScript {
+  stepId: string;
+  scriptName: string;
+  phase: WorkflowPhase;
+  scope: WorkflowScope;
+  order: number;
+  target: "local" | "remote";
+  executionConnectionRef?: string;
+  sha256: string;
+  sizeBytes: number;
+  timeoutMs: number;
+}
+
+/** Everything this product can establish about one backup set's hooks
+ *  WITHOUT running any of them.
+ *
+ *  Two verdicts rather than one, and that is the shape rather than an
+ *  oversight: a set whose source connects, whose destination is writable
+ *  and whose retention is sound, with a hook directory nobody has created
+ *  yet, is valid for backup and invalid for workflows — the normal case
+ *  during setup, and reporting it as a broken backup set would tell an
+ *  operator their backups are failing when they are not. */
+export interface WorkflowValidation {
+  backupSetId: string;
+  configured: boolean;
+  root: string;
+  stages: WorkflowStage[];
+  scripts: WorkflowValidatedScript[];
+  findings: WorkflowFinding[];
+  validForBackup: boolean;
+  workflowValid: boolean;
+}
+
+/**
  * Everything this frontend can ask a backend to do.
  *
  * Two implementations satisfy it and both are real: httpApi talks to a
@@ -2652,4 +3058,112 @@ export interface BackupdApi {
    *  revokes every other live session for this administrator. */
   rotatePassword(currentPassword: string, newPassword: string): Promise<void>;
   logout(): Promise<void>;
+
+  /**
+   * EPIC L's workflow surface (issue #814), against the routes L6 landed.
+   *
+   * Four reads for what a run DID, three writes for a run that is stuck,
+   * and the configuration either side of it. The split is the API's own
+   * and it is worth keeping in mind when calling them: the run and its
+   * steps are separate reads because a client following a live workflow
+   * polls the steps, and the validation is a separate read again because
+   * it costs real work — it captures and hashes every script, opens a
+   * socket to the Host Workflow Runner and an SSH connection to the
+   * source — so nothing may poll it on a timer.
+   */
+  /** Every recorded run, newest first, optionally narrowed to one backup
+   *  set. A set id this deployment no longer configures is answered
+   *  rather than refused: a run outlives the configuration that produced
+   *  it. */
+  workflowRuns(query?: WorkflowRunQuery): Promise<WorkflowRun[]>;
+  /** One run, with its steps. */
+  workflowRun(runId: string): Promise<WorkflowRun>;
+  /** One run's steps, in plan order. The read a live page polls. */
+  workflowSteps(runId: string): Promise<WorkflowStepSummary[]>;
+  /**
+   * One page of one step's captured output, from `after` onwards.
+   *
+   * The cursor read the step terminal follows: send the last sequence
+   * PROCESSED and get what is newer, which makes resume after a dropped
+   * connection the ordinary call rather than a special case. `complete`
+   * — never an empty page — is what says a follower may stop.
+   */
+  workflowStepLogs(
+    runId: string,
+    stepId: string,
+    options?: WorkflowStepLogOptions
+  ): Promise<WorkflowStepLogPage>;
+
+  /** Every outstanding recovery hold in this deployment. An empty list is
+   *  the ordinary state; a non-empty one is the reason a backup set has
+   *  stopped backing up, answered from the engine's own hold set rather
+   *  than guessed at from the run list. */
+  workflowRecovery(): Promise<WorkflowRecoveryHold[]>;
+  /**
+   * Run the "after" hooks a held run still owes, from that run's own
+   * retained spool.
+   *
+   * Nothing a caller sends and nothing an operator edited since decides
+   * what executes: every script comes out of the spool and is
+   * re-verified against the sha256 recorded when that run was planned,
+   * and the request names a run id and nothing else. Answers with the
+   * run as it now stands.
+   */
+  resumeWorkflowCleanup(runId: string): Promise<WorkflowRun>;
+  /**
+   * Take responsibility, by hand, for a run this product could not
+   * account for, and unblock its backup set.
+   *
+   * The reason is required by the service and by the product: there is
+   * deliberately no "clear this" and no "ignore this", because a run in
+   * recovery may have left a source machine quiesced, mounted or paused.
+   * The actor is read from the session and never sent, since an
+   * acknowledgement whose actor the caller could choose would answer
+   * "who unblocked this" with whatever name the caller typed.
+   */
+  acknowledgeWorkflowRecovery(runId: string, reason: string): Promise<void>;
+
+  /** The deployment-wide workflow block, resolved. */
+  getWorkflowSettings(): Promise<WorkflowSettings>;
+  /** A sparse write of it. Answers with the block as it now stands, so a
+   *  form re-renders from what was persisted rather than from what it
+   *  hoped it had written. */
+  patchWorkflowSettings(patch: WorkflowSettingsPatch): Promise<WorkflowSettings>;
+
+  /** The deployment-wide environment, and its two writes. Every one of
+   *  the three answers with the whole list, because a set or an unset is
+   *  only meaningful against what else is there. */
+  listWorkflowEnvironment(): Promise<WorkflowEnvironment>;
+  setWorkflowEnvironment(name: string, entry: WorkflowEnvVariableInput): Promise<WorkflowEnvironment>;
+  unsetWorkflowEnvironment(name: string): Promise<WorkflowEnvironment>;
+
+  /** One backup set's block, resolved against the deployment's, and its
+   *  sparse write. */
+  getBackupSetWorkflow(source: string, set: string): Promise<BackupSetWorkflow>;
+  patchBackupSetWorkflow(
+    source: string,
+    set: string,
+    patch: BackupSetWorkflowPatch
+  ): Promise<BackupSetWorkflow>;
+
+  /** One backup set's own environment layer, and its two writes. The same
+   *  three operations as the deployment scope, on the narrower list. */
+  listBackupSetWorkflowEnvironment(source: string, set: string): Promise<WorkflowEnvironment>;
+  setBackupSetWorkflowEnvironment(
+    source: string,
+    set: string,
+    name: string,
+    entry: WorkflowEnvVariableInput
+  ): Promise<WorkflowEnvironment>;
+  unsetBackupSetWorkflowEnvironment(
+    source: string,
+    set: string,
+    name: string
+  ): Promise<WorkflowEnvironment>;
+
+  /** Everything establishable about one set's hooks without running any
+   *  of them. Never polled: it hashes every script and opens both a
+   *  runner socket and an SSH connection, so a dashboard on a timer here
+   *  would be probing an operator's source host on a timer. */
+  getBackupSetWorkflowValidation(source: string, set: string): Promise<WorkflowValidation>;
 }

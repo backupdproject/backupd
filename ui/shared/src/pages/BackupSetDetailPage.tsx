@@ -51,6 +51,12 @@ import { useActivityFeed } from "./useActivityFeed";
 import { emitBrowserNotice } from "@shared/state/browserNotices";
 import { WarningBanner } from "@shared/components/WarningBanner";
 import { HaltBanner } from "@shared/components/HaltBanner";
+// EPIC L (issue #814): this set's hooks, and the hold that stops it
+// running at all. The hold is read here rather than inside the card,
+// because it gates a control in the page header — the per-set Run —
+// and a card cannot disable a button it does not own.
+import { WorkflowRecoveryBanner, useWorkflowHold } from "@shared/components/WorkflowRecoveryBanner";
+import { BackupSetWorkflowCard } from "@shared/pages/BackupSetWorkflowCard";
 import { ConfirmationDialog } from "@shared/components/ConfirmationDialog";
 import { RemoveBackupSetDialog } from "@shared/components/RemoveBackupSetDialog";
 import { SSHAuthWizard } from "@shared/components/SSHAuthWizard";
@@ -135,6 +141,11 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
   // longer holds a version of its own. Taking one here as well would be a
   // second answer to the same question.
   const run = useRunControls({ kind: "set", id: setId });
+  // EPIC L (#814). One read of the deployment's hold set, filtered to
+  // this set, because that is the route the API offers and the holds are
+  // what the next run is actually refused against — a run row's own
+  // recovery_state would only be a prediction of that refusal.
+  const workflowHold = useWorkflowHold(setId);
   // The live feed for THIS set, narrowed by the `backup_set` the route
   // already takes (issue #596). It is held here rather than inside the
   // panel because the Test Connection button below asks it for a fresh
@@ -732,13 +743,37 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                 disabled set, and offering a control here that contradicts
                 that would need explaining every time. An operator who
                 means it can still run the command the notice prints. */}
+            {/* EPIC L (#814): unavailable while a workflow run is held
+                for this set. The engine refuses the next run of a held
+                set outright, so leaving this pressable would be offering
+                a control that answers 409 every time — which reads as
+                broken rather than as refused. The banner below is the
+                only way out, and it offers both of them.
+
+                Also unavailable while the hold list has not been read
+                yet: the gate is "no hold has been reported", and before
+                the first answer nothing has been reported either way, so
+                drawing this as available would be guessing. */}
             <button
               className="btn btn--primary"
-              disabled={readOnly || run.busy || !s.enabled}
+              disabled={
+                readOnly ||
+                run.busy ||
+                !s.enabled ||
+                workflowHold.hold !== null ||
+                workflowHold.loading ||
+                workflowHold.error !== null
+              }
               title={hoverTitle(
-                s.enabled
-                  ? "Runs one pass over this backup set only."
-                  : "This backup set is disabled, so a run would not visit it."
+                workflowHold.hold
+                  ? "A workflow run for this set is held for recovery, so the engine will refuse a run until it is settled."
+                  : workflowHold.loading
+                    ? "Checking whether a workflow run is holding this backup set."
+                    : workflowHold.error !== null
+                      ? "Whether a workflow run is holding this set could not be read, so a run is not offered."
+                      : s.enabled
+                        ? "Runs one pass over this backup set only."
+                        : "This backup set is disabled, so a run would not visit it."
               )}
               onClick={() => run.runBackupSet(s.id)}
             >
@@ -864,6 +899,35 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
           changed is an administrator action taken out of band that this
           manager will not offer to perform (§77 invariant 5). */}
       <HaltBanner set={s} />
+
+      {/* EPIC L (#814). Above the panels, beside HaltBanner, because it
+          is a fact about the whole set and because it is the only thing
+          on screen explaining why the per-set Run control is
+          unavailable. A held set keeps every read on this page: an
+          operator diagnosing a hold needs the configuration, the
+          validation and the run that caused it. */}
+      {workflowHold.hold ? (
+        <div style={{ marginBottom: 14 }}>
+          <WorkflowRecoveryBanner
+            hold={workflowHold.hold}
+            readOnly={readOnly}
+            onSettled={workflowHold.reload}
+          />
+        </div>
+      ) : workflowHold.error ? (
+        <div style={{ marginBottom: 14 }}>
+          {/* An unreadable hold list is said out loud rather than
+              treated as "no holds": the second reading would offer a Run
+              the engine is about to refuse. */}
+          <WarningBanner
+            tone="warn"
+            title="Whether a workflow run is holding this backup set could not be read"
+            dismissKey={workflowHold.error}
+          >
+            {"Running this set is unavailable until that read succeeds (" + workflowHold.error + ")."}
+          </WarningBanner>
+        </div>
+      ) : null}
 
       {/* Issue #624: a backup set nobody ever proved, said out loud.
           This is what stops `--no-verify` being a hole rather than an
@@ -1172,6 +1236,13 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
               <ActivityTimeline events={events} dense />
             </div>
           </Section>
+
+          {/* EPIC L (#814). Below Activity rather than above it: an
+              operator arriving here is usually asking what this set did,
+              and the hooks either side of that are the next question,
+              not the first one. A set with no hooks configured anywhere
+              renders one sentence here and nothing else. */}
+          <BackupSetWorkflowCard source={s.source} set={s.set} readOnly={readOnly} />
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>

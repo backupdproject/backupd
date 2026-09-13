@@ -84,3 +84,20 @@ export function restorePath(source: string, set: string, runId?: string): string
 export function snapshotRetentionPath(source: string, set: string): string {
   return backupSetPath(source, set) + "/snapshot-retention";
 }
+
+/**
+ * One workflow run (EPIC L, issue #814).
+ *
+ * Top-level and NOT under the backup set, matching the API's own
+ * `/workflow-runs/{run}`, and for the API's own reason: a run outlives
+ * the configuration that produced it, so a set whose configuration has
+ * been removed still has runs an operator needs to read, and "what is
+ * stuck in this deployment" cannot be asked of any one set's page.
+ *
+ * One segment, because a run id is opaque and single-segment — the
+ * engine mints it — unlike a backup set id, which is composite. It is
+ * still escaped: an id is not a promise about which characters it holds.
+ */
+export function workflowRunPath(runId: string): string {
+  return "/workflow-runs/" + encodeURIComponent(runId);
+}

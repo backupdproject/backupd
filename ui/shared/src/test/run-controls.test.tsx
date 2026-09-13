@@ -264,6 +264,13 @@ describe("the per-set run control", () => {
   });
 
   async function renderDetail(api: ReturnType<typeof createMockApi>, set: BackupSet) {
+    // EPIC L (#814) gates the per-set Run control on this set's workflow
+    // recovery holds, and the dev fixtures deliberately hold one set so
+    // that screen renders in dev. This suite is about what a PRESS does,
+    // so it drives a deployment with nothing held rather than asserting
+    // around the gate — the gate has its own cases in
+    // test/workflow-set-config.test.tsx, in both directions.
+    vi.spyOn(api, "workflowRecovery").mockResolvedValue([]);
     const rendered = render(
       <MemoryRouter initialEntries={[backupSetPath(set.source, set.set)]}>
         <ApiProvider api={api}>
