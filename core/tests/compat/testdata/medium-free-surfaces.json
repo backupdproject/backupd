@@ -22,11 +22,22 @@
         "04-per-set-retention.yaml   set production/postgres-primary: tz=UTC week_starts=monday protect_lkg=true chain=[daily(gran=day,keep=14,period_days=0,window=-,medium=local) weekly(gran=week,keep=2,period_days=0,window=month,medium=local) monthly(gran=month,keep=6,period_days=0,window=-,medium=local)] local_path=/backups/production/postgres read_only=false",
         "04-per-set-retention.yaml   set production/media-archive: tz=UTC week_starts=monday protect_lkg=false chain=[monthly(gran=month,keep=24,period_days=0,window=-,medium=local)] local_path=/backups/production/media read_only=false",
         "04-per-set-retention.yaml   storage_mediums declared: 0",
+        "05-workflow-global-and-per-set.yaml validate: accepted",
+        "05-workflow-global-and-per-set.yaml   deployment policy: tz=UTC week_starts=monday protect_lkg=true chain=[daily(gran=day,keep=7,period_days=0,window=-,medium=local) weekly(gran=week,keep=3,period_days=0,window=month,medium=local) monthly(gran=month,keep=12,period_days=0,window=-,medium=local)]",
+        "05-workflow-global-and-per-set.yaml   set production/postgres-primary: tz=UTC week_starts=monday protect_lkg=true chain=[daily(gran=day,keep=7,period_days=0,window=-,medium=local) weekly(gran=week,keep=3,period_days=0,window=month,medium=local) monthly(gran=month,keep=12,period_days=0,window=-,medium=local)] local_path=/backups/production/postgres read_only=false",
+        "05-workflow-global-and-per-set.yaml   storage_mediums declared: 0",
+        "06-workflow-configured-missing-dir.yaml validate: accepted",
+        "06-workflow-configured-missing-dir.yaml   deployment policy: tz=UTC week_starts=monday protect_lkg=true chain=[daily(gran=day,keep=7,period_days=0,window=-,medium=local) weekly(gran=week,keep=3,period_days=0,window=month,medium=local) monthly(gran=month,keep=12,period_days=0,window=-,medium=local)]",
+        "06-workflow-configured-missing-dir.yaml   set production/postgres-primary: tz=UTC week_starts=monday protect_lkg=true chain=[daily(gran=day,keep=7,period_days=0,window=-,medium=local) weekly(gran=week,keep=3,period_days=0,window=month,medium=local) monthly(gran=month,keep=12,period_days=0,window=-,medium=local)] local_path=/backups/production/postgres read_only=false",
+        "06-workflow-configured-missing-dir.yaml   storage_mediums declared: 0",
         "50-invalid-no-sources.yaml validate: REFUSED invalid config: sources: at least one source is required",
         "51-invalid-both-retention-spellings.yaml validate: REFUSED invalid config: retention.daily_days: cannot be combined with retention.tiers; daily_days is sugar for the default tiers chain, so write one or the other",
         "52-invalid-unknown-field.yaml load: REFUSED parsing config \"testdata/configs/52-invalid-unknown-field.yaml\": yaml: unmarshal errors: | line 5: field polling_interval not found in type config.Config",
         "53-invalid-inline-medium-secret.yaml load: REFUSED parsing config \"testdata/configs/53-invalid-inline-medium-secret.yaml\": yaml: unmarshal errors: | line 29: field access_key_id not found in type config.StorageMedium | line 30: field secret_access_key not found in type config.StorageMedium",
-        "54-invalid-dangling-tier-medium.yaml validate: REFUSED invalid config: retention.tiers[1]: medium \"offsite_s3\" is not declared by any storage_mediums entry; a tier's medium must name one, and there is no fall-back to local for a name that does not resolve"
+        "54-invalid-dangling-tier-medium.yaml validate: REFUSED invalid config: retention.tiers[1]: medium \"offsite_s3\" is not declared by any storage_mediums entry; a tier's medium must name one, and there is no fall-back to local for a name that does not resolve",
+        "55-invalid-workflow-relative-root.yaml validate: REFUSED invalid config: workflows.root: \"workflows\" must be an absolute path",
+        "56-invalid-workflow-stage-dir-escapes.yaml validate: REFUSED invalid config: workflows.global.before_dir: must not contain \"..\" (got \"../escape\"); every hook directory resolves inside workflows.root, and that declaration is the only thing that makes the tree trusted",
+        "57-invalid-workflow-exec-connection-without-root.yaml validate: REFUSED invalid config: workflows.root: must be set when workflows.exec_connections is configured; an execution connection with no hook directories to run scripts from is configuration that does nothing"
       ]
     },
     "02-artifact-rows-after-migration": {
