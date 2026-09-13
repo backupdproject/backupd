@@ -23,6 +23,14 @@ build does.
 
 `tier-destinations.md` is the same thing in prose for the storage-tier work.
 
+`788-incremental-ui-mockup.md` is the design gate for EPIC K's web UI (#788),
+and it is the one entry here whose artifact is not a picture: the mock-up it
+describes is real TSX under `ui/shared/src/mockup`, mounted at `/mockup` in a
+dev build only, so the incremental-backup screens could be reviewed as the
+product rather than as a drawing. The document records the screen list, the
+wizard's step order and the decisions the review was asked to rule on; the code
+goes when the production UI wave lands.
+
 ## What used to be here
 
 `PR_BODY.md` was the pull request description for, committed to the tree by

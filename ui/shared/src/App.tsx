@@ -56,6 +56,7 @@ import { ResetPasswordPage } from "@shared/auth/ResetPasswordPage";
 import { VerifyEmailPage } from "@shared/auth/VerifyEmailPage";
 import { ServiceUnreachablePage, SessionCheckFailedPage } from "@shared/pages/SessionCheckFailure";
 import { TooltipOptOutDialog } from "@shared/components/TooltipOptOutDialog";
+import { MockupApp } from "@shared/mockup/MockupApp";
 import { isServiceUnreachable } from "@shared/api/failure";
 
 const THEME_KEY = "backupd.theme";
@@ -158,6 +159,25 @@ export function App() {
   // than by a useMemo keyed on their .data references.
   const counts = useCausl(countsNode);
   const readOnly = useCausl(readOnlyNode);
+
+  // The #788 design gate, and the only branch in this file that is not
+  // about the application's own state.
+  //
+  // It is ABOVE every gate below, including the sign-in one, because the
+  // mock-up talks to nothing: it is static screens made of this app's own
+  // components, reviewed before the incremental-backup UI is written.
+  // Behind the gate it would need a running service and an account to
+  // look at a drawing, and it would break in exactly the environment it
+  // exists to be looked at in.
+  //
+  // `import.meta.env.DEV` is statically false in a production build, so
+  // this branch and everything it imports leave the shipped bundle
+  // entirely. Nothing in src/mockup is reachable from a release.
+  if (import.meta.env.DEV && window.location.pathname.startsWith("/mockup")) {
+    return (
+      <MockupApp theme={theme} onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")} />
+    );
+  }
 
   if (authLoading) return <Splash />;
 
