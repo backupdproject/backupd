@@ -161,6 +161,19 @@ const (
 	LabelHook = "backupd.workflow-hook"
 	LabelRun  = "backupd.workflow-run"
 	LabelStep = "backupd.workflow-step"
+
+	// LabelInstance is the one label that is unique to a SINGLE launch,
+	// and it is what makes termination possible rather than merely
+	// legible.
+	//
+	// The other three describe a step; this one describes an attempt at
+	// it. It goes on the container when the container is CREATED, so
+	// `docker ps --filter label=...` finds this launch's container even
+	// when nothing here ever observed its name being registered --
+	// which is exactly the state a cancel landing inside a creation
+	// leaves behind, and the state in which a container used to be able
+	// to run on with nothing watching it (see Executor.reconcile).
+	LabelInstance = "backupd.workflow-instance"
 )
 
 // dockerProbeTimeout bounds the preflight's own docker calls. Generous,
@@ -256,6 +269,9 @@ func ParseMount(spec string) (Mount, error) {
 	if strings.Contains(filepath.Base(clean), "docker.sock") || strings.Contains(clean, "/docker.sock") {
 		return Mount{}, fmt.Errorf("%w: %q is a docker socket, and a hook container that can reach the docker daemon is root on this host for whatever an operator put in a hook script. This runner will not mount one under any name", ErrContainer, spec)
 	}
+	if socket := reachesDaemonSocket(clean); socket != "" {
+		return Mount{}, fmt.Errorf("%w: the hook mount %q contains the docker socket %s, so a hook could reach the docker daemon through it -- which is root on this host for whatever an operator put in a hook script. Name the directory the hook actually needs, not one above the socket", ErrContainer, spec, socket)
+	}
 	info, err := os.Lstat(clean)
 	if err != nil {
 		return Mount{}, fmt.Errorf("%w: the hook mount %q cannot be read: %v", ErrContainer, clean, err)
@@ -267,6 +283,76 @@ func ParseMount(spec string) (Mount, error) {
 		return Mount{}, fmt.Errorf("%w: the hook mount %q is a symbolic link, so what a hook could reach through it is whatever the link says today. Name the directory itself", ErrContainer, clean)
 	}
 	return Mount{Path: clean, ReadOnly: mode != "rw"}, nil
+}
+
+// daemonSocketPaths are the Unix sockets no hook container may be able to
+// reach, whether by name or by way of a directory they are in.
+//
+// Three entries rather than one, because "the docker socket" is not one
+// path. /var/run/docker.sock is the documented location and is a SYMLINK
+// on every modern Linux, where the real file is /run/docker.sock -- so a
+// check that knew only the first would accept `--hook-mount /run`, which
+// is the same socket by the path the kernel actually uses. And a
+// deployment that moved the endpoint (rootless Docker under
+// XDG_RUNTIME_DIR) names it in DOCKER_HOST, which is the endpoint this
+// runner's own client talks to.
+func daemonSocketPaths() []string {
+	paths := []string{"/var/run/docker.sock", "/run/docker.sock"}
+	if host := strings.TrimSpace(os.Getenv("DOCKER_HOST")); strings.HasPrefix(host, "unix://") {
+		if path := strings.TrimPrefix(host, "unix://"); path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+// reachesDaemonSocket reports the daemon socket a mount of clean would
+// expose, or "" when it exposes none.
+//
+// It is a question about TREES rather than about names, which is the
+// whole reason it exists: the name check above refuses
+// /var/run/docker.sock and every alias of it, and refuses nothing at all
+// about `--hook-mount /run:rw`, which mounts the directory the socket
+// lives in and hands the same file to the same script by a path nobody
+// typed. A mount that is the socket's directory, or anything above it, is
+// the socket.
+//
+// Both sides are resolved through the links that are actually there,
+// because on a Linux host /var/run, /run and a bind-mounted runtime
+// directory are routinely three names for one place, and a purely lexical
+// comparison would accept two of them.
+func reachesDaemonSocket(clean string) string {
+	mounts := []string{clean}
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil && resolved != clean {
+		mounts = append(mounts, resolved)
+	}
+	for _, socket := range daemonSocketPaths() {
+		socket = filepath.Clean(socket)
+		sockets := []string{socket}
+		if resolved, err := filepath.EvalSymlinks(filepath.Dir(socket)); err == nil {
+			if real := filepath.Join(resolved, filepath.Base(socket)); real != socket {
+				sockets = append(sockets, real)
+			}
+		}
+		for _, candidate := range sockets {
+			for _, mount := range mounts {
+				if mount == candidate || containsPath(mount, candidate) {
+					return candidate
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// containsPath reports whether dir is an ancestor of path. Both are
+// expected clean and absolute.
+func containsPath(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // arg renders this mount as a --volume value.
@@ -385,12 +471,16 @@ func (c Container) Available() bool { return c.Docker != "" && c.Image != "" && 
 //  3. the hook user is not root, because a container writing root-owned
 //     files into the per-step working directory breaks the cleanup this
 //     runner promises, and re-privileges every hook at once;
-//  4. the configured mounts are paths, not sockets and not links;
-//  5. the image is present. It is NOT pulled: a preflight that reached
+//  4. the hook network is not one of the two modes that would undo the
+//     isolation the default gives -- the host's own namespace, or
+//     another container's;
+//  5. the configured mounts are paths, not sockets, not links, and not
+//     directories the docker socket is in;
+//  6. the image is present. It is NOT pulled: a preflight that reached
 //     for the network would turn "the image is missing" into a five
 //     minute hang on a NAS with no route out, and an operator who
 //     chooses an image chooses when to fetch it;
-//  6. a probe container runs OUR bytes, under the same hardening a hook
+//  7. a probe container runs OUR bytes, under the same hardening a hook
 //     gets, and reports the interpreter, the uid and the absence of a
 //     terminal from inside.
 func ProveContainerCapability(ctx context.Context, cfg ContainerConfig) (Container, error) {
@@ -420,6 +510,9 @@ func ProveContainerCapability(ctx context.Context, cfg ContainerConfig) (Contain
 	c.ServerVersion, c.platform = cutFields(strings.TrimSpace(version))
 
 	if err := refuseRootHookUser(c.User); err != nil {
+		return Container{}, err
+	}
+	if err := refuseHookNetwork(c.Network); err != nil {
 		return Container{}, err
 	}
 	for i := range c.Mounts {
@@ -547,13 +640,46 @@ func cutFields(s string) (string, string) {
 
 // refuseRootHookUser is RefuseRoot's rule for the account INSIDE the
 // container. See ProveContainerCapability's third step.
+//
+// The uid is parsed as a NUMBER rather than compared as a string, and
+// that is not pedantry about `00`: a --hook-user this runner refused to
+// read as root and the kernel read as root would be a hook running as
+// root with a preflight that said it was not, which is worse than either
+// answer on its own. The probe's own uid assertion is the backstop; this
+// is the refusal that names the flag to fix.
 func refuseRootHookUser(user string) error {
 	uid, _, _ := strings.Cut(user, ":")
-	if uid == "0" || uid == "root" {
-		return containerRefusal("a hook container would run as root inside, which writes root-owned files into the per-step working directory this runner later removes, and re-privileges every hook in the deployment at once. Name an unprivileged uid:gid with --hook-user")
-	}
+	uid = strings.TrimSpace(uid)
 	if uid == "" {
 		return containerRefusal("no uid was resolved for the hook container, and a container with no --user runs as whatever the image declares, which is root in most images")
+	}
+	if numeric, err := strconv.ParseInt(uid, 10, 64); err == nil && numeric == 0 || uid == "root" {
+		return containerRefusal("a hook container would run as root inside, which writes root-owned files into the per-step working directory this runner later removes, and re-privileges every hook in the deployment at once. Name an unprivileged uid:gid with --hook-user")
+	}
+	return nil
+}
+
+// refuseHookNetwork refuses the two network modes that would quietly
+// undo the isolation --network none exists for.
+//
+// `host` and `container:<id>` are not "a bigger network". They put a hook
+// INSIDE a namespace somebody else owns: with `host` a script an operator
+// copied off a forum reaches every service on this machine, including the
+// ones bound to 127.0.0.1 -- which on a NAS is where the admin interface
+// lives, and in this deployment is where the engine's own listeners are.
+// `container:<id>` makes what a hook can reach a property of whatever
+// that container happens to be today, which is a fact no preflight here
+// can establish and none of this runner's hardening can constrain.
+//
+// A named docker network is allowed, because that is a boundary an
+// operator DEFINED and can look at. The default is still `none`.
+func refuseHookNetwork(network string) error {
+	mode := strings.TrimSpace(network)
+	if mode == "host" {
+		return containerRefusal("a hook network of `host` puts the hook container in this machine's own network namespace, where a hook script reaches every service on the host -- including the ones bound to 127.0.0.1, which is where a NAS keeps its admin interface and this deployment keeps its own listeners. A local hook quiesces something on this machine and needs no network to do it: leave --hook-network at `none`, or name a docker network")
+	}
+	if mode == "container" || strings.HasPrefix(mode, "container:") {
+		return containerRefusal("a hook network of `" + mode + "` puts the hook container inside another container's network namespace, so what a hook can reach becomes a property of whatever that container is today rather than of anything this runner proved. Leave --hook-network at `none`, or name a docker network")
 	}
 	return nil
 }
@@ -583,7 +709,18 @@ func containerRefusal(sentence string) error {
 // runtime, and a probe that needed the step's directories could not run
 // before one exists.
 func (c Container) runProbe(ctx context.Context) (map[string]string, error) {
-	out, err := c.output(ctx, dockerProbeTimeout, c.probeArgs()...)
+	id, err := mintAuxIdentity("probe")
+	if err != nil {
+		return nil, err
+	}
+	// The probe is a `--rm` run and normally removes itself. This is for
+	// the launch that does not get that far: a probe cancelled, or timed
+	// out, between the daemon creating the container and starting it
+	// leaves a Created container that --rm never reaps, because --rm is
+	// a promise about an exit. The name and the label are minted before
+	// the launch precisely so that this can find it.
+	defer c.reconcileInstance(id.token)
+	out, err := c.output(ctx, dockerProbeTimeout, c.probeArgs(id)...)
 	if err != nil {
 		return nil, containerRefusal(fmt.Sprintf("a probe container in %s did not run: %v. That is the capability a local hook needs, so this runner will not serve", c.Image, err))
 	}
@@ -672,9 +809,18 @@ func (c Container) hardening() []string {
 // environment, and the probe script on the command line -- which is safe
 // for this one script because it is a constant in this repository and
 // carries no value from anywhere.
-func (c Container) probeArgs() []string {
+//
+// It carries a name and this runner's labels for the reason a hook
+// launch does: an UNNAMED container is one nothing can address after the
+// client that started it has gone, and a probe is started with a context
+// that can be cancelled.
+func (c Container) probeArgs(id containerIdentity) []string {
 	args := append([]string{}, c.clientArgs...)
-	args = append(args, "run", "--rm")
+	args = append(args, "run", "--rm",
+		"--name", id.name,
+		"--label", LabelHook+"=1",
+		"--label", LabelInstance+"="+id.token,
+	)
 	args = append(args, c.hardening()...)
 	args = append(args, c.Image, "--noprofile", "--norc", "-c", probeScript)
 	return args
@@ -683,6 +829,7 @@ func (c Container) probeArgs() []string {
 // launchSpec is one hook container's inputs.
 type launchSpec struct {
 	name       string
+	token      string
 	runID      string
 	stepID     string
 	workDir    string
@@ -690,14 +837,32 @@ type launchSpec struct {
 	envNames   []string
 }
 
-// hookArgs builds the whole `docker run` for one step.
+// hookArgs builds the `docker create` for one step.
+//
+// CREATE rather than RUN, and that is the difference the whole
+// termination story rests on. `docker run` is create-and-start behind one
+// exit status, which costs two things this runner needs: the container's
+// name and labels do not exist on the daemon's side until some
+// unobservable moment inside that call, so a cancel landing there leaves
+// an object nothing here can address; and the client's exit status then
+// carries both "the container could not be created" and "the hook ran
+// and exited with this status", which are not the same answer and are
+// the same number (125). Creating first makes the identity a fact before
+// the process is, and leaves the hook's own status to be read off the
+// daemon, which is the only party that has it.
+//
+// There is no --rm either, for the second half of the same reason: a
+// container the daemon removes the moment it exits is a container whose
+// exit status cannot be inspected afterwards. The removal is explicit
+// (Container.remove, Executor.reconcile) and happens after the status
+// has been read.
 //
 // Three properties are asserted about this vector by tests that would be
 // meaningless anywhere else, so they are stated here as well:
 //
 //   - no environment VALUE appears in it. `--env NAME` tells the client to
-//     read the value from its own environment (see Executor.run, which
-//     sets it to ProcessEnv's block), and that keeps repository
+//     read the value from its own environment (see Container.create,
+//     which sets it to ProcessEnv's block), and that keeps repository
 //     passphrases out of the host's process list, which on a NAS is
 //     readable by every account.
 //   - the only mounts are the step's own working directory (read-write),
@@ -709,11 +874,12 @@ type launchSpec struct {
 func (c Container) hookArgs(spec launchSpec) []string {
 	args := append([]string{}, c.clientArgs...)
 	args = append(args,
-		"run", "--rm",
+		"create",
 		"--name", spec.name,
 		"--label", LabelHook+"=1",
 		"--label", LabelRun+"="+spec.runID,
 		"--label", LabelStep+"="+spec.stepID,
+		"--label", LabelInstance+"="+spec.token,
 	)
 	args = append(args, c.hardening()...)
 	for _, name := range spec.envNames {
@@ -731,6 +897,15 @@ func (c Container) hookArgs(spec launchSpec) []string {
 	return args
 }
 
+// startArgs runs the created container with this process attached to it.
+//
+// --attach and no -i: the two streams come back on the client's own two
+// pipes, demultiplexed by the daemon because the container has no PTY
+// (see the probe's tty assertion), and the hook's stdin stays closed.
+func (c Container) startArgs(name string) []string {
+	return c.argv("start", "--attach", name)
+}
+
 // syntaxArgs runs `bash -n` on the captured bytes INSIDE the hook image.
 //
 // Inside, not on the host, and that is the whole reason this is a
@@ -742,9 +917,13 @@ func (c Container) hookArgs(spec launchSpec) []string {
 //
 // The bytes go in on stdin, with no mount and no network: a syntax check
 // has no working directory to own and nothing to reach.
-func (c Container) syntaxArgs() []string {
+func (c Container) syntaxArgs(id containerIdentity) []string {
 	args := append([]string{}, c.clientArgs...)
-	args = append(args, "run", "--rm", "--interactive")
+	args = append(args, "run", "--rm", "--interactive",
+		"--name", id.name,
+		"--label", LabelHook+"=1",
+		"--label", LabelInstance+"="+id.token,
+	)
 	args = append(args, c.hardening()...)
 	args = append(args, c.Image, "--noprofile", "--norc", "-n")
 	return args
@@ -764,16 +943,27 @@ func (c Container) SyntaxCheck(ctx context.Context, script []byte) error {
 	if !c.Available() {
 		return noCapability()
 	}
+	id, err := mintAuxIdentity("syntax")
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, dockerProbeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.Docker, c.syntaxArgs()...)
+	// Same argument as the probe's: the timeout above and a cancelled
+	// validation are both endings that can land between the daemon
+	// creating this container and starting it, and --rm does not cover a
+	// container that never ran. The reconciliation uses the label rather
+	// than this context, which is by then the cancelled one.
+	defer c.reconcileInstance(id.token)
+
+	cmd := exec.CommandContext(ctx, c.Docker, c.syntaxArgs(id)...)
 	cmd.Stdin = bytes.NewReader(script)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err == nil {
 		return nil
 	}
@@ -817,42 +1007,170 @@ func noCapability() error {
 	return containerRefusal("no container capability was proven at startup, so there is nothing to run a hook in. This runner never falls back to executing a hook on the host")
 }
 
-// containerExists asks the DAEMON whether a container is still there.
+// create asks the daemon for one hook container and returns before
+// anything in it runs.
 //
-// `ps --all --quiet --filter name=^NAME$` rather than `inspect`, and the
-// difference is the whole reason this is a function. `docker inspect`
-// exits non-zero both for a container that is gone and for a daemon that
-// cannot be reached, so a termination taken during a daemon restart would
-// be reported as CONFIRMED on the strength of an error. `ps` exits 0 with
-// empty output for "no such container" and non-zero only when the daemon
-// itself could not answer, so the two are distinguishable -- and the
-// unanswerable case is reported as still-present, which is the safe
-// direction.
-func (c Container) containerExists(name string) (bool, error) {
-	out, err := c.output(context.Background(), dockerControlTimeout,
-		c.argv("ps", "--all", "--quiet", "--filter", "name=^"+name+"$")...)
-	if err != nil {
-		return true, err
+// The identity this runner minted is on the container from here on: the
+// NAME every signal is addressed to, and the unique label every
+// reconciliation selects on. That ordering is the point of splitting the
+// launch in two -- see hookArgs -- and it is what makes a cancel that
+// lands during creation survivable rather than a runaway.
+//
+// env is the HOOK's block, and this is the one call that gets it: `--env
+// NAME` makes the client read each value out of its own environment and
+// send it to the daemon over the socket, so the values travel here and
+// never appear in the argument vector of this call or of any later one.
+// The client's own settings travel as explicit flags for the same reason
+// in the other direction (see Container.clientArgs).
+//
+// The client's stderr is RETURNED rather than folded into an error,
+// because it belongs in the step's own stderr where every other launch
+// fault's message already is -- and not in a refusal, which would put a
+// host path out of an operator's configuration into every record of it.
+func (c Container) create(ctx context.Context, timeout time.Duration, env []string, spec launchSpec) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, c.Docker, c.hookArgs(spec)...)
+	cmd.Env = env
+	cmd.Stdin = nil
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
+		return detail, err
 	}
-	return strings.TrimSpace(out) != "", nil
+	return "", nil
 }
 
-// signal sends one signal to a hook's container by name.
-func (c Container) signal(name, sig string) error {
-	_, err := c.output(context.Background(), dockerControlTimeout, c.argv("kill", "--signal="+sig, name)...)
-	return err
+// containerState is what the daemon says about one container.
+type containerState struct {
+	// status is the daemon's own word: created, running, exited, dead.
+	status string
+
+	// running is that word's boolean, as the daemon reports it.
+	running bool
+
+	// exited is the only state in which exitCode means anything: a
+	// container whose own process ran and stopped.
+	exited bool
+
+	// exitCode is that process's status. It is the HOOK's exit code,
+	// which is the whole reason this round trip exists.
+	exitCode int
 }
 
-// remove removes a hook's container, whatever state it is in.
+// inspectState asks the daemon what became of a container's own process.
 //
-// --rm on the launch already removes a container that exited, so this is
-// for the cases that matter: a container that is still there because the
-// daemon was busy, and the run whose client process was killed before it
-// could clean up. The lease guarantee is "an engine that went away leaves
-// no runaway AND no leftover", and the second half is this call.
-func (c Container) remove(name string) error {
-	_, err := c.output(context.Background(), dockerControlTimeout, c.argv("rm", "--force", "--volumes", name)...)
+// It exists because the client cannot be asked. `docker start --attach`
+// reports the container's status as its own exit status, so a hook that
+// ran and exited 125 is indistinguishable from a client that could not
+// reach the daemon -- and reading that number as "the container was
+// never created" tells an operator nothing ran when their script ran and
+// returned 125, which is the one fact the workflow engine branches on.
+// The daemon knows the difference, so the daemon is asked.
+//
+// `created` is treated as NOT exited even though it carries an exit code
+// of 0, because that is the reading which would turn a launch that never
+// happened into a hook that succeeded.
+func (c Container) inspectState(timeout time.Duration, name string) (containerState, error) {
+	out, err := c.output(context.Background(), timeout,
+		c.argv("inspect", "--format", "{{.State.Status}} {{.State.Running}} {{.State.ExitCode}}", name)...)
+	if err != nil {
+		return containerState{}, err
+	}
+	fields := strings.Fields(strings.TrimSpace(out))
+	if len(fields) != 3 {
+		return containerState{}, fmt.Errorf("the daemon described %s as %.120q, which this runner cannot read", name, out)
+	}
+	code, err := strconv.Atoi(fields[2])
+	if err != nil {
+		return containerState{}, fmt.Errorf("the daemon reported %q as the exit status of %s", fields[2], name)
+	}
+	state := containerState{
+		status:   fields[0],
+		running:  fields[1] == "true",
+		exitCode: code,
+	}
+	state.exited = !state.running && state.status == "exited"
+	return state, nil
+}
+
+// containersWithInstance lists every container the daemon still has
+// carrying one launch's unique label.
+//
+// `ps --all --filter label=` rather than a question about a name, and the
+// difference is the whole reason this is the function termination uses.
+// A name is what this runner BELIEVES it created; the label is what the
+// daemon HAS -- including a container whose creation completed after the
+// client that asked for it had already been killed, which is the runaway
+// this replaces. `ps` also exits 0 with empty output for "nothing
+// matches" and non-zero only when the daemon could not answer, so
+// "absent" and "unanswerable" are distinguishable, and the error is
+// returned separately for exactly that reason: reporting "gone" because
+// a question failed is how a runaway gets recorded as a clean kill.
+func (c Container) containersWithInstance(timeout time.Duration, token string) ([]string, error) {
+	out, err := c.output(context.Background(), timeout,
+		c.argv("ps", "--all", "--quiet", "--no-trunc", "--filter", "label="+LabelInstance+"="+token)...)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			ids = append(ids, line)
+		}
+	}
+	return ids, nil
+}
+
+// signal sends one signal to a container, addressed by name or by id.
+//
+// The timeout is the caller's, because these calls happen on the
+// termination path and the caller is the one that knows how long the
+// whole termination is allowed to take. A control call with no bound of
+// its own is how a wedged daemon turns a lost lease into a shutdown that
+// never finishes.
+func (c Container) signal(timeout time.Duration, target, sig string) error {
+	_, err := c.output(context.Background(), timeout, c.argv("kill", "--signal="+sig, target)...)
 	return err
+}
+
+// remove removes a container, whatever state it is in.
+//
+// There is no --rm on a hook launch (see hookArgs), so this is not a
+// belt-and-braces call any more: it is the removal. The lease guarantee
+// is "an engine that went away leaves no runaway AND no leftover", and
+// this is the second half of it -- with Executor.reconcile as the part
+// that proves it.
+func (c Container) remove(timeout time.Duration, target string) error {
+	_, err := c.output(context.Background(), timeout, c.argv("rm", "--force", "--volumes", target)...)
+	return err
+}
+
+// reconcileInstance removes whatever the daemon still has carrying one
+// launch's label. It is Executor.reconcile without the certainty: the
+// callers are this runner's OWN short-lived containers -- the capability
+// probe and the syntax check -- which own no working directory and whose
+// outcome no Result reports, so a leftover is a leftover and not a
+// forensic question.
+//
+// Bounded and best effort, and deliberately not using the caller's
+// context: the reason it is reached at all is usually that the caller's
+// context was cancelled.
+func (c Container) reconcileInstance(token string) {
+	leftovers, err := c.containersWithInstance(dockerControlTimeout, token)
+	if err != nil {
+		return
+	}
+	for _, container := range leftovers {
+		_ = c.signal(dockerControlTimeout, container, "KILL")
+		_ = c.remove(dockerControlTimeout, container)
+	}
 }
 
 // output runs one docker argv and returns its stdout, with stderr folded

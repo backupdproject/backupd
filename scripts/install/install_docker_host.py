@@ -588,13 +588,14 @@ class Preflight:
         its own hint, and that hint says the installer will not reach for
         sudo, since it has no way to know sudo is allowed here.
         """
-        if shutil.which("docker") is None:
+        connection = docker_connection()
+        if not connection.client:
             raise Refusal(
                 EXIT_PREREQ_DOCKER,
                 "docker is not on PATH.",
                 "Install Docker, then add this account to the docker group and log in again.",
             )
-        proc = run(["docker", "version", "--format", "{{.Server.Version}}"], check=False, timeout=30)
+        proc = run([connection.client, "version", "--format", "{{.Server.Version}}"], check=False, timeout=30)
         if proc.returncode != 0:
             # The single most common shape on a NAS: the CLI is there and
             # the account cannot reach the socket. Saying "docker failed"
@@ -608,7 +609,11 @@ class Preflight:
                     "session. This installer will not use sudo: it has no way to know that is allowed here."
                 )
             raise Refusal(EXIT_PREREQ_DOCKER, f"the Docker daemon is not reachable:\n{detail}", hint)
-        self.note(f"docker server {proc.stdout.strip()} is reachable as uid {os.getuid()}")
+        # The client is named by absolute path, because it is the one the
+        # generated unit will name: the runner does not search PATH, so
+        # "the docker that proved this host" and "the docker that runs
+        # hooks" have to be the same file (see DockerConnection).
+        self.note(f"docker server {proc.stdout.strip()} is reachable as uid {os.getuid()} through {connection.client}")
 
     def check_compose(self) -> None:
         """Is `docker compose` there, and is it v2?
@@ -3419,20 +3424,100 @@ def hook_image(args) -> str:
     return configured or DEFAULT_HOOK_IMAGE
 
 
-def docker_socket_path() -> str:
-    """The daemon endpoint this host's docker client talks to.
+class DockerConnection:
+    """WHICH daemon this install talked to, resolved once.
+
+    It exists because an installer and the unit it writes have to mean
+    the same daemon, and nothing makes that true by default. This process
+    inherits DOCKER_HOST, DOCKER_CONTEXT and DOCKER_CONFIG from the
+    operator's shell and honours all three -- the preflight, the image
+    pull and the socket check all go through them -- while systemd
+    inherits NOTHING. A unit that did not carry them produced the worst
+    kind of success: install, preflight and pull all pass against daemon
+    A, and then the runner starts, probes the DEFAULT daemon, finds no
+    hook image (or no daemon at all) and refuses to serve every local
+    hook, with a message about an image the operator did fetch.
+
+    The client binary is part of the same fact. `docker` was found on the
+    operator's PATH for every check above, and the runner searches a
+    fixed list of candidate paths instead (it will not take a runtime
+    from a PATH a service manager set), so a client at /snap/bin/docker
+    or /opt/docker/bin/docker passes the install and is invisible to the
+    runner. Naming it in the unit is what makes "the client that was
+    proved" and "the client that runs hooks" one binary.
+    """
+
+    def __init__(self, client: str, host: str, context: str, config: str, socket: str):
+        self.client = client
+        self.host = host
+        self.context = context
+        self.config = config
+        self.socket = socket
+
+    def environment(self) -> list[tuple[str, str]]:
+        """The variables the unit has to carry, in a fixed order.
+
+        DOCKER_HOST beats DOCKER_CONTEXT, which is docker's own
+        precedence, and only the winner is written: a unit that set both
+        would leave the client resolving a conflict the installer had
+        already resolved, and the two could then disagree after somebody
+        edited one of them.
+        """
+        pairs = []
+        if self.host:
+            pairs.append(("DOCKER_HOST", self.host))
+        elif self.context:
+            pairs.append(("DOCKER_CONTEXT", self.context))
+        if self.config:
+            pairs.append(("DOCKER_CONFIG", self.config))
+        return pairs
+
+
+def docker_connection() -> DockerConnection:
+    """Resolve the daemon and the client this install is using.
 
     DOCKER_HOST is honoured when it names a Unix socket, because a
     deployment that moved the socket (rootless Docker puts it under
     XDG_RUNTIME_DIR) would otherwise get a unit that allows writes to a
     path the daemon is not on. A tcp:// endpoint has no path to allow, so
-    it falls back to the default and the unit's ReadWritePaths line is
-    harmless either way.
+    the socket falls back to the default and the unit's ReadWritePaths
+    line is harmless either way.
     """
     host = os.environ.get("DOCKER_HOST", "").strip()
+    context = os.environ.get("DOCKER_CONTEXT", "").strip()
+    config = os.environ.get("DOCKER_CONFIG", "").strip()
+
+    socket_path = DEFAULT_DOCKER_SOCKET
     if host.startswith("unix://"):
-        return host[len("unix://"):] or DEFAULT_DOCKER_SOCKET
-    return DEFAULT_DOCKER_SOCKET
+        socket_path = host[len("unix://"):] or DEFAULT_DOCKER_SOCKET
+
+    # shutil.which on the inherited PATH, deliberately and unlike
+    # find_tool: the question is not "where is a docker" but "which
+    # docker did every check in this install use", and that is the one
+    # the operator's PATH gave us.
+    found = shutil.which("docker")
+    client = os.path.abspath(found) if found else ""
+
+    return DockerConnection(client=client, host=host, context=context, config=config, socket=socket_path)
+
+
+def docker_socket_path() -> str:
+    """The Unix socket the daemon this install talked to listens on."""
+    return docker_connection().socket
+
+
+def systemd_environment_line(name: str, value: str) -> str:
+    """One correctly escaped `Environment=` line.
+
+    Quoted, because a DOCKER_CONFIG under a path with a space in it is a
+    perfectly ordinary NAS directory and an unquoted value would silently
+    become two. Backslashes and quotes are escaped for the same reason,
+    and `%` is doubled because systemd expands specifiers in unit values
+    -- a `%h` in a path would otherwise become the account's home
+    directory.
+    """
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'Environment="{name}={escaped}"'
 
 
 def docker_socket_group(socket_path: str | None = None) -> str:
@@ -3655,7 +3740,29 @@ def render_workflow_runner_unit(args) -> str:
         )
 
     binary = args.prefix / "bin" / "backupd-workflow-runner"
-    return "\n".join([
+
+    # Resolved ONCE, and used for all three of the things that have to
+    # agree: the client the unit names, the connection it carries, and
+    # the socket whose group the service account is given and whose path
+    # ProtectSystem=strict has to leave writable. See DockerConnection.
+    connection = docker_connection()
+
+    launch = [
+        f"ExecStart={binary} workflow-runner serve",
+        f"--runtime-dir {args.runtime_dir}",
+        f"--workspace-dir {args.workspace_dir}",
+        f"--secrets-dir {args.prefix / 'secrets'}",
+        f"--config {args.host_dirs['--config-dir']}",
+        f"--hook-image {hook_image(args)}",
+    ]
+    if connection.client:
+        # The client this install PROVED, by absolute path. Without it
+        # the runner searches its own candidate list, which deliberately
+        # ignores PATH -- so a deployment whose docker is anywhere else
+        # installs cleanly and then refuses every hook.
+        launch.append(f"--docker {connection.client}")
+
+    lines = [
         "# Generated by scripts/install/install_docker_host.py for the",
         f"# deployment under {args.prefix}. Re-running the installer rewrites it.",
         "#",
@@ -3671,12 +3778,25 @@ def render_workflow_runner_unit(args) -> str:
         "Type=simple",
         f"User={args.puid}",
         f"Group={args.pgid}",
-        f"ExecStart={binary} workflow-runner serve"
-        f" --runtime-dir {args.runtime_dir}"
-        f" --workspace-dir {args.workspace_dir}"
-        f" --secrets-dir {args.prefix / 'secrets'}"
-        f" --config {args.host_dirs['--config-dir']}"
-        f" --hook-image {hook_image(args)}",
+    ]
+
+    if connection.environment():
+        lines += [
+            "# The daemon this install actually used, carried explicitly.",
+            "#",
+            "# systemd inherits nothing from the shell the installer ran",
+            "# in, and this installer honours DOCKER_HOST, DOCKER_CONTEXT",
+            "# and DOCKER_CONFIG for every check it makes -- the daemon",
+            "# probe, the hook image pull, the socket group. A unit without",
+            "# these lines therefore points the runner at the DEFAULT",
+            "# daemon: install and preflight pass against one daemon and",
+            "# the runner refuses to serve against another, reporting a",
+            "# missing hook image that was fetched on the first one.",
+        ]
+        lines += [systemd_environment_line(name, value) for name, value in connection.environment()]
+
+    lines += [
+        " ".join(launch),
         "Restart=on-failure",
         "RestartSec=5",
         "NoNewPrivileges=yes",
@@ -3698,17 +3818,23 @@ def render_workflow_runner_unit(args) -> str:
         # write: this is the line whose absence produces a permission
         # error that names the socket and blames the group.
         #
+        # Both are about the socket the CONNECTION resolved, not the
+        # default one: a rootless deployment under XDG_RUNTIME_DIR would
+        # otherwise be given the group of a socket it never uses and
+        # denied writes to the one it does.
+        #
         # It is deliberately the only thing added. No capability, no
         # device, no host mount, and nothing whatsoever for the engine
         # container, which still cannot exec and still has no route to
         # the daemon.
-        f"SupplementaryGroups={docker_socket_group()}",
-        f"ReadWritePaths={args.runtime_dir} {args.workspace_dir} {docker_socket_path()}",
+        f"SupplementaryGroups={docker_socket_group(connection.socket)}",
+        f"ReadWritePaths={args.runtime_dir} {args.workspace_dir} {connection.socket}",
         "",
         "[Install]",
         "WantedBy=multi-user.target",
         "",
-    ])
+    ]
+    return "\n".join(lines)
 
 
 def extract_runner_binary(args) -> Path:

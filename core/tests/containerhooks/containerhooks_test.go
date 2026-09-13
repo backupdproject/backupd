@@ -543,3 +543,77 @@ func TestASyntaxErrorIsRefusedByTheImagesOwnBash(t *testing.T) {
 		t.Errorf("a hook container was created for a script that does not parse: %v", ids)
 	}
 }
+
+// TestAHookThatExitsWith125HasRunAndSaysSo is the one statement about
+// docker's exit statuses that only a real daemon can make.
+//
+// The client propagates the container's wait status verbatim, so a hook
+// ending in `exit 125` leaves `docker run` with exactly the status a
+// container that could NOT BE CREATED leaves it with. The runner used to
+// read that number and report a failure -- "nothing was attempted" --
+// for a hook that had run and returned an exit code its author chose,
+// which is a lie about the one fact the workflow engine branches on and
+// a regression from the host bash this replaced.
+//
+// The fix is to ask the daemon what the container's own process did
+// instead of reading the client's opinion of it, and that is what this
+// asserts: against a real Docker, with a real container, the hook has
+// RUN (its evidence file is there), the state is exited and the code is
+// its own.
+func TestAHookThatExitsWith125HasRunAndSaysSo(t *testing.T) {
+	exec, _ := capability(t)
+	out := &collector{}
+
+	body := `printf 'the hook ran\n'
+exit 125
+`
+	result, err := exec.Execute(context.Background(), request("run-125", "step-125", body), out)
+	if err != nil {
+		t.Fatalf("a hook that exited 125 was reported as never having been attempted: %v", err)
+	}
+	if got := strings.TrimSpace(out.text(hostrunner.StreamStdout)); got != "the hook ran" {
+		t.Fatalf("the hook did not produce its output, so this test is not about what it claims: %q", got)
+	}
+	if result.State != hostrunner.StateExited {
+		t.Fatalf("state = %q, want exited: the hook ran to completion", result.State)
+	}
+	if result.ExitCode == nil || *result.ExitCode != 125 {
+		t.Fatalf("exit code = %v, want 125: that is the status the hook chose", result.ExitCode)
+	}
+	if result.TerminationCertainty != hostrunner.CertaintyNotApplicable {
+		t.Errorf("a hook that exited on its own was given a termination certainty of %q", result.TerminationCertainty)
+	}
+	if !result.WorkDirRemoved {
+		t.Error("the working directory of a hook that exited cleanly was kept")
+	}
+	if left := machines.ContainersWithLabel(t, hookLabel); len(left) != 0 {
+		t.Errorf("the container of a finished step is still on this daemon: %v", left)
+	}
+}
+
+// TestEveryContainerThisRunnerStartsIsRemovedIncludingItsOwn is the
+// leftover claim across the whole lifecycle, against the daemon that
+// decides it.
+//
+// There is no --rm on a hook launch any more -- a container the daemon
+// removes the instant it exits is one whose exit status cannot be
+// inspected -- so "no leftover" is now entirely this runner's own doing:
+// an explicit removal, and a reconciliation by label that proves it. The
+// runner's OWN containers (the capability probe, the `bash -n` syntax
+// check) are in scope too, because #875 gave them names and labels for
+// exactly this reason.
+func TestEveryContainerThisRunnerStartsIsRemovedIncludingItsOwn(t *testing.T) {
+	exec, _ := capability(t)
+
+	if err := exec.Container.SyntaxCheck(context.Background(), []byte("printf ok\n")); err != nil {
+		t.Fatalf("checking bytes that parse: %v", err)
+	}
+	if _, err := exec.Execute(context.Background(),
+		request("run-clean", "step-clean", "printf done\n"), &collector{}); err != nil {
+		t.Fatalf("running the hook: %v", err)
+	}
+
+	if left := machines.ContainersWithLabel(t, hookLabel); len(left) != 0 {
+		t.Fatalf("containers this runner started are still on the daemon: %v. Every one of them carries %s, and the operator's `docker ps` is where an accumulation of them shows up", left, hookLabel)
+	}
+}

@@ -331,8 +331,8 @@ touch. #865 closes that: the runner still owns the execution, and what it
 starts is one **ephemeral container per hook**.
 
 ```text
-docker run --rm --name backupd-hook-<run>-<step>-<random>
-           --label backupd.workflow-hook=1 (plus run and step labels)
+docker create --name backupd-hook-<run>-<step>-<16 hex>
+           --label backupd.workflow-hook=1 (plus run, step and instance labels)
            --network none  --security-opt no-new-privileges  --cap-drop ALL
            --read-only  --tmpfs /tmp:rw,nosuid,nodev,size=64m
            --pids-limit 512  --user <the runner's own uid:gid>
@@ -342,7 +342,40 @@ docker run --rm --name backupd-hook-<run>-<step>-<random>
            -v <captured script>:<itself>:ro         read-only
            [-v <operator-configured path>:<itself>[:ro]]
            <hook image> --noprofile --norc <the script>
+docker start --attach <that name>        the hook runs, two streams back
+docker inspect <that name>               what the container's process DID
+docker rm --force --volumes <that name>  and the proof it is gone
 ```
+
+**The lifecycle is explicit, and `docker run` is not used.** `run` is
+create-and-start behind one exit status, and both halves of that cost
+something this design needs. The container's name and labels do not exist
+on the daemon's side until some unobservable moment inside that call, so a
+cancel landing there leaves an object nothing can address -- the
+termination signalled a name the daemon had not registered, got "no such
+container" twice, and a container created a moment later ran on with
+nothing watching it. And the client's exit status carries both "the
+container could not be created" and "the hook ran and returned this",
+which are different answers with the same number (125): a hook ending in
+`exit 125` was recorded as a step that never ran, which is a lie about the
+one fact the workflow engine branches on and a regression from the host
+bash this replaced. Creating first makes the identity a fact before the
+process is; asking the daemon for the status leaves the hook's own exit
+code to the only party that has it.
+
+There is no `--rm` for the same reason: a container the daemon removes the
+instant it exits is a container whose exit status cannot be inspected. The
+removal is this runner's own, and it happens after the status has been
+read.
+
+**The name is unique, and the unique part cannot be truncated away.** Each
+launch mints 8 bytes of randomness, and the name is
+`<prefix><run>-<step>-<token>` held to 200 bytes by shortening the ID
+PORTION -- a hash of the id pair -- rather than the whole string. A name
+cut at the end loses the token, and two concurrent steps whose ids share a
+long prefix then asked for the SAME container: the second creation failed
+on the name conflict and that failed attempt's cleanup removed the
+container the first step was still running in.
 
 **The envelope is unchanged.** Same fixed bash (now the one inside the
 image, proven by the probe), same `--noprofile --norc`, no PTY, nothing
@@ -363,28 +396,62 @@ a daemon of their choosing. The client's real settings travel as explicit
 flags (`--config`, `--host`/`--context`, `--platform`), which beat the
 environment in docker's own precedence.
 
-**The engine cannot name a mount.** The protocol still has no field that
-can hold a path (Decision 2), so the paths a hook may see are the
-RUNNER's configuration: the per-step working directory, the script, and
-whatever `--hook-mount PATH[:ro|:rw]` declares -- read-only unless the
-operator typed `:rw`. A mount naming a docker socket is refused under any
-name, as is a socket, a symbolic link or a relative path. Mounts are
-IDENTITY mounts, so `BACKUPD_WORK_DIR` means one thing on both sides and
-a path in a hook's log is a path an operator can find.
+**The engine cannot name a mount, and the operator cannot name the
+socket.** The protocol still has no field that can hold a path (Decision
+2), so the paths a hook may see are the RUNNER's configuration: the
+per-step working directory, the script, and whatever `--hook-mount
+PATH[:ro|:rw]` declares -- read-only unless the operator typed `:rw`. A
+mount naming a docker socket is refused under any name, as is a socket, a
+symbolic link or a relative path -- and so is any DIRECTORY the daemon
+socket is in or under. `--hook-mount /run:rw` names no socket and hands
+the same file to the same script, so the refusal is about the resolved
+tree (both `/var/run/docker.sock` and `/run/docker.sock`, plus a
+`DOCKER_HOST` unix path) rather than about the string. Mounts are IDENTITY
+mounts, so `BACKUPD_WORK_DIR` means one thing on both sides and a path in
+a hook's log is a path an operator can find.
 
-**Termination is the container's.** `docker kill --signal=TERM`, the same
-grace period, `docker kill`, then the look -- and the look asks the
-daemon whether the container still exists, through `docker ps --all
---filter name=`, not `docker inspect`. That choice is the one place
-Decision 6's ordering argument changed shape: `inspect` exits non-zero
-both for "no such container" and for "no daemon", so a termination taken
-during a daemon restart would be reported CONFIRMED on the strength of an
-error. `ps` answers 0-with-nothing for the first and non-zero for the
-second, and an unanswerable question is reported UNCONFIRMED, which is
-the safe direction. The container is also explicitly REMOVED, not merely
-stopped: `--rm` covers the ordinary exit, and the removal by name covers
-the cases that leave a leftover -- a name a retry of the same step could
-then never reuse.
+**The network can be widened but not unhinged.** `--hook-network`
+accepts `none` (the default), `bridge` or a network an operator DEFINED,
+and refuses `host` and `container:<id>` at startup. Those two are not a
+bigger network: they put the hook inside a namespace somebody else owns,
+where `host` reaches every service on this machine including the ones
+bound to 127.0.0.1 -- the NAS's admin interface, this deployment's own
+listeners -- and `container:<id>` makes what a hook can reach a property
+of whatever that container is today, which no preflight here can
+establish and none of the hardening above can constrain.
+
+**Termination is the container's, and it is bounded.** `docker kill
+--signal=TERM`, the same grace period, `docker kill`, then the look -- and
+the look asks the daemon what it still has carrying this launch's INSTANCE
+label (`docker ps --all --filter label=`), kills and removes whatever that
+is, and reports only what it could prove. By label rather than by name,
+because a removal by name is a removal of the object this runner believes
+in while the label is a question about what the daemon HAS: a creation the
+daemon completed after the client asking for it was killed is found here
+and nowhere else.
+
+`ps` rather than `docker inspect` for that question, which is the one
+place Decision 6's ordering argument changed shape: `inspect` exits
+non-zero both for "no such container" and for "no daemon", so a
+termination taken during a daemon restart would be reported CONFIRMED on
+the strength of an error. `ps` answers 0-with-nothing for the first and
+non-zero for the second, and an unanswerable question is reported
+UNCONFIRMED, which is the safe direction. Where the container's existence
+itself is in doubt -- a cancelled creation -- absence is watched for the
+whole confirmation window rather than believed on the first empty answer,
+because such an answer proves only when it was taken.
+
+Every call on this path has its own timeout, **including the wait for the
+attached client**. `docker start --attach` talking to a daemon that has
+stopped answering has no timeout of its own, so waiting for it turned a
+lost lease or a shutdown into a hang with no message anywhere; when the
+bound elapses the client process is killed -- safe precisely because the
+client is not the container -- and the container's fate is then settled
+against the daemon. A wedged daemon costs this runner certainty, never its
+ability to return. The same reasoning covers the runner's OWN containers:
+the capability probe and the `bash -n` syntax check are named and
+labelled too, because `--rm` is a promise about an exit and a run
+cancelled between creation and start leaves a container it does not cover.
 
 This is strictly stronger than the process group it replaces. A child
 that ignores `SIGTERM`, a child that changed its process group, and a
@@ -424,6 +491,21 @@ process that launches hook containers and to nothing else: the unit gains
 `ReadWritePaths`, and the ENGINE container gains nothing at all -- no
 socket, no `group_add`, no capability, no `DOCKER_HOST`. Rootless Docker
 and podman are a follow-up, not a decision made here.
+
+**The unit names the daemon and the client the install actually used.**
+The installer honours `DOCKER_HOST`, `DOCKER_CONTEXT` and `DOCKER_CONFIG`
+for every check it makes, and systemd inherits none of them; the runner,
+in turn, searches a fixed list of client paths rather than PATH (a
+container runtime that can change with a unit-file edit is a capability
+proof about a different binary). Left alone, that produced the worst kind
+of success: install, preflight and pull pass against the daemon the
+operator named, and then the runner probes the DEFAULT daemon through a
+client it may not find, and refuses every local hook while naming an
+image that was fetched. So the connection is resolved ONCE at install
+time and encoded in the unit -- correctly escaped `Environment=` lines
+for the winner of docker's own `DOCKER_HOST`-beats-`DOCKER_CONTEXT`
+precedence, `--docker <absolute path>` on `ExecStart`, and the SAME
+resolved socket in both `SupplementaryGroups` and `ReadWritePaths`.
 
 ## Consequences
 

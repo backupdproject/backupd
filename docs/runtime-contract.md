@@ -155,27 +155,50 @@ A local hook does not run on the host's shell either. Since #865 the runner
 launches one ephemeral container per hook:
 
 ```text
-docker run --rm --network none --security-opt no-new-privileges --cap-drop ALL
+docker create --name backupd-hook-<run>-<step>-<16 hex>
+           --label backupd.workflow-hook=1 (plus run, step and instance labels)
+           --network none --security-opt no-new-privileges --cap-drop ALL
            --read-only --tmpfs /tmp --pids-limit 512 --user <uid>:<gid>
            --platform <the daemon's own> --entrypoint <bash in the image>
            --env NAME ... (names only; values travel over the daemon socket)
            -v <per-step work dir>:<itself> -v <captured script>:<itself>:ro
            <hook image> --noprofile --norc <the script>
+docker start --attach <that name>        the hook runs; two streams come back
+docker inspect <that name>               the hook's own exit status
+docker rm --force --volumes <that name>  and the proof it is gone
 ```
 
+The lifecycle is explicit rather than one `docker run`, and there is no
+`--rm`: the container's name and labels exist on the daemon's side before any
+process does, so a cancel mid-launch has something to address, and the hook's
+exit status is read off the DAEMON — the client reports 125 both for "the
+container could not be created" and for a hook that ended in `exit 125`.
+Termination reconciles by the per-launch label, so a container the daemon
+finished creating after the client was gone is still found and killed, and
+every call on that path is bounded: a daemon that stops answering costs the
+runner certainty (`unconfirmed`, which also keeps the working directory), never
+its ability to return.
+
 No Docker socket is mounted into a hook container, under any name — the runner
-refuses a configured `--hook-mount` that names one. A hook reaches nothing else
-on the host unless an operator declared it with `--hook-mount PATH[:ro|:rw]`,
-read-only by default; the ENGINE cannot ask for a mount, because the protocol
-between them has no field that can hold a path.
+refuses a configured `--hook-mount` that names one, or that names a directory
+the socket is IN. A hook reaches nothing else on the host unless an operator
+declared it with `--hook-mount PATH[:ro|:rw]`, read-only by default; the ENGINE
+cannot ask for a mount, because the protocol between them has no field that can
+hold a path. `--hook-network host` and `--hook-network container:<id>` are
+refused: both put the hook inside a namespace somebody else owns.
 
 This does move one privilege onto the host: the runner needs to reach the
 Docker daemon, which on a NAS is root-equivalent. That is the trade #865 makes
 deliberately, and the containment is that the privilege belongs to the small
 version-pinned process that launches hook containers and to nothing else:
 
-- the unit adds `SupplementaryGroups=<the socket's group>` and the socket to
-  `ReadWritePaths`, and nothing else;
+- the unit adds `SupplementaryGroups=<the socket's group>` and that same
+  socket to `ReadWritePaths`, plus the connection the install itself used —
+  `Environment="DOCKER_HOST=..."` (or `DOCKER_CONTEXT`), `DOCKER_CONFIG` where
+  set, and `--docker <absolute path>` on `ExecStart`, because systemd inherits
+  none of the installer's environment and the runner does not search `PATH`.
+  Without them an install can succeed against one daemon and the runner refuse
+  to serve against another;
 - **this container gains nothing.** No socket, no `group_add`, no capability,
   no `DOCKER_HOST`. It still has no shell and still cannot exec.
 

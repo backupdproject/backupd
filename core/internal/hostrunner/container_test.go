@@ -122,10 +122,21 @@ func TestHookArgs_CarriesTheHardeningTheDesignPromises(t *testing.T) {
 	if !argvHas(argv, "--platform", "linux/arm64") {
 		t.Errorf("the launch does not name the platform the preflight proved: argv %v", argv)
 	}
-	for _, want := range []string{"--rm", "--read-only"} {
-		if argvIndex(argv, want) < 0 {
-			t.Errorf("%s is missing: argv %v", want, argv)
-		}
+	if argvIndex(argv, "--read-only") < 0 {
+		t.Errorf("--read-only is missing: argv %v", argv)
+	}
+	// And NOT --rm, which is a property of this vector rather than an
+	// omission from it. A container the daemon removes the moment it
+	// exits is a container whose exit status cannot be inspected
+	// afterwards -- and the hook's own status, 125 included, is read off
+	// the daemon precisely because the client cannot report it. The
+	// removal is explicit and happens after the status has been taken
+	// (Executor.reconcile).
+	if argvIndex(argv, "--rm") >= 0 {
+		t.Errorf("the hook container is created with --rm, so the daemon may remove it before its exit status is read: argv %v", argv)
+	}
+	if argvIndex(argv, "create") != 0 {
+		t.Errorf("the launch is not a `docker create`, so the container's identity does not exist before its process does: argv %v", argv)
 	}
 	if argvIndex(argv, "--tmpfs") < 0 {
 		t.Error("there is no writable /tmp, so a hook that uses mktemp fails for a reason the read-only rootfs does not explain")
@@ -283,6 +294,16 @@ func TestParseMount_Refusals(t *testing.T) {
 		{"the docker socket", "/var/run/docker.sock", "docker"},
 		{"a docker socket under another name", socket, "docker"},
 		{"nothing at all", "", "absolute"},
+		// The directory the socket is IN, which is the refusal the name
+		// check does not make: `--hook-mount /run:rw` hands the same
+		// file to the same script by a path nobody typed. Both spellings
+		// are covered because /var/run is a symlink to /run on every
+		// modern Linux and neither is the other lexically.
+		{"the directory the socket is in", "/run:rw", "docker socket"},
+		{"the directory the socket is in, by its other name", "/var/run", "docker socket"},
+		// And the ancestor case, which is the same argument one level
+		// out: a mount of / contains every socket on the host.
+		{"the root of the filesystem", "/", "docker socket"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseMount(tc.spec)
@@ -511,5 +532,78 @@ func TestExecute_RefusesWithoutAProvenCapabilityAndRunsNoHostBash(t *testing.T) 
 	}
 	if _, statErr := os.Stat(witness); statErr == nil {
 		t.Fatal("the hook RAN: this runner fell back to executing a script outside a container, which is the one thing #865 forbids")
+	}
+}
+
+// TestProveContainerCapability_RefusesANetworkThatUndoesTheIsolation is
+// the two --hook-network values that are not "a bigger network".
+//
+// `host` puts the hook in this machine's own network namespace, where a
+// script an operator copied off a forum reaches every service on the
+// host -- including the ones bound to 127.0.0.1, which on a NAS is the
+// admin interface and in this deployment is the engine's own listeners.
+// `container:<id>` makes what a hook can reach a property of whatever
+// that container is today, which is a fact no preflight here can
+// establish. Both are a reduction in isolation that no other flag in
+// this runner can produce, so both are refused rather than documented.
+func TestProveContainerCapability_RefusesANetworkThatUndoesTheIsolation(t *testing.T) {
+	docker := writeFakeDocker(t, fakeDocker{})
+
+	for _, network := range []string{"host", "container:backupd-engine", "container"} {
+		t.Run(network, func(t *testing.T) {
+			_, err := ProveContainerCapability(context.Background(), ContainerConfig{
+				Docker:  docker,
+				Image:   DefaultHookImage,
+				Bash:    hostBashForFake(t),
+				User:    "1000:1000",
+				Network: network,
+			})
+			if err == nil {
+				t.Fatalf("--hook-network %s was accepted, and with it every service on this host", network)
+			}
+			if !IsCode(err, CodeContainerUnavailable) {
+				t.Fatalf("the refusal is not a container-capability refusal: %v", err)
+			}
+			if !strings.Contains(err.Error(), "none") {
+				t.Fatalf("the refusal does not name the remedy: %v", err)
+			}
+		})
+	}
+
+	// A named network is a boundary an operator DEFINED, so it is
+	// allowed: this is a refusal of two namespace modes, not of
+	// networking.
+	if _, err := ProveContainerCapability(context.Background(), ContainerConfig{
+		Docker:  docker,
+		Image:   DefaultHookImage,
+		Bash:    hostBashForFake(t),
+		User:    "1000:1000",
+		Network: "backupd-hooks",
+	}); err != nil {
+		t.Fatalf("a named docker network was refused as well, which is a refusal of networking rather than of the host namespace: %v", err)
+	}
+}
+
+// TestRefuseRootHookUser_ReadsTheUidAsANumber is the spelling the string
+// comparison missed.
+//
+// The kernel reads `00` and ` 0` as uid 0; a check that compared the text
+// to "0" read them as somebody else. A hook this runner said was
+// unprivileged and the daemon ran as root is worse than either answer on
+// its own, which is why the refusal is early and the probe's own uid
+// assertion is only the backstop.
+func TestRefuseRootHookUser_ReadsTheUidAsANumber(t *testing.T) {
+	for _, user := range []string{"0", "0:0", "00", "00:00", " 0", "0 ", "+0", "-0", "root", "root:root"} {
+		if err := refuseRootHookUser(user); err == nil {
+			t.Errorf("--hook-user %q was accepted, and it is uid 0 to the kernel", user)
+		}
+	}
+	if err := refuseRootHookUser(""); err == nil {
+		t.Error("a hook container with no --user was accepted, and an image declares root in most cases")
+	}
+	for _, user := range []string{"1000:1000", "501:20", "10:0", "nobody"} {
+		if err := refuseRootHookUser(user); err != nil {
+			t.Errorf("--hook-user %q was refused as root: %v", user, err)
+		}
 	}
 }

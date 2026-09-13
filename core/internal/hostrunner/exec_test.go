@@ -19,9 +19,9 @@ import (
 //
 // The hook runs on the HOST -- the machine backupd is installed on --
 // rather than inside the distroless engine container, which has no shell
-// at all. And it gets there through a `docker run`: the call log shows
-// one, with this step's container name on it, and nothing was executed
-// any other way.
+// at all. And it gets there through a container this runner created and
+// then started: the call log shows both, with this step's container name
+// on them, and nothing was executed any other way.
 func TestExecute_RunsTheCapturedBytesInAContainerOnThisHost(t *testing.T) {
 	exec, state := testExecutor(t)
 	witness := filepath.Join(t.TempDir(), "only-on-this-host")
@@ -42,9 +42,17 @@ func TestExecute_RunsTheCapturedBytesInAContainerOnThisHost(t *testing.T) {
 		t.Errorf("the hook could not read a file that exists only on this host, so it did not run here: %q", got)
 	}
 
-	runs := dockerCallsMatching(t, state, "run ", containerNamePrefix+"run-1-step-1-")
-	if len(runs) != 1 {
-		t.Fatalf("the hook was not launched by exactly one `docker run` for this step: %v", dockerCalls(t, state))
+	// One creation and one attached start for this step, and the step's
+	// own name on both: the launch is the explicit lifecycle rather than
+	// a `docker run`, which is what lets the exit status below be the
+	// hook's own (see Executor.observeExit).
+	created := dockerCallsWithVerb(t, state, "create", containerNamePrefix+"run-1-step-1-")
+	if len(created) != 1 {
+		t.Fatalf("the hook's container was not created exactly once for this step: %v", dockerCalls(t, state))
+	}
+	started := dockerCallsWithVerb(t, state, "start", containerNamePrefix+"run-1-step-1-")
+	if len(started) != 1 {
+		t.Fatalf("the created container was not started with this process attached: %v", dockerCalls(t, state))
 	}
 }
 
@@ -66,8 +74,11 @@ func TestExecute_RefusesBytesWhoseHashDoesNotMatchTheClaim(t *testing.T) {
 	if !IsCode(err, CodeScriptMismatch) {
 		t.Fatalf("the refusal is not a script_mismatch, so the engine cannot tell it from a hook that failed: %v", err)
 	}
-	if runs := dockerCallsMatching(t, state, containerNamePrefix); len(runs) != 0 {
-		t.Errorf("a hook container was started for bytes that were refused: %v", runs)
+	// The CREATE verb, not the name prefix: this runner's own probe and
+	// syntax-check containers carry the same prefix, so a search for it
+	// would find them and this assertion would be about nothing.
+	if created := dockerCallsWithVerb(t, state, "create"); len(created) != 0 {
+		t.Errorf("a hook container was created for bytes that were refused: %v", created)
 	}
 	assertNothingLeftBehind(t, exec.Layout, "run-1", "step-1")
 }
@@ -141,8 +152,8 @@ func TestExecute_RefusesBytesBashCannotParse(t *testing.T) {
 	// The check is a container of its own, and no hook container was
 	// ever created: a runner that ran the check inside the hook's own
 	// launch would have had to start the hook to find out.
-	if named := dockerCallsMatching(t, state, containerNamePrefix); len(named) != 0 {
-		t.Errorf("a hook container was created for a script that does not parse: %v", named)
+	if created := dockerCallsWithVerb(t, state, "create"); len(created) != 0 {
+		t.Errorf("a hook container was created for a script that does not parse: %v", created)
 	}
 }
 
@@ -723,8 +734,8 @@ func TestExecute_RefusesToMountAWorkingDirectoryThatBecameALink(t *testing.T) {
 	} else if !IsCode(err, CodeRefused) {
 		t.Fatalf("the refusal is not a refusal: %v", err)
 	}
-	if runs := dockerCallsMatching(t, state, containerNamePrefix); len(runs) != 0 {
-		t.Errorf("a hook container was started anyway: %v", runs)
+	if created := dockerCallsWithVerb(t, state, "create"); len(created) != 0 {
+		t.Errorf("a hook container was created anyway: %v", created)
 	}
 }
 
@@ -948,4 +959,369 @@ func TestSyntaxCheck_ACancelledCheckIsNotASyntaxRefusal(t *testing.T) {
 	if !IsCode(err, CodeInternal) {
 		t.Fatalf("the failure is neither a syntax refusal nor an internal one, so nothing downstream can branch on it: %v", err)
 	}
+}
+
+// --- the container's identity, and the cross-kill it used to allow -------
+
+// TestContainerName_KeepsTheUniqueSuffixWhateverTheIdsAre is the
+// truncation bug in its smallest form.
+//
+// Verify accepts a run id and a step id of MaxIDLength each, so the two
+// of them plus the prefix are past docker's limit on their own. A name
+// cut at the END loses the random token -- the ONLY unique part of it --
+// so two concurrent steps whose ids share a long prefix ended up asking
+// the daemon for the same container. That is not a cosmetic collision:
+// the second `docker create` fails, and the failed attempt's own cleanup
+// then removes the container the first step is still running in.
+func TestContainerName_KeepsTheUniqueSuffixWhateverTheIdsAre(t *testing.T) {
+	long := strings.Repeat("a", MaxIDLength-6)
+	runID := long + "-run-1"
+	stepID := long + "-step-2"
+	other := long + "-step-3"
+
+	first := containerName(runID, stepID, "0123456789abcdef")
+	second := containerName(runID, other, "fedcba9876543210")
+
+	for _, name := range []string{first, second} {
+		if len(name) > maxContainerNameLength {
+			t.Fatalf("the name is %d bytes, past the %d this runner holds itself to: %q", len(name), maxContainerNameLength, name)
+		}
+		if !strings.HasPrefix(name, containerNamePrefix) {
+			t.Fatalf("the name is not this runner's: %q", name)
+		}
+	}
+	if !strings.HasSuffix(first, "0123456789abcdef") || !strings.HasSuffix(second, "fedcba9876543210") {
+		t.Fatalf("the token was truncated away, so the name is derived rather than unique:\n%q\n%q", first, second)
+	}
+	if first == second {
+		t.Fatalf("two different steps got the same container name: %q", first)
+	}
+	// And the legible part still differs, so an operator reading
+	// `docker ps` can tell two long-id steps apart.
+	if strings.TrimSuffix(first, "0123456789abcdef") == strings.TrimSuffix(second, "fedcba9876543210") {
+		t.Fatalf("the two names differ only in their token: %q vs %q", first, second)
+	}
+}
+
+// TestExecute_TwoConcurrentStepsWithLongSharedIdsNeitherCollideNorKillEachOther
+// is the same fault measured where it did its damage.
+//
+// Both steps run at once, both ids are as long as this runner accepts and
+// agree for all but their last characters. Pre-fix they minted ONE name:
+// the loser's `docker create` failed with a name conflict, and its
+// cleanup removed that name's container -- so the winner's hook was
+// killed by the other step's failure. Both hooks running to completion is
+// the whole assertion.
+func TestExecute_TwoConcurrentStepsWithLongSharedIdsNeitherCollideNorKillEachOther(t *testing.T) {
+	exec, state := testExecutor(t)
+	evidence := t.TempDir()
+	long := strings.Repeat("s", MaxIDLength-8)
+
+	type outcome struct {
+		step   string
+		result Result
+		err    error
+	}
+	outcomes := make(chan outcome, 2)
+	for _, step := range []string{long + "-step-1", long + "-step-2"} {
+		go func(step string) {
+			body := fmt.Sprintf("touch %s/%s.started\nsleep 1\nprintf ok > %s/%s.done\n",
+				evidence, step[len(step)-6:], evidence, step[len(step)-6:])
+			result, err := exec.Execute(context.Background(),
+				scriptRequest(long+"-run", step, body), &collector{})
+			outcomes <- outcome{step: step, result: result, err: err}
+		}(step)
+	}
+
+	for i := 0; i < 2; i++ {
+		got := <-outcomes
+		if got.err != nil {
+			t.Fatalf("%s could not run at all: %v. Two concurrent steps with long ids asked the daemon for the same container", got.step[len(got.step)-6:], got.err)
+		}
+		if got.result.ExitCode == nil || *got.result.ExitCode != 0 {
+			t.Fatalf("%s did not finish: %+v. A step killed by the other step's cleanup looks exactly like this", got.step[len(got.step)-6:], got.result)
+		}
+	}
+	for _, marker := range []string{"step-1.done", "step-2.done"} {
+		if _, err := os.Stat(filepath.Join(evidence, marker)); err != nil {
+			t.Fatalf("%s was never written, so that hook did not run to the end: %v", marker, err)
+		}
+	}
+	// Two creations, two distinct names: the collision is what the
+	// truncation produced, and this is it not happening.
+	created := dockerCallsWithVerb(t, state, "create")
+	if len(created) != 2 {
+		t.Fatalf("there were not two creations: %v", created)
+	}
+	if names := containerNamesIn(created); len(names) != 2 {
+		t.Fatalf("the two steps asked for the same container name: %v", names)
+	}
+}
+
+// containerNamesIn collects the distinct --name values out of call-log
+// lines.
+func containerNamesIn(calls []string) map[string]bool {
+	names := map[string]bool{}
+	for _, call := range calls {
+		fields := strings.Fields(call)
+		for i, field := range fields {
+			if field == "--name" && i+1 < len(fields) {
+				names[fields[i+1]] = true
+			}
+		}
+	}
+	return names
+}
+
+// --- creation, termination and the race between them --------------------
+
+// TestExecute_ACancelDuringCreationLeavesNoRunaway is the create/terminate
+// race, reproduced rather than argued about.
+//
+// The stand-in daemon here accepts the creation and completes it a second
+// LATER, from a writer the client's death does not touch, while the
+// client itself hangs -- which is what a cancel landing inside a launch
+// really looks like on a loaded host. The version of this runner that
+// signalled the name it minted, once, got "no such container" twice and
+// returned; the container appeared afterwards and nothing on the host
+// knew its name.
+//
+// The reconciliation is by LABEL and watches for the whole confirmation
+// window, so the container that appears late is still found, killed and
+// removed.
+func TestExecute_ACancelDuringCreationLeavesNoRunaway(t *testing.T) {
+	container, state := fakeCapability(t, fakeDocker{createLatencySeconds: "1"})
+	exec := &Executor{
+		Layout:         testLayout(t),
+		Container:      container,
+		Grace:          200 * time.Millisecond,
+		ConfirmWindow:  3 * time.Second,
+		ControlTimeout: 5 * time.Second,
+	}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		cancel(errLeaseExpired)
+	}()
+
+	started := time.Now()
+	result, err := exec.Execute(ctx, scriptRequest("run-late", "step-late", "sleep 30\n"), &collector{})
+	if err != nil {
+		t.Fatalf("a cancel during creation was reported as a failure rather than as a cancel: %v", err)
+	}
+	if result.State != StateLeaseExpired {
+		t.Fatalf("the outcome is %q rather than the lease expiring, so the journal cannot say why the step ended", result.State)
+	}
+	if elapsed := time.Since(started); elapsed > 20*time.Second {
+		t.Fatalf("the cancel took %s to be answered", elapsed)
+	}
+	if result.TerminationCertainty != CertaintyConfirmed {
+		t.Errorf("the runner could not prove the late container was gone: %q", result.TerminationCertainty)
+	}
+	if records := containerRecords(t, state); len(records) != 0 {
+		t.Fatalf("a container created after the cancel is still there: %v. That is the runaway: nothing on this host now knows what it is", records)
+	}
+	if killed := dockerCallsWithVerb(t, state, "rm"); len(killed) == 0 {
+		t.Errorf("nothing was ever removed, so the reconciliation never found the container:\n%s", strings.Join(dockerCalls(t, state), "\n"))
+	}
+	// By label, which is the only question that can find a container
+	// whose name this runner never saw registered.
+	if byLabel := dockerCallsWithVerb(t, state, "ps", "label="+LabelInstance+"="); len(byLabel) == 0 {
+		t.Errorf("the reconciliation never asked the daemon what it had by label:\n%s", strings.Join(dockerCalls(t, state), "\n"))
+	}
+}
+
+// TestExecute_AWedgedDaemonEndsTheStepWithinTheBoundAndSaysSo is the
+// other half of the same requirement: a daemon that has stopped
+// answering must cost this runner CERTAINTY, never its ability to
+// return.
+//
+// Every docker call here blocks forever once the hook has started, and
+// the attached client blocks with them -- which is the case that used to
+// hang: the wait for that client had no bound at all, so a lost lease or
+// a shutdown waited for a daemon that was never going to answer. The
+// step must end inside the bound, report the termination as unconfirmed
+// and keep the working directory, because something may still be running
+// in it.
+func TestExecute_AWedgedDaemonEndsTheStepWithinTheBoundAndSaysSo(t *testing.T) {
+	container, state := fakeCapability(t, fakeDocker{hangAfterStart: true})
+	layout := testLayout(t)
+	exec := &Executor{
+		Layout:         layout,
+		Container:      container,
+		Grace:          200 * time.Millisecond,
+		ConfirmWindow:  700 * time.Millisecond,
+		ControlTimeout: 300 * time.Millisecond,
+	}
+
+	evidence := t.TempDir()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	go func() {
+		waitForFileEventually(filepath.Join(evidence, "started"), 5*time.Second)
+		cancel(errLeaseExpired)
+	}()
+
+	started := time.Now()
+	result, err := exec.Execute(ctx,
+		scriptRequest("run-wedged", "step-wedged", fmt.Sprintf("touch %s/started\nsleep 30\n", evidence)),
+		&collector{})
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("the step was reported as a failure rather than as a lost lease: %v", err)
+	}
+	// Generous, and still a bound: the point is that the answer does not
+	// wait for a daemon that never replies, not the exact arithmetic.
+	if elapsed > 30*time.Second {
+		t.Fatalf("the step took %s against a daemon that never answered, so something on the termination path is unbounded", elapsed)
+	}
+	if result.State != StateLeaseExpired {
+		t.Errorf("the outcome is %q rather than the lease expiring", result.State)
+	}
+	if result.TerminationCertainty != CertaintyUnconfirmed {
+		t.Fatalf("termination against a wedged daemon was reported as %q. Nothing proved the container is gone, and claiming it is is how a runaway gets recorded as a clean kill", result.TerminationCertainty)
+	}
+	if result.WorkDirRemoved {
+		t.Error("the working directory was removed although the termination could not be proved")
+	}
+	if _, err := os.Stat(stepWorkDirOf(t, layout, "run-wedged", "step-wedged")); err != nil {
+		t.Errorf("the working directory of an unconfirmed termination is gone: %v. Something may still be writing in there, and it is the only forensic record of what", err)
+	}
+	if signals := dockerCallsMatching(t, state, "kill", "--signal=TERM"); len(signals) == 0 {
+		t.Errorf("the container was never signalled:\n%s", strings.Join(dockerCalls(t, state), "\n"))
+	}
+}
+
+// TestExecute_AClientThatExitsWhileItsContainerLivesIsNotACleanExit is
+// MAJOR 3: the normal path's evidence, which used to be discarded.
+//
+// The client says the step is over and the container says otherwise -- a
+// daemon restart, a dropped transport, a client that was OOM-killed. The
+// runner that read the client's exit as the hook's reported a clean
+// termination with no certainty at all and DELETED the working
+// directory, which is the one place the half-written output of a hook
+// that outlived its client is.
+//
+// Both endings are asserted, because the pair is what keeps either one
+// honest: a daemon that lets the container be removed gives a confirmed
+// termination, and one that will not gives an unconfirmed one and keeps
+// the directory.
+func TestExecute_AClientThatExitsWhileItsContainerLivesIsNotACleanExit(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		sticky    bool
+		certainty TerminationCertainty
+		kept      bool
+	}{
+		{"a daemon that lets go", false, CertaintyConfirmed, false},
+		{"a daemon that will not let go", true, CertaintyUnconfirmed, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			container, _ := fakeCapability(t, fakeDocker{clientExitsEarly: true, sticky: tc.sticky})
+			layout := testLayout(t)
+			exec := &Executor{
+				Layout:         layout,
+				Container:      container,
+				Grace:          200 * time.Millisecond,
+				ConfirmWindow:  500 * time.Millisecond,
+				ControlTimeout: 3 * time.Second,
+			}
+
+			result, err := exec.Execute(context.Background(),
+				scriptRequest("run-orphan", "step-orphan", "sleep 2\n"), &collector{})
+			if err != nil {
+				t.Fatalf("running the hook: %v", err)
+			}
+			if result.ExitCode != nil {
+				t.Errorf("the hook was given exit code %d, which nothing observed: the client exited and the container was still running", *result.ExitCode)
+			}
+			if result.TerminationCertainty != tc.certainty {
+				t.Fatalf("certainty = %q, want %q", result.TerminationCertainty, tc.certainty)
+			}
+			_, statErr := os.Stat(stepWorkDirOf(t, layout, "run-orphan", "step-orphan"))
+			if tc.kept && statErr != nil {
+				t.Errorf("the working directory was removed although the container outlived its client and could not be proved gone: %v", statErr)
+			}
+			if !tc.kept && statErr == nil {
+				t.Error("the working directory survived a termination this runner proved, so the cleanup promise is not kept")
+			}
+		})
+	}
+}
+
+// TestExecute_AHookThatExitsWith125IsAHookThatRan is the exit-status
+// conflation, which was a lie about the seam rather than a cosmetic
+// mistake.
+//
+// `docker run` answers 125 when it could not create the container AND
+// when the container's process returned 125, because the client
+// propagates the wait status verbatim. A runner that read the number
+// reported a *Failure -- "nothing was attempted" -- for a hook that had
+// run, done its work and returned an exit code an operator chose. That
+// is a behavioural regression from the host bash this replaced, where
+// 125 was just a number, and it is the one fact the workflow engine
+// branches on.
+func TestExecute_AHookThatExitsWith125IsAHookThatRan(t *testing.T) {
+	exec, _ := testExecutor(t)
+	evidence := t.TempDir()
+
+	result, err := exec.Execute(context.Background(),
+		scriptRequest("run-125", "step-125", fmt.Sprintf("printf ran > %s/it-ran\nexit 125\n", evidence)),
+		&collector{})
+	if err != nil {
+		t.Fatalf("a hook that exited 125 was reported as never having been attempted: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(evidence, "it-ran")); statErr != nil {
+		t.Fatalf("the hook did not run at all, so this test is not about what it claims: %v", statErr)
+	}
+	if result.State != StateExited {
+		t.Fatalf("the state is %q rather than exited", result.State)
+	}
+	if result.ExitCode == nil || *result.ExitCode != 125 {
+		t.Fatalf("exit code = %v, want 125: the hook ran and returned it", result.ExitCode)
+	}
+	if result.TerminationCertainty != CertaintyNotApplicable {
+		t.Errorf("a hook that exited on its own was given a termination certainty of %q", result.TerminationCertainty)
+	}
+}
+
+// TestSyntaxCheck_RemovesTheContainerAutoRemoveDidNotReap is MINOR 7: this
+// runner's OWN containers are named, labelled and reconciled too.
+//
+// The probe and the syntax check are `--rm` runs, and --rm is a promise
+// about an EXIT: a run cancelled or timed out between the daemon creating
+// the container and starting it leaves a Created container that nothing
+// ever reaps. They used to be unnamed children of a CommandContext, so
+// there was nothing to reap it BY.
+func TestSyntaxCheck_RemovesTheContainerAutoRemoveDidNotReap(t *testing.T) {
+	container, state := fakeCapability(t, fakeDocker{autoRemoveFails: true})
+
+	if err := container.SyntaxCheck(context.Background(), []byte("printf ok\n")); err != nil {
+		t.Fatalf("checking bytes that parse: %v", err)
+	}
+	if records := containerRecords(t, state); len(records) != 0 {
+		t.Fatalf("a container this runner started is still there: %v. --rm did not happen, and nothing else removed it", records)
+	}
+	// Named and labelled, which is what made the removal possible.
+	named := dockerCallsWithVerb(t, state, "run", containerNamePrefix+"syntax-", "--label "+LabelInstance+"=")
+	if len(named) == 0 {
+		t.Errorf("the syntax check's container carries no name and no instance label:\n%s", strings.Join(dockerCalls(t, state), "\n"))
+	}
+	probed := dockerCallsWithVerb(t, state, "run", containerNamePrefix+"probe-", "--label "+LabelInstance+"=")
+	if len(probed) == 0 {
+		t.Errorf("the capability probe's container carries no name and no instance label:\n%s", strings.Join(dockerCalls(t, state), "\n"))
+	}
+}
+
+// stepWorkDirOf is StepWorkDir with the id validation already known to
+// pass, for the tests that assert on whether the directory survived.
+func stepWorkDirOf(t *testing.T, layout Layout, runID, stepID string) string {
+	t.Helper()
+	dir, err := layout.StepWorkDir(runID, stepID)
+	if err != nil {
+		t.Fatalf("resolving the step's working directory: %v", err)
+	}
+	return dir
 }

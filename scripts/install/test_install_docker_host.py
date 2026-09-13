@@ -6516,6 +6516,90 @@ class TestTheRunnerRunsHooksInContainers(unittest.TestCase):
                       "the unit does not pin the image hooks run in")
         self.assertNotIn("--privileged", unit)
 
+    def test_the_unit_carries_the_daemon_this_install_actually_used(self):
+        """Install against daemon A, serve hooks against daemon A.
+
+        This installer honours DOCKER_HOST, DOCKER_CONTEXT and
+        DOCKER_CONFIG: the daemon probe, the hook image pull and the
+        socket group all go through them. systemd inherits none of it, so
+        a unit that did not carry the connection produced the worst kind
+        of success -- install, preflight and pull pass against the daemon
+        the operator named, then the runner probes the DEFAULT daemon,
+        finds no hook image and refuses every local hook while naming an
+        image that was fetched.
+        """
+        args = self.staged()
+        env = {
+            "DOCKER_HOST": "tcp://10.4.0.9:2376",
+            "DOCKER_CONFIG": "/srv/nas config/.docker",
+        }
+        with unittest.mock.patch.dict(os.environ, env, clear=False):
+            unit = installer.render_workflow_runner_unit(args)
+
+        self.assertIn('Environment="DOCKER_HOST=tcp://10.4.0.9:2376"', unit,
+                      "the unit does not carry the daemon the install used, so the runner will probe "
+                      "the default one and refuse to serve")
+        self.assertIn('Environment="DOCKER_CONFIG=/srv/nas config/.docker"', unit,
+                      "the unit does not carry the docker config directory the install used, so the "
+                      "runner has neither its contexts nor its credentials")
+
+    def test_a_docker_context_travels_and_loses_to_an_explicit_host(self):
+        """docker's own precedence, settled by the installer rather than
+        left for the client.
+
+        A unit that set both would leave the two able to disagree after
+        somebody edited one of them, which is a deployment whose daemon
+        depends on which line a later hand-edit touched.
+        """
+        args = self.staged()
+        with unittest.mock.patch.dict(os.environ, {"DOCKER_CONTEXT": "nas-remote"}, clear=False):
+            os.environ.pop("DOCKER_HOST", None)
+            unit = installer.render_workflow_runner_unit(args)
+        self.assertIn('Environment="DOCKER_CONTEXT=nas-remote"', unit,
+                      "the docker context the install used is not in the unit")
+
+        with unittest.mock.patch.dict(os.environ,
+                                      {"DOCKER_CONTEXT": "nas-remote", "DOCKER_HOST": "tcp://10.4.0.9:2376"},
+                                      clear=False):
+            both = installer.render_workflow_runner_unit(args)
+        self.assertIn('Environment="DOCKER_HOST=tcp://10.4.0.9:2376"', both)
+        self.assertNotIn('Environment="DOCKER_CONTEXT', both,
+                         "the unit carries both a host and a context, so the client is left resolving "
+                         "a conflict this installer had already resolved")
+
+    def test_a_moved_socket_is_the_one_the_unit_allows_and_reads_the_group_from(self):
+        """Rootless Docker puts the socket under XDG_RUNTIME_DIR.
+
+        A unit that allowed writes to /var/run/docker.sock there would
+        give the service account the group of a socket it never uses and
+        deny it writes to the one it does -- and the error names the
+        socket and blames the group.
+        """
+        args = self.staged()
+        moved = Path(self.enterContext(tempfile.TemporaryDirectory())) / "docker.sock"
+        moved.parent.mkdir(parents=True, exist_ok=True)
+        with unittest.mock.patch.dict(os.environ, {"DOCKER_HOST": f"unix://{moved}"}, clear=False):
+            unit = installer.render_workflow_runner_unit(args)
+            self.assertEqual(installer.docker_connection().socket, str(moved))
+        self.assertIn(f"ReadWritePaths={args.runtime_dir} {args.workspace_dir} {moved}", unit,
+                      "the unit allows writes to a socket this deployment's daemon is not on")
+        self.assertIn(f'Environment="DOCKER_HOST=unix://{moved}"', unit)
+
+    def test_the_unit_names_the_docker_client_the_install_proved(self):
+        """#875: check_docker accepts any `docker` on PATH, and the runner
+        searches a fixed candidate list instead -- deliberately, because
+        it will not take a container runtime from a PATH a service manager
+        set. A client at /snap/bin/docker therefore passed the install and
+        was invisible to the runner, which then refused every hook for
+        want of a docker it had just been proved to have.
+        """
+        args = self.staged()
+        with unittest.mock.patch.object(installer.shutil, "which", lambda name: "/snap/bin/docker"):
+            unit = installer.render_workflow_runner_unit(args)
+        self.assertIn("--docker /snap/bin/docker", unit,
+                      "the unit does not name the client the install used, so the runner falls back to "
+                      "searching paths this host may not have")
+
     def test_the_engine_container_still_gets_no_docker_access_at_all(self):
         """The acceptance criterion #865 shares with #809, and the one
         this change could most easily have broken.
