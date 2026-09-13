@@ -388,11 +388,14 @@ func (c *Client) SetDefaultStorageMedium(ctx context.Context, id string) (apicon
 // repository security boundary.
 //
 // It answers with the domain's HEALTH rather than with an echo of the
-// declaration, because that is what the route answers with: the domain as
-// GET /repositories reports it, probed. A domain that has just been
-// declared and has nothing stored in it therefore comes back unreachable,
-// which is the truth about a repository that is realized lazily and is
-// what `repository create` prints.
+// declaration, because that is the shape the route answers with -- but
+// NOT a probe: declaring opens no storage and resolves no passphrase
+// reference, so what comes back is built from the declaration (the id,
+// the co-tenancy posture, DEGRADED, and a detail saying the store is
+// written by the first backup run into the domain) with every access
+// boolean false because nothing was measured. GET /repositories is what
+// probes, and a domain nothing has run into yet reads there as reachable
+// and not yet readable.
 func (c *Client) CreateRepositoryDomain(ctx context.Context, req apicontract.CreateRepositoryDomainRequest) (apicontract.RepositoryHealth, error) {
 	var out apicontract.RepositoryHealth
 	err := c.call(ctx, "createRepositoryDomain", nil, req, &out)

@@ -5162,7 +5162,7 @@
       },
       "CreateRepositoryDomainRequest": {
         "type": "object",
-        "description": "POST /repositories: declare a repository domain. What this persists is a DECLARATION -- an id, a co-tenancy posture and the reference the passphrase is resolved from -- and it creates no store: the repository itself is realized lazily by the first backup run that stores a snapshot in it, exactly as a domain named on the add-backup-set wizard's repository step already is. Nothing here is therefore proven against storage, and a domain created a moment ago reads as unreachable on GET /repositories until something has run into it, which is the truth about it rather than a failure of it.",
+        "description": "POST /repositories: declare a repository domain. What this persists is a DECLARATION -- an id, a co-tenancy posture and the reference the passphrase is resolved from -- and it creates no store: the repository itself is realized lazily by the first backup run that stores a snapshot in it, exactly as a domain named on the add-backup-set wizard's repository step already is. Nothing here is proven against storage, and nothing here reads it: this route opens no repository and resolves no passphrase reference, so the domain it answers with is described from the declaration alone. Once declared, the domain is probed by GET /repositories, where one nothing has run into yet answers `reachable` true and `readable` false -- the storage answers and holds no repository, which is the truth about it rather than a failure of it.",
         "additionalProperties": false,
         "properties": {
           "id": {
@@ -5195,7 +5195,7 @@
               "this",
               "another-instance"
             ],
-            "description": "Which deployment maintains this repository. Empty means `this`. Nothing here CLAIMS ownership and nothing here can: ADR 0017 makes maintenance ownership a durable record that is taken by whichever instance first maintains an unclaimed repository and afterwards moves only by transfer, so a declaration that could name an owner would be exactly the \"claim this for me\" operation that design exists to make impossible. What the field does is decide whether this create is allowed to be one. `this` is refused with REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE when a maintenance record for this id already names an owner, which is what a re-declared id or a state directory shared with another instance looks like; `another-instance` says the operator knows that and declares the boundary anyway, and this deployment then reads and writes snapshots here without ever maintaining the store."
+            "description": "Which deployment maintains this repository, as a GATE on this one create and nothing more. Empty means `this`. It records nothing: there is no maintenance_owner key in config.yaml and this field is not persisted anywhere, because ADR 0017 makes maintenance ownership a durable record taken by whichever instance first maintains an unclaimed repository and moved afterwards only by transfer -- so a declaration that could name an owner would be exactly the \"claim this for me\" operation that design exists to make impossible. What the field decides is whether this create is refused as such a claim. `this` is refused with REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE when a maintenance record for this id already names an owner, which is what a re-declared id or a state directory shared with another instance looks like. `another-instance` says the operator knows that and declares the boundary anyway, and it is the answer that gets the declaration written; which deployment then actually maintains the store is decided by that durable record and by transfer, never by this field."
           }
         },
         "required": [
@@ -12666,7 +12666,7 @@
         },
         "responses": {
           "201": {
-            "description": "Success. The created domain exactly as GET /repositories reports it, probed rather than echoed: every field is what this deployment can see about the store right now, which for a domain nothing has run into yet is an unrealized repository and not a healthy one.",
+            "description": "Success. The created domain as the DECLARATION describes it: the id, the co-tenancy posture, a `degraded` verdict and a detail saying the store is written by the first backup run into it. Nothing here is a probe -- this route opens no storage and resolves no passphrase reference, so every access boolean is false because nothing was measured rather than because something failed. GET /repositories probes from now on, and a domain nothing has run into yet answers there with `reachable` true and `readable` false: the storage answers and holds no repository.",
             "content": {
               "application/json": {
                 "schema": {

@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "a371671e55b32a97f989adeb13dce29995b3eb57a82eaccbf29098c052d1c104"
+const ContractSHA256 = "7c2ee42ab6e3fd3d8d592ed9a24feb1aaa5bef978007e72be8d8972f07ccbb7a"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -1565,10 +1565,13 @@ type CreateBackupSetResponse struct {
 // store: the repository itself is realized lazily by the first
 // backup run that stores a snapshot in it, exactly as a domain named
 // on the add-backup-set wizard's repository step already is. Nothing
-// here is therefore proven against storage, and a domain created a
-// moment ago reads as unreachable on GET /repositories until
-// something has run into it, which is the truth about it rather than
-// a failure of it.
+// here is proven against storage, and nothing here reads it: this
+// route opens no repository and resolves no passphrase reference, so
+// the domain it answers with is described from the declaration
+// alone. Once declared, the domain is probed by GET /repositories,
+// where one nothing has run into yet answers `reachable` true and
+// `readable` false -- the storage answers and holds no repository,
+// which is the truth about it rather than a failure of it.
 type CreateRepositoryDomainRequest struct {
 	Description      string                        `json:"description"`
 	ID               string                        `json:"id"`

@@ -124,6 +124,59 @@ func TestCreateRepositoryDomain_PersistsTheDeclarationASecondLoadCanSee(t *testi
 	}
 }
 
+// Issue #862's acceptance criterion in full: the declared domain is
+// immediately NAMEABLE by a backup set, on the service that declared it
+// and without a restart.
+//
+// This is the one that makes the create worth having. The two writes go
+// through the same configMu door and the second one's repository_domain
+// is checked against the configuration the first one left behind, so a
+// create that persisted the entry but did not hot-reload -- or one that
+// wrote an entry config.Validate will not accept beside a set naming it
+// -- is a domain an operator can see on a list and cannot use for
+// anything.
+func TestCreateRepositoryDomain_IsImmediatelyNameableByABackupSet(t *testing.T) {
+	svc := openRestoreTestService(t)
+
+	if _, err := svc.CreateRepositoryDomain(context.Background(), validDomainRequest(t)); err != nil {
+		t.Fatalf("CreateRepositoryDomain: %v", err)
+	}
+
+	req := validCreateReq(t, svc, "offsite-tree")
+	req.SourceName = "production"
+	req.Engine = "kopia"
+	req.RepositoryDomain = "offsite-b2"
+	// The artifact-only keys config.Validate refuses on an incremental
+	// set, exactly as the gate test clears them.
+	req.LocalPath = ""
+	req.Include = nil
+	req.CompletionStrategy = ""
+
+	result, err := svc.CreateBackupSet(context.Background(), req)
+	if err != nil {
+		t.Fatalf("CreateBackupSet naming the domain just declared: %v", err)
+	}
+	if result.Set.RepositoryDomain != "offsite-b2" {
+		t.Errorf("the created set reports repository domain %q, want offsite-b2", result.Set.RepositoryDomain)
+	}
+
+	// And the pair survives the file: a second, independent load has to
+	// accept a configuration in which a set names a domain declared by
+	// an API call, which is the thing config.Validate would refuse if
+	// either write had produced something only the writer understood.
+	second := reopen(t, svc.configPath)
+	if !contains(declaredDomains(t, second), "offsite-b2") {
+		t.Error("a second service does not report the declared domain")
+	}
+	got, err := second.GetBackupSet(context.Background(), "production/offsite-tree")
+	if err != nil {
+		t.Fatalf("GetBackupSet on a second service: %v", err)
+	}
+	if got.RepositoryDomain != "offsite-b2" {
+		t.Errorf("the reloaded set reports repository domain %q, want offsite-b2", got.RepositoryDomain)
+	}
+}
+
 // FR-33's rule for the one secret this noun has: the file is referenced,
 // never read into the configuration.
 func TestCreateRepositoryDomain_PersistsAPassphraseReferenceAndNotTheSecret(t *testing.T) {
@@ -145,6 +198,96 @@ func TestCreateRepositoryDomain_PersistsAPassphraseReferenceAndNotTheSecret(t *t
 	}
 	if !strings.Contains(text, "file: "+req.Passphrase.File) {
 		t.Errorf("config.yaml carries no passphrase.file reference to %s:\n%s", req.Passphrase.File, text)
+	}
+}
+
+// The create neither resolves the passphrase nor opens the store, and
+// this is the case that holds it to that.
+//
+// The declaration names a passphrase COMMAND -- a program of the
+// caller's choosing -- and the one written here proves whether it ran by
+// creating a file. Nothing about declaring a boundary warrants executing
+// it: the route is CSRF-checked and deliberately exempt from the
+// destructive gate on the stated grounds that it opens no storage and
+// proves no passphrase, and a read-back that probed would have made that
+// exemption false, quietly, on the one route whose body carries an argv.
+//
+// It would also have run under configMu and inside the probe timeout, so
+// a resolver that hangs would have held every other configuration write
+// in this process behind it.
+func TestCreateRepositoryDomain_ExecutesNoPassphraseCommandAndProbesNoStore(t *testing.T) {
+	svc := openRestoreTestService(t)
+
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "the-passphrase-command-ran")
+	resolver := filepath.Join(dir, "passphrase-resolver.sh")
+	script := "#!/bin/sh\n:> " + marker + "\nprintf %s " + testRepositoryPassphrase + "\n"
+	if err := os.WriteFile(resolver, []byte(script), 0o700); err != nil { //nolint:gosec // an executable this test runs nothing but itself.
+		t.Fatalf("writing the passphrase resolver: %v", err)
+	}
+
+	created, err := svc.CreateRepositoryDomain(context.Background(), CreateRepositoryDomainRequest{
+		ID:         "offsite-b2",
+		Isolation:  "shared",
+		Passphrase: RepositoryPassphraseRef{Command: []string{resolver}},
+	})
+	if err != nil {
+		t.Fatalf("CreateRepositoryDomain: %v", err)
+	}
+
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("declaring a repository domain executed the passphrase command it named (os.Stat(%s) = %v); a declaration must resolve no secret", marker, err)
+	}
+
+	// And what came back describes the declaration rather than a store.
+	// Every probe answer is false because nothing was probed, which is
+	// what false means on this shape, and the verdict is not the green
+	// row a create must never teach an operator to expect.
+	if created.Domain != "offsite-b2" || !created.MayShare {
+		t.Errorf("the create answered with %+v, want the declared id and its shared posture", created)
+	}
+	if created.Reachable || created.Readable || created.Writable || created.CredentialsValid {
+		t.Errorf("the create reports probe results for a store nothing opened: %+v", created)
+	}
+	if created.State != "DEGRADED" {
+		t.Errorf("the created domain reports state %q, want DEGRADED: a domain with no store yet is neither healthy nor a repository something found to be broken", created.State)
+	}
+	if created.Detail == "" {
+		t.Error("the created domain carries no detail, so nothing tells an operator that the store is written by the first backup run rather than now")
+	}
+
+	// The file holds the reference, and only the reference.
+	text := readFileForTest(t, svc.configPath)
+	if strings.Contains(text, testRepositoryPassphrase) {
+		t.Fatalf("the passphrase itself is in config.yaml:\n%s", text)
+	}
+	if !strings.Contains(text, resolver) {
+		t.Errorf("config.yaml carries no passphrase.command reference to %s:\n%s", resolver, text)
+	}
+}
+
+// A declaration whose passphrase reference cannot be resolved at all is
+// still a declaration. The secret is proved by the first thing that opens
+// the store, and a create that refused here would be a create that
+// insists the resolver already works -- which for a domain being built up
+// before anything is pointed at it is a requirement nobody stated.
+func TestCreateRepositoryDomain_DeclaresADomainWhosePassphraseCommandDoesNotExist(t *testing.T) {
+	svc := openRestoreTestService(t)
+
+	missing := filepath.Join(t.TempDir(), "no-such-resolver")
+	created, err := svc.CreateRepositoryDomain(context.Background(), CreateRepositoryDomainRequest{
+		ID:         "offsite-b2",
+		Isolation:  "isolated",
+		Passphrase: RepositoryPassphraseRef{Command: []string{missing}},
+	})
+	if err != nil {
+		t.Fatalf("CreateRepositoryDomain with an unresolvable passphrase reference = %v, want the declaration to be accepted", err)
+	}
+	if created.Domain != "offsite-b2" {
+		t.Errorf("the create answered about %q, want offsite-b2", created.Domain)
+	}
+	if !contains(declaredDomains(t, reopen(t, svc.configPath)), "offsite-b2") {
+		t.Error("a second service opened on the same file does not report the declared domain")
 	}
 }
 

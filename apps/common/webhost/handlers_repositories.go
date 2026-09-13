@@ -255,6 +255,14 @@ func (h *handlers) writeRepositoryDomainError(w http.ResponseWriter, r *http.Req
 		// the only secret-shaped thing on this boundary is a REFERENCE.
 		h.logRefusal(r, http.StatusBadRequest, "INVALID_REQUEST",
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error()), err)
+	case errors.Is(err, service.ErrConfigNotFileBacked):
+		// The same sentence the other configuration writes answer with
+		// (backup sets, settings, retention). It is a 500 because
+		// nothing about the request is wrong, and it says which
+		// deployment-shaped thing is missing rather than leaving an
+		// operator to read "failed to declare the repository domain"
+		// and go looking at the domain.
+		h.internalError(w, r, "INTERNAL", "this deployment has no configuration file to persist to", err)
 	default:
 		h.internalError(w, r, "INTERNAL", "failed to declare the repository domain", err)
 	}

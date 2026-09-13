@@ -121,45 +121,6 @@ func (s *Service) RepositoryHealth(ctx context.Context) ([]health.RepositoryHeal
 	return out, nil
 }
 
-// RepositoryHealthOf probes ONE declared domain and reports its verdict.
-//
-// It exists for the create route (#862), which has just written a
-// declaration and has to answer with that domain as GET /repositories
-// reports it. Walking every declared domain to answer about one of them
-// would make a create's cost, and its worst-case latency, a function of
-// how many OTHER repositories this deployment has and whether they are
-// awake -- so a domain declared successfully could still be reported as
-// a failure because an unrelated NAS was asleep.
-//
-// The gate and the not-declared refusal are the same two this file's
-// other reads make, in the same order and for the same reasons.
-func (s *Service) RepositoryHealthOf(ctx context.Context, domain string) (health.RepositoryHealth, error) {
-	if s.Config == nil {
-		return health.RepositoryHealth{}, ErrRepositoryDomainNotDeclared
-	}
-
-	if err := s.incrementalEngineGate(); err != nil {
-		return health.RepositoryHealth{}, err
-	}
-
-	id, err := model.NewRepositoryDomainID(domain)
-	if err != nil {
-		return health.RepositoryHealth{}, fmt.Errorf("%w: %q", ErrRepositoryDomainNotDeclared, domain)
-	}
-
-	sets := s.setsByDomain()
-	for i := range s.Config.RepositoryDomains {
-		declared := s.Config.RepositoryDomains[i]
-		if declared.Domain.ID != id {
-			continue
-		}
-
-		return s.repositoryHealthOf(ctx, declared, sets[id]), nil
-	}
-
-	return health.RepositoryHealth{}, fmt.Errorf("%w: %q", ErrRepositoryDomainNotDeclared, domain)
-}
-
 // MaintenanceOwnerOf reports which instance the durable record says
 // maintains one repository, and "" when nothing has ever maintained it.
 //

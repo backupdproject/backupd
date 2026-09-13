@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/backupdproject/backupd/core/internal/health"
 	"github.com/backupdproject/backupd/core/internal/model"
 )
 
@@ -25,10 +26,14 @@ import (
 // different lifecycles for one noun, one of which can fail halfway and
 // leave a repository nothing declares.
 //
-// So this method opens no storage, proves no passphrase against a store
-// that does not exist, and answers with the domain as GET /repositories
-// reports it -- which for a domain nothing has run into yet is an
-// unrealized repository, reported honestly rather than dressed up.
+// So this method opens no storage, resolves no passphrase reference and
+// runs no probe -- not even to describe what it just wrote. It answers
+// with the domain as the DECLARATION describes it: an unrealized
+// repository, reported honestly rather than dressed up, and with no
+// claim about storage nothing has looked at. See
+// declaredRepositoryHealth for why a probing read-back would have been
+// the route granting itself the two capabilities it is exempt from the
+// destructive gate for not having.
 //
 // # Why it is a *BackupService method
 //
@@ -234,21 +239,49 @@ func (b *BackupService) CreateRepositoryDomain(ctx context.Context, req CreateRe
 		return RepositoryHealth{}, err
 	}
 
-	// Read back through the probe rather than echoing the request. What
-	// a client gets is the domain as GET /repositories reports it, which
-	// for a store nothing has run into yet says unreachable -- the truth
-	// about a lazily realized repository, and the one answer that does
-	// not teach an operator to expect a green row from a create.
-	created, err := b.state.Load().inner.RepositoryHealthOf(ctx, id)
-	if err != nil {
-		// The declaration is already durable at this point, so this is
-		// not a creation failure and must not read like one. It can only
-		// be reached if the file this method just wrote no longer
-		// declares what it wrote, which is an internal contradiction.
-		return RepositoryHealth{}, fmt.Errorf("service: reading back the repository domain that was just declared: an internal error occurred")
-	}
+	return declaredRepositoryHealth(id, strings.TrimSpace(req.Isolation)), nil
+}
 
-	return toRepositoryHealth(created), nil
+// declaredRepositoryHealth is the 201's body: one repository domain as
+// the declaration that just landed describes it, and nothing else.
+//
+// # Why a create does not probe
+//
+// Because probing would make the declaration do the two things this
+// route promises not to do. RepositoryHealth is normally produced by
+// opening the store (internal/app.probeRepository), and opening a store
+// resolves the domain's passphrase reference -- which for the `command`
+// spelling means EXECUTING a program the request named -- and then
+// connects to storage. On a route that is CSRF-checked but deliberately
+// exempt from the destructive gate, on the stated grounds that declaring
+// a boundary "opens no storage, proves no passphrase" and cannot reach a
+// backup datum, that is not a detail: it is the route quietly acquiring
+// the two capabilities its exemption was granted for not having.
+//
+// It is also a liveness problem. The probe would run under configMu,
+// bounded only by the repository probe timeout, so one unreachable store
+// or one passphrase command that hangs would stall every other
+// configuration write in this process for as long as it took.
+//
+// # What the answer therefore says
+//
+// The two facts the declaration itself establishes -- the id and the
+// co-tenancy posture, MayShare derived exactly as internal/app derives
+// it -- and no claim about storage at all. Every probe boolean stays
+// false because nothing was probed, which is what false means here, and
+// the verdict is DEGRADED: a domain with no store yet is not HEALTHY,
+// and FAILING is reserved for a repository something has actually found
+// to be unusable. The detail says which of the two it is, because
+// "declared, nothing realized" and "probed and broken" have completely
+// different remedies and only the fleet read can report the second.
+func declaredRepositoryHealth(id, isolation string) RepositoryHealth {
+	return RepositoryHealth{
+		Domain:   id,
+		MayShare: model.RepositoryIsolation(isolation) != model.RepositoryIsolated,
+		State:    health.Degraded.String(),
+		Detail: "this repository domain is declared and its store has not been created yet: it is written by the first backup run that stores a snapshot here, " +
+			"so nothing above is a reading of storage. GET /repositories probes it from then on",
+	}
 }
 
 // maintenanceOwnerOf resolves the request's owner word, defaulting an

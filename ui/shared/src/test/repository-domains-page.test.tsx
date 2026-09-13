@@ -28,7 +28,7 @@ import userEvent from "@testing-library/user-event";
 import type { UserEvent } from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { ApiProvider } from "@shared/api/ApiContext";
-import { createMockApi } from "@shared/api/mock";
+import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import { BackupdError } from "@shared/api/contracts";
 import type { BackupdApi } from "@shared/api/contracts";
 import { resetGraphForTests } from "@shared/state/graph";
@@ -73,6 +73,11 @@ function topologyCard(domain: string): HTMLElement {
 
 afterEach(() => {
   resetGraphForTests();
+  // createRepositoryDomain WRITES the domain into the fleet fixture, the
+  // same way the route writes it into the configuration, so without this
+  // a later case declaring the same id meets a REPOSITORY_DOMAIN_EXISTS
+  // its own scenario never set up.
+  resetMockFixtures();
 });
 
 describe("the domains table", () => {
@@ -237,6 +242,50 @@ describe("declaring a domain", () => {
     await user.type(screen.getByLabelText("Passphrase file on this NAS"), "/etc/backupd/" + id);
   }
 
+  /** The same wizard, landing on the REAL fleet page rather than a stub.
+   *  Issue #862's acceptance criterion is that the declared domain
+   *  "appears on the fleet", and a stub div proves only that navigate()
+   *  was called: the screen it lands on re-reads the fleet on mount, so
+   *  a create whose domain never reached the list it navigates to passes
+   *  every assertion made against a placeholder. */
+  function renderDefineOntoTheFleet(api: BackupdApi) {
+    render(
+      <MemoryRouter initialEntries={["/repositories/new"]}>
+        <ApiProvider api={api}>
+          <Routes>
+            <Route path="/repositories/new" element={<RepositoryDomainNewPage />} />
+            <Route path="/repositories" element={<RepositoryDomainsPage readOnly={false} />} />
+          </Routes>
+        </ApiProvider>
+      </MemoryRouter>
+    );
+  }
+
+  it("lands on the fleet list with the new domain on it", async () => {
+    const user = userEvent.setup();
+    renderDefineOntoTheFleet(createMockApi());
+
+    await fillIdentity(user, "offsite-c4");
+    await user.click(screen.getByRole("radio", { name: /Isolated/ }));
+    await user.click(screen.getByRole("button", { name: "Create domain" }));
+
+    // The fleet page, proven by a domain the wizard never mentioned.
+    await waitFor(() => expect(screen.getAllByText("primary-nas").length).toBeGreaterThan(0));
+
+    // And the declared one, on the list the operator was sent to. It is
+    // not a green row: the store is written by the first backup run into
+    // the domain, so what the fleet read reports is a location that
+    // answers and holds no repository yet.
+    const row = domainRow("offsite-c4");
+    expect(within(row).getByText("Failing")).toBeTruthy();
+    // Which probe, not just that something is wrong: a store that has
+    // never been written is not readable, and the row must not say
+    // "unreachable" -- the location answered, and sending an operator to
+    // check a mount that is fine is the whole cost of that word.
+    expect(within(row).getByText(/not readable/)).toBeTruthy();
+    expect(within(row).queryByText(/unreachable/)).toBeNull();
+  });
+
   it("sends a well-formed declaration and leaves for the fleet list", async () => {
     const user = userEvent.setup();
     const api = createMockApi();
@@ -359,15 +408,21 @@ describe("declaring a domain", () => {
     expect(screen.getByText("One encryption key")).toBeTruthy();
   });
 
-  it("says ownership moves by transfer whichever answer is chosen", async () => {
+  it("says ownership moves by transfer, and that neither answer records anything", async () => {
     const user = userEvent.setup();
     renderDefine();
 
     expect(screen.getByText(/ownership moves by transfer, never by claim/i)).toBeTruthy();
+    // maintenance_owner is a gate on this one write: the field is
+    // persisted nowhere, so a screen promising that this deployment
+    // "then never maintains the store" would be promising something no
+    // configuration records.
+    expect(screen.getByText(/records nothing/i)).toBeTruthy();
 
     await user.click(screen.getByRole("radio", { name: /Another instance maintains it/ }));
 
-    expect(screen.getByText(/ownership is transferred by the instance that holds it, never taken/i)).toBeTruthy();
+    expect(screen.getByText(/ownership is transferred by the instance that holds it/i)).toBeTruthy();
+    expect(screen.getByText(/not written into the configuration at all/i)).toBeTruthy();
   });
 });
 

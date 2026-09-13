@@ -135,9 +135,17 @@ func repositoryCreate(args []string) int {
 		return fail(err)
 	}
 
-	fmt.Printf("declared repository domain %s\n", created.Domain)
-	fmt.Printf("  no store was created: the repository is written the first time a backup set stores a snapshot in this domain\n")
-	printRepositoryHealth(created)
+	// The declaration, and deliberately NOT printRepositoryHealth's
+	// probe table. A create resolves no passphrase and opens no storage
+	// (core/service's declaredRepositoryHealth says why), so every probe
+	// row would be a false nobody measured -- and "the declared
+	// passphrase did not open this repository" is a sentence about a
+	// store that does not exist yet. `backupd repository health` is the
+	// verb that probes.
+	fmt.Printf("declared repository domain %s  %s\n", created.Domain, created.State)
+	fmt.Printf("  shared:          %v\n", created.MayShare)
+	fmt.Printf("  %s\n", created.Detail)
+	fmt.Printf("  `backupd repository health` probes it; nothing here opened its storage\n")
 
 	return 0
 }

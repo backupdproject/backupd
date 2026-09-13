@@ -16,10 +16,13 @@
  * deployment's configuration and writes no store: the repository itself is
  * created by the first backup run that puts a snapshot in the domain,
  * which is the same lifecycle a domain named on the add-backup-set wizard
- * already has. So the fleet list this screen navigates to shows the new
- * domain as unreachable until something has run into it, and that is the
- * truth about it rather than a failed create -- which is why the success
- * path says so on the way out.
+ * already has. So the create itself opens no storage and resolves no
+ * passphrase reference -- what comes back is the declaration, reported as
+ * a domain whose store has not been written yet -- and the fleet list
+ * this screen navigates to shows the new domain answering but holding no
+ * repository until something has run into it. That is the truth about it
+ * rather than a failed create, which is why the success path says so on
+ * the way out.
  *
  * # Why the passphrase box takes a reference and not a passphrase
  *
@@ -97,8 +100,8 @@ export function RepositoryDomainNewPage() {
         maintenanceOwner: ownership
       });
       // The fleet list re-reads on mount, so the domain is there when it
-      // draws — reported as unreachable, because nothing has written its
-      // store yet.
+      // draws — reported as answering and not yet readable, because
+      // nothing has written its store.
       navigate("/repositories");
     } catch (e) {
       const message =
@@ -145,10 +148,11 @@ export function RepositoryDomainNewPage() {
       >
         This saves the domain into this deployment&rsquo;s configuration —{" "}
         <WireField name="POST /repositories" /> — with its id, its sharing rule and a REFERENCE to
-        the passphrase that will open it. No repository is created now, so the domain appears on
-        the fleet list as unreachable until a backup set stores its first snapshot in it. That is
-        the same lifecycle a domain named on the Repository domain step of Add backup set already
-        has.
+        the passphrase that will open it. No repository is created now and nothing here opens
+        storage or reads your passphrase, so the domain appears on the fleet list as not yet
+        readable — it holds no repository — until a backup set stores its first snapshot in it.
+        That is the same lifecycle a domain named on the Repository domain step of Add backup set
+        already has.
       </WarningBanner>
 
       <section className="card">
@@ -320,7 +324,7 @@ export function RepositoryDomainNewPage() {
             <Choice
               name="domain-ownership"
               title="This instance maintains it"
-              detail="This deployment compacts the store and reclaims its space on the schedule below."
+              detail="This deployment compacts the store and reclaims its space, if nothing else already maintains it: declaring is refused when a maintenance record names somebody else."
               checked={ownership === "this"}
               onChange={() => setOwnership("this")}
             />
@@ -328,7 +332,7 @@ export function RepositoryDomainNewPage() {
               name="domain-ownership"
               title="Another instance maintains it"
               wire="maintenance_owner=another-instance"
-              detail="This deployment reads and writes snapshots here but never maintains the store."
+              detail="This deployment reads and writes snapshots here. It is the answer that lets the declaration through when the store is already maintained elsewhere; nothing about maintenance is recorded by it."
               checked={ownership === "another-instance"}
               onChange={() => setOwnership("another-instance")}
             />
@@ -345,8 +349,8 @@ export function RepositoryDomainNewPage() {
           </div>
           <Note>
             {ownership === "this"
-              ? "Exactly one instance may maintain a domain, and ownership moves by transfer, never by claim: an instance that simply decided it was the owner is how two of them compact one store at once."
-              : "This deployment will still read and write snapshots here. Nothing on this screen can make it the owner: ownership is transferred by the instance that holds it, never taken."}
+              ? "Exactly one instance may maintain a domain, and ownership moves by transfer, never by claim: an instance that simply decided it was the owner is how two of them compact one store at once. Choosing this answer records nothing — it only decides that a domain somebody else already maintains is refused here rather than quietly re-declared."
+              : "This deployment will still read and write snapshots here. Nothing on this screen can make it the owner, or stop it becoming one: ownership is transferred by the instance that holds it, and this answer is not written into the configuration at all."}
           </Note>
         </div>
       </section>

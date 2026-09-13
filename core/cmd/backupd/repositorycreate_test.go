@@ -17,11 +17,19 @@ import (
 // hot-reloaded its own copy passes nothing here, and the failure that
 // would hide is the one an operator meets: a domain declared from a
 // terminal that the next command, and the engine, never sees.
+//
+// The secret is a canary for the same reason the service test's is: what
+// the declaration persists is a REFERENCE to the file, so the file's own
+// content must be findable nowhere in config.yaml.
+
+// testCLIRepositoryPassphrase is obviously fake and is written only into
+// a file these tests' own temp directory owns.
+const testCLIRepositoryPassphrase = "EXAMPLE-CLI-REPOSITORY-PASSPHRASE-NOT-A-REAL-ONE"
 
 func TestRepositoryCreate_PersistsADeclarationTheNextInvocationSees(t *testing.T) {
 	configPath := aDeploymentWithSnapshots(t)
 	passphrase := filepath.Join(filepath.Dir(configPath), "offsite.passphrase")
-	if err := os.WriteFile(passphrase, []byte("another-passphrase-long-enough-to-be-one"), 0o600); err != nil {
+	if err := os.WriteFile(passphrase, []byte(testCLIRepositoryPassphrase), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -52,6 +60,11 @@ func TestRepositoryCreate_PersistsADeclarationTheNextInvocationSees(t *testing.T
 	if !strings.Contains(string(raw), "file: "+passphrase) {
 		t.Errorf("config.yaml carries no passphrase reference to %s:\n%s", passphrase, raw)
 	}
+	// The secret itself, which the declaration references and must never
+	// copy, exactly as the service test asserts one layer down.
+	if strings.Contains(string(raw), testCLIRepositoryPassphrase) {
+		t.Fatalf("the passphrase itself is in config.yaml:\n%s", raw)
+	}
 
 	// The second, independent invocation: a fresh service, a fresh load
 	// of the file, and the domain has to be there.
@@ -69,7 +82,7 @@ func TestRepositoryCreate_PersistsADeclarationTheNextInvocationSees(t *testing.T
 func TestRepositoryCreate_IsRefusedWhenTheIncrementalEngineIsGatedOff(t *testing.T) {
 	configPath := aDeploymentWithSnapshots(t)
 	passphrase := filepath.Join(filepath.Dir(configPath), "offsite.passphrase")
-	if err := os.WriteFile(passphrase, []byte("another-passphrase-long-enough-to-be-one"), 0o600); err != nil {
+	if err := os.WriteFile(passphrase, []byte(testCLIRepositoryPassphrase), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	before, err := os.ReadFile(configPath) //nolint:gosec // a path this test created.
@@ -79,13 +92,27 @@ func TestRepositoryCreate_IsRefusedWhenTheIncrementalEngineIsGatedOff(t *testing
 
 	t.Setenv("BACKUPD_INCREMENTAL_ENGINE", "0")
 
-	code := run([]string{
-		"repository", "--config", configPath, "create", "offsite-b2",
-		"--isolation", "shared",
-		"--passphrase-file", passphrase,
+	var code int
+	stderr := captureStderr(t, func() {
+		code = run([]string{
+			"repository", "--config", configPath, "create", "offsite-b2",
+			"--isolation", "shared",
+			"--passphrase-file", passphrase,
+		})
 	})
-	if code == exitOK {
-		t.Fatal("repository create succeeded on a deployment with the incremental engine gated off")
+	// exitFailure specifically, not merely "not exitOK": exitUsage is
+	// what a mistyped invocation gets, and a gated deployment is not a
+	// mistyped invocation -- the command was right and this deployment
+	// cannot honour it, which is the difference between "fix your
+	// command line" and "turn the engine on".
+	if code != exitFailure {
+		t.Fatalf("repository create on a gated deployment = %d, want exitFailure (%d); it printed %q", code, exitFailure, stderr)
+	}
+	// And the one place an operator is told which key to set. A refusal
+	// that did not name it leaves them with a command that will not work
+	// and nothing to change.
+	if !strings.Contains(stderr, "incremental_engine.enabled") {
+		t.Errorf("the refusal does not name the flag that answers it:\n%s", stderr)
 	}
 
 	after, err := os.ReadFile(configPath) //nolint:gosec // a path this test created.

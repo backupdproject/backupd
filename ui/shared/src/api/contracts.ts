@@ -2348,9 +2348,14 @@ export interface BackupdApi {
    * Declare a repository domain (issue #862).
    *
    * It persists a DECLARATION and creates no store: the repository is
-   * written the first time a backup set puts a snapshot in the domain, so
-   * the health that comes back reports an unrealized repository and a
-   * screen must not render that as a failed create.
+   * written the first time a backup set puts a snapshot in the domain.
+   * The health that resolves is built from that declaration and is NOT a
+   * probe -- the route opens no storage and resolves no passphrase
+   * reference -- so every access boolean is false because nothing was
+   * measured, the verdict is DEGRADED, and a screen must not render
+   * either as a failed create. `listRepositories` probes from then on,
+   * where a domain nothing has run into yet is reachable and not
+   * readable: the storage answers and holds no repository.
    *
    * The passphrase crosses as a REFERENCE. There is no field for the
    * secret and there will not be one.

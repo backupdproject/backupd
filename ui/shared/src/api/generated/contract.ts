@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "a371671e55b32a97f989adeb13dce29995b3eb57a82eaccbf29098c052d1c104";
+export const CONTRACT_SHA256 = "7c2ee42ab6e3fd3d8d592ed9a24feb1aaa5bef978007e72be8d8972f07ccbb7a";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -2086,10 +2086,13 @@ export interface WireCreateBackupSetResponse extends WireBackupSet {
  *  store: the repository itself is realized lazily by the first
  *  backup run that stores a snapshot in it, exactly as a domain named
  *  on the add-backup-set wizard's repository step already is. Nothing
- *  here is therefore proven against storage, and a domain created a
- *  moment ago reads as unreachable on GET /repositories until
- *  something has run into it, which is the truth about it rather than
- *  a failure of it. */
+ *  here is proven against storage, and nothing here reads it: this
+ *  route opens no repository and resolves no passphrase reference, so
+ *  the domain it answers with is described from the declaration
+ *  alone. Once declared, the domain is probed by GET /repositories,
+ *  where one nothing has run into yet answers `reachable` true and
+ *  `readable` false -- the storage answers and holds no repository,
+ *  which is the truth about it rather than a failure of it. */
 export interface WireCreateRepositoryDomainRequest {
   description?: string;
   id: string;

@@ -490,11 +490,19 @@ A declared domain that no set references yet is legal and staged: that is
 how an operator builds one up. The passphrase requirement is enforced
 where the reference is.
 
-**Nothing writes `repository_domains` for you.** No CLI verb and no API
-route creates, edits or removes a domain in this build; the *Define a
-repository domain* screen says so on its face and disables every field
-that would describe the store. A domain is declared by editing
-`config.yaml` — see [the migration
+**A domain can be declared without editing this file**, and only
+declared. `backupd repository create <domain> --isolation shared|isolated
+--passphrase-file F` (also `--passphrase-env`, and `--passphrase-command`
+once per argv word), `POST /repositories`, and the *Define a repository
+domain* screen all write the same `repository_domains:` entry atomically
+and hot-reload the deployment, so the domain is nameable by a backup set
+at once. What they write is the DECLARATION: no store is created, no
+storage is opened and no passphrase is resolved — the repository is
+realized by the first backup run that stores a snapshot in the domain,
+which is what already happened for a domain named on the add-backup-set
+wizard's repository step. There is still no verb that EDITS or REMOVES a
+domain: changing or retiring one is an edit to `config.yaml` — see [the
+migration
 runbook](incremental-runbooks.md#runbook-1-moving-a-source-onto-the-incremental-engine).
 
 ## Where a repository's bytes live
