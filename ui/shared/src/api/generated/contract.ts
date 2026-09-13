@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "a413edcc4fd3be66fa75cf4ed880541fa7768ec62ad719241d3e13a551f8bd36";
+export const CONTRACT_SHA256 = "95371c7fe0e492a261b5eb107a8d0483d0738f47475cb973f13f0788a91d5ef9";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -68,6 +68,10 @@ export const WIRE_ERROR_CODES = [
   "BACKUP_SET_CONNECTION_NOT_PROVEN",
   "BACKUP_SET_SOURCE_NOT_WRITABLE",
   "MEDIUM_CONNECTION_NOT_PROVEN",
+  "SNAPSHOT_NOT_FOUND",
+  "SNAPSHOT_HOLD_NOT_FOUND",
+  "REPOSITORY_DOMAIN_NOT_FOUND",
+  "BACKUP_SET_NOT_INCREMENTAL",
 ] as const;
 
 /** This UI's own presentation vocabulary. No endpoint emits these;
@@ -148,6 +152,10 @@ export const API_ERROR_CODES = [
   "BACKUP_SET_CONNECTION_NOT_PROVEN",
   "BACKUP_SET_SOURCE_NOT_WRITABLE",
   "MEDIUM_CONNECTION_NOT_PROVEN",
+  "SNAPSHOT_NOT_FOUND",
+  "SNAPSHOT_HOLD_NOT_FOUND",
+  "REPOSITORY_DOMAIN_NOT_FOUND",
+  "BACKUP_SET_NOT_INCREMENTAL",
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
@@ -159,10 +167,10 @@ export const API_ERROR_CLASSES = {
   "authorization": ["ENROLLMENT_CLOSED", "DESTRUCTIVE_OPERATIONS_DISABLED", "CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
   "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN"],
   "internal": ["INTERNAL", "INTERNAL_ERROR"],
-  "not-found": ["BACKUP_SET_NOT_FOUND", "OPERATION_NOT_FOUND", "RETENTION_PLAN_NOT_FOUND", "ARTIFACT_NOT_FOUND", "MEDIUM_NOT_FOUND"],
+  "not-found": ["BACKUP_SET_NOT_FOUND", "OPERATION_NOT_FOUND", "RETENTION_PLAN_NOT_FOUND", "ARTIFACT_NOT_FOUND", "MEDIUM_NOT_FOUND", "SNAPSHOT_NOT_FOUND", "SNAPSHOT_HOLD_NOT_FOUND", "REPOSITORY_DOMAIN_NOT_FOUND"],
   "throttling": ["RATE_LIMITED"],
   "unavailable": ["NOT_CONFIGURED", "SMTP_SEND_FAILED"],
-  "validation": ["INVALID_REQUEST", "INVALID_EMAIL", "SSH_KEY_NOT_FOUND", "HOST_KEY_PROBE_FAILED", "MEDIUM_DISCLOSURE_REQUIRED"],
+  "validation": ["INVALID_REQUEST", "INVALID_EMAIL", "SSH_KEY_NOT_FOUND", "HOST_KEY_PROBE_FAILED", "MEDIUM_DISCLOSURE_REQUIRED", "BACKUP_SET_NOT_INCREMENTAL"],
 } as const satisfies Record<string, readonly ApiErrorCode[]>;
 
 /** The platform-capability set GET /system/capabilities reports, as wire
@@ -673,6 +681,26 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
     }
   },
   {
+    id: "listBackupSetSnapshotHolds",
+    method: "GET",
+    path: "/backup-sets/{source}/{set}/holds",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "ListSnapshotHoldsResponse",
+    successStatus: 200,
+    errorCodes: {
+      400: ["BACKUP_SET_NOT_INCREMENTAL"],
+      401: ["UNAUTHENTICATED"],
+      404: ["BACKUP_SET_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
     id: "setBackupSetReadOnly",
     method: "POST",
     path: "/backup-sets/{source}/{set}/read-only",
@@ -792,6 +820,66 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
       400: ["INVALID_REQUEST"],
       401: ["UNAUTHENTICATED"],
       404: ["BACKUP_SET_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "getBackupSetSnapshotRetention",
+    method: "GET",
+    path: "/backup-sets/{source}/{set}/snapshot-retention",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "SnapshotRetentionResponse",
+    successStatus: 200,
+    errorCodes: {
+      400: ["BACKUP_SET_NOT_INCREMENTAL"],
+      401: ["UNAUTHENTICATED"],
+      404: ["BACKUP_SET_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "listBackupSetSnapshots",
+    method: "GET",
+    path: "/backup-sets/{source}/{set}/snapshots",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "ListSnapshotsResponse",
+    successStatus: 200,
+    errorCodes: {
+      400: ["BACKUP_SET_NOT_INCREMENTAL"],
+      401: ["UNAUTHENTICATED"],
+      404: ["BACKUP_SET_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "getBackupSetSnapshot",
+    method: "GET",
+    path: "/backup-sets/{source}/{set}/snapshots/{run}",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "SnapshotResponse",
+    successStatus: 200,
+    errorCodes: {
+      400: ["BACKUP_SET_NOT_INCREMENTAL"],
+      401: ["UNAUTHENTICATED"],
+      404: ["BACKUP_SET_NOT_FOUND", "SNAPSHOT_NOT_FOUND"],
       500: ["INTERNAL"],
       503: ["NOT_CONFIGURED"],
     }
@@ -918,10 +1006,10 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
     responseSchema: "Operation",
     successStatus: 202,
     errorCodes: {
-      400: ["INVALID_REQUEST"],
+      400: ["INVALID_REQUEST", "BACKUP_SET_NOT_INCREMENTAL"],
       401: ["UNAUTHENTICATED"],
       403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH", "DESTRUCTIVE_OPERATIONS_DISABLED"],
-      404: ["BACKUP_SET_NOT_FOUND", "ARTIFACT_NOT_FOUND", "COPY_NOT_FOUND"],
+      404: ["BACKUP_SET_NOT_FOUND", "ARTIFACT_NOT_FOUND", "COPY_NOT_FOUND", "SNAPSHOT_NOT_FOUND", "SNAPSHOT_HOLD_NOT_FOUND"],
       409: ["CONFIG_REVISION_STALE", "IDEMPOTENCY_KEY_CONFLICT", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "RESTORE_REFUSED"],
       500: ["INTERNAL"],
       503: ["RESTORE_UNAVAILABLE"],
@@ -1021,6 +1109,43 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
       404: ["ARTIFACT_NOT_FOUND", "BACKUP_SET_NOT_FOUND"],
       409: ["ARTIFACT_NOT_QUARANTINED"],
       500: ["INTERNAL"],
+    }
+  },
+  {
+    id: "listRepositories",
+    method: "GET",
+    path: "/repositories",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "ListRepositoriesResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
+    }
+  },
+  {
+    id: "getRepositoryMaintenance",
+    method: "GET",
+    path: "/repositories/{domain}/maintenance",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "RepositoryMaintenance",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      404: ["REPOSITORY_DOMAIN_NOT_FOUND"],
+      500: ["INTERNAL"],
+      503: ["NOT_CONFIGURED"],
     }
   },
   {
@@ -1674,6 +1799,7 @@ export interface WireBackupSet {
   connection_unverified?: boolean;
   disabled: boolean;
   effective_poll_interval_seconds: number;
+  engine: "artifact" | "kopia";
   host: string;
   id: string;
   include: string[];
@@ -1683,7 +1809,10 @@ export interface WireBackupSet {
   port: number;
   read_only: boolean;
   remote_path: string;
+  repository_domain?: string;
   retention_is_override: boolean;
+  source_consistency?: string;
+  source_mount_prefix?: string;
   source_name: string;
   ssh_key_id: string;
   stable_for_seconds: number;
@@ -1691,7 +1820,12 @@ export interface WireBackupSet {
   trusted_host_key_recorded_at?: string;
   trusted_host_keys?: WireTrustedHostKey[];
   user: string;
+  uuid?: string;
   validator_id: string;
+  verification_full_every_seconds?: number;
+  verification_level?: string;
+  verification_restore_drill_every_seconds?: number;
+  verification_sample_percent?: number;
 }
 
 /** POST /backup-sets/{source}/{set}/edit-hold. The lease just taken
@@ -1783,6 +1917,7 @@ export interface WireBackupSetRetention {
 export interface WireBackupSetSpec {
   completion_strategy: "rename" | "marker" | "stable";
   disabled?: boolean;
+  engine?: "artifact" | "kopia";
   host: string;
   include?: string[];
   known_hosts_line: string;
@@ -1791,13 +1926,21 @@ export interface WireBackupSetSpec {
   port: number;
   read_only?: boolean;
   remote_path: string;
+  repository_domain?: string;
   skip_connection_check?: boolean;
+  source_consistency?: "live_best_effort" | "externally_quiesced" | "external_snapshot";
+  source_mount_prefix?: string;
   source_name?: string;
   ssh_key_id: string;
   stable_for_seconds?: number;
   stale_after_seconds?: number;
   user: string;
+  uuid?: string;
   validator_id?: string;
+  verification_full_every_seconds?: number;
+  verification_level?: "structural" | "content_sample" | "content_full" | "restore_drill";
+  verification_restore_drill_every_seconds?: number;
+  verification_sample_percent?: number;
 }
 
 /** GET /system/capabilities. The API expression of the
@@ -2103,6 +2246,15 @@ export interface WireListOperationsResponse {
   operations: WireOperation[];
 }
 
+/** GET /repositories: every repository domain this deployment
+ *  declares, with its health. Nothing is cached, for the reason the
+ *  backup-set health read is not: a cached repository verdict keeps
+ *  reporting green after the storage under it has gone away. */
+export interface WireListRepositoriesResponse {
+  generated_at: string;
+  repositories: WireRepositoryHealth[];
+}
+
 /** GET /ssh/key-candidates. The locations travel beside the
  *  candidates, in one response, so a client cannot render one without
  *  the other. */
@@ -2117,6 +2269,17 @@ export interface WireListSSHKeyCandidatesResponse {
  *  would tell anybody. */
 export interface WireListSSHKeysResponse {
   keys: WireSSHKey[];
+}
+
+/** GET /backup-sets/{source}/{set}/holds: every unreleased hold in
+ *  this backup set's snapshot lineage. */
+export interface WireListSnapshotHoldsResponse {
+  holds: WireSnapshotHold[];
+}
+
+/** GET /backup-sets/{source}/{set}/snapshots, newest first. */
+export interface WireListSnapshotsResponse {
+  snapshots: WireSnapshot[];
 }
 
 /** Every declared storage destination, in declaration order. An
@@ -2386,6 +2549,7 @@ export interface WireOperation {
   progress?: WireOperationProgress;
   restore?: WireOperationRestore;
   result?: string;
+  snapshots?: WireSnapshot[];
   started_at?: string;
   status: string;
 }
@@ -2492,6 +2656,61 @@ export interface WireRecoverySettingsUpdate {
   currentPassword: string;
   recoveryEmail?: string;
   smtp?: WireSmtpSettings;
+}
+
+/** One repository domain's own health, which is a different question
+ *  from any backup set's. A set can be perfectly fresh while the
+ *  repository holding its snapshots is unwritable, out of
+ *  maintenance, or reachable only by a process whose clock has
+ *  drifted far enough to mis-order manifests -- and none of those
+ *  show up in a freshness verdict. Every probe here is reported
+ *  separately rather than reduced to one boolean, because the
+ *  remedies are different: unreachable is a mount, unwritable is a
+ *  permission, invalid credentials is a passphrase, and overdue
+ *  maintenance is a schedule. */
+export interface WireRepositoryHealth {
+  backup_sets?: string[];
+  clock_sane: boolean;
+  clock_skew_seconds?: number | null;
+  credentials_valid: boolean;
+  detail?: string;
+  domain: string;
+  last_maintenance_at?: string;
+  last_maintenance_result?: string;
+  last_snapshot_at?: string;
+  last_snapshot_status?: string;
+  last_verification_at?: string;
+  last_verification_status?: string;
+  maintenance_overdue: boolean;
+  may_share: boolean;
+  reachable: boolean;
+  readable: boolean;
+  state: string;
+  writable: boolean;
+}
+
+/** GET /repositories/{domain}/maintenance: who owns this repository's
+ *  maintenance, when it last ran and when it is next eligible.
+ *  Ownership is the load-bearing part: several deployments may share
+ *  one repository, exactly one of them may run maintenance on it, and
+ *  an operator looking at a repository that is not being maintained
+ *  needs to know whether that is because nobody owns it or because
+ *  the owner is somebody else. */
+export interface WireRepositoryMaintenance {
+  domain: string;
+  due: boolean;
+  due_mode?: string;
+  due_reason?: string;
+  failing: boolean;
+  failures: number;
+  last_full_at?: string;
+  last_quick_at?: string;
+  next_eligible_at?: string;
+  overdue: boolean;
+  owned_until?: string;
+  owner: string;
+  reclaimed_bytes: number;
+  runs: number;
 }
 
 /** POST /auth/reset-password: the token out of the emailed link, and
@@ -2793,6 +3012,166 @@ export interface WireSmtpSettingsView {
   username: string;
 }
 
+/** One snapshot run: what the incremental engine did on one pass over
+ *  one backup set's source, and what it proved about the result. This
+ *  is the record the operator surfaces render for a Kopia run, and
+ *  its shape is the whole reason EPIC K refuses a single "bytes
+ *  backed up" figure: entries_scanned, logical_bytes,
+ *  source_bytes_read, repository_bytes_written and
+ *  content_reused_bytes are five different measurements of one pass,
+ *  and collapsing them reports a 100 GB tree deduplicated down to 200
+ *  MB of new content as a 100 GB upload. A run is identified by
+ *  run_id, which exists from the moment the pass starts; snapshot_id
+ *  is the engine's manifest id and exists only once a manifest was
+ *  committed, so a failed run has the first and not the second. */
+export interface WireSnapshot {
+  backup_set_id: string;
+  completed_at?: string;
+  consistency_mode?: string;
+  content_reused_bytes?: number | null;
+  delete_requested_at?: string;
+  directories?: number | null;
+  duration_seconds?: number | null;
+  engine: string;
+  entries_scanned?: number | null;
+  files?: number | null;
+  holds?: WireSnapshotHold[];
+  last_known_good: boolean;
+  logical_bytes?: number | null;
+  operation_id?: string;
+  phase: string;
+  reason?: string;
+  repository_bytes_written?: number | null;
+  repository_domain?: string;
+  run_id: string;
+  snapshot_id?: string;
+  source_bytes_read?: number | null;
+  source_complete?: boolean | null;
+  started_at: string;
+  verification_level?: string;
+  verification_level_achieved?: string;
+  verification_status?: string;
+}
+
+/** One hold: a durable statement that a named snapshot must not be
+ *  deleted, whoever's retention policy says otherwise, until somebody
+ *  releases it. A hold is the mechanism an investigation, a legal
+ *  request or a suspected corruption uses, so it names who placed it
+ *  and why: a hold nobody can attribute is one nobody dares release. */
+export interface WireSnapshotHold {
+  active: boolean;
+  backup_set_id: string;
+  hold_id: string;
+  placed_at: string;
+  placed_by: string;
+  reason: string;
+  released_at?: string;
+  released_by?: string;
+  run_id: string;
+}
+
+/** POST /operations' parameters when the action is
+ *  release_snapshot_hold: end one hold, by its id. Releasing does not
+ *  delete anything; it returns the snapshot to whatever the retention
+ *  policy already said about it. */
+export interface WireSnapshotHoldReleaseRequest {
+  backup_set_id: string;
+  hold_id: string;
+}
+
+/** POST /operations' parameters when the action is hold_snapshot:
+ *  stop retention deleting one named snapshot until somebody releases
+ *  the hold. */
+export interface WireSnapshotHoldRequest {
+  backup_set_id: string;
+  reason: string;
+  run_id: string;
+}
+
+/** GET /backup-sets/{source}/{set}/snapshots/{run}: one run, plus the
+ *  transition log that says how it got where it is. The log is on the
+ *  detail read and not on the list because it is unbounded per run
+ *  and nothing on a list renders it. */
+export interface WireSnapshotResponse {
+  snapshot: WireSnapshot;
+  transitions: WireSnapshotTransition[];
+}
+
+/** POST /operations' parameters when the action is restore_snapshot:
+ *  read a restore point this deployment holds and write a tree onto a
+ *  disk it can reach. It is a different act from restore_placement
+ *  and the two are never folded together -- that one asks a storage
+ *  provider to make an archived object readable again, over hours, at
+ *  a cost, and writes nothing anywhere. */
+export interface WireSnapshotRestoreRequest {
+  backup_set_id: string;
+  conflict?: "refuse" | "skip" | "overwrite";
+  snapshot_id?: string;
+  source_path?: string;
+  target_path: string;
+}
+
+/** GET /backup-sets/{source}/{set}/snapshot-retention: what this
+ *  set's snapshot retention would decide right now, oldest snapshot
+ *  first. It is a PREVIEW and changes nothing. This is not
+ *  /backup-sets/{source}/{set}/retention, and the two must not be
+ *  confused: that one is FR-18's artifact retention policy, and this
+ *  one is the per-snapshot verdict the incremental engine's own
+ *  pruner would reach. */
+export interface WireSnapshotRetentionResponse {
+  generated_at: string;
+  verdicts: WireSnapshotRetentionVerdict[];
+}
+
+/** One reason a snapshot survived: which tier selected it, and what
+ *  about the snapshot the tier selected it for. */
+export interface WireSnapshotRetentionTier {
+  selected_by?: string;
+  tier: string;
+}
+
+/** What snapshot retention would do about one snapshot, and why.
+ *  Three actions and never two: KEEP means something selects it,
+ *  DELETE means nothing does and every safety check passed, and
+ *  REFUSE means it was a delete candidate and something stopped it.
+ *  Folding REFUSE into KEEP would hide the only one of the three that
+ *  needs somebody to look at it. */
+export interface WireSnapshotRetentionVerdict {
+  action: string;
+  hold_reason?: string;
+  holds?: WireSnapshotHold[];
+  reason: string;
+  run_id: string;
+  snapshot_id?: string;
+  started_at: string;
+  tiers?: WireSnapshotRetentionTier[];
+}
+
+/** One edge of the snapshot state machine, as it actually happened.
+ *  The run record is overwritten by every advance, so it can say what
+ *  a run IS and never how it got there: a run verified twice because
+ *  a crash interrupted the first attempt reads identically on the row
+ *  to one verified once, and this log is what tells them apart. */
+export interface WireSnapshotTransition {
+  at: string;
+  detail?: string;
+  from?: string;
+  to: string;
+}
+
+/** POST /operations' parameters when the action is verify_snapshot:
+ *  prove, now, that a restore point is actually restorable, at a
+ *  stated depth. It records nothing onto the snapshot row -- what a
+ *  RUN proved is what that run proved, and an on-demand check months
+ *  later is a different claim about a different moment, reported on
+ *  the operation that performed it. */
+export interface WireSnapshotVerifyRequest {
+  backup_set_id: string;
+  level?: string;
+  run_id?: string;
+  sample_percent?: number;
+}
+
 /** Where one storage medium's credentials come from. Exactly one of
  *  the four must be set, and none of them is credential MATERIAL:
  *  this is a reference in all four spellings. credentials_id is the
@@ -2901,12 +3280,26 @@ export interface WireStorageStatus {
  *  field: it is a property of the retry, not of the operation. action
  *  selects which of the parameter objects below is read;
  *  restore_placement reads restore, run_backup_set reads
- *  backup_set_id, and run_cycle reads neither. */
+ *  backup_set_id, restore_snapshot reads snapshot_restore,
+ *  verify_snapshot reads snapshot_verify, hold_snapshot reads
+ *  snapshot_hold, release_snapshot_hold reads snapshot_hold_release,
+ *  and run_cycle reads none of them. A body naming another action's
+ *  parameters is refused rather than ignored: a server that ignores
+ *  fields it did not expect teaches clients those fields are
+ *  optional, and the next reader of that client cannot tell which
+ *  operation was meant. Every mutating incremental-backup action this
+ *  product has is on this one route, which is what makes each of them
+ *  durable, idempotency-keyed and revision-checked without a second
+ *  answer to how long work begins. */
 export interface WireSubmitOperationRequest {
   action: string;
   backup_set_id?: string;
   config_revision: string;
   restore?: WireRestoreOperationRequest;
+  snapshot_hold?: WireSnapshotHoldRequest;
+  snapshot_hold_release?: WireSnapshotHoldReleaseRequest;
+  snapshot_restore?: WireSnapshotRestoreRequest;
+  snapshot_verify?: WireSnapshotVerifyRequest;
 }
 
 /** POST /backup-sets/test-connection. A reachability and
@@ -2991,11 +3384,16 @@ export interface WireUpdateBackupSetRequest {
   port?: number;
   remote_path?: string;
   skip_connection_check?: boolean;
+  source_consistency?: "live_best_effort" | "externally_quiesced" | "external_snapshot";
   ssh_key_id?: string;
   stable_for_seconds?: number;
   stale_after_seconds?: number;
   user?: string;
   validator_id?: string;
+  verification_full_every_seconds?: number;
+  verification_level?: "structural" | "content_sample" | "content_full" | "restore_drill";
+  verification_restore_drill_every_seconds?: number;
+  verification_sample_percent?: number;
 }
 
 /** A PARTIAL capacity update. An omitted field is left exactly as the

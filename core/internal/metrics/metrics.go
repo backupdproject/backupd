@@ -311,6 +311,36 @@ func Render(report health.Report) string {
 			return float64(s.Snapshot.ContentReusedBytes), true
 		})
 
+	writeGauge(&b, sets, "snapshot_files",
+		"Files the newest snapshot run of this backup set stored. Absent for a set that takes no snapshots and for a run nobody measured.",
+		func(s health.BackupSetHealth) (float64, bool) {
+			if s.Snapshot == nil || !s.Snapshot.Measured {
+				return 0, false
+			}
+			return float64(s.Snapshot.Files), true
+		})
+
+	writeGauge(&b, sets, "snapshot_duration_seconds",
+		"How long the newest snapshot run of this backup set took, in seconds. Absent while a run is still going: a duration for something unfinished is a measurement of now rather than of the run.",
+		func(s health.BackupSetHealth) (float64, bool) {
+			if s.Snapshot == nil || s.Snapshot.Duration <= 0 {
+				return 0, false
+			}
+			return s.Snapshot.Duration.Seconds(), true
+		})
+
+	writeGauge(&b, sets, "snapshot_verification_failed",
+		"1 when the newest snapshot run of this backup set could not be proven readable, 0 when it could or when no verification has concluded. Absent for a set that takes no snapshots.",
+		func(s health.BackupSetHealth) (float64, bool) {
+			if s.Snapshot == nil {
+				return 0, false
+			}
+			if s.Snapshot.VerificationFailed {
+				return 1, true
+			}
+			return 0, true
+		})
+
 	writeGauge(&b, sets, "snapshot_unfinished_runs",
 		"Snapshot runs of this backup set left in a non-terminal phase: what a crash left for the next cycle's reconciliation to decide. Zero after a clean cycle.",
 		func(s health.BackupSetHealth) (float64, bool) {

@@ -112,7 +112,11 @@
           "SSH_KEY_CANDIDATE_NOT_FOUND",
           "BACKUP_SET_CONNECTION_NOT_PROVEN",
           "BACKUP_SET_SOURCE_NOT_WRITABLE",
-          "MEDIUM_CONNECTION_NOT_PROVEN"
+          "MEDIUM_CONNECTION_NOT_PROVEN",
+          "SNAPSHOT_NOT_FOUND",
+          "SNAPSHOT_HOLD_NOT_FOUND",
+          "REPOSITORY_DOMAIN_NOT_FOUND",
+          "BACKUP_SET_NOT_INCREMENTAL"
         ],
         "x-code-origins": {
           "authentication-failed": "ui",
@@ -172,7 +176,11 @@
           "RESET_TOKEN_INVALID": "wire",
           "INVALID_EMAIL": "wire",
           "SMTP_SEND_FAILED": "wire",
-          "VERIFY_TOKEN_INVALID": "wire"
+          "VERIFY_TOKEN_INVALID": "wire",
+          "SNAPSHOT_NOT_FOUND": "wire",
+          "SNAPSHOT_HOLD_NOT_FOUND": "wire",
+          "REPOSITORY_DOMAIN_NOT_FOUND": "wire",
+          "BACKUP_SET_NOT_INCREMENTAL": "wire"
         },
         "x-error-classes": {
           "authentication": [
@@ -192,7 +200,8 @@
             "INVALID_EMAIL",
             "SSH_KEY_NOT_FOUND",
             "HOST_KEY_PROBE_FAILED",
-            "MEDIUM_DISCLOSURE_REQUIRED"
+            "MEDIUM_DISCLOSURE_REQUIRED",
+            "BACKUP_SET_NOT_INCREMENTAL"
           ],
           "conflict": [
             "RETENTION_PLAN_STALE",
@@ -219,7 +228,10 @@
             "OPERATION_NOT_FOUND",
             "RETENTION_PLAN_NOT_FOUND",
             "ARTIFACT_NOT_FOUND",
-            "MEDIUM_NOT_FOUND"
+            "MEDIUM_NOT_FOUND",
+            "SNAPSHOT_NOT_FOUND",
+            "SNAPSHOT_HOLD_NOT_FOUND",
+            "REPOSITORY_DOMAIN_NOT_FOUND"
           ],
           "throttling": [
             "RATE_LIMITED"
@@ -645,7 +657,7 @@
       },
       "SubmitOperationRequest": {
         "type": "object",
-        "description": "POST /operations. The idempotency key is a header, not a body field: it is a property of the retry, not of the operation. action selects which of the parameter objects below is read; restore_placement reads restore, run_backup_set reads backup_set_id, and run_cycle reads neither.",
+        "description": "POST /operations. The idempotency key is a header, not a body field: it is a property of the retry, not of the operation. action selects which of the parameter objects below is read; restore_placement reads restore, run_backup_set reads backup_set_id, restore_snapshot reads snapshot_restore, verify_snapshot reads snapshot_verify, hold_snapshot reads snapshot_hold, release_snapshot_hold reads snapshot_hold_release, and run_cycle reads none of them. A body naming another action's parameters is refused rather than ignored: a server that ignores fields it did not expect teaches clients those fields are optional, and the next reader of that client cannot tell which operation was meant. Every mutating incremental-backup action this product has is on this one route, which is what makes each of them durable, idempotency-keyed and revision-checked without a second answer to how long work begins.",
         "additionalProperties": false,
         "properties": {
           "action": {
@@ -663,6 +675,30 @@
           },
           "restore": {
             "$ref": "#/components/schemas/RestoreOperationRequest",
+            "x-go-omitempty": true,
+            "x-go-pointer": true
+          },
+          "snapshot_restore": {
+            "$ref": "#/components/schemas/SnapshotRestoreRequest",
+            "description": "Read by restore_snapshot and refused for any other action.",
+            "x-go-omitempty": true,
+            "x-go-pointer": true
+          },
+          "snapshot_verify": {
+            "$ref": "#/components/schemas/SnapshotVerifyRequest",
+            "description": "Read by verify_snapshot and refused for any other action.",
+            "x-go-omitempty": true,
+            "x-go-pointer": true
+          },
+          "snapshot_hold": {
+            "$ref": "#/components/schemas/SnapshotHoldRequest",
+            "description": "Read by hold_snapshot and refused for any other action.",
+            "x-go-omitempty": true,
+            "x-go-pointer": true
+          },
+          "snapshot_hold_release": {
+            "$ref": "#/components/schemas/SnapshotHoldReleaseRequest",
+            "description": "Read by release_snapshot_hold and refused for any other action.",
             "x-go-omitempty": true,
             "x-go-pointer": true
           }
@@ -737,6 +773,14 @@
             "$ref": "#/components/schemas/OperationRestore",
             "x-go-omitempty": true,
             "x-go-pointer": true
+          },
+          "snapshots": {
+            "type": "array",
+            "description": "The snapshot runs this operation performed, absent for every operation that performed none. Present here rather than only under the backup set because an operation is what a client polled: a surface that submitted a run and then had to guess which of the set's snapshots belonged to it would attribute the wrong one every time two runs overlapped.",
+            "items": {
+              "$ref": "#/components/schemas/Snapshot"
+            },
+            "x-go-omitempty": true
           }
         },
         "required": [
@@ -1126,6 +1170,56 @@
           "effective_poll_interval_seconds": {
             "type": "integer",
             "description": "How often this backup set is actually polled: its own override, or the deployment default when it has none. Resolved by the engine so no client combines the two scopes itself."
+          },
+          "engine": {
+            "type": "string",
+            "description": "Which machinery produces this backup set's restore points: \"artifact\" or \"kopia\". Always reported, and always the RESOLVED value: a configuration that omits the key reads \"artifact\" here rather than empty, because a client that had to know the default would be a second place the default is decided.",
+            "enum": [
+              "artifact",
+              "kopia"
+            ]
+          },
+          "uuid": {
+            "type": "string",
+            "description": "The durable identifier the snapshot lineage hangs off. Empty for an artifact set, which has none.",
+            "x-go-omitempty": true
+          },
+          "repository_domain": {
+            "type": "string",
+            "description": "The repository security boundary this set's snapshots are stored in. Empty for an artifact set.",
+            "x-go-omitempty": true
+          },
+          "source_consistency": {
+            "type": "string",
+            "description": "The resolved consistency mode. Empty for an artifact set: resolving it for an engine that reads it nowhere would report a claim nobody made.",
+            "x-go-omitempty": true
+          },
+          "verification_level": {
+            "type": "string",
+            "description": "The resolved verification level. Empty for an artifact set.",
+            "x-go-omitempty": true
+          },
+          "verification_sample_percent": {
+            "type": "integer",
+            "description": "The sample size a content_sample verification reads, 0 for a set that configures none.",
+            "x-go-omitempty": true
+          },
+          "verification_full_every_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The full-content-read cadence in whole seconds, 0 for never.",
+            "x-go-omitempty": true
+          },
+          "verification_restore_drill_every_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The restore-drill cadence in whole seconds, 0 for never.",
+            "x-go-omitempty": true
+          },
+          "source_mount_prefix": {
+            "type": "string",
+            "description": "The declared mount prefix, empty when the whole remote path is the source's own.",
+            "x-go-omitempty": true
           }
         },
         "required": [
@@ -1147,7 +1241,8 @@
           "retention_is_override",
           "ssh_key_id",
           "poll_interval_seconds",
-          "effective_poll_interval_seconds"
+          "effective_poll_interval_seconds",
+          "engine"
         ]
       },
       "CreateBackupSetResponse": {
@@ -2109,6 +2204,68 @@
           "skip_connection_check": {
             "type": "boolean",
             "description": "Writes this set without proving its connection first (issue #624). The service runs the same six-step check POST /backup-sets/test-connection answers, in front of the write, and refuses with BACKUP_SET_CONNECTION_NOT_PROVEN when it fails; this is the deliberate opt-out, and a set written under it is marked connection_unverified until a test passes. The mark is the service's own record of the skip and is never taken from the request. Omitted or false checks, which is what every create should do."
+          },
+          "engine": {
+            "type": "string",
+            "description": "Which machinery produces this backup set's restore points: \"artifact\" (the file-at-a-time pipeline every configuration written before EPIC K uses) or \"kopia\" (the incremental engine, which snapshots a source TREE into a deduplicating repository). Omitted means artifact, which is what every configuration written before this key existed says. An unrecognised value is refused rather than defaulted in either direction: reading a typo as artifact silently ignores an operator who asked for snapshots, and reading it as incremental silently changes what a run does to a source tree.",
+            "enum": [
+              "artifact",
+              "kopia"
+            ],
+            "x-go-omitempty": true
+          },
+          "uuid": {
+            "type": "string",
+            "description": "This backup set's DURABLE identifier: the one thing about it that no rename changes. Required for an incremental set and refused for an artifact set. Required, because the snapshot lineage hangs off it and a set's configured identity is source-plus-name, both of which are editable -- if the lineage hung off those, renaming a set would orphan every snapshot it had ever taken and the next run would store a second full copy of the source. Omitted on a create, the service mints one.",
+            "x-go-omitempty": true
+          },
+          "repository_domain": {
+            "type": "string",
+            "description": "The repository security boundary this set's snapshots are stored in: one of the repository domains the configuration declares. Required for an incremental set and it has no default, because a default is exactly the decision that must be intentional: a set that silently landed in some \"default\" repository would be deduplicating against, sharing an encryption key with, sharing a credential with and sharing a corruption fate with whatever else happened to be there.",
+            "x-go-omitempty": true
+          },
+          "source_consistency": {
+            "type": "string",
+            "description": "What the operator has arranged around this source while a run reads it. Omitted resolves to live_best_effort, the weakest claim, because inferring quiescence or a frozen image from silence would let a run report a point-in-time snapshot that never existed.",
+            "enum": [
+              "live_best_effort",
+              "externally_quiesced",
+              "external_snapshot"
+            ],
+            "x-go-omitempty": true
+          },
+          "verification_level": {
+            "type": "string",
+            "description": "How far this set's restore points are verified. Omitted resolves to structural, the rung that costs nothing beyond the repository's own metadata; every stronger rung spends a deployment's I/O budget on a cadence, which is not this product's decision to make by default. This is not the artifact validator and the two must not be confused: validator_id checks a durable copy of one file, this is a statement about how hard a snapshot in a repository has been looked at.",
+            "enum": [
+              "structural",
+              "content_sample",
+              "content_full",
+              "restore_drill"
+            ],
+            "x-go-omitempty": true
+          },
+          "verification_sample_percent": {
+            "type": "integer",
+            "description": "How much of a snapshot's file content a sampled verification reads, 1 to 100. Omitted takes the engine's own default. A percentage of files rather than of bytes: damage arrives per file, and a byte-proportional sample spends its whole budget inside the largest one.",
+            "x-go-omitempty": true
+          },
+          "verification_full_every_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How often this set's restore points get a FULL content read regardless of the configured level. A cadence rather than a level, because the deep rungs cost a backup window and the honest shape of \"prove it properly sometimes\" is a period, not a level somebody sets and turns off again when the nightly window overruns. Omitted means never, which is the only safe default: nobody should acquire a nightly full read by leaving a key out.",
+            "x-go-omitempty": true
+          },
+          "verification_restore_drill_every_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How often one of this set's restore points gets an actual restore drill. Omitted means never, for verification_full_every_seconds' reason, restated for a cadence that restores the entire source.",
+            "x-go-omitempty": true
+          },
+          "source_mount_prefix": {
+            "type": "string",
+            "description": "The leading part of remote_path that is how THIS DEPLOYMENT reaches the source rather than part of the source's own identity: a container bind mount, an install prefix, or the directory an externally-provided snapshot is mounted under for one run. It exists so that moving any of those does not fork the snapshot lineage. Empty is the ordinary case. Declared rather than detected, because nothing on this side can tell which leading segments of a path are the mount, and a heuristic here would be a guess deciding whether a deployment keeps its backup history.",
+            "x-go-omitempty": true
           }
         },
         "required": [
@@ -2809,6 +2966,49 @@
             "type": "integer",
             "description": "Change how often this set's source is checked. Absent leaves it alone; an explicit 0 means \"inherit the deployment default again\", which is unambiguous because SettingsSchema.service.min_poll_interval_seconds makes zero a value no caller could be asking for.",
             "x-go-pointer": true
+          },
+          "source_consistency": {
+            "type": "string",
+            "description": "Change what the operator has arranged around this source. Editable after creation because the arrangement genuinely changes -- a database gets a pre-backup quiesce hook, a filesystem gets LVM snapshots -- and the set should be able to say so without being recreated.",
+            "enum": [
+              "live_best_effort",
+              "externally_quiesced",
+              "external_snapshot"
+            ],
+            "x-go-pointer": true,
+            "x-go-omitempty": true
+          },
+          "verification_level": {
+            "type": "string",
+            "description": "Change how far this set's restore points are verified.",
+            "enum": [
+              "structural",
+              "content_sample",
+              "content_full",
+              "restore_drill"
+            ],
+            "x-go-pointer": true,
+            "x-go-omitempty": true
+          },
+          "verification_sample_percent": {
+            "type": "integer",
+            "description": "Change the sampled verification's size, 1 to 100.",
+            "x-go-pointer": true,
+            "x-go-omitempty": true
+          },
+          "verification_full_every_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Change the full-content-read cadence; 0 means never.",
+            "x-go-pointer": true,
+            "x-go-omitempty": true
+          },
+          "verification_restore_drill_every_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Change the restore-drill cadence; 0 means never.",
+            "x-go-pointer": true,
+            "x-go-omitempty": true
           }
         }
       },
@@ -4382,6 +4582,733 @@
             "description": "Whether this destination names a credential source at all. Nothing about which, and nothing about what is behind it."
           }
         }
+      },
+      "Snapshot": {
+        "type": "object",
+        "description": "One snapshot run: what the incremental engine did on one pass over one backup set's source, and what it proved about the result. This is the record the operator surfaces render for a Kopia run, and its shape is the whole reason EPIC K refuses a single \"bytes backed up\" figure: entries_scanned, logical_bytes, source_bytes_read, repository_bytes_written and content_reused_bytes are five different measurements of one pass, and collapsing them reports a 100 GB tree deduplicated down to 200 MB of new content as a 100 GB upload. A run is identified by run_id, which exists from the moment the pass starts; snapshot_id is the engine's manifest id and exists only once a manifest was committed, so a failed run has the first and not the second.",
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "This run's own durable id, unique across this deployment's journal."
+          },
+          "backup_set_id": {
+            "type": "string",
+            "description": "The source/backup-set id this run belongs to, as every surface in this product prints it."
+          },
+          "operation_id": {
+            "type": "string",
+            "description": "The durable operation this run was performed under, empty for a run the daemon's own schedule started. Empty is a real answer and says the schedule did it, not that the attribution was lost.",
+            "x-go-omitempty": true
+          },
+          "engine": {
+            "type": "string",
+            "description": "Which machinery produced this run: \"artifact\" or \"kopia\". Recorded on the row rather than read from the current configuration, so a set whose engine was changed still reports each run under the engine that actually performed it."
+          },
+          "repository_domain": {
+            "type": "string",
+            "description": "The repository security boundary this run's snapshot was stored in."
+          },
+          "snapshot_id": {
+            "type": "string",
+            "description": "The engine's opaque manifest id. Absent until a manifest is committed, which is what distinguishes a run that stored something from one that did not.",
+            "x-go-omitempty": true
+          },
+          "phase": {
+            "type": "string",
+            "description": "The run's durable phase: SOURCE_SCAN, SNAPSHOT_WRITE, MANIFEST_COMMITTED, VERIFICATION, SUCCESS, FAILED, QUARANTINED, LOST or DELETED. Only SUCCESS is a restore point."
+          },
+          "consistency_mode": {
+            "type": "string",
+            "description": "What the operator had arranged around the source while this pass read it: live_best_effort, externally_quiesced or external_snapshot. Recorded per run, because it is a claim about the moment the data was read and not about the configuration as it stands now."
+          },
+          "verification_level": {
+            "type": "string",
+            "description": "The level this run was CONFIGURED for, which is what the operator asked for."
+          },
+          "verification_level_achieved": {
+            "type": "string",
+            "description": "The level a verification actually PROVED, absent when nothing was proven. Never the same field as verification_level and never filled in from it: a run asking for a full content verification that only managed a structural one has to read as exactly that.",
+            "x-go-omitempty": true
+          },
+          "verification_status": {
+            "type": "string",
+            "description": "Whether a verification ran and what it concluded: pending, passed or failed. Absent when none has been attempted.",
+            "x-go-omitempty": true
+          },
+          "entries_scanned": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How many source entries this pass considered, of every kind, including the ones it deliberately skipped. It is not files plus directories: that reconstruction leaves out everything a pass refused. Null is not zero and must never be rendered as zero: it means NOBODY MEASURED THIS, which is the honest state of a run that died before its manifest was recorded and of a snapshot crash reconciliation adopted from the repository."
+          },
+          "files": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Files in the snapshot. Null is not zero and must never be rendered as zero: it means NOBODY MEASURED THIS, which is the honest state of a run that died before its manifest was recorded and of a snapshot crash reconciliation adopted from the repository."
+          },
+          "directories": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Directories in the snapshot. Null is not zero and must never be rendered as zero: it means NOBODY MEASURED THIS, which is the honest state of a run that died before its manifest was recorded and of a snapshot crash reconciliation adopted from the repository."
+          },
+          "logical_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The size of the tree as the source described it. This is what was SCANNED and is never what was uploaded. Null is not zero and must never be rendered as zero: it means NOBODY MEASURED THIS, which is the honest state of a run that died before its manifest was recorded and of a snapshot crash reconciliation adopted from the repository."
+          },
+          "source_bytes_read": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bytes this pass actually pulled off the source. An incremental engine still reads the source; this is what that cost. Null is not zero and must never be rendered as zero: it means NOBODY MEASURED THIS, which is the honest state of a run that died before its manifest was recorded and of a snapshot crash reconciliation adopted from the repository."
+          },
+          "repository_bytes_written": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bytes that actually landed in the repository's storage, after deduplication and compression. The only one of these numbers that is storage growth. Null is not zero and must never be rendered as zero: it means NOBODY MEASURED THIS, which is the honest state of a run that died before its manifest was recorded and of a snapshot crash reconciliation adopted from the repository."
+          },
+          "content_reused_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bytes this pass did not have to store again, because the repository already held that content. The gap between read and written. Null is not zero and must never be rendered as zero: it means NOBODY MEASURED THIS, which is the honest state of a run that died before its manifest was recorded and of a snapshot crash reconciliation adopted from the repository."
+          },
+          "source_complete": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The source side's own verdict that the pass covered every entry it was asked to. Null means NOBODY RECORDED A VERDICT, which is what a run that died before its manifest was recorded and a manifest adopted by reconciliation both genuinely are; it is a different claim from \"the pass was incomplete\", and neither of them is a restore point."
+          },
+          "last_known_good": {
+            "type": "boolean",
+            "description": "Whether this is the one run per backup set whose snapshot may be offered as a restore point."
+          },
+          "reason": {
+            "type": "string",
+            "description": "One sentence: why it failed, why it was quarantined, why it is lost. Operator prose, redacted on the way into the journal.",
+            "x-go-omitempty": true
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the pass began."
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the run came to rest. Absent while it is in flight.",
+            "x-go-omitempty": true
+          },
+          "duration_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How long the run took, in whole seconds. Null while the run is still in flight, because a duration for something that has not finished is a measurement of now rather than of the run."
+          },
+          "delete_requested_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The durable intent to delete this snapshot, recorded before the repository was asked for anything. Present on a snapshot retention has decided against and not yet finished removing.",
+            "x-go-omitempty": true
+          },
+          "holds": {
+            "type": "array",
+            "description": "Every unreleased hold over this snapshot. A held snapshot is never deleted by retention, whatever the tier chain says.",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotHold"
+            },
+            "x-go-omitempty": true
+          }
+        },
+        "required": [
+          "run_id",
+          "backup_set_id",
+          "engine",
+          "phase",
+          "last_known_good",
+          "started_at"
+        ]
+      },
+      "SnapshotHold": {
+        "type": "object",
+        "description": "One hold: a durable statement that a named snapshot must not be deleted, whoever's retention policy says otherwise, until somebody releases it. A hold is the mechanism an investigation, a legal request or a suspected corruption uses, so it names who placed it and why: a hold nobody can attribute is one nobody dares release.",
+        "additionalProperties": false,
+        "properties": {
+          "hold_id": {
+            "type": "string",
+            "description": "This hold's own id, which is what releases it."
+          },
+          "run_id": {
+            "type": "string",
+            "description": "The snapshot run this hold protects."
+          },
+          "backup_set_id": {
+            "type": "string",
+            "description": "The source/backup-set id that run belongs to."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the hold was placed, in the words of whoever placed it. Required when a hold is placed: a hold with no reason cannot be safely released by anybody except the person who placed it, and they leave."
+          },
+          "placed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "placed_by": {
+            "type": "string",
+            "description": "The actor who placed it: an account name, or the surface that placed it on somebody's behalf."
+          },
+          "released_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the hold was released. Absent while the hold is active, which is the same fact as active being true and is reported both ways because a history renders the timestamp and a control renders the boolean.",
+            "x-go-omitempty": true
+          },
+          "released_by": {
+            "type": "string",
+            "description": "The actor who released it.",
+            "x-go-omitempty": true
+          },
+          "active": {
+            "type": "boolean",
+            "description": "Whether this hold still protects the snapshot."
+          }
+        },
+        "required": [
+          "hold_id",
+          "run_id",
+          "backup_set_id",
+          "reason",
+          "placed_at",
+          "placed_by",
+          "active"
+        ]
+      },
+      "SnapshotTransition": {
+        "type": "object",
+        "description": "One edge of the snapshot state machine, as it actually happened. The run record is overwritten by every advance, so it can say what a run IS and never how it got there: a run verified twice because a crash interrupted the first attempt reads identically on the row to one verified once, and this log is what tells them apart.",
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The phase left, empty for the row that created the run.",
+            "x-go-omitempty": true
+          },
+          "to": {
+            "type": "string",
+            "description": "The phase entered."
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detail": {
+            "type": "string",
+            "description": "The sentence recorded with the transition, redacted on the way in.",
+            "x-go-omitempty": true
+          }
+        },
+        "required": [
+          "to",
+          "at"
+        ]
+      },
+      "ListSnapshotsResponse": {
+        "type": "object",
+        "description": "GET /backup-sets/{source}/{set}/snapshots, newest first.",
+        "additionalProperties": false,
+        "properties": {
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Snapshot"
+            }
+          }
+        },
+        "required": [
+          "snapshots"
+        ]
+      },
+      "SnapshotResponse": {
+        "type": "object",
+        "description": "GET /backup-sets/{source}/{set}/snapshots/{run}: one run, plus the transition log that says how it got where it is. The log is on the detail read and not on the list because it is unbounded per run and nothing on a list renders it.",
+        "additionalProperties": false,
+        "properties": {
+          "snapshot": {
+            "$ref": "#/components/schemas/Snapshot"
+          },
+          "transitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotTransition"
+            }
+          }
+        },
+        "required": [
+          "snapshot",
+          "transitions"
+        ]
+      },
+      "ListSnapshotHoldsResponse": {
+        "type": "object",
+        "description": "GET /backup-sets/{source}/{set}/holds: every unreleased hold in this backup set's snapshot lineage.",
+        "additionalProperties": false,
+        "properties": {
+          "holds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotHold"
+            }
+          }
+        },
+        "required": [
+          "holds"
+        ]
+      },
+      "SnapshotRetentionTier": {
+        "type": "object",
+        "description": "One reason a snapshot survived: which tier selected it, and what about the snapshot the tier selected it for.",
+        "additionalProperties": false,
+        "properties": {
+          "tier": {
+            "type": "string",
+            "description": "The tier's name, the protected term a last-known-good snapshot is kept under, or the hold term for one a hold kept."
+          },
+          "selected_by": {
+            "type": "string",
+            "description": "The placement inside the tier's bucket that selected this snapshot -- the newest in the day, the newest in the month. Empty for last-known-good protection, which has no placement and whose tier name already says what kind of thing it is; rendering a placement beside it would read as one.",
+            "x-go-omitempty": true
+          }
+        },
+        "required": [
+          "tier"
+        ]
+      },
+      "SnapshotRetentionVerdict": {
+        "type": "object",
+        "description": "What snapshot retention would do about one snapshot, and why. Three actions and never two: KEEP means something selects it, DELETE means nothing does and every safety check passed, and REFUSE means it was a delete candidate and something stopped it. Folding REFUSE into KEEP would hide the only one of the three that needs somebody to look at it.",
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "The catalog row this decision is about."
+          },
+          "snapshot_id": {
+            "type": "string",
+            "description": "The manifest in the repository, empty for a run that committed none.",
+            "x-go-omitempty": true
+          },
+          "action": {
+            "type": "string",
+            "description": "KEEP, DELETE or REFUSE."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the run that produced this snapshot began, which is the instant the classifier bucketed it by."
+          },
+          "tiers": {
+            "type": "array",
+            "description": "Every reason this snapshot survived. Populated only on KEEP.",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotRetentionTier"
+            },
+            "x-go-omitempty": true
+          },
+          "holds": {
+            "type": "array",
+            "description": "The unreleased holds over this snapshot, whether or not they are what kept it. Naming them is the point: \"kept by a hold\" is unactionable without knowing which hold and who placed it.",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotHold"
+            },
+            "x-go-omitempty": true
+          },
+          "reason": {
+            "type": "string",
+            "description": "The sentence an operator reads: which tier kept it, or that nothing did and every check passed, or exactly what refused it."
+          },
+          "hold_reason": {
+            "type": "string",
+            "description": "Set on a REFUSE, and only when the refusal is about the whole backup SET rather than this snapshot: the restore point this set advertises could not be confirmed, or the catalog stopped being able to record what the pass was doing. A separate field rather than something a client matches out of reason, so a wording change is not an alerting change.",
+            "x-go-omitempty": true
+          }
+        },
+        "required": [
+          "run_id",
+          "action",
+          "started_at",
+          "reason"
+        ]
+      },
+      "SnapshotRetentionResponse": {
+        "type": "object",
+        "description": "GET /backup-sets/{source}/{set}/snapshot-retention: what this set's snapshot retention would decide right now, oldest snapshot first. It is a PREVIEW and changes nothing. This is not /backup-sets/{source}/{set}/retention, and the two must not be confused: that one is FR-18's artifact retention policy, and this one is the per-snapshot verdict the incremental engine's own pruner would reach.",
+        "additionalProperties": false,
+        "properties": {
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The instant these verdicts were decided against. Nothing is cached: a retention preview is only true for the moment it names."
+          },
+          "verdicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotRetentionVerdict"
+            }
+          }
+        },
+        "required": [
+          "generated_at",
+          "verdicts"
+        ]
+      },
+      "RepositoryHealth": {
+        "type": "object",
+        "description": "One repository domain's own health, which is a different question from any backup set's. A set can be perfectly fresh while the repository holding its snapshots is unwritable, out of maintenance, or reachable only by a process whose clock has drifted far enough to mis-order manifests -- and none of those show up in a freshness verdict. Every probe here is reported separately rather than reduced to one boolean, because the remedies are different: unreachable is a mount, unwritable is a permission, invalid credentials is a passphrase, and overdue maintenance is a schedule.",
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The repository domain's id."
+          },
+          "may_share": {
+            "type": "boolean",
+            "description": "Whether the configuration lets more than one backup set store snapshots in this domain."
+          },
+          "state": {
+            "type": "string",
+            "description": "healthy, degraded or failing, using the same vocabulary the backup-set half of this model already uses so one dashboard has one severity scale."
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Whether the repository's storage could be contacted at all."
+          },
+          "readable": {
+            "type": "boolean",
+            "description": "Whether this deployment could read the repository's own format metadata. A location that is reachable and unreadable is the shape an empty or wrong mount presents, which is exactly the case that must never be mistaken for \"no repository yet\"."
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "Whether this deployment could write to the repository. Proven by a write this deployment then removes, in the reserved namespace, never by inference from a successful read."
+          },
+          "credentials_valid": {
+            "type": "boolean",
+            "description": "Whether the declared passphrase reference resolves and opens the repository. False with reachable and readable both true is the signature of a rotated or mis-referenced secret."
+          },
+          "clock_sane": {
+            "type": "boolean",
+            "description": "Whether this process's clock agrees with the newest durable timestamp the repository and journal already hold. A clock behind its own history mis-orders manifests and makes retention delete the wrong ones."
+          },
+          "clock_skew_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How far this process's clock is ahead of (positive) or behind (negative) the newest durable timestamp on record. Null when there is no durable timestamp to compare against, which is a brand-new deployment and not a healthy or unhealthy clock."
+          },
+          "maintenance_overdue": {
+            "type": "boolean",
+            "description": "Whether the repository's own maintenance is past due. Overdue maintenance is not a backup failure and is reported as its own fact: the snapshots are fine and the storage they sit in is growing without being reclaimed."
+          },
+          "last_maintenance_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When maintenance last ran to completion. Absent when it never has.",
+            "x-go-omitempty": true
+          },
+          "last_maintenance_result": {
+            "type": "string",
+            "description": "What the last maintenance run concluded, empty when none has run.",
+            "x-go-omitempty": true
+          },
+          "last_snapshot_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the newest snapshot in this domain, from any backup set sharing it, came to rest.",
+            "x-go-omitempty": true
+          },
+          "last_snapshot_status": {
+            "type": "string",
+            "description": "That snapshot run's durable phase, empty when the domain holds none.",
+            "x-go-omitempty": true
+          },
+          "last_verification_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When a verification in this domain last concluded.",
+            "x-go-omitempty": true
+          },
+          "last_verification_status": {
+            "type": "string",
+            "description": "What it concluded: passed, failed or pending. Empty when nothing in this domain has ever been verified, which is a real and separate answer from \"passed\".",
+            "x-go-omitempty": true
+          },
+          "backup_sets": {
+            "type": "array",
+            "description": "The source/backup-set ids storing snapshots in this domain. A shared domain's health is every one of their problems.",
+            "items": {
+              "type": "string"
+            },
+            "x-go-omitempty": true
+          },
+          "detail": {
+            "type": "string",
+            "description": "One sentence naming what is wrong, for a domain that is not healthy. Never a path, an endpoint or a credential: this string is rendered on a dashboard and copied into support conversations.",
+            "x-go-omitempty": true
+          }
+        },
+        "required": [
+          "domain",
+          "may_share",
+          "state",
+          "reachable",
+          "readable",
+          "writable",
+          "credentials_valid",
+          "clock_sane",
+          "maintenance_overdue"
+        ]
+      },
+      "ListRepositoriesResponse": {
+        "type": "object",
+        "description": "GET /repositories: every repository domain this deployment declares, with its health. Nothing is cached, for the reason the backup-set health read is not: a cached repository verdict keeps reporting green after the storage under it has gone away.",
+        "additionalProperties": false,
+        "properties": {
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "repositories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepositoryHealth"
+            }
+          }
+        },
+        "required": [
+          "generated_at",
+          "repositories"
+        ]
+      },
+      "RepositoryMaintenance": {
+        "type": "object",
+        "description": "GET /repositories/{domain}/maintenance: who owns this repository's maintenance, when it last ran and when it is next eligible. Ownership is the load-bearing part: several deployments may share one repository, exactly one of them may run maintenance on it, and an operator looking at a repository that is not being maintained needs to know whether that is because nobody owns it or because the owner is somebody else.",
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The repository domain's id."
+          },
+          "owner": {
+            "type": "string",
+            "description": "The deployment that currently owns maintenance for this repository, empty when nobody does."
+          },
+          "owned_until": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the current ownership claim lapses, after which another deployment may take it. Absent when nobody owns it.",
+            "x-go-omitempty": true
+          },
+          "last_quick_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When a quick maintenance last completed.",
+            "x-go-omitempty": true
+          },
+          "last_full_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When a full maintenance last completed. Full maintenance is what actually reclaims storage; a repository with recent quick runs and no full run is growing.",
+            "x-go-omitempty": true
+          },
+          "next_eligible_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The earliest instant the next run may start.",
+            "x-go-omitempty": true
+          },
+          "due": {
+            "type": "boolean",
+            "description": "Whether maintenance is due right now."
+          },
+          "due_mode": {
+            "type": "string",
+            "description": "Which mode is due: quick or full. Empty when nothing is.",
+            "x-go-omitempty": true
+          },
+          "due_reason": {
+            "type": "string",
+            "description": "Why it is or is not due, in one sentence.",
+            "x-go-omitempty": true
+          },
+          "overdue": {
+            "type": "boolean",
+            "description": "Whether the repository has gone long enough without maintenance to be worth an operator's attention, which is a stronger claim than due."
+          },
+          "runs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many maintenance runs the retained history records."
+          },
+          "failures": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many of those failed."
+          },
+          "reclaimed_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How much storage the retained history says maintenance has reclaimed."
+          },
+          "failing": {
+            "type": "boolean",
+            "description": "Whether the most recent run failed. Separate from the failure count, because a repository whose last ten runs failed and one whose first run failed a year ago are different situations."
+          }
+        },
+        "required": [
+          "domain",
+          "owner",
+          "due",
+          "overdue",
+          "runs",
+          "failures",
+          "reclaimed_bytes",
+          "failing"
+        ]
+      },
+      "SnapshotRestoreRequest": {
+        "type": "object",
+        "description": "POST /operations' parameters when the action is restore_snapshot: read a restore point this deployment holds and write a tree onto a disk it can reach. It is a different act from restore_placement and the two are never folded together -- that one asks a storage provider to make an archived object readable again, over hours, at a cost, and writes nothing anywhere.",
+        "additionalProperties": false,
+        "properties": {
+          "backup_set_id": {
+            "type": "string",
+            "description": "The source/backup-set id whose restore point is being read."
+          },
+          "snapshot_id": {
+            "type": "string",
+            "description": "Which restore point to read, as the engine's manifest id. Omitted means this set's last-known-good snapshot, which is the only snapshot this product advertises as a restore point. It is the MANIFEST id and not a run id on purpose: the catalog is this deployment's account of its own runs, and a restore point the repository holds and the catalog has forgotten -- a journal restored from an older backup, a row a migration lost -- is exactly the situation somebody is restoring in, so the repository decides whether the id names anything.",
+            "x-go-omitempty": true
+          },
+          "source_path": {
+            "type": "string",
+            "description": "The path INSIDE the snapshot to restore, relative to the snapshot root, slash separated. Omitted restores the whole tree.",
+            "x-go-omitempty": true
+          },
+          "target_path": {
+            "type": "string",
+            "description": "The local directory to restore into, on the machine running this deployment. Required, and never invented: a restore writes somebody's data onto a disk somebody owns, and an engine that chose the disk would fill it."
+          },
+          "conflict": {
+            "type": "string",
+            "description": "What happens when the destination already holds something. refuse, the default, stops rather than replacing anything: a restore that silently overwrote a newer local file destroyed the thing somebody was trying to compare against. skip leaves what is there and restores the rest; overwrite replaces it.",
+            "enum": [
+              "refuse",
+              "skip",
+              "overwrite"
+            ],
+            "x-go-omitempty": true
+          }
+        },
+        "required": [
+          "backup_set_id",
+          "target_path"
+        ]
+      },
+      "SnapshotVerifyRequest": {
+        "type": "object",
+        "description": "POST /operations' parameters when the action is verify_snapshot: prove, now, that a restore point is actually restorable, at a stated depth. It records nothing onto the snapshot row -- what a RUN proved is what that run proved, and an on-demand check months later is a different claim about a different moment, reported on the operation that performed it.",
+        "additionalProperties": false,
+        "properties": {
+          "backup_set_id": {
+            "type": "string",
+            "description": "The source/backup-set id whose snapshot is being verified."
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Which snapshot run to verify. Omitted means this set's last-known-good snapshot.",
+            "x-go-omitempty": true
+          },
+          "level": {
+            "type": "string",
+            "description": "How deep to look: structural, content_sample, content_full or restore_drill. Omitted means the level the backup set is configured for. The four rungs cost four different amounts and prove four different things, which is why this is a parameter and not a fixed depth.",
+            "x-go-omitempty": true
+          },
+          "sample_percent": {
+            "type": "integer",
+            "description": "How much of the snapshot's file content a content_sample reads, 1 to 100. Omitted means the level the backup set is configured with. A percentage of FILES rather than of bytes, because damage arrives per file and a byte-proportional sample spends its whole budget inside the largest one.",
+            "x-go-omitempty": true
+          }
+        },
+        "required": [
+          "backup_set_id"
+        ]
+      },
+      "SnapshotHoldRequest": {
+        "type": "object",
+        "description": "POST /operations' parameters when the action is hold_snapshot: stop retention deleting one named snapshot until somebody releases the hold.",
+        "additionalProperties": false,
+        "properties": {
+          "backup_set_id": {
+            "type": "string",
+            "description": "The source/backup-set id the snapshot belongs to."
+          },
+          "run_id": {
+            "type": "string",
+            "description": "The snapshot run to hold."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why. Required, because a hold with no reason is one nobody except the person who placed it dares release, and they leave."
+          }
+        },
+        "required": [
+          "backup_set_id",
+          "run_id",
+          "reason"
+        ]
+      },
+      "SnapshotHoldReleaseRequest": {
+        "type": "object",
+        "description": "POST /operations' parameters when the action is release_snapshot_hold: end one hold, by its id. Releasing does not delete anything; it returns the snapshot to whatever the retention policy already said about it.",
+        "additionalProperties": false,
+        "properties": {
+          "backup_set_id": {
+            "type": "string",
+            "description": "The source/backup-set id the hold's snapshot belongs to."
+          },
+          "hold_id": {
+            "type": "string",
+            "description": "The hold to release, as GET /backup-sets/{source}/{set}/holds reports it."
+          }
+        },
+        "required": [
+          "backup_set_id",
+          "hold_id"
+        ]
       }
     },
     "responses": {}
@@ -4548,7 +5475,7 @@
     "/operations": {
       "post": {
         "operationId": "submitOperation",
-        "summary": "Submit a durable operation: a run cycle, one backup set's run, or a restore of one archived copy.",
+        "summary": "Submit a durable operation: a run cycle, one backup set's run, a restore of one archived copy, or one of the incremental engine's four acts (restore a snapshot, verify one, hold one, release a hold).",
         "tags": [
           "operations"
         ],
@@ -4586,7 +5513,7 @@
             }
           },
           "400": {
-            "description": "Refused: INVALID_REQUEST.",
+            "description": "Refused: INVALID_REQUEST, BACKUP_SET_NOT_INCREMENTAL. The second is its own code rather than an invalid request because the request is well formed and the set is the wrong kind: an artifact set has no snapshots to restore, verify or hold, and a client reading a generic validation failure would offer the operator a fix to the body.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4595,7 +5522,8 @@
               }
             },
             "x-error-codes": [
-              "INVALID_REQUEST"
+              "INVALID_REQUEST",
+              "BACKUP_SET_NOT_INCREMENTAL"
             ]
           },
           "401": {
@@ -4627,7 +5555,7 @@
             ]
           },
           "404": {
-            "description": "Refused: BACKUP_SET_NOT_FOUND, ARTIFACT_NOT_FOUND, COPY_NOT_FOUND.",
+            "description": "Refused: BACKUP_SET_NOT_FOUND, ARTIFACT_NOT_FOUND, COPY_NOT_FOUND, SNAPSHOT_NOT_FOUND, SNAPSHOT_HOLD_NOT_FOUND.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4638,7 +5566,9 @@
             "x-error-codes": [
               "BACKUP_SET_NOT_FOUND",
               "ARTIFACT_NOT_FOUND",
-              "COPY_NOT_FOUND"
+              "COPY_NOT_FOUND",
+              "SNAPSHOT_NOT_FOUND",
+              "SNAPSHOT_HOLD_NOT_FOUND"
             ]
           },
           "409": {
@@ -11013,6 +11943,644 @@
         "x-authenticated": true,
         "x-csrf-required": true,
         "x-idempotency-key": "none"
+      }
+    },
+    "/backup-sets/{source}/{set}/snapshots": {
+      "get": {
+        "operationId": "listBackupSetSnapshots",
+        "summary": "Every snapshot run this backup set has on record, newest first, with what each one measured and proved. Read-only.",
+        "tags": [
+          "backup-sets"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The configured source this backup set belongs to."
+          },
+          {
+            "name": "set",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's own name within that source."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSnapshotsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "400": {
+            "description": "Refused: BACKUP_SET_NOT_INCREMENTAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_INCREMENTAL"
+            ]
+          },
+          "404": {
+            "description": "Refused: BACKUP_SET_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/backup-sets/{source}/{set}/snapshots/{run}": {
+      "get": {
+        "operationId": "getBackupSetSnapshot",
+        "summary": "One snapshot run in full, plus the transition log that says how it reached the phase it is in. Read-only.",
+        "tags": [
+          "backup-sets"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The configured source this backup set belongs to."
+          },
+          {
+            "name": "set",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's own name within that source."
+          },
+          {
+            "name": "run",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The snapshot run's own id, as GET /backup-sets/{source}/{set}/snapshots reports it. A RUN id, never the engine's manifest id: a run that died before committing a manifest has the first and not the second, and it is exactly the run somebody needs to look at."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "400": {
+            "description": "Refused: BACKUP_SET_NOT_INCREMENTAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_INCREMENTAL"
+            ]
+          },
+          "404": {
+            "description": "Refused: BACKUP_SET_NOT_FOUND, SNAPSHOT_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_FOUND",
+              "SNAPSHOT_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/backup-sets/{source}/{set}/holds": {
+      "get": {
+        "operationId": "listBackupSetSnapshotHolds",
+        "summary": "Every unreleased hold over this backup set's snapshots: what is being kept, why, and by whom. Read-only.",
+        "tags": [
+          "backup-sets"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The configured source this backup set belongs to."
+          },
+          {
+            "name": "set",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's own name within that source."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSnapshotHoldsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "400": {
+            "description": "Refused: BACKUP_SET_NOT_INCREMENTAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_INCREMENTAL"
+            ]
+          },
+          "404": {
+            "description": "Refused: BACKUP_SET_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/backup-sets/{source}/{set}/snapshot-retention": {
+      "get": {
+        "operationId": "getBackupSetSnapshotRetention",
+        "summary": "What snapshot retention would decide about every one of this backup set's snapshots right now: KEEP, DELETE or REFUSE, each with the reason. A preview; it deletes nothing. Read-only.",
+        "tags": [
+          "backup-sets"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The configured source this backup set belongs to."
+          },
+          {
+            "name": "set",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The backup set's own name within that source."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotRetentionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "400": {
+            "description": "Refused: BACKUP_SET_NOT_INCREMENTAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_INCREMENTAL"
+            ]
+          },
+          "404": {
+            "description": "Refused: BACKUP_SET_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "BACKUP_SET_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/repositories": {
+      "get": {
+        "operationId": "listRepositories",
+        "summary": "Every repository domain this deployment declares, with its own health: reachable, readable, writable, credentials valid, clock sane, maintenance overdue, and the last snapshot and verification it holds. Read-only.",
+        "tags": [
+          "repositories"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListRepositoriesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/repositories/{domain}/maintenance": {
+      "get": {
+        "operationId": "getRepositoryMaintenance",
+        "summary": "One repository's maintenance state: who owns it, when it last ran quick and full, when it is next eligible, and whether it is overdue or failing. Read-only.",
+        "tags": [
+          "repositories"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "domain",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The repository domain's id, as the configuration declares it and GET /repositories reports it."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryMaintenance"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "404": {
+            "description": "Refused: REPOSITORY_DOMAIN_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "REPOSITORY_DOMAIN_NOT_FOUND"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL"
+            ]
+          },
+          "503": {
+            "description": "Refused: NOT_CONFIGURED. This deployment has no configuration yet and is serving the first-run setup flow instead of the application. Every operation outside that flow answers this until setup completes, so a client can send the operator to setup rather than interpret a bare 404.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "NOT_CONFIGURED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
       }
     }
   },

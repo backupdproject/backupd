@@ -339,6 +339,18 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		// answer "should traffic come here" and say nothing about whether
 		// backups are landing (failure-safety invariant 14). Read-only.
 		r.Get("/system/health", h.systemHealth)
+		// EPIC K's repository surface (#788), read-only (§50). It sits
+		// beside the health read above rather than under /backup-sets
+		// because a repository domain is a deployment-level declaration
+		// several backup sets may share: hanging it off one of them
+		// would make a shared boundary look like that set's property.
+		//
+		// The list is the expensive one -- it opens every declared
+		// repository to prove it is readable and writable -- and that is
+		// exactly why it is a separate route from /system/health, which
+		// a dashboard polls.
+		r.Get("/repositories", h.listRepositories)
+		r.Get("/repositories/{domain}/maintenance", h.getRepositoryMaintenance)
 
 		r.With(requireCSRF, requireDestructiveGate(gate)).Post("/operations", h.submitOperation)
 		r.Get("/operations/{id}", h.getOperation)
@@ -488,6 +500,26 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		r.Get("/backup-sets/{source}/{set}/edit-hold", h.getBackupSetEditHold)
 		r.With(requireCSRF).Post("/backup-sets/{source}/{set}/edit-hold", h.takeBackupSetEditHold)
 		r.With(requireCSRF).Post("/backup-sets/{source}/{set}/edit-hold/release", h.releaseBackupSetEditHold)
+		// EPIC K's snapshot surface (#788), read-only every one of them
+		// (§50): no CSRF and no destructive gate. They are registered
+		// ahead of the "/backup-sets/*" catch-all below for the reason
+		// the edit hold above is -- two named segments plus a static
+		// tail, which chi's node ordering matches first -- and the
+		// snapshot detail adds a third named segment rather than a
+		// wildcard, so a run id carrying a slash is answered by the
+		// router with a 404 instead of by a handler having to interpret
+		// one.
+		//
+		// There is no mutating route here on purpose. Holding a
+		// snapshot, releasing a hold, verifying one and restoring one
+		// are durable, idempotency-keyed, revision-checked acts, so they
+		// are actions on POST /operations and not four more routes: this
+		// deployment has one answer to how long work begins, and a
+		// second would drift.
+		r.Get("/backup-sets/{source}/{set}/snapshots", h.listBackupSetSnapshots)
+		r.Get("/backup-sets/{source}/{set}/snapshots/{run}", h.getBackupSetSnapshot)
+		r.Get("/backup-sets/{source}/{set}/holds", h.listBackupSetSnapshotHolds)
+		r.Get("/backup-sets/{source}/{set}/snapshot-retention", h.getBackupSetSnapshotRetention)
 		r.Get("/backup-sets/*", h.getBackupSet)
 
 		// Issue #211: the backups this deployment actually holds, and the

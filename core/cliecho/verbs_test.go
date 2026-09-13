@@ -146,20 +146,24 @@ func TestOperationsReadsTheActionsTheContractDefines(t *testing.T) {
 		t.Errorf("%s printed the command %v; `"+Binary+" run` opens the service in the operator's own process and runs a cycle THERE", apicontract.ActionRunCycle, cycle.Command)
 	}
 
-	// A snapshot restore is its own action too, and the sentence it
-	// prints must not be the archived-copy retrieval's: `restore` is a
-	// billed provider retrieval of a different object, so answering a
-	// "get this file back out of the restore point" request with it
-	// sends an operator to spend money on the wrong thing.
+	// A snapshot restore is its own action too, and it now has its own
+	// verb (#788). The property worth pinning is not that a command
+	// appears, it is WHICH command: `restore` is a billed provider
+	// retrieval of a different object, so answering a "get this file
+	// back out of the restore point" request with it would send an
+	// operator to spend money on the wrong thing. This used to assert
+	// that the arm printed a GAP saying exactly that; the gap is closed,
+	// and the same mistake is now visible as the wrong verb rather than
+	// as the wrong sentence.
 	snapshot := Echo(Action{Method: "POST", Route: "/operations",
-		Body: []byte(`{"action":"` + apicontract.ActionRestoreSnapshot + `","config_revision":"r1","backup_set_id":"api-server/var-backups"}`)})
-	if len(snapshot.Command) != 0 {
-		t.Errorf("%s printed the command %v; no shipped verb restores a snapshot to a local directory",
+		Body: []byte(`{"action":"` + apicontract.ActionRestoreSnapshot + `","config_revision":"r1","snapshot_restore":{"backup_set_id":"api-server/var-backups","target_path":"/tmp/restored"}}`)})
+	if len(snapshot.Command) < 2 || snapshot.Command[1] != "snapshot" || snapshot.Command[2] != "restore" {
+		t.Errorf("%s printed %v, want a `snapshot restore` line: `restore` alone is the archived-copy retrieval and is a different act against a different store",
 			apicontract.ActionRestoreSnapshot, snapshot.Command)
 	}
-	if snapshot.GapDetail == restore.Shell() || !strings.Contains(snapshot.GapDetail, "ARCHIVED COPY") {
-		t.Errorf("the %s gap does not say why `restore` is not the answer:\n  %s",
-			apicontract.ActionRestoreSnapshot, snapshot.GapDetail)
+	if snapshot.Shell() == restore.Shell() {
+		t.Errorf("%s and %s print the same command:\n  %s\nOne reads a restore point this deployment holds and the other buys a provider retrieval.",
+			apicontract.ActionRestoreSnapshot, apicontract.ActionRestorePlacement, snapshot.Shell())
 	}
 
 	// And the examples drive every arm, because an arm no example visits
@@ -169,6 +173,9 @@ func TestOperationsReadsTheActionsTheContractDefines(t *testing.T) {
 		apicontract.ActionRunBackupSet,
 		apicontract.ActionRestorePlacement,
 		apicontract.ActionRestoreSnapshot,
+		apicontract.ActionVerifySnapshot,
+		apicontract.ActionHoldSnapshot,
+		apicontract.ActionReleaseSnapshotHold,
 	}
 	defined := map[string]bool{}
 	for _, action := range contractActions {

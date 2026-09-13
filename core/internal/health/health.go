@@ -517,6 +517,25 @@ type SnapshotHealth struct {
 	// successful run's snapshot has since gone from the repository.
 	LastKnownGoodAt *time.Time
 
+	// Files is how many files the newest run's snapshot holds, and
+	// Duration is how long that run took. Both are zero when the run has
+	// not finished or nobody measured it, which Measured above already
+	// distinguishes for the counters beside them; Duration is
+	// additionally zero for a run still in flight, because a duration
+	// for something unfinished is a measurement of now rather than of
+	// the run.
+	Files    int64
+	Duration time.Duration
+
+	// VerificationFailed is whether the newest run's verification
+	// concluded that the snapshot could not be proven readable.
+	//
+	// A separate field from VerificationStatus, which carries four
+	// values, because a scrape needs one number it can alert on and
+	// string-matching a status in a dashboard query is how an alert
+	// silently stops firing when a fifth value is added.
+	VerificationFailed bool
+
 	// UnfinishedRuns is how many of this set's runs are in a
 	// non-terminal phase, which after a clean cycle is zero and after a
 	// crash is what reconciliation will decide about on the next one.

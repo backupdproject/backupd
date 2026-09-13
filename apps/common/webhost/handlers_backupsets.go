@@ -99,6 +99,30 @@ type backupSetSpec struct {
 	// repository's own could simply omit (PR #628 review). Omitted or
 	// false checks, which is what every create should do.
 	SkipConnectionCheck bool `json:"skip_connection_check"`
+
+	// EPIC K's engine seam on the way in (#788).
+	//
+	// engine is "artifact", "kopia", or absent, and absent means
+	// artifact -- which is what every request written before this field
+	// existed means. Everything below it is read only for the
+	// incremental engine and refused for an artifact set, by the same
+	// config.Validate a hand-edited config.yaml goes through: nothing in
+	// this package decides what a valid engine configuration is, for the
+	// reason setBackupSetRetention gives about the same question.
+	//
+	// uuid is optional on the way in and the service mints one: its only
+	// job is to be stable across every rename this set will ever have,
+	// and a value an operator types is a value an operator can retype
+	// differently.
+	Engine                               string `json:"engine,omitempty"`
+	UUID                                 string `json:"uuid,omitempty"`
+	RepositoryDomain                     string `json:"repository_domain,omitempty"`
+	SourceConsistency                    string `json:"source_consistency,omitempty"`
+	VerificationLevel                    string `json:"verification_level,omitempty"`
+	VerificationSamplePercent            int    `json:"verification_sample_percent,omitempty"`
+	VerificationFullEverySeconds         int64  `json:"verification_full_every_seconds,omitempty"`
+	VerificationRestoreDrillEverySeconds int64  `json:"verification_restore_drill_every_seconds,omitempty"`
+	SourceMountPrefix                    string `json:"source_mount_prefix,omitempty"`
 }
 
 // backupSetRequest is POST /api/v1/backup-sets' request body: the spec
@@ -248,6 +272,29 @@ type backupSetResponse struct {
 	// screen, which is what made --no-verify a hole rather than an escape
 	// hatch.
 	ConnectionUnverified bool `json:"connection_unverified,omitempty"`
+
+	// EPIC K's engine seam, read back (#788).
+	//
+	// engine is never omitted and is always the RESOLVED value: a
+	// configuration that says nothing reads "artifact" here rather than
+	// empty, because a client that had to know the default would be a
+	// second place the default is decided. This is the field a surface
+	// draws "Artifact" or "Incremental" from, which is EPIC K's own
+	// acceptance criterion.
+	//
+	// Everything below it is omitted for an artifact set, which has no
+	// repository, no lineage and no verification budget. Absent is the
+	// honest answer there, and a zero would read as a configured budget
+	// of none.
+	Engine                               string `json:"engine"`
+	UUID                                 string `json:"uuid,omitempty"`
+	RepositoryDomain                     string `json:"repository_domain,omitempty"`
+	SourceConsistency                    string `json:"source_consistency,omitempty"`
+	VerificationLevel                    string `json:"verification_level,omitempty"`
+	VerificationSamplePercent            int    `json:"verification_sample_percent,omitempty"`
+	VerificationFullEverySeconds         int64  `json:"verification_full_every_seconds,omitempty"`
+	VerificationRestoreDrillEverySeconds int64  `json:"verification_restore_drill_every_seconds,omitempty"`
+	SourceMountPrefix                    string `json:"source_mount_prefix,omitempty"`
 }
 
 // trustedHostKeyResponse is one pinned host key on the wire: the algorithm
@@ -292,6 +339,16 @@ func toBackupSetResponse(bs service.BackupSet) backupSetResponse {
 		TrustedHostKeys:          trusted,
 		TrustedHostKeyRecordedAt: recordedAt,
 		ConnectionUnverified:     bs.ConnectionUnverified,
+
+		Engine:                               bs.Engine,
+		UUID:                                 bs.UUID,
+		RepositoryDomain:                     bs.RepositoryDomain,
+		SourceConsistency:                    bs.SourceConsistency,
+		VerificationLevel:                    bs.VerificationLevel,
+		VerificationSamplePercent:            bs.VerificationSamplePercent,
+		VerificationFullEverySeconds:         int64(bs.VerificationFullEvery / time.Second),
+		VerificationRestoreDrillEverySeconds: int64(bs.VerificationRestoreDrillEvery / time.Second),
+		SourceMountPrefix:                    bs.SourceMountPrefix,
 	}
 }
 
@@ -398,9 +455,20 @@ func (h *handlers) createBackupSet(w http.ResponseWriter, r *http.Request) {
 		Disabled:            body.Disabled,
 		ReadOnly:            body.ReadOnly,
 		SkipConnectionCheck: body.SkipConnectionCheck,
-		RunImmediately:      runImmediately,
-		AcknowledgeRepoint:  body.AcknowledgeRepoint,
-		Actor:               actorFromContext(r.Context()),
+
+		Engine:                        body.Engine,
+		UUID:                          body.UUID,
+		RepositoryDomain:              body.RepositoryDomain,
+		SourceConsistency:             body.SourceConsistency,
+		VerificationLevel:             body.VerificationLevel,
+		VerificationSamplePercent:     body.VerificationSamplePercent,
+		VerificationFullEvery:         time.Duration(body.VerificationFullEverySeconds) * time.Second,
+		VerificationRestoreDrillEvery: time.Duration(body.VerificationRestoreDrillEverySeconds) * time.Second,
+		SourceMountPrefix:             body.SourceMountPrefix,
+
+		RunImmediately:     runImmediately,
+		AcknowledgeRepoint: body.AcknowledgeRepoint,
+		Actor:              actorFromContext(r.Context()),
 	}
 
 	result, err := h.backend.CreateBackupSet(r.Context(), req)
@@ -812,6 +880,16 @@ type updateBackupSetRequest struct {
 	// connection_unverified until a test passes. Not a pointer, for the
 	// reason the two acknowledgements above are not.
 	SkipConnectionCheck bool `json:"skip_connection_check"`
+
+	// EPIC K's editable verification budget (#788). Five fields and no
+	// more: engine, uuid and repository_domain are create-only, because
+	// changing any of them is a migration rather than an edit. See
+	// core/service's own note above UpdateBackupSetRequest.isEmpty.
+	SourceConsistency                    *string `json:"source_consistency,omitempty"`
+	VerificationLevel                    *string `json:"verification_level,omitempty"`
+	VerificationSamplePercent            *int    `json:"verification_sample_percent,omitempty"`
+	VerificationFullEverySeconds         *int64  `json:"verification_full_every_seconds,omitempty"`
+	VerificationRestoreDrillEverySeconds *int64  `json:"verification_restore_drill_every_seconds,omitempty"`
 }
 
 // updateBackupSet is PATCH /api/v1/backup-sets/{source}/{set} (issue
@@ -870,6 +948,12 @@ func (h *handlers) updateBackupSet(w http.ResponseWriter, r *http.Request) {
 		AcknowledgeRepoint:       body.AcknowledgeRepoint,
 		AcknowledgeHostKeyChange: body.AcknowledgeHostKeyChange,
 		SkipConnectionCheck:      body.SkipConnectionCheck,
+
+		SourceConsistency:             body.SourceConsistency,
+		VerificationLevel:             body.VerificationLevel,
+		VerificationSamplePercent:     body.VerificationSamplePercent,
+		VerificationFullEvery:         secondsPointerToDurationFromInt64(body.VerificationFullEverySeconds),
+		VerificationRestoreDrillEvery: secondsPointerToDurationFromInt64(body.VerificationRestoreDrillEverySeconds),
 	}
 	if body.ValidatorID != nil {
 		id := service.ValidatorID(*body.ValidatorID)
@@ -942,4 +1026,19 @@ func checkedSecondsPointerToDuration(s *int, field string) (*time.Duration, erro
 	}
 	d := secondsToDuration(*s)
 	return &d, nil
+}
+
+// secondsPointerToDurationFromInt64 is secondsPointerToDuration for a
+// cadence, which is spelled int64 on the wire because a verification
+// cadence is measured in weeks and an int32 of seconds runs out at
+// sixty-eight years. nil stays nil, which is "leave this alone"; zero is
+// a real value here and means never.
+func secondsPointerToDurationFromInt64(v *int64) *time.Duration {
+	if v == nil {
+		return nil
+	}
+
+	d := time.Duration(*v) * time.Second
+
+	return &d
 }

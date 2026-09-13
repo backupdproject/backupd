@@ -561,9 +561,22 @@ describe("every request the shared client makes is a declared operation", () => 
    * Asserted EXACTLY, like its counterpart, so the list can only shrink.
    */
   const UNREACHED_SERVER_OPERATIONS = [
+    // The six reads #788's API landed ahead of the screens that will
+    // show them: the incremental engine's snapshot list, one snapshot,
+    // its holds, its retention verdicts, repository health and
+    // repository maintenance. They are pinned here rather than
+    // exempted, because that is what makes this list SHRINK as each one
+    // is wired: an operation whose client call arrives has to be
+    // deleted from here or this assertion fails.
+    "getBackupSetSnapshot",
+    "getBackupSetSnapshotRetention",
     "getOperation",
+    "getRepositoryMaintenance",
     "getSession",
-    "getSystemCapabilities"
+    "getSystemCapabilities",
+    "listBackupSetSnapshotHolds",
+    "listBackupSetSnapshots",
+    "listRepositories"
   ];
 
   it("pins the contract operations no client call reaches", () => {

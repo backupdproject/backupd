@@ -112,6 +112,15 @@ type UpdateBackupSetRequest struct {
 	// impossible value available to mean "none".
 	PollInterval *time.Duration
 
+	// EPIC K's editable verification budget (#788). See the note above
+	// isEmpty for why these five and not the engine, the uuid or the
+	// repository domain.
+	SourceConsistency             *string
+	VerificationLevel             *string
+	VerificationSamplePercent     *int
+	VerificationFullEvery         *time.Duration
+	VerificationRestoreDrillEvery *time.Duration
+
 	// SSHKeyID replaces the key this backup set authenticates with, by
 	// the id an earlier ImportSSHKey call returned (issue #572). A
 	// reference, never key material, exactly as on the create path: a
@@ -194,6 +203,25 @@ type UpdateBackupSetRequest struct {
 	SkipConnectionCheck bool
 }
 
+// EPIC K's editable verification budget (#788).
+//
+// These five and no more. A set's engine, its lineage uuid and its
+// repository domain are NOT editable here, and the omission is the
+// decision: changing any of the three is a migration rather than an
+// edit. An engine change would leave a catalog of snapshots nothing
+// runs and an artifact pipeline pointed at a source tree; a uuid
+// change would orphan every snapshot the set has ever taken; a domain
+// change would leave the existing snapshots in one repository and
+// write the next one into another, deduplicating against nothing.
+// Each of those is a thing an operator does by creating a new set,
+// deliberately, with the old one's history still readable.
+//
+// What IS here is the budget, because the budget genuinely changes: a
+// source acquires a quiesce hook, a deployment finds the I/O for a
+// nightly full read, an audit asks for restore drills. Zero on either
+// cadence clears it, which is "never" and is exactly what a client
+// means by turning a cadence off.
+
 // isEmpty reports whether this request names nothing at all. An update
 // that changes nothing is refused rather than persisted: it would rewrite
 // the configuration file and hot-reload the whole service to achieve
@@ -208,7 +236,10 @@ func (r UpdateBackupSetRequest) isEmpty() bool {
 		r.CompletionStrategy == nil && r.StableFor == nil &&
 		r.StaleAfter == nil && r.ValidatorID == nil &&
 		r.SSHKeyID == nil && r.KnownHostsLine == nil &&
-		r.PollInterval == nil
+		r.PollInterval == nil &&
+		r.SourceConsistency == nil && r.VerificationLevel == nil &&
+		r.VerificationSamplePercent == nil &&
+		r.VerificationFullEvery == nil && r.VerificationRestoreDrillEvery == nil
 }
 
 // UpdateBackupSet applies req to the backup set named by id ("source/name"),
@@ -579,6 +610,26 @@ func applyBackupSetUpdate(bs config.BackupSet, req UpdateBackupSetRequest) confi
 			d := config.Duration(*req.PollInterval)
 			bs.PollInterval = &d
 		}
+	}
+	if req.SourceConsistency != nil {
+		bs.ConsistencyConfig = *req.SourceConsistency
+	}
+	if req.VerificationLevel != nil {
+		bs.VerificationLevelConfig = *req.VerificationLevel
+	}
+	if req.VerificationSamplePercent != nil {
+		bs.VerificationSamplePercentConfig = *req.VerificationSamplePercent
+	}
+	// Zero clears a cadence, so the key leaves the operator's file
+	// entirely (omitempty on the config field) and the set goes back to
+	// never. See this file's own note on the editable budget for why
+	// zero can carry that meaning here, exactly as it does for the poll
+	// interval above.
+	if req.VerificationFullEvery != nil {
+		bs.VerificationFullEvery = config.Duration(*req.VerificationFullEvery)
+	}
+	if req.VerificationRestoreDrillEvery != nil {
+		bs.VerificationRestoreDrillEvery = config.Duration(*req.VerificationRestoreDrillEvery)
 	}
 	if req.ValidatorID != nil {
 		bs.Validation.ValidatorID = string(*req.ValidatorID)

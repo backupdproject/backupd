@@ -607,6 +607,21 @@ func toContractBackupSet(s service.BackupSet) apicontract.BackupSet {
 		// nullable field exists to prevent.
 		PollIntervalSeconds:          contractSecondsOrNil(s.PollInterval),
 		EffectivePollIntervalSeconds: int(s.EffectivePollInterval / time.Second),
+		// EPIC K's engine seam (#788). Carried for the guard's reason,
+		// and for one of its own: `sources` and the routed backup-set
+		// reads are where an operator finds out whether a set is an
+		// Artifact or an Incremental one, and a fixture that dropped the
+		// engine would exercise a deployment where that question has no
+		// answer.
+		Engine:                               s.Engine,
+		Uuid:                                 s.UUID,
+		RepositoryDomain:                     s.RepositoryDomain,
+		SourceConsistency:                    s.SourceConsistency,
+		VerificationLevel:                    s.VerificationLevel,
+		VerificationSamplePercent:            s.VerificationSamplePercent,
+		VerificationFullEverySeconds:         int64(s.VerificationFullEvery / time.Second),
+		VerificationRestoreDrillEverySeconds: int64(s.VerificationRestoreDrillEvery / time.Second),
+		SourceMountPrefix:                    s.SourceMountPrefix,
 	}
 }
 
@@ -689,6 +704,16 @@ func TestTheFixtureCarriesEveryFieldTheContractHas(t *testing.T) {
 		ConnectionUnverified:     true,
 		PollInterval:             controlPollInterval(),
 		EffectivePollInterval:    7 * time.Minute,
+
+		Engine:                        "kopia",
+		UUID:                          "control-uuid",
+		RepositoryDomain:              "control-domain",
+		SourceConsistency:             "externally_quiesced",
+		VerificationLevel:             "content_sample",
+		VerificationSamplePercent:     11,
+		VerificationFullEvery:         13 * time.Hour,
+		VerificationRestoreDrillEvery: 17 * time.Hour,
+		SourceMountPrefix:             "/srv/control-mount",
 	}
 
 	// Nothing is exempt today, and that is the point of writing the list
