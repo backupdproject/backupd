@@ -8,6 +8,13 @@ import { genericBridge } from "../../../../apps/generic/frontend/platform";
 import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi } from "@shared/api/mock";
 import { resetGraphForTests } from "@shared/state/graph";
+// Since #864 a later step is only reachable once the earlier ones are
+// answered. Every "this field is gone" assertion below is a queryBy that
+// passes on any screen it is not on, so the cases that live past the
+// connection test walk there and state which step they arrived at — a
+// test that stayed on Source would go on passing while the field it is
+// about came back.
+import { proveTheSource, walkToReview } from "./wizardWalk";
 
 /**
  * Issue #299 — proves each of the wizard's decorative fields is actually
@@ -39,8 +46,10 @@ describe("the wizard no longer renders the decorative fields #299 removed", () =
   it("has no Exclude patterns field on the Verification step", async () => {
     const user = userEvent.setup();
     renderWizard();
+    await proveTheSource();
 
     await user.click(screen.getByRole("button", { name: "Verification" }));
+    expect(screen.getByRole("heading", { name: "Completion and validation" })).toBeTruthy();
 
     expect(screen.queryByLabelText("Exclude patterns")).toBeNull();
     expect(screen.queryByText("Exclude patterns")).toBeNull();
@@ -49,8 +58,10 @@ describe("the wizard no longer renders the decorative fields #299 removed", () =
   it("has no per-set retention controls on the Retention step", async () => {
     const user = userEvent.setup();
     renderWizard();
+    await proveTheSource();
 
     await user.click(screen.getByRole("button", { name: "Retention" }));
+    expect(screen.getByRole("heading", { name: "Storage, retention and holds" })).toBeTruthy();
 
     // #788 gave this step the deployment's chain to REPORT — one global
     // policy (#111), read from GET /settings — which is why the
@@ -67,6 +78,7 @@ describe("the wizard no longer renders the decorative fields #299 removed", () =
   it("has no Checksum verification toggle, and a Transfer verification indicator that cannot be unchecked", async () => {
     const user = userEvent.setup();
     renderWizard();
+    await proveTheSource();
 
     await user.click(screen.getByRole("button", { name: "Verification" }));
 
@@ -110,10 +122,8 @@ describe("the wizard no longer renders the decorative fields #299 removed", () =
   });
 
   it("has no Retention summary and no SHA-256 claim on the Review step", async () => {
-    const user = userEvent.setup();
     renderWizard();
-
-    await user.click(screen.getByRole("button", { name: "Review" }));
+    await walkToReview();
 
     // Not a bare "Retention" check any more: #788's rail has a step by
     // that name, so matching the word would pin the rail label rather

@@ -476,6 +476,112 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
     // the key authenticates or whether the account can read the folder.
     !connectionProven;
 
+  // The two things step 2 asks for besides the test itself, named here
+  // because the step-completion table below reads them and a table of
+  // eight one-line answers is only readable if each answer is one line.
+  //
+  // "Generate" counts as settled: it is a real answer to the key
+  // question, and the reason it cannot be saved is stated on the step
+  // and enforced by saveDisabled rather than by pretending the operator
+  // has not answered. A trusted host is scoped to the host it was
+  // trusted FOR (revalidateHostTrust's own rule) and to the host key not
+  // having changed under it since.
+  const keySettled = keySource === "generate" || importedKeyId !== null;
+  const hostTrustedForThisHost =
+    hostTrusted &&
+    !hostKeyChanged &&
+    trustedKnownHostsLine !== null &&
+    trustedHostKey === source.host + ":" + source.port;
+
+  /**
+   * Issue #864: what each step of this rail has actually been answered,
+   * step by step, and which steps that makes reachable.
+   *
+   * The rail used to jump anywhere and tick everything behind the
+   * cursor, which is two defects wearing one coat. An operator could go
+   * from "Source" straight to "Review" — past the connection test every
+   * step after it reads — and arrive at a wizard drawing seven green
+   * checks for seven steps nobody had filled in. A tick that means "the
+   * cursor went past this" is the screen telling somebody their
+   * configuration is done when it is not.
+   *
+   * `completed[i]` is step i+1's OWN answers, and nothing else: not what
+   * came before it, not where the cursor is. A step that does not apply
+   * to the chosen engine is complete rather than blocking, for the same
+   * reason it renders NotForThisEngine rather than a disabled form — an
+   * artifact set has no repository domain to choose, and a gate that
+   * waited for one would be waiting forever.
+   *
+   * The one ORDERING rule lives in `reachable`: a step is reachable when
+   * every step before it is complete, so the first unfinished step is
+   * always reachable (you can sit on it and fill it in) and nothing past
+   * it is. Going back to check or fix an earlier answer keeps working,
+   * which is what the rail is for; passing an unfinished step does not,
+   * which is what it was not for.
+   */
+  const stepCompleted: readonly boolean[] = [
+    // 1 Source. The values a connection test is about, plus the name the
+    // set is created under. Trust and credentials are NOT here: they are
+    // asked for on step 2, and a gate belongs on the step whose controls
+    // answer it.
+    source.name.trim() !== "" &&
+      source.host.trim() !== "" &&
+      source.username.trim() !== "" &&
+      isPort(source.port) &&
+      remoteFolder.trim() !== "",
+    // 2 Connection test. The load-bearing one, and the only step on this
+    // rail that proves something about the world rather than recording
+    // an answer. `connectionProven` is already scoped to the values on
+    // the form (see connectionSubject), so editing the host or the port
+    // takes this back to false and re-locks everything after it — a
+    // green check standing for a connection nobody made to the machine
+    // now named on step 1 is the defect this whole gate exists for.
+    keySettled && hostTrustedForThisHost && connectionProven,
+    // 3 Engine. A closed choice with a default, so it is answered from
+    // the moment the step exists; what the step is for is making sure
+    // the default was read, and a rail cannot check reading.
+    true,
+    // 4 Repository domain. An existing domain, or a named new one.
+    // Incremental only: an artifact set stores no snapshots and has no
+    // domain to put them in.
+    !incremental || (domainChoice !== "" && repositoryDomain !== ""),
+    // 5 Source consistency. Incremental only, and a default answer,
+    // same as the engine.
+    true,
+    // 6 Verification, or completion and validation. Both branches have
+    // defaults; what can be UNanswered is a verification budget typed as
+    // something that is not a number, which optionalCount would drop on
+    // the floor and silently inherit instead (see its own doc).
+    !incremental ||
+      (isBudgetField(samplePercent) && isBudgetField(fullEveryDays) && isBudgetField(drillEveryDays)),
+    // 7 Storage, retention and holds. Somewhere to put the copy, and —
+    // when this set will delete the remote original — the
+    // acknowledgement saveDisabled already requires, waived by a
+    // read-only source on exactly the same reasoning: there is nothing
+    // to acknowledge deleting.
+    localDestination.trim() !== "" && (acknowledged || readOnlyEffective),
+    // 8 Review. Nothing is typed here; what makes it finished is that
+    // the flow can actually be committed, which is the same question the
+    // Save buttons answer.
+    !saveDisabled
+  ];
+
+  // Every step up to and including the first incomplete one. Written as
+  // a running AND rather than a slice-and-every so it stays O(steps).
+  const stepReachable: readonly boolean[] = (() => {
+    const reachable: boolean[] = [];
+    let behindAllComplete = true;
+    for (const complete of stepCompleted) {
+      reachable.push(behindAllComplete);
+      behindAllComplete = behindAllComplete && complete;
+    }
+    return reachable;
+  })();
+
+  // The footer's own way forward. A rail that refuses to skip a step and
+  // a Continue that walks past it would be one gate with a hole in it.
+  const nextDisabled = step === STEPS.length || stepCompleted[step - 1] !== true;
+
   // Runs the six-step check against the values on this form, through the
   // same route `backup-set create` runs before it writes (issue #624).
   //
@@ -795,8 +901,20 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
       {/* The promoted rail (components/WizardStep.tsx), which is where
           this markup used to live inline with six columns hardcoded into
           it. One tooltip id for the whole rail: what a step is, and that
-          any of them can be revisited, is one explanation (#834). */}
-      <StepRail steps={STEPS} step={step} onSelect={setStep} tip="wizard.set.step" />
+          any of them can be revisited, is one explanation (#834).
+
+          The two arrays are issue #864: the tick is what each step has
+          actually been answered, and a step whose predecessors are
+          unanswered cannot be jumped to. Revisiting still works — every
+          step up to the first unfinished one stays reachable. */}
+      <StepRail
+        steps={STEPS}
+        step={step}
+        onSelect={setStep}
+        tip="wizard.set.step"
+        completed={stepCompleted}
+        reachable={stepReachable}
+      />
 
       <section className="card">
         <div style={{ padding: "20px 22px 22px" }}>
@@ -2015,7 +2133,7 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
             <button
               className="btn btn--primary"
               onClick={() => setStep(Math.min(STEPS.length, step + 1))}
-              disabled={step === STEPS.length}
+              disabled={nextDisabled}
             >
               Continue
             </button>
@@ -2291,4 +2409,37 @@ function optionalCount(value: string): number | undefined {
 function optionalDays(value: string): number | undefined {
   const days = optionalCount(value);
   return days === undefined ? undefined : days * 24 * 3600;
+}
+
+/**
+ * Whether the SSH port field holds a port (issue #864).
+ *
+ * The save path reads `Number(source.port) || 22`, which turns "22a",
+ * "0" and "" all into 22 — a default standing in for an answer nobody
+ * gave, and the reason this is a gate rather than a coercion: the step
+ * is unfinished until the field says something a connection could
+ * actually be made to.
+ */
+function isPort(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed === "") return false;
+  const n = Number(trimmed);
+  return Number.isInteger(n) && n >= 1 && n <= 65535;
+}
+
+/**
+ * Whether one of the verification budget fields holds something that
+ * will reach the wire (issue #864).
+ *
+ * Empty is a real answer — it inherits this deployment's own setting —
+ * so it passes. What does not is a value optionalCount would drop:
+ * "later", "10%", "-1" all resolve to undefined, which is the same
+ * request as leaving the field blank, so a step that accepted them would
+ * be showing a typed number back to an operator while asking the service
+ * to ignore it.
+ */
+function isBudgetField(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed === "") return true;
+  return optionalCount(trimmed) !== undefined;
 }

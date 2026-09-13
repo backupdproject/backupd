@@ -59,6 +59,21 @@ function press(name: string | RegExp) {
   });
 }
 
+/** Whether a control refuses to act. A locked rail step and a refused
+ *  Continue both carry the real `disabled` attribute, which is what
+ *  keeps them out of the tab order as well as out of reach of a
+ *  pointer. */
+function locked(name: string) {
+  return screen.getByRole("button", { name }).hasAttribute("disabled");
+}
+
+/** Whether the rail draws that step as answered. The mark itself is a
+ *  decorative glyph with no accessible name, so the rail states the
+ *  same fact in an attribute. */
+function marked(name: string) {
+  return screen.getByRole("button", { name }).getAttribute("data-complete");
+}
+
 describe("the restore flow", () => {
   afterEach(() => {
     cleanup();
@@ -170,21 +185,187 @@ describe("the restore flow", () => {
     expect(await screen.findByText("snapshot_id=b83d15a0ce9f4721")).toBeTruthy();
   });
 
-  it("refuses to submit without a destination, and says why beside the button", async () => {
+  // The gate, issue #864. This flow used to advance on any press: the
+  // rail moved the cursor wherever it was clicked and Continue counted
+  // up unconditionally, so an operator could land on Confirm over a
+  // destination nobody had named — with checks drawn against every step
+  // behind them, because a check meant "the cursor has passed this"
+  // rather than "this is answered". The four cases below are that gate.
+  it("keeps a step whose question is unanswered out of reach", async () => {
     const api = createMockApi();
     const restore = vi.spyOn(api, "restoreSnapshot");
+    await seed(api);
+
+    renderRestore(api);
+    await screen.findByText(/newest known-good/);
+
+    // The snapshot (the newest known-good one, in hand) and the scope
+    // (the whole tree, the default) are answered, so Where is as far as
+    // this flow goes. Confirm is not reachable: no destination.
+    expect(locked("Snapshot")).toBe(false);
+    expect(locked("What to restore")).toBe(false);
+    expect(locked("Where")).toBe(false);
+    expect(locked("Confirm")).toBe(true);
+
+    // Not merely drawn shut: the press does not move the cursor.
+    press("Confirm");
+    expect(screen.getByRole("heading", { name: "Which snapshot" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Start restore" })).toBeNull();
+
+    press("Where");
+    expect(locked("Continue")).toBe(true);
+    // Walking back out of a step is never gated: that is how a wrong
+    // answer gets corrected.
+    expect(locked("Back")).toBe(false);
+    // A disabled control announces nothing about why it is disabled.
+    expect(screen.getByText("Name a directory on this deployment to restore into.")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Restore into"), {
+      target: { value: "/data/restores/gate" }
+    });
+
+    expect(locked("Continue")).toBe(false);
+    expect(locked("Confirm")).toBe(false);
+    // Nothing was submitted on the way through: the commit is still a
+    // press on Start restore, and it was never reachable.
+    expect(restore).not.toHaveBeenCalled();
+  });
+
+  it("does not count a path-inside-the-snapshot answer with no path in it", async () => {
+    const api = createMockApi();
+    await seed(api);
+
+    renderRestore(api);
+    await screen.findByText(/newest known-good/);
+
+    press("What to restore");
+    act(() => {
+      screen.getByLabelText(/One path inside it/).click();
+    });
+
+    // The scope question is now open again: "one path inside it" with no
+    // path named is not an answer, and the steps that depend on it shut.
+    expect(marked("What to restore")).toBe("false");
+    expect(locked("Continue")).toBe(true);
+    expect(locked("Where")).toBe(true);
+    expect(locked("Confirm")).toBe(true);
+
+    press("Where");
+    expect(screen.getByRole("heading", { name: "What to restore" })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Path inside the snapshot"), {
+      target: { value: "/srv/shares/finance" }
+    });
+
+    expect(marked("What to restore")).toBe("true");
+    expect(locked("Continue")).toBe(false);
+    expect(locked("Where")).toBe(false);
+    // Still not Confirm: the destination is a question of its own.
+    expect(locked("Confirm")).toBe(true);
+  });
+
+  it("offers nothing past the first step until a snapshot is in hand", async () => {
+    const api = createMockApi();
+    const real = await createMockApi().listSnapshots("production", "postgres-primary");
+    // Every run failed its verification, so none is offered by default
+    // and the flow has no restore point selected at all.
+    vi.spyOn(api, "listSnapshots").mockResolvedValue(
+      real.map((snapshot) => ({
+        ...snapshot,
+        verificationStatus: "failed" as const,
+        verificationLevelAchieved: null,
+        lastKnownGood: false
+      }))
+    );
+    await seed(api);
+
+    renderRestore(api);
+
+    const toggle = screen.getByRole("checkbox", {
+      name: /Also show snapshots that failed verification/
+    });
+    await waitFor(() => expect(locked("What to restore")).toBe(true));
+    expect(marked("Snapshot")).toBe("false");
+    expect(locked("Where")).toBe(true);
+    expect(locked("Confirm")).toBe(true);
+    expect(locked("Continue")).toBe(true);
+
+    // Asking for the unverified runs puts one in hand, and the step
+    // after it opens. The flow still says the snapshot proves nothing.
+    act(() => {
+      toggle.click();
+    });
+    expect(await screen.findByText("snapshot_id=b83d15a0ce9f4721")).toBeTruthy();
+    expect(screen.getByText(/This snapshot is not a proven restore point/)).toBeTruthy();
+
+    expect(marked("Snapshot")).toBe("true");
+    expect(locked("What to restore")).toBe(false);
+    expect(locked("Continue")).toBe(false);
+  });
+
+  it("marks the steps that are answered, not the ones the cursor walked past", async () => {
+    const api = createMockApi();
     await seed(api);
 
     renderRestore(api, "run-2026-09-13-0400");
     await screen.findByText(/newest known-good/);
 
-    press("Confirm");
+    // On step one, and the scope step is already answered by its own
+    // default: the mark is about the answer, not about the cursor.
+    expect(marked("Snapshot")).toBe("true");
+    expect(marked("What to restore")).toBe("true");
+    expect(marked("Where")).toBe("false");
+    expect(marked("Confirm")).toBe("false");
 
-    const start = screen.getByRole("button", { name: "Start restore" });
-    expect(start.hasAttribute("disabled")).toBe(true);
-    // A disabled control announces nothing about why it is disabled.
-    expect(screen.getByText("Name a directory on this deployment to restore into.")).toBeTruthy();
-    expect(restore).not.toHaveBeenCalled();
+    press("Where");
+    // Walked onto a step, and it is still unanswered.
+    expect(marked("Where")).toBe("false");
+
+    fireEvent.change(screen.getByLabelText("Restore into"), {
+      target: { value: "/data/restores/marks" }
+    });
+    expect(marked("Where")).toBe("true");
+
+    // Emptying it again takes the mark back rather than leaving a check
+    // over a destination that is no longer named.
+    fireEvent.change(screen.getByLabelText("Restore into"), { target: { value: "   " } });
+    expect(marked("Where")).toBe("false");
+    expect(locked("Confirm")).toBe(true);
+
+    // The last step is answered by the submission, and nothing has been
+    // submitted.
+    fireEvent.change(screen.getByLabelText("Restore into"), { target: { value: "/data/restores/marks" } });
+    press("Confirm");
+    expect(marked("Confirm")).toBe("false");
+    expect(screen.getByRole("button", { name: "Start restore" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  // The gate is about unanswered questions, and a submitted restore has
+  // none left. Emptying a field afterwards must not lock an operator
+  // out of the one panel reporting the restore that is running.
+  it("keeps the submitted restore in reach after its fields are edited", async () => {
+    const api = createMockApi();
+    await seed(api);
+
+    renderRestore(api, "run-2026-09-13-0400");
+    await screen.findByText(/newest known-good/);
+
+    press("Where");
+    fireEvent.change(screen.getByLabelText("Restore into"), {
+      target: { value: "/data/restores/inflight" }
+    });
+    press("Confirm");
+    press("Start restore");
+    expect(await screen.findByText("restore snapshot")).toBeTruthy();
+
+    press("Back");
+    fireEvent.change(screen.getByLabelText("Restore into"), { target: { value: "" } });
+
+    expect(locked("Confirm")).toBe(false);
+    press("Confirm");
+    expect(screen.getByText("restore snapshot")).toBeTruthy();
+    // And it is not a second submission waiting to happen.
+    expect(screen.getByRole("button", { name: "Start restore" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("watches the operation it submitted rather than claiming the restore is done", async () => {

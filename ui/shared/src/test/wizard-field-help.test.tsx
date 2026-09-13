@@ -10,6 +10,10 @@ import { resetGraphForTests } from "@shared/state/graph";
 import { BackupSetWizardPage } from "@shared/pages/BackupSetWizardPage";
 import { FIELD_HELP } from "@shared/components/fieldHelpCopy";
 import type { FieldHelpCopy } from "@shared/components/fieldHelpCopy";
+// Since #864 the rail will not jump to a later step until the earlier
+// ones are answered, so the cases that live on steps 6 and 7 walk there
+// through the connection test rather than clicking straight past it.
+import { proveTheSource } from "./wizardWalk";
 
 /**
  * Issue #278's wizard follow-up (held back from the original PR while
@@ -94,6 +98,8 @@ describe("the wizard's honest fields are wired to their own copy", () => {
     expectHelp(screen.getByLabelText("Directory to back up"), FIELD_HELP.wizardRemoteFolder);
     expectHelp(screen.getByLabelText("Ignore paths matching"), FIELD_HELP.wizardIncludePatterns);
 
+    await proveTheSource();
+
     await user.click(screen.getByRole("button", { name: "Verification" }));
     // A <fieldset> is role "group", named by its own <legend>.
     expectHelp(screen.getByRole("group", { name: "Completion method" }), FIELD_HELP.wizardCompletionMethod);
@@ -106,6 +112,7 @@ describe("the wizard's honest fields are wired to their own copy", () => {
   it("on the Retention and Verification steps", async () => {
     const user = userEvent.setup();
     renderWizard();
+    await proveTheSource();
 
     await user.click(screen.getByRole("button", { name: "Retention" }));
 
@@ -128,6 +135,7 @@ describe("the wizard's honest fields are wired to their own copy", () => {
   it("on the Retention step's acknowledgement checkbox", async () => {
     const user = userEvent.setup();
     renderWizard();
+    await proveTheSource();
 
     await user.click(screen.getByRole("button", { name: "Retention" }));
 

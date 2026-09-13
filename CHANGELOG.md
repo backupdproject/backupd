@@ -442,6 +442,48 @@
   the fault before handing the stack over rather than letting a suite pass
   against a stack that was never broken.
 
+- **A wizard's step rail cannot be used to skip a step, and does not tick a
+  step nobody filled in** (#864). Two guided flows drew the shared rail
+  (`components/WizardStep.tsx`) with every step clickable at any time and a
+  green check on every step behind the cursor. Both halves of that were
+  wrong, and the second one worse than the first: an operator could click
+  from "Source" to "Review" in the add-backup-set wizard — past the
+  connection test whose verdict steps 3 to 7 read, including the write probe
+  that decides whether deleting from the source may be offered at all — and
+  arrive at a page drawing seven ticks for seven steps they had never seen.
+  A tick that means "the cursor went past this" is the product telling
+  somebody their configuration is done.
+
+  The rail now takes what is finished and what is reachable from the flow
+  that owns the answers: a step is ticked for its OWN inputs, independently
+  of where the cursor is, and it is reachable only once every step before it
+  is finished — so the first unfinished step, and every step already
+  answered, stays open (going back to check or fix an answer is what a rail
+  is for) while nothing past it is. A locked step is a genuinely disabled
+  button, which is also what takes it out of the tab order, so there is no
+  keyboard route around it; Continue refuses on an unfinished step, because a
+  footer that walks past one is the same hole in the same gate. A step that
+  does not apply to the engine chosen — a repository domain for an artifact
+  set — is finished rather than blocking, exactly as it already renders "not
+  for this engine" rather than an empty form.
+
+  In the add-backup-set wizard the load-bearing gate is the connection test:
+  steps 3 onwards stay shut until it passes for the values on the form now,
+  and editing the host, the port or the directory to back up puts them back
+  out of reach, because a result that outlived the values it was about is a
+  green check standing for a connection nobody made.
+
+  The restore flow gates the same way: Confirm — and so Start restore — is
+  out of reach until a snapshot is chosen, the scope is actually answered
+  ("one path inside it" with no path typed is not an answer) and a
+  destination is named. Its last step is ticked by the submission rather
+  than by arriving at it, and a submitted restore lifts the gate, so editing
+  a field afterwards cannot hide the operation that is already running.
+
+  Every Save refusal these flows already had (#146, #624, #852) is still
+  underneath: a handler reachable by any other route must not save a set
+  whose connection nothing proved.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added
