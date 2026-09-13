@@ -261,8 +261,23 @@ type SnapshotID string
 // which set put it there: the engine's own source identity is a
 // host/user/path triple, and a streaming set writes one of those PER
 // OBJECT, so counting them answers a different question from the one the
-// isolation rule asks. These two tags are how a snapshot carries the
-// answer, and RepositoryStats.Sources is counted from the first of them.
+// isolation rule asks. The first two tags below are how a snapshot
+// carries that answer, and RepositoryStats.Sources is counted from
+// TagKeyBackupSet.
+//
+// # Why a snapshot also has to say which RUN wrote it
+//
+// A daemon that dies mid-run leaves behind a manifest its own catalog
+// never recorded, and the next start has to decide whether that orphan
+// is the dead run's restore point or somebody else's. Without a run tag
+// the only evidence available is TIME -- "it appeared after this run
+// started" -- and time does not tell a co-tenant set's snapshot, a
+// second daemon's, or an operator's own manual one taken with the
+// vendor's CLI against the same bucket, apart from this run's. Adopting
+// one of those records a restore point holding somebody else's data
+// under this set's name, which is worse than adopting nothing at all.
+// TagKeyRun turns that judgement into an equality: a manifest belongs to
+// a run if, and only if, it says so.
 //
 // # Why the literal strings are here and not at the caller
 //
@@ -287,6 +302,23 @@ const (
 	// holding it is a snapshot written somewhere it does not belong, and
 	// the tag is the only evidence that would survive to say so.
 	TagKeyDomain = "backupd.domain"
+
+	// TagKeyRun is the manager's own snapshot-run id, as the catalog
+	// recorded it before the run touched storage.
+	//
+	// It is the one tag an adapter writes rather than the caller (see
+	// TreeSnapshotRequest.RunID), because it is the one piece of
+	// attribution a caller must not be able to forget: a manifest
+	// without it can only be matched to a run by timestamp, and matching
+	// by timestamp is how somebody else's snapshot becomes this set's
+	// restore point.
+	//
+	// Reconciliation matches it EXACTLY, and together with TagKeyDomain
+	// and TagKeyBackupSet rather than alone. A run id is unique inside
+	// this product's own catalog and therefore proves nothing by itself
+	// about which set or which domain the run was for; an orphan is
+	// adopted only when all three agree.
+	TagKeyRun = "backupd.run"
 )
 
 // SnapshotRequest asks for one snapshot of one source.
@@ -335,6 +367,18 @@ type SnapshotInfo struct {
 	// not represent the whole source, which is a thing retention and restore
 	// must be able to see rather than infer.
 	Incomplete string
+
+	// Tags are the tags stored with the snapshot, read back as the engine
+	// holds them. It is nil when the manifest carries none.
+	//
+	// This is the READ side of the attribution contract the TagKey
+	// constants above define, and it is here rather than left to the
+	// adapter because the question it answers -- "whose snapshot is
+	// this" -- is asked by code that has no business knowing the
+	// engine's name. Crash reconciliation matches run, domain and set
+	// exactly against these; a snapshot that cannot be attributed is one
+	// it leaves alone.
+	Tags map[string]string
 }
 
 // DefaultVerifySamplePercent is how much of a snapshot's file content a
@@ -969,19 +1013,38 @@ type TreeSnapshotRequest struct {
 	// stored as an empty snapshot.
 	Root SourceDir
 
+	// RunID is the manager's own snapshot-run id for this run, as the
+	// catalog recorded it before anything was stored.
+	//
+	// It is REQUIRED: SnapshotTree refuses an empty one before it
+	// touches storage, because a snapshot that cannot say which run
+	// wrote it is a snapshot crash reconciliation can only match by
+	// timestamp. TagKeyRun is what that costs, argued in full.
+	//
+	// The adapter writes it as the TagKeyRun tag itself rather than
+	// leaving it to Tags below. Attribution a caller can forget is
+	// attribution that goes missing on the one path nobody exercises by
+	// hand -- the crash path -- which is the only path this field exists
+	// to survive.
+	RunID string
+
 	// Description is operator-facing text stored with the snapshot.
 	Description string
 
-	// Tags are stored with the snapshot. Every snapshot this product
-	// writes carries TagKeyBackupSet and TagKeyDomain, and the engine
-	// sets neither: the caller owns attribution, because the caller is
-	// the only thing that knows which backup set is running.
+	// Tags are stored with the snapshot, alongside the TagKeyRun the
+	// adapter adds. Every snapshot this product writes carries
+	// TagKeyBackupSet and TagKeyDomain, and the engine synthesises
+	// neither: the caller owns set and domain attribution, because the
+	// caller is the only thing that knows which backup set is running.
+	//
+	// A TagKeyRun entry here does not win. RunID is authoritative,
+	// because two sources for one fact are one fact and one bug.
 	Tags map[string]string
 }
 
 // TreeSnapshotInfo reports one stored tree snapshot.
 //
-// The three byte counts are three different numbers and a surface must
+// The four byte counts are four different numbers and a surface must
 // never present one as another (#783's metrics requirement):
 //
 //   - SnapshotInfo.Bytes is what was SCANNED: the logical size of the
@@ -989,6 +1052,9 @@ type TreeSnapshotRequest struct {
 //   - SourceBytesRead is what this run actually pulled off the source.
 //   - RepositoryBytesWritten is what this run actually pushed into the
 //     repository's storage, after deduplication and compression.
+//   - ContentReusedBytes is how much of what the run offered the
+//     repository was content it already held, and so did not store
+//     again.
 //
 // On a second run over a mostly-unchanged tree the first two are the
 // whole tree and the third is nearly nothing, and that gap is the only
@@ -996,6 +1062,27 @@ type TreeSnapshotRequest struct {
 // would report a deduplicated repository as growing by the size of the
 // source every night, which is the specific lie this type is shaped to
 // prevent.
+//
+// # Why reuse is MEASURED and not derived
+//
+// The arithmetic that suggests itself -- SourceBytesRead minus
+// RepositoryBytesWritten -- is not deduplication. That difference also
+// contains compression, and the pack and index overhead of storing
+// anything at all, so a FIRST snapshot of highly compressible data,
+// which by definition reused nothing, would report most of itself as
+// reused and tell an operator their brand new backup was mostly free.
+// ContentReusedBytes therefore comes from the engine's own
+// content-level accounting or it does not come at all: when the engine
+// cannot supply it, ContentReuseMeasured is false, because "not
+// measured" and "measured zero" are different facts and a catalog that
+// stored them as the same number would be reporting the first as the
+// second.
+//
+// Compression savings are deliberately NOT reported here and are not
+// folded into reuse. They are a different economy -- the same bytes
+// stored more cheaply, rather than bytes not stored twice -- and one
+// number covering both would answer neither "is incremental backup
+// working" nor "is compression earning its CPU".
 type TreeSnapshotInfo struct {
 	SnapshotInfo
 
@@ -1005,6 +1092,23 @@ type TreeSnapshotInfo struct {
 	// RepositoryBytesWritten is how many bytes the run wrote to the
 	// repository's storage.
 	RepositoryBytesWritten int64
+
+	// ContentReusedBytes is how many bytes of content this run handed to
+	// the repository that it already held. It is THIS run's reuse, not
+	// the repository's lifetime total, and a first snapshot's is zero.
+	//
+	// It means nothing unless ContentReuseMeasured is true.
+	ContentReusedBytes int64
+
+	// ContentReuseMeasured says whether ContentReusedBytes is a
+	// measurement at all.
+	//
+	// False means the engine could not account for reuse on this run. It
+	// does not mean nothing was reused, and the two must not be reported
+	// alike: a zero presented as a measurement is a claim that the run
+	// deduplicated nothing, which sends an operator looking for a broken
+	// incremental backup that is working perfectly well.
+	ContentReuseMeasured bool
 }
 
 // TreeRepository is the capability a Repository advertises when it can

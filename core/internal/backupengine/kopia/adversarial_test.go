@@ -394,6 +394,7 @@ func TestSnapshotTreeRefusesEveryEntryNameThatChoosesWhereItLands(t *testing.T) 
 
 				_, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
 					Source: src,
+					RunID:  treeRunID,
 					Root:   oneEntryTree(name, []byte("payload\n")),
 				})
 				if err == nil {
@@ -442,6 +443,7 @@ func TestSnapshotTreeRefusesEveryEntryNameThatChoosesWhereItLands(t *testing.T) 
 
 				info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
 					Source: src,
+					RunID:  treeRunID,
 					Root:   oneEntryTree(name, body),
 				})
 				if err != nil {
@@ -540,6 +542,7 @@ func FuzzSnapshotAndRestoreCannotEscapeTheRestoreRoot(f *testing.F) {
 
 		info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
 			Source: src,
+			RunID:  treeRunID,
 			Root:   oneEntryTree(name, body),
 		})
 		if err != nil {
@@ -643,7 +646,7 @@ func TestRestoreWritesAPreservedLinkAsDataAndFollowsNothing(t *testing.T) {
 		fileEntry("relative.link", newMemStream([]byte(links["relative.link"]))),
 	}}
 
-	info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, Root: root})
+	info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: root})
 	if err != nil {
 		t.Fatalf("SnapshotTree: %v", err)
 	}
@@ -873,6 +876,7 @@ func TestASourceThatMutatesUnderTheReadIsDeterministic(t *testing.T) {
 			for attempt := 1; attempt <= 2; attempt++ {
 				_, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
 					Source: src,
+					RunID:  treeRunID,
 					Root:   tc.root,
 				})
 				if err == nil {
@@ -924,7 +928,7 @@ func TestSnapshotTreeStoresTheBytesItReadAndNotTheSizeTheListingClaimed(t *testi
 				claimedSizeEntry("object.bin", claimed, &driftingStream{revisions: [][]byte{body}}),
 			}}
 
-			info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, Root: root})
+			info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{Source: src, RunID: treeRunID, Root: root})
 			if err != nil {
 				t.Fatalf("SnapshotTree: %v", err)
 			}

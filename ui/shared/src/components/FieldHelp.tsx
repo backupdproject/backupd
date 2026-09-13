@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { FieldHelpCopy } from "@shared/components/fieldHelpCopy";
+import { useTooltipsVisible } from "@shared/hooks/useTooltips";
+import { noteTooltipClosed } from "@shared/state/tooltipNodes";
 
 /**
  * Issue #278: the explanatory pop-up an input carries, and the four states
@@ -106,6 +108,16 @@ import type { FieldHelpCopy } from "@shared/components/fieldHelpCopy";
  * one rule every pop-up on the page is permanently open. It is asserted
  * from the shipped stylesheet in this component's suite, because a stubbed
  * stylesheet cannot tell the difference.
+ *
+ * # The operator can switch all of this off (issue #829)
+ *
+ * Everything above describes a pop-up an operator wants. One who does not
+ * can say so, once, from the "x" itself: closing a pop-up that way offers
+ * the global opt-out, and a browser that has taken it shows no pop-up
+ * anywhere. That preference, and the "asked already" flag beside it, live
+ * on the graph (state/tooltipNodes.ts); this component only reads the one
+ * boolean that falls out of them, `useTooltipsVisible()`, which also
+ * covers the surface-level suppression the sign-in screen applies.
  */
 
 /** How a caller renders its own control: it must put `helpId` on the
@@ -131,7 +143,22 @@ export function FieldHelp({ label, help, children, style }: FieldHelpProps) {
   const [pinned, setPinned] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
-  const open = pinned || ((hovered || focused) && !dismissed);
+  // Issue #829: a fifth input, and the only one that is not this field's
+  // own. It gates the four states rather than joining them, because it
+  // answers a question asked before any of them: may a pop-up appear here
+  // at all. Off, or on the sign-in screen, and nothing hover or focus does
+  // opens one.
+  //
+  // The copy itself stays mounted and stays referenced by the control's
+  // aria-describedby. That is not a loophole in "no tooltips": a screen
+  // reader's description is not a pop-up, it does not cover the Save
+  // button, and an operator who turned off pop-ups they can see has not
+  // asked for the field's explanation to be withheld from somebody who
+  // cannot. Only the visible overlay, and the close control inside it, are
+  // what the preference removes.
+  const tooltipsVisible = useTooltipsVisible();
+
+  const open = tooltipsVisible && (pinned || ((hovered || focused) && !dismissed));
 
   // A pinned pop-up closes on a click anywhere outside it. Registered in
   // the CAPTURE phase so this runs before React's own delegated handlers
@@ -173,6 +200,11 @@ export function FieldHelp({ label, help, children, style }: FieldHelpProps) {
     return other instanceof Node && event.currentTarget.contains(other);
   };
 
+  /** The close control, and only the close control. Escape and a click
+   *  away close a pop-up too and deliberately do not come through here:
+   *  #829 asks about the "x" because pressing it is the one exit that is
+   *  unambiguously aimed AT the pop-up, rather than at the page behind it
+   *  or at whatever the operator is typing. */
   const dismiss = () => {
     setPinned(false);
     setDismissed(true);
@@ -181,6 +213,10 @@ export function FieldHelp({ label, help, children, style }: FieldHelpProps) {
     // would otherwise have to Tab back from. The pop-up does not re-open:
     // this focus never leaves the wrapper, so `dismissed` is not cleared.
     wrapper.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+    // Offers the global opt-out, the first time this happens in this
+    // browser and never again (state/tooltipNodes.ts owns that decision,
+    // so every tooltip host shares one answer rather than one each).
+    noteTooltipClosed();
   };
 
   return (

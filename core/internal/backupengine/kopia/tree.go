@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -98,6 +99,24 @@ func (r *repository) SnapshotTree(
 			"kopia: tree snapshot request for %s carries no root directory; an absent tree is not an empty one", si.Path)
 	}
 
+	// Refused for the same reason and at the same moment. A run id is
+	// how crash reconciliation tells this run's orphaned manifest from a
+	// co-tenant set's or an operator's own; storing a snapshot without
+	// one produces a restore point that can only ever be matched to a
+	// run by its timestamp, which is the ambiguity
+	// backupengine.TagKeyRun exists to remove. It cannot be fixed after
+	// the fact either: nothing later can tell which run wrote a manifest
+	// that did not say.
+	if req.RunID == "" {
+		return backupengine.TreeSnapshotInfo{}, fmt.Errorf(
+			"kopia: tree snapshot request for %s carries no run id; a snapshot nothing can attribute to a run is one reconciliation can only guess at", si.Path)
+	}
+
+	// The manifest's tags, assembled before any storage is touched so
+	// that the failure to attribute a run is a refusal rather than a
+	// snapshot with a missing label.
+	tags := treeSnapshotTags(req)
+
 	run := &treeRun{}
 	prog := &captureProgress{}
 
@@ -139,6 +158,15 @@ func (r *repository) SnapshotTree(
 		man      *snapshot.Manifest
 		id       manifest.ID
 	)
+
+	// The reuse measurement is a DELTA across the write session: the
+	// vendor's counter is the repository handle's lifetime total, and
+	// reporting a lifetime total as this run's reuse would make every
+	// run look better than the one before it. Reading it here, before
+	// anything is written, is the first half; see
+	// contentDeduplicatedBytes for why this is read reflectively and why
+	// a failure to read it is reported as "not measured".
+	reusedBefore, reuseReadable := contentDeduplicatedBytes(r.rep)
 
 	err = repo.WriteSession(ctx, r.rep, repo.WriteSessionOptions{
 		Purpose:  treeSnapshotPurpose,
@@ -196,7 +224,7 @@ func (r *repository) SnapshotTree(
 		}
 
 		m.Description = req.Description
-		m.Tags = req.Tags
+		m.Tags = tags
 
 		sid, serr := snapshot.SaveSnapshot(ctx, w, m)
 		if serr != nil {
@@ -213,11 +241,182 @@ func (r *repository) SnapshotTree(
 
 	man.ID = id
 
+	// The second half of the delta. Both reads have to have worked and
+	// the counter has to have moved forwards: a counter that went
+	// backwards means something reset it underneath this run -- another
+	// caller asking for a resetting snapshot, a handle reopened -- and
+	// the difference is then not this run's reuse but a negative number
+	// dressed up as one.
+	var (
+		reused        int64
+		reuseMeasured bool
+	)
+
+	if reuseReadable {
+		if after, ok := contentDeduplicatedBytes(r.rep); ok && after >= reusedBefore {
+			reused, reuseMeasured = after-reusedBefore, true
+		}
+	}
+
 	return backupengine.TreeSnapshotInfo{
 		SnapshotInfo:           snapshotInfo(man),
 		SourceBytesRead:        run.read.Load(),
 		RepositoryBytesWritten: uploaded.Load(),
+		ContentReusedBytes:     reused,
+		ContentReuseMeasured:   reuseMeasured,
 	}, nil
+}
+
+// treeSnapshotTags is the manifest's tags: what the caller passed, plus
+// the run attribution this adapter owns.
+//
+// The caller's map is COPIED rather than written to. A request is the
+// caller's own value and may well be a literal it reuses for the next
+// run or a map it still reads afterwards; an adapter that added a key to
+// it would be editing its caller's state to record its own, and the
+// symptom -- a second run carrying the first run's id because the caller
+// handed the same map back -- would look like a reconciliation bug
+// rather than an aliasing one.
+//
+// The adapter's run id is set LAST and therefore wins over a
+// backupengine.TagKeyRun the caller put in Tags itself. That is not
+// politeness about precedence: TreeSnapshotRequest.RunID is the field
+// the manager is required to fill in and the one SnapshotTree refused an
+// empty value for, so a disagreeing tag is a caller with two ideas about
+// which run this is, and the one that was validated is the one the
+// manifest gets. Silently keeping the other would put an id in the
+// repository that no catalog row matches, which reconciliation reads as
+// "somebody else's snapshot" -- the exact failure the tag exists to
+// prevent.
+func treeSnapshotTags(req backupengine.TreeSnapshotRequest) map[string]string {
+	tags := make(map[string]string, len(req.Tags)+1)
+
+	for k, v := range req.Tags {
+		tags[k] = v
+	}
+
+	tags[backupengine.TagKeyRun] = req.RunID
+
+	return tags
+}
+
+// --- the reuse measurement -----------------------------------------------
+
+// kopiaDedupCounterName is the name of Kopia's own content-level
+// deduplication counter, as repo/content/content_manager_metrics.go
+// registers it and repo/content/content_manager.go increments it from
+// WriteContent when the content being written is already stored.
+//
+// It is a string looked up at runtime rather than a symbol the compiler
+// checks, so the tests in tree_test.go that assert reuse on a second run
+// of an unchanged tree are what pins it: if a version bump renames the
+// counter, the lookup below stops finding it and those tests fail with
+// "reuse was not measured" rather than the adapter quietly reporting
+// nothing was ever deduplicated.
+const kopiaDedupCounterName = "content_deduplicated_bytes"
+
+// contentDeduplicatedBytes reads Kopia's lifetime count of bytes it did
+// not have to store because it already held the content, or reports that
+// it could not.
+//
+// # Why the vendor's number and not arithmetic
+//
+// The tempting definition of reuse is SourceBytesRead minus
+// RepositoryBytesWritten, and it is wrong in a way that gets worse the
+// better the repository works: that difference also contains compression
+// and the pack and index overhead of storing anything at all. A first
+// snapshot of a directory of text and logs, which has by definition
+// reused nothing, compresses to a fraction of its size and would be
+// reported as mostly deduplicated. Only the content manager knows which
+// bytes it recognised, and this is where it says so.
+//
+// # Why reflection
+//
+// The counter is reachable only through repo.DirectRepository's Metrics
+// accessor (repo/repository.go), whose return type *metrics.Registry
+// lives in github.com/kopia/kopia/internal/metrics. An internal package
+// cannot be imported from here, which means the type cannot be named --
+// not in an import, not in a type assertion, not in a function
+// signature. Reflection is not a style choice here, it is the only route
+// the vendor leaves open, and it is confined to this one function so
+// that the day Kopia exports a registry type this is the only thing that
+// changes.
+//
+// # Why a failure is "not measured" and not zero
+//
+// Every step below is guarded and every guard leads to the same answer:
+// false. A missing method, a changed signature, a nil registry, a
+// snapshot that is not a struct, a Counters field that is not a
+// string-keyed int64 map, an absent counter -- none of them are evidence
+// that this run deduplicated nothing, and returning a confident zero
+// would turn a vendor upgrade into an operator hunting a backup that is
+// working. The caller reports that distinction all the way out as
+// TreeSnapshotInfo.ContentReuseMeasured.
+//
+// The snapshot is taken WITHOUT reset. The registry belongs to the
+// repository handle and the vendor's own reporting reads it too; a reset
+// here would zero somebody else's counters to save this function a
+// subtraction.
+//
+// One honest limitation: the counter is per open repository, not per
+// session, so two concurrent SnapshotTree calls on the SAME handle would
+// each see the other's reuse inside their delta. Nothing in this product
+// runs two snapshots of one repository at once -- a run holds the
+// repository for its duration -- and the alternative, a per-session
+// counter, is not something the vendor offers at any level of API.
+func contentDeduplicatedBytes(rep repo.Repository) (int64, bool) {
+	if rep == nil {
+		return 0, false
+	}
+
+	metricsMethod := reflect.ValueOf(rep).MethodByName("Metrics")
+	if !metricsMethod.IsValid() {
+		return 0, false
+	}
+
+	if mt := metricsMethod.Type(); mt.NumIn() != 0 || mt.NumOut() != 1 {
+		return 0, false
+	}
+
+	registry := metricsMethod.Call(nil)[0]
+	if registry.Kind() != reflect.Pointer || registry.IsNil() {
+		return 0, false
+	}
+
+	snapshotMethod := registry.MethodByName("Snapshot")
+	if !snapshotMethod.IsValid() {
+		return 0, false
+	}
+
+	st := snapshotMethod.Type()
+	if st.NumIn() != 1 || st.In(0).Kind() != reflect.Bool || st.NumOut() != 1 {
+		return 0, false
+	}
+
+	snap := snapshotMethod.Call([]reflect.Value{reflect.ValueOf(false)})[0]
+	if snap.Kind() != reflect.Struct {
+		return 0, false
+	}
+
+	counters := snap.FieldByName("Counters")
+	if !counters.IsValid() || counters.Kind() != reflect.Map {
+		return 0, false
+	}
+
+	ct := counters.Type()
+	if ct.Key().Kind() != reflect.String || ct.Elem().Kind() != reflect.Int64 {
+		return 0, false
+	}
+
+	// Converted rather than passed straight, because a map keyed by a
+	// named string type would panic on a plain string key, and a panic
+	// out of a measurement is not an outcome a backup run may have.
+	value := counters.MapIndex(reflect.ValueOf(kopiaDedupCounterName).Convert(ct.Key()))
+	if !value.IsValid() {
+		return 0, false
+	}
+
+	return value.Int(), true
 }
 
 // treeRun is the state one SnapshotTree call keeps outside the vendor's

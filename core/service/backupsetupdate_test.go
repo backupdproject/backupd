@@ -720,12 +720,21 @@ var exemptFromIsolationFixture = map[string]string{
 	"RepositoryDomainConfig":  "the repository domain a snapshot is stored in, refused by Validate on an artifact set, which has no repository",
 	"ConsistencyConfig":       "ADR 0009's source-consistency mode, refused by Validate on an artifact set, whose unit of work is a completed file rather than a source tree being read live",
 	"VerificationLevelConfig": "how far a SNAPSHOT is verified, refused by Validate on an artifact set; FR-11's validation/revalidation of a durable copy is what this fixture exercises instead",
-	"SourceMountPrefix":       "the part of remote_path that is this deployment's mount rather than the source's own identity; it only feeds a source identity, so Validate refuses it on an artifact set",
-	"Engine":                  "the RESOLVED engine, filled in by Validate from the `engine` key the fixture does set, on the same footing as Retention and ReadOnly above",
-	"Repository":              "the RESOLVED repository reference, carrying yaml:\"-\" and zero for an artifact set, so it is never on disk to compare",
-	"Consistency":             "the RESOLVED consistency mode, filled in by Validate for an incremental set only",
-	"VerificationLevel":       "the RESOLVED verification level, filled in by Validate for an incremental set only",
-	"SourceIdentity":          "the RESOLVED source identity, computed by Validate for an incremental set only; an artifact set has no snapshot lineage to keep stable",
+
+	// #784's verification budget: the sample size and the two cadences.
+	// All three describe how deeply a SNAPSHOT is proven, so Validate
+	// refuses them on an artifact set for the same reason it refuses
+	// verification_level above -- a key nothing will ever read is dead
+	// configuration.
+	"VerificationSamplePercentConfig": "how much of a snapshot's file list a sampled verification reads, refused by Validate on an artifact set alongside verification_level",
+	"VerificationFullEvery":           "how often a snapshot gets a full content read regardless of its configured level, refused by Validate on an artifact set alongside verification_level",
+	"VerificationRestoreDrillEvery":   "how often a snapshot gets an actual restore drill, refused by Validate on an artifact set alongside verification_level",
+	"SourceMountPrefix":               "the part of remote_path that is this deployment's mount rather than the source's own identity; it only feeds a source identity, so Validate refuses it on an artifact set",
+	"Engine":                          "the RESOLVED engine, filled in by Validate from the `engine` key the fixture does set, on the same footing as Retention and ReadOnly above",
+	"Repository":                      "the RESOLVED repository reference, carrying yaml:\"-\" and zero for an artifact set, so it is never on disk to compare",
+	"Consistency":                     "the RESOLVED consistency mode, filled in by Validate for an incremental set only",
+	"VerificationLevel":               "the RESOLVED verification level, filled in by Validate for an incremental set only",
+	"SourceIdentity":                  "the RESOLVED source identity, computed by Validate for an incremental set only; an artifact set has no snapshot lineage to keep stable",
 }
 
 // TestUpdateBackupSetIsolationFixtureExercisesEveryField is a control on

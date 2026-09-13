@@ -18,6 +18,7 @@
  * for exactly the artifact where it matters.
  */
 import { StatusBadge } from "@shared/components/StatusBadge";
+import { useHoverTitle } from "@shared/hooks/useTooltips";
 import type {
   ArtifactRetentionPolicy,
   RetentionClass,
@@ -91,6 +92,10 @@ function placementSuffix(by: RetentionTierPlacement | undefined): string {
 }
 
 function Badge({ label, accent, title }: { label: string; accent?: boolean; title?: string }) {
+  // Issue #829: a browser-drawn hover title is a tooltip too, so it is
+  // withheld when the operator has turned tooltips off. The label itself
+  // is never conditional — it is the badge.
+  const hoverTitle = useHoverTitle();
   return (
     <span
       style={{
@@ -99,7 +104,7 @@ function Badge({ label, accent, title }: { label: string; accent?: boolean; titl
         border: "1px solid " + (accent ? "var(--accent)" : "var(--border-strong)"),
         background: accent ? "var(--accent-quiet)" : "transparent"
       }}
-      title={title}
+      title={hoverTitle(title)}
     >
       {label}
     </span>
@@ -146,6 +151,10 @@ export function RetentionBadge({ kind, by }: { kind: RetentionClass; by?: Retent
  * says the permanence, and so does this.
  */
 export function RetentionPolicyBadge({ policy }: { policy: ArtifactRetentionPolicy }) {
+  // Above the early return, as every hook must be: a governed backup
+  // renders nothing here, and a hook call after that branch would be
+  // conditional on the policy.
+  const hoverTitle = useHoverTitle();
   if (policy === "configured") return null;
   const [label, title] =
     policy === "none"
@@ -158,7 +167,7 @@ export function RetentionPolicyBadge({ policy }: { policy: ArtifactRetentionPoli
           "This server did not report which retention policy governs this backup, so this page cannot say whether anything will ever delete it."
         ];
   return (
-    <span title={title}>
+    <span title={hoverTitle(title)}>
       <StatusBadge tone="warn" icon="warning">{label}</StatusBadge>
     </span>
   );

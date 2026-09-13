@@ -4,14 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/backupdproject/backupd/core/internal/backupengine"
 	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
 	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/backupdproject/backupd/core/internal/health"
 	"github.com/backupdproject/backupd/core/internal/model"
 	"github.com/backupdproject/backupd/core/internal/secretref"
 	"github.com/backupdproject/backupd/core/internal/state"
@@ -201,7 +205,7 @@ func TestRunCycle_AnIncrementalSetSnapshotsItsSourceIntoARealRepository(t *testi
 
 	// The lineage is durable: the row is in the journal, under this set,
 	// with the engine's manifest id on it.
-	rows, err := journal.ListSnapshotRuns(ctx, bs.ID, 10)
+	rows, err := journal.ListSnapshotRuns(ctx, snapshotLineage(bs), 10)
 	if err != nil {
 		t.Fatalf("listing snapshot runs: %v", err)
 	}
@@ -285,7 +289,7 @@ func TestRunCycle_ASecondIncrementalRunReusesContentAndKeepsTheLineage(t *testin
 
 	// The lineage: two runs, both recorded, and only the newer one is the
 	// restore point.
-	rows, err := journal.ListSnapshotRuns(ctx, bs.ID, 10)
+	rows, err := journal.ListSnapshotRuns(ctx, snapshotLineage(bs), 10)
 	if err != nil {
 		t.Fatalf("listing snapshot runs: %v", err)
 	}
@@ -294,7 +298,7 @@ func TestRunCycle_ASecondIncrementalRunReusesContentAndKeepsTheLineage(t *testin
 		t.Fatalf("the journal holds %d runs, want 2", len(rows))
 	}
 
-	lkg, err := journal.LastKnownGoodSnapshot(ctx, bs.ID)
+	lkg, err := journal.LastKnownGoodSnapshot(ctx, snapshotLineage(bs))
 	if err != nil {
 		t.Fatalf("reading last-known-good: %v", err)
 	}
@@ -315,6 +319,195 @@ func TestRunCycle_ASecondIncrementalRunReusesContentAndKeepsTheLineage(t *testin
 		"runs/2026/log.txt": sumOf(changed),
 	}
 	assertRestoreMatches(t, cfg, bs, backupengine.SnapshotID(after.SnapshotID), want)
+}
+
+// A repository serves a DOMAIN, and a domain may be shared. So the guard
+// in front of creating one has to ask "has anything ever committed a
+// snapshot to this domain", not "has THIS set".
+//
+// The set-scoped version of the question is the bug: a set added to a
+// populated domain has no history of its own, so the guard opened, and
+// the cycle created a second, empty repository at the same location as a
+// live one. Every later snapshot would then succeed, deduplicate against
+// nothing, and be unrestorable from the repository the operator thinks
+// they have.
+func TestRunCycle_ANewSetInAPopulatedDomainRefusesToCreateASecondRepository(t *testing.T) {
+	t.Parallel()
+
+	cfg, bs, sourceDir := incrementalDeployment(t)
+	seedTree(t, sourceDir, map[string][]byte{"index.txt": incompressibleBytes(64<<10, 21)})
+
+	svc, journal := incrementalService(t, cfg)
+	ctx := context.Background()
+
+	// A co-tenant set that committed a manifest to this domain: its own
+	// lineage, its own source identity, and no rows at all under the set
+	// this cycle is about.
+	cotenant, err := journal.BeginSnapshotRun(ctx, state.SnapshotRunRequest{
+		RunID:             "cotenant-run",
+		IdempotencyKey:    "cotenant-run",
+		Set:               mustSetID(t, "production", "postgres-primary"),
+		SetUUID:           "0c9a44e2-77b1-4d3f-8a61-5f0ab2c3d4e5",
+		Engine:            model.EngineKopia.String(),
+		Domain:            bs.Repository.Domain.String(),
+		SourceIdentity:    "sha256:cotenant",
+		VerificationLevel: string(model.LevelStructural),
+		StartedAt:         svc.now(),
+	})
+	if err != nil {
+		t.Fatalf("seeding the co-tenant run: %v", err)
+	}
+
+	for _, phase := range []state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite} {
+		if err := journal.AdvanceSnapshotRun(ctx, cotenant.Run.RunID, phase, state.SnapshotRunUpdate{At: svc.now()}); err != nil {
+			t.Fatalf("seeding the co-tenant phase %s: %v", phase, err)
+		}
+	}
+
+	if err := journal.AdvanceSnapshotRun(ctx, cotenant.Run.RunID, state.PhaseManifestCommitted, state.SnapshotRunUpdate{
+		SnapshotID: new("cotenant-manifest"),
+		At:         svc.now(),
+	}); err != nil {
+		t.Fatalf("seeding the co-tenant manifest: %v", err)
+	}
+
+	set := svc.RunCycle(ctx).Sets[0]
+	if set.Err == nil {
+		t.Fatal("the cycle created a repository in a domain that already holds snapshots; a second repository over a live one is unrecoverable")
+	}
+
+	if !strings.Contains(set.Err.Error(), "refusing to create a second") {
+		t.Errorf("the refusal reads %q, which does not tell an operator what was refused or why", set.Err)
+	}
+
+	// Nothing was written: no repository, and no row for this set.
+	if _, err := kopia.New().OpenRepository(ctx, backupengine.RepositoryLocation{
+		Kind:       backupengine.LocationLocal,
+		Domain:     bs.Repository.Domain,
+		Root:       cfg.EffectiveBackupRoot(),
+		Passphrase: cfg.RepositoryDomains[0].PassphraseRef,
+	}); !errors.Is(err, backupengine.ErrRepositoryNotFound) {
+		t.Errorf("opening the domain's location after the refusal returned %v, want ErrRepositoryNotFound: the refusal must not have created one", err)
+	}
+
+	rows, err := journal.ListSnapshotRuns(ctx, snapshotLineage(bs), 10)
+	if err != nil {
+		t.Fatalf("listing this set's runs: %v", err)
+	}
+
+	if len(rows) != 0 {
+		t.Errorf("the refused pass left %d rows for this set, want none: a refusal before the first write leaves nothing to reconcile", len(rows))
+	}
+}
+
+// The scanned-entry count is the source side's own census, and it has to
+// survive the whole way to the surfaces that render it.
+//
+// It used to be dropped at the manifest commit and reconstructed as files
+// plus directories, which is a different number: it leaves out every
+// entry a pass deliberately skipped -- the symlink below -- and the run's
+// own report never set it at all, so an operator polling a submission was
+// told the run had scanned zero entries.
+func TestRunCycle_TheScannedEntryCountSurvivesToEveryReport(t *testing.T) {
+	t.Parallel()
+
+	cfg, bs, sourceDir := incrementalDeployment(t)
+	files := map[string][]byte{
+		"index.txt":         incompressibleBytes(64<<10, 31),
+		"runs/2026/db.dump": incompressibleBytes(64<<10, 32),
+	}
+	seedTree(t, sourceDir, files)
+
+	// One entry the pass considers and deliberately does not store. A
+	// count derived from what the snapshot HOLDS cannot see it.
+	if err := os.Symlink(filepath.Join(sourceDir, "index.txt"), filepath.Join(sourceDir, "latest.txt")); err != nil {
+		t.Fatalf("seeding a symlink: %v", err)
+	}
+
+	// A weekly full read this set has never had. #784's cadence
+	// escalates THIS run above the structural level the set is
+	// configured for, which is what makes the two verification columns
+	// on the row demonstrably different facts rather than one value
+	// written down twice.
+	cfg.Sources[0].BackupSets[0].VerificationFullEvery = config.Duration(7 * 24 * time.Hour)
+
+	svc, journal := incrementalService(t, cfg)
+	ctx := context.Background()
+
+	set := svc.RunCycle(ctx).Sets[0]
+	if set.Err != nil {
+		t.Fatalf("the pass failed: %v", set.Err)
+	}
+
+	run := set.Snapshot.Run
+	if !run.Succeeded() {
+		t.Fatalf("the pass produced no restore point: %+v", run)
+	}
+
+	// The source side counted the two files it stored and the symlink it
+	// refused to store: three entries CONSIDERED against two objects in
+	// the snapshot. A count derived from what the snapshot holds cannot
+	// produce that number, which is the whole reason this is its own
+	// column.
+	if want := int64(len(files)) + 1; run.Entries != want {
+		t.Errorf("the run reports %d entries scanned, want %d (two files and the symlink it skipped)", run.Entries, want)
+	}
+
+	if run.Entries <= run.Files {
+		t.Errorf("the run reports %d entries scanned against %d files stored; the entry the pass skipped is missing from the count",
+			run.Entries, run.Files)
+	}
+
+	row, err := journal.GetSnapshotRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatalf("reading the run's row: %v", err)
+	}
+
+	if row.EntriesScanned == nil || *row.EntriesScanned != run.Entries {
+		t.Errorf("the catalog row records %v entries scanned, want the run's %d", row.EntriesScanned, run.Entries)
+	}
+
+	if row.SourceComplete == nil || !*row.SourceComplete {
+		t.Errorf("source_complete = %v on a successful run; a skipped symlink is policy, not a hole in the backup", row.SourceComplete)
+	}
+
+	// And the health report, which is what `backupd status` and the
+	// dashboard render.
+	report, err := svc.BuildHealthReport(ctx, VersionInfo{})
+	if err != nil {
+		t.Fatalf("BuildHealthReport: %v", err)
+	}
+
+	var snap *health.SnapshotHealth
+	for _, s := range report.BackupSets {
+		if s.Set == bs.ID {
+			snap = s.Snapshot
+		}
+	}
+
+	if snap == nil {
+		t.Fatal("the health report carries no snapshot block for an incremental set that has run")
+	}
+
+	if snap.EntriesScanned != run.Entries {
+		t.Errorf("the health report says %d entries scanned, want %d", snap.EntriesScanned, run.Entries)
+	}
+
+	// What the set asked for and what the run proved, kept apart: this
+	// set is configured for a structural verification and the pass
+	// actually read every byte the snapshot references.
+	if snap.VerificationLevel != string(model.LevelStructural) {
+		t.Errorf("the health report says the set is configured for %q, want %q", snap.VerificationLevel, model.LevelStructural)
+	}
+
+	if snap.VerificationAchieved != string(model.LevelContentFull) {
+		t.Errorf("the health report says the run proved %q, want %q: a report carrying only the configured level asserts a verification nobody performed",
+			snap.VerificationAchieved, model.LevelContentFull)
+	}
+
+	if snap.UnfinishedRuns != 0 {
+		t.Errorf("the health report counts %d unfinished runs after a clean cycle, want 0", snap.UnfinishedRuns)
+	}
 }
 
 // assertOneSnapshotPerRun opens the deployment's repository and checks

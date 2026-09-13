@@ -55,18 +55,42 @@ type Catalog interface {
 	BeginSnapshotRun(ctx context.Context, req state.SnapshotRunRequest) (state.SnapshotRunOutcome, error)
 	AdvanceSnapshotRun(ctx context.Context, runID string, to state.SnapshotPhase, upd state.SnapshotRunUpdate) error
 	GetSnapshotRun(ctx context.Context, runID string) (state.SnapshotRun, error)
-	ListSnapshotRuns(ctx context.Context, set model.BackupSetID, limit int) ([]state.SnapshotRun, error)
 	UnfinishedSnapshotRuns(ctx context.Context) ([]state.SnapshotRun, error)
-	LastKnownGoodSnapshot(ctx context.Context, set model.BackupSetID) (state.SnapshotRun, error)
-	SnapshotRunBySnapshotID(ctx context.Context, domain, snapshotID string) (state.SnapshotRun, error)
+
+	// The per-set reads are keyed on the backup set's DURABLE uuid and
+	// not on model.BackupSetID, whose two halves are names an operator
+	// edits. A rename must not hide a set's history, its unfinished work
+	// or its restore point, and it must not let a second last-known-good
+	// row exist beside the first. See 0010_snapshot_run_lineage.sql.
+	ListSnapshotRuns(ctx context.Context, setUUID string, limit int) ([]state.SnapshotRun, error)
+	LastKnownGoodSnapshot(ctx context.Context, setUUID string) (state.SnapshotRun, error)
+
+	// DomainSnapshotIDs is every manifest in one repository domain this
+	// catalog accounts for, mapped to the run that claims it, read once
+	// per reconciliation pass.
+	//
+	// It is one read for the whole domain rather than one per repository
+	// snapshot because reconciliation asks the question about every
+	// snapshot the repository holds, twice (attribution, then orphan
+	// adoption), and a domain with a thousand manifests would otherwise
+	// spend two thousand round trips per cycle on it.
+	DomainSnapshotIDs(ctx context.Context, domain string) (map[string]string, error)
+
+	// DomainHasSnapshot reports whether ANY backup set has ever committed
+	// a manifest in this repository domain. It is the guard in front of
+	// creating a repository, and it is domain-wide because a repository
+	// serves a domain: evidence from a co-tenant set is evidence that a
+	// repository already exists at that location.
+	DomainHasSnapshot(ctx context.Context, domain string) (bool, error)
 
 	// RepointLastKnownGood moves the last-known-good flag to an older
-	// successful run. It is the only way the flag moves other than a run
-	// reaching SUCCESS, and it exists for exactly one situation: the
-	// newest restore point's snapshot has gone from the repository, so
-	// the flag it held has been cleared and an older snapshot that is
-	// still there should carry it. See Reconciler.repointLastKnownGood.
-	RepointLastKnownGood(ctx context.Context, set model.BackupSetID, runID string) error
+	// successful run of the same lineage. It is the only way the flag
+	// moves other than a run reaching SUCCESS, and it exists for exactly
+	// one situation: the newest restore point's snapshot has gone from
+	// the repository, so the flag it held has been cleared and an older
+	// snapshot that is still there should carry it. See
+	// Reconciler.repointLastKnownGood.
+	RepointLastKnownGood(ctx context.Context, setUUID, runID string) error
 }
 
 // Repository is everything this package asks of an open repository.
@@ -196,7 +220,13 @@ type RunRequest struct {
 	// empty for a scheduled cycle that nobody submitted.
 	OperationID string
 
-	Set            model.BackupSetID
+	// Set is the backup set's names, for a surface to render. SetUUID is
+	// its durable identifier, and it is what the catalog keys this run's
+	// lineage on: a set an operator renames must keep its history, its
+	// unfinished work and its restore point.
+	Set     model.BackupSetID
+	SetUUID string
+
 	Engine         model.BackupEngine
 	Domain         model.RepositoryDomainID
 	SourceIdentity model.SourceIdentity
@@ -237,15 +267,26 @@ type RunRequest struct {
 // present one as another. LogicalBytes is what the source said the tree
 // weighs; SourceBytesRead is what this pass actually pulled off the
 // source; RepositoryBytesWritten is what actually landed in storage;
-// ContentReusedBytes is the difference between the last two, which is what
-// deduplication and compression saved. Reporting a 100 GB tree as 100 GB
-// uploaded is the specific claim EPIC K forbids.
+// ContentReusedBytes is the engine's own account of content the
+// repository already had, and it is NOT the difference between the last
+// two -- that difference is deduplication plus compression plus pack and
+// index overhead, and reporting it as reuse would credit a first-ever
+// snapshot of compressible data with reusing most of the tree. What
+// compression saved is deliberately not reported here at all rather than
+// folded into a number that means something else. Reporting a 100 GB tree
+// as 100 GB uploaded is the specific claim EPIC K forbids.
 type RunResult struct {
 	RunID      string
 	Set        model.BackupSetID
 	Phase      state.SnapshotPhase
 	SnapshotID string
 
+	// Entries is every source entry the pass considered, of every kind,
+	// including the ones it deliberately skipped. It is the source side's
+	// own census and NOT files + directories: a pass that refused a
+	// hundred sockets considered them, and a snapshot nobody measured
+	// reports zero here beside Measured == false rather than a
+	// reconstruction that looks like a real count.
 	Entries     int64
 	Files       int64
 	Directories int64
@@ -343,6 +384,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		RunID:             req.RunID,
 		IdempotencyKey:    req.IdempotencyKey,
 		Set:               req.Set,
+		SetUUID:           req.SetUUID,
 		OperationID:       req.OperationID,
 		Engine:            req.Engine.String(),
 		Domain:            req.Domain.String(),
@@ -398,8 +440,17 @@ func (r *Runner) drive(ctx context.Context, req RunRequest, run state.SnapshotRu
 	}
 
 	info, err := req.Repository.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
-		Source:      req.Source,
-		Root:        tree.Root(),
+		Source: req.Source,
+		Root:   tree.Root(),
+
+		// The manifest carries this run's own id, written by the adapter
+		// as backupengine.TagKeyRun. It is what makes crash
+		// reconciliation's orphan adoption an identity match rather than
+		// a guess about time: without it, the only evidence that an
+		// unclaimed manifest belongs to a dead run is that it appeared
+		// after the run started, which is equally true of a co-tenant
+		// set's snapshot and of one an operator took by hand.
+		RunID:       req.RunID,
 		Description: req.Description,
 		Tags: map[string]string{
 			backupengine.TagKeyBackupSet: req.Set.String(),
@@ -418,30 +469,51 @@ func (r *Runner) drive(ctx context.Context, req RunRequest, run state.SnapshotRu
 
 	scan := tree.Report()
 
+	// The source side's verdict, decided here and written durably in the
+	// same statement as the manifest. Two different failures make a pass
+	// incomplete -- a run-level reading error and a census that did not
+	// cover everything -- and neither of them is visible in the manifest,
+	// which is a perfectly well-formed snapshot of a tree with a hole in
+	// it.
+	//
+	// Recording it HERE, before the run has done anything about it, is
+	// the whole point. A process that dies between this write and the
+	// failure below leaves a row at MANIFEST_COMMITTED that reconciliation
+	// would otherwise verify and promote to SUCCESS, advertising a
+	// restore point already known to omit source data. With the verdict
+	// on the row, reconciliation refuses to promote it.
+	complete := tree.Err() == nil && scan.Complete
+
 	// The manifest exists, so it is recorded before anything is decided
 	// about it. A run that died here with the id already on its row is
 	// reconcilable; one that died with the id still only in this
 	// process's memory is the manifest-with-no-catalog-row case, which
 	// costs a quarantine decision later. So this write happens first,
 	// even when the scan below is about to fail the run.
-	reused := info.SourceBytesRead - info.RepositoryBytesWritten
-	if reused < 0 {
-		// Storage can exceed what was read: a tiny source in a
-		// repository that has to write an index and a pack header for it.
-		// Reporting that as negative reuse would be arithmetic nobody
-		// asked for.
-		reused = 0
-	}
-
-	if err := r.advance(ctx, &run, state.PhaseManifestCommitted, state.SnapshotRunUpdate{
+	upd := state.SnapshotRunUpdate{
 		SnapshotID:             new(string(info.ID)),
+		EntriesScanned:         &scan.Entries,
 		Files:                  &info.Files,
 		Directories:            &info.Directories,
 		LogicalBytes:           &info.Bytes,
 		SourceBytesRead:        &info.SourceBytesRead,
 		RepositoryBytesWritten: &info.RepositoryBytesWritten,
-		ContentReusedBytes:     &reused,
-	}); err != nil {
+		SourceComplete:         &complete,
+	}
+
+	// Reuse is the ENGINE's own deduplication accounting or it is nothing.
+	// The arithmetic that suggests itself here -- bytes read minus bytes
+	// written -- is not reuse: it also contains compression and the
+	// repository's pack and index overhead, so a first-ever snapshot of
+	// compressible data would report most of the tree as content the
+	// repository already had. An engine that cannot account for reuse
+	// leaves the column NULL, which every surface already renders as "not
+	// measured".
+	if info.ContentReuseMeasured {
+		upd.ContentReusedBytes = &info.ContentReusedBytes
+	}
+
+	if err := r.advance(ctx, &run, state.PhaseManifestCommitted, upd); err != nil {
 		return r.result(ctx, run.RunID, false), err
 	}
 
@@ -478,7 +550,7 @@ func (r *Runner) verifyAndCommit(ctx context.Context, req RunRequest, run *state
 		return r.result(ctx, run.RunID, false), err
 	}
 
-	plan := planVerification(req.VerificationLevel, req.Verification, run.RunID, r.verificationHistory(ctx, req.Set), r.now())
+	plan := planVerification(req.VerificationLevel, req.Verification, run.RunID, r.verificationHistory(ctx, req.SetUUID), r.now())
 
 	achieved, report, verifyErr := plan.run(ctx, req.Repository, backupengine.SnapshotID(run.SnapshotID))
 	if verifyErr != nil {
@@ -536,8 +608,8 @@ func (r *Runner) verifyAndCommit(ctx context.Context, req RunRequest, run *state
 // show that a deep check has happened recently, every cadence reads as
 // due, so an unreadable catalog makes this run verify MORE rather than
 // less.
-func (r *Runner) verificationHistory(ctx context.Context, set model.BackupSetID) []state.SnapshotRun {
-	history, err := r.Catalog.ListSnapshotRuns(ctx, set, verificationHistory)
+func (r *Runner) verificationHistory(ctx context.Context, setUUID string) []state.SnapshotRun {
+	history, err := r.Catalog.ListSnapshotRuns(ctx, setUUID, verificationHistory)
 	if err != nil {
 		return nil
 	}
@@ -589,6 +661,10 @@ func applyUpdate(run *state.SnapshotRun, upd state.SnapshotRunUpdate) {
 		run.SnapshotID = *upd.SnapshotID
 	}
 
+	if upd.EntriesScanned != nil {
+		run.EntriesScanned = upd.EntriesScanned
+	}
+
 	if upd.Files != nil {
 		run.Files = upd.Files
 	}
@@ -611,6 +687,10 @@ func applyUpdate(run *state.SnapshotRun, upd state.SnapshotRunUpdate) {
 
 	if upd.ContentReusedBytes != nil {
 		run.ContentReusedBytes = upd.ContentReusedBytes
+	}
+
+	if upd.SourceComplete != nil {
+		run.SourceComplete = upd.SourceComplete
 	}
 
 	if upd.VerificationStatus != nil {
@@ -690,6 +770,7 @@ func projectRun(run state.SnapshotRun, replayed bool) RunResult {
 		Set:                    run.Set,
 		Phase:                  run.Phase,
 		SnapshotID:             run.SnapshotID,
+		Entries:                measured(run.EntriesScanned),
 		Files:                  measured(run.Files),
 		Directories:            measured(run.Directories),
 		LogicalBytes:           measured(run.LogicalBytes),
@@ -767,6 +848,10 @@ func (r *Runner) validate(req RunRequest) error {
 
 	if req.Set.IsZero() {
 		return errors.New("snapshotlifecycle: a snapshot run needs the backup set it is for")
+	}
+
+	if req.SetUUID == "" {
+		return errors.New("snapshotlifecycle: a snapshot run needs the backup set's durable uuid, or its snapshot lineage would be keyed on a name an operator can edit")
 	}
 
 	if !req.Engine.UsesRepository() {

@@ -35,6 +35,7 @@ func reconciler(t *testing.T, j *state.Journal) *snapshotlifecycle.Reconciler {
 func reconcileRequest(set model.BackupSetID, repo snapshotlifecycle.Repository) snapshotlifecycle.ReconcileRequest {
 	return snapshotlifecycle.ReconcileRequest{
 		Set:            set,
+		SetUUID:        setUUID(set),
 		Domain:         model.RepositoryDomainID(testDomain),
 		Source:         testSource,
 		SourceIdentity: model.SourceIdentity("ab12cd34"),
@@ -53,6 +54,7 @@ func seed(t *testing.T, j *state.Journal, set model.BackupSetID, runID string, p
 		RunID:             runID,
 		IdempotencyKey:    runID,
 		Set:               set,
+		SetUUID:           setUUID(set),
 		Engine:            model.EngineKopia.String(),
 		Domain:            testDomain,
 		SourceIdentity:    "ab12cd34",
@@ -162,19 +164,26 @@ func TestReconcile_ARunThatDiedDuringItsUploadWithNoManifestIsFailed(t *testing.
 	}
 }
 
-func TestReconcile_AManifestTheCatalogNeverRecordedIsAdoptedAndProvenRatherThanDeleted(t *testing.T) {
+func TestReconcile_AManifestTheCatalogNeverRecordedIsAdoptedRatherThanDeleted(t *testing.T) {
 	t.Parallel()
 
 	j := journal(t)
 	set := setID(t, "postgres")
 	run := seed(t, j, set, "run-1", []state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite}, nil)
 
-	// The manifest the dead process saved: after the run started, under
-	// this set's source, claimed by nothing.
+	// The manifest the dead process saved, carrying the three tags the
+	// adapter writes on every snapshot this product stores. All three
+	// have to match for the row to claim it: that is what makes adoption
+	// an identity match rather than a guess about time.
 	repo := newFakeRepository()
 	repo.snapshots["snap-orphan"] = backupengine.SnapshotInfo{
 		ID: "snap-orphan", Source: testSource, Files: 3, Directories: 1, Bytes: 4096,
 		Start: run.StartedAt.Add(time.Second), End: run.StartedAt.Add(2 * time.Second),
+		Tags: map[string]string{
+			backupengine.TagKeyRun:       "run-1",
+			backupengine.TagKeyDomain:    testDomain,
+			backupengine.TagKeyBackupSet: set.String(),
+		},
 	}
 
 	rep, err := reconciler(t, j).Reconcile(context.Background(), reconcileRequest(set, repo))
@@ -187,15 +196,23 @@ func TestReconcile_AManifestTheCatalogNeverRecordedIsAdoptedAndProvenRatherThanD
 		t.Errorf("adopted snapshot %q, want snap-orphan", adopted.SnapshotID)
 	}
 
-	verdictOf(t, rep, snapshotlifecycle.VerdictVerified)
+	// Adopted, and deliberately NOT promoted. The row carries no
+	// source-completeness verdict -- the process that would have written
+	// one died -- so nothing here can say the snapshot covers the source,
+	// and a verification cannot answer that question. The manifest is
+	// kept, named and owned; the run is failed.
+	incomplete := verdictOf(t, rep, snapshotlifecycle.VerdictSourceIncomplete)
+	if incomplete.SnapshotID != "snap-orphan" {
+		t.Errorf("the source-incomplete verdict is about %q, want snap-orphan", incomplete.SnapshotID)
+	}
 
 	after, err := j.GetSnapshotRun(context.Background(), "run-1")
 	if err != nil {
 		t.Fatalf("reading run: %v", err)
 	}
 
-	if after.Phase != state.PhaseSuccess {
-		t.Errorf("adopted run is at %s, want %s", after.Phase, state.PhaseSuccess)
+	if after.Phase != state.PhaseFailed {
+		t.Errorf("adopted run is at %s, want %s: a manifest nobody vouched for is not a restore point", after.Phase, state.PhaseFailed)
 	}
 
 	if after.SnapshotID != "snap-orphan" {
@@ -206,8 +223,12 @@ func TestReconcile_AManifestTheCatalogNeverRecordedIsAdoptedAndProvenRatherThanD
 		t.Error("adoption invented measurements the dead process never recorded; an unmeasured counter must stay unmeasured rather than becoming a zero")
 	}
 
-	if rep.LastKnownGoodRunID != "run-1" {
-		t.Errorf("last-known-good is %q, want run-1", rep.LastKnownGoodRunID)
+	if rep.LastKnownGoodRunID != "" {
+		t.Errorf("last-known-good is %q, want none: an adopted manifest must not become the set's restore point", rep.LastKnownGoodRunID)
+	}
+
+	if repo.verifyCalls != 0 {
+		t.Errorf("the adopted snapshot was verified %d times; a snapshot that cannot be promoted must not cost a full read to prove", repo.verifyCalls)
 	}
 
 	if _, ok := repo.snapshots["snap-orphan"]; !ok {
@@ -224,7 +245,7 @@ func TestReconcile_ARowWhoseManifestIsGoneIsFailedAndNeverSucceeds(t *testing.T)
 		"run-1",
 		[]state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted},
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new("snap-vanished")},
+			state.PhaseManifestCommitted: {SnapshotID: new("snap-vanished"), SourceComplete: new(true)},
 		})
 
 	rep, err := reconciler(t, j).Reconcile(context.Background(), reconcileRequest(set, newFakeRepository()))
@@ -248,7 +269,7 @@ func TestReconcile_ARunThatDiedAfterItsManifestIsVerifiedAndCommitted(t *testing
 		"run-1",
 		[]state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted},
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+			state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 		})
 
 	repo := newFakeRepository()
@@ -296,7 +317,7 @@ func TestReconcile_ARunThatDiedDuringVerificationIsVerifiedAgainFromTheManifest(
 		"run-1",
 		[]state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted, state.PhaseVerification},
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+			state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 			state.PhaseVerification:      {VerificationStatus: new("pending")},
 		})
 
@@ -349,7 +370,7 @@ func TestReconcile_ARunVerifiedBeforeTheCatalogCommitIsCompletedWithoutVerifying
 			state.PhaseVerification, state.PhaseCatalogCommit,
 		},
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+			state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 			state.PhaseCatalogCommit: {
 				VerificationStatus:        new("passed"),
 				VerificationLevelAchieved: new(string(model.LevelContentFull)),
@@ -391,7 +412,7 @@ func TestReconcile_ARunThatReachedTheCatalogCommitWithoutPassingVerificationIsFa
 			state.PhaseVerification, state.PhaseCatalogCommit,
 		},
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+			state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 			state.PhaseCatalogCommit:     {VerificationStatus: new("pending")},
 		})
 
@@ -465,7 +486,7 @@ func TestReconcile_AnUnattributableSnapshotIsQuarantinedOnceAndNeverDeleted(t *t
 		}
 	}
 
-	rows, err := j.ListSnapshotRuns(context.Background(), set, 50)
+	rows, err := j.ListSnapshotRuns(context.Background(), setUUID(set), 50)
 	if err != nil {
 		t.Fatalf("listing runs: %v", err)
 	}
@@ -494,11 +515,11 @@ func TestReconcile_ASuccessfulRunWhoseSnapshotIsGoneBecomesLostAndLastKnownGoodM
 	}
 
 	seed(t, j, set, "run-old", nominal, map[state.SnapshotPhase]state.SnapshotRunUpdate{
-		state.PhaseManifestCommitted: {SnapshotID: new("snap-old")},
+		state.PhaseManifestCommitted: {SnapshotID: new("snap-old"), SourceComplete: new(true)},
 		state.PhaseCatalogCommit:     {VerificationStatus: new("passed")},
 	})
 	seed(t, j, set, "run-new", nominal, map[state.SnapshotPhase]state.SnapshotRunUpdate{
-		state.PhaseManifestCommitted: {SnapshotID: new("snap-new")},
+		state.PhaseManifestCommitted: {SnapshotID: new("snap-new"), SourceComplete: new(true)},
 		state.PhaseCatalogCommit:     {VerificationStatus: new("passed")},
 	})
 
@@ -526,13 +547,285 @@ func TestReconcile_ASuccessfulRunWhoseSnapshotIsGoneBecomesLostAndLastKnownGoodM
 		t.Errorf("last-known-good is %q, want run-old", rep.LastKnownGoodRunID)
 	}
 
-	lkg, err := j.LastKnownGoodSnapshot(context.Background(), set)
+	lkg, err := j.LastKnownGoodSnapshot(context.Background(), setUUID(set))
 	if err != nil {
 		t.Fatalf("reading last-known-good: %v", err)
 	}
 
 	if lkg.RunID != "run-old" || lkg.SnapshotID != "snap-old" {
 		t.Errorf("last-known-good row is %q/%q, want run-old/snap-old", lkg.RunID, lkg.SnapshotID)
+	}
+}
+
+// The finding this whole gate exists for.
+//
+// A run recorded its manifest and, in the same statement, the source
+// side's verdict that the pass had NOT covered the source. It then died
+// before it could fail itself. The row a crash leaves there is
+// indistinguishable, phase for phase, from a run that died after a
+// perfectly good pass -- so before the verdict was durable, reconciliation
+// verified it, found the snapshot intact (which it is), advanced it to
+// SUCCESS, and handed the set a restore point already known to be missing
+// source data, taking last-known-good off the older good snapshot to do
+// it.
+//
+// Verification cannot save this: it proves a snapshot is internally
+// coherent, never that it holds everything the source had.
+func TestReconcile_AnIncompleteManifestIsNeverPromotedAndNeverTakesLastKnownGood(t *testing.T) {
+	t.Parallel()
+
+	j := journal(t)
+	set := setID(t, "postgres")
+
+	nominal := []state.SnapshotPhase{
+		state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted,
+		state.PhaseVerification, state.PhaseCatalogCommit, state.PhaseSuccess,
+	}
+
+	// The restore point this deployment already has.
+	seed(t, j, set, "run-good", nominal, map[state.SnapshotPhase]state.SnapshotRunUpdate{
+		state.PhaseManifestCommitted: {SnapshotID: new("snap-good"), SourceComplete: new(true)},
+		state.PhaseCatalogCommit:     {VerificationStatus: new("passed")},
+	})
+
+	// The run that died between an incomplete manifest and the catalog
+	// commit. Its manifest is real and its snapshot is in the repository.
+	seed(t, j, set, "run-holey",
+		[]state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted},
+		map[state.SnapshotPhase]state.SnapshotRunUpdate{
+			state.PhaseManifestCommitted: {
+				SnapshotID:     new("snap-holey"),
+				SourceComplete: new(false),
+				Reason:         new("the source pass could not read 12 entries"),
+			},
+		})
+
+	repo := newFakeRepository()
+	repo.snapshots["snap-good"] = backupengine.SnapshotInfo{ID: "snap-good", Source: testSource}
+	repo.snapshots["snap-holey"] = backupengine.SnapshotInfo{ID: "snap-holey", Source: testSource}
+
+	rep, err := reconciler(t, j).Reconcile(context.Background(), reconcileRequest(set, repo))
+	if err != nil {
+		t.Fatalf("reconciling: %v", err)
+	}
+
+	verdict := verdictOf(t, rep, snapshotlifecycle.VerdictSourceIncomplete)
+	if verdict.RunID != "run-holey" {
+		t.Errorf("the source-incomplete verdict is about %q, want run-holey", verdict.RunID)
+	}
+
+	holey, err := j.GetSnapshotRun(context.Background(), "run-holey")
+	if err != nil {
+		t.Fatalf("reading run-holey: %v", err)
+	}
+
+	if holey.Phase != state.PhaseFailed {
+		t.Errorf("run-holey is at %s, want %s: recovery must not advertise a snapshot known to omit source data", holey.Phase, state.PhaseFailed)
+	}
+
+	if holey.LastKnownGood {
+		t.Error("run-holey holds last-known-good")
+	}
+
+	// The restore point this deployment had before the crash is exactly
+	// the one it has after it.
+	if rep.LastKnownGoodRunID != "run-good" {
+		t.Errorf("last-known-good is %q, want run-good", rep.LastKnownGoodRunID)
+	}
+
+	// And the manifest is still there: an incomplete snapshot is somebody's
+	// partial copy, not this pass's rubbish to collect.
+	if _, ok := repo.snapshots["snap-holey"]; !ok {
+		t.Error("the incomplete snapshot was deleted from the repository")
+	}
+
+	if holey.SnapshotID != "snap-holey" {
+		t.Errorf("run-holey no longer records its manifest (%q); a failed run still owns what it wrote", holey.SnapshotID)
+	}
+}
+
+// Orphan adoption is an identity match or it is nothing.
+//
+// A snapshot that merely turned up in the repository inside a dead run's
+// window is not evidence of anything: a shared domain's co-tenant set
+// writes those, and so does an operator running the vendor's own CLI
+// against their own bucket. Adopting one attributes somebody else's data
+// to this set and then offers it for restore.
+func TestReconcile_ASnapshotWithoutThisRunsTagIsNotAdopted(t *testing.T) {
+	t.Parallel()
+
+	for name, tags := range map[string]map[string]string{
+		"no tags at all": nil,
+		"another run": {
+			backupengine.TagKeyRun:       "run-somebody-else",
+			backupengine.TagKeyDomain:    testDomain,
+			backupengine.TagKeyBackupSet: "production/postgres",
+		},
+		"another set": {
+			backupengine.TagKeyRun:       "run-1",
+			backupengine.TagKeyDomain:    testDomain,
+			backupengine.TagKeyBackupSet: "production/uploads",
+		},
+		"another domain": {
+			backupengine.TagKeyRun:       "run-1",
+			backupengine.TagKeyDomain:    "somewhere-else",
+			backupengine.TagKeyBackupSet: "production/postgres",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			j := journal(t)
+			set := setID(t, "postgres")
+			run := seed(t, j, set, "run-1", []state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite}, nil)
+
+			repo := newFakeRepository()
+			repo.snapshots["snap-foreign"] = backupengine.SnapshotInfo{
+				ID: "snap-foreign", Source: testSource, Bytes: 4096,
+				Start: run.StartedAt.Add(time.Second), End: run.StartedAt.Add(2 * time.Second),
+				Tags: tags,
+			}
+
+			rep, err := reconciler(t, j).Reconcile(context.Background(), reconcileRequest(set, repo))
+			if err != nil {
+				t.Fatalf("reconciling: %v", err)
+			}
+
+			verdictOf(t, rep, snapshotlifecycle.VerdictAbandonedUpload)
+
+			after, err := j.GetSnapshotRun(context.Background(), "run-1")
+			if err != nil {
+				t.Fatalf("reading run: %v", err)
+			}
+
+			if after.SnapshotID != "" {
+				t.Errorf("the run adopted snapshot %q, which is not provably its own", after.SnapshotID)
+			}
+
+			if after.Phase != state.PhaseFailed {
+				t.Errorf("run is at %s, want %s", after.Phase, state.PhaseFailed)
+			}
+
+			if rep.LastKnownGoodRunID != "" {
+				t.Errorf("last-known-good is %q; a snapshot nobody can attribute must never become a restore point", rep.LastKnownGoodRunID)
+			}
+
+			// Not adopted, not deleted: named.
+			quarantined := verdictOf(t, rep, snapshotlifecycle.VerdictQuarantined)
+			if quarantined.SnapshotID != "snap-foreign" {
+				t.Errorf("quarantine verdict is about %q, want snap-foreign", quarantined.SnapshotID)
+			}
+
+			if _, ok := repo.snapshots["snap-foreign"]; !ok {
+				t.Error("the unattributable snapshot was deleted")
+			}
+		})
+	}
+}
+
+// unreadableMembership is a catalog whose domain-membership read fails and
+// whose every other answer is the real journal's.
+type unreadableMembership struct {
+	snapshotlifecycle.Catalog
+
+	err error
+}
+
+func (u unreadableMembership) DomainSnapshotIDs(context.Context, string) (map[string]string, error) {
+	return nil, u.err
+}
+
+// A pass that cannot find out which manifests are already ours decides
+// nothing at all.
+//
+// This is the same rule as "a pass that cannot read the repository decides
+// nothing", from the other side, and it was the more dangerous of the two
+// to get wrong: the row-at-a-time version of this question treated every
+// non-nil error as "unclaimed", so an unreadable catalog made every
+// snapshot in the repository look adoptable by whichever interrupted run
+// was being resolved.
+func TestReconcile_ACatalogThatCannotSayWhatIsOursDecidesNothing(t *testing.T) {
+	t.Parallel()
+
+	j := journal(t)
+	set := setID(t, "postgres")
+	run := seed(t, j, set, "run-1", []state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite}, nil)
+
+	repo := newFakeRepository()
+	repo.snapshots["snap-orphan"] = backupengine.SnapshotInfo{
+		ID: "snap-orphan", Source: testSource, Bytes: 4096,
+		Start: run.StartedAt.Add(time.Second),
+		Tags: map[string]string{
+			backupengine.TagKeyRun:       "run-1",
+			backupengine.TagKeyDomain:    testDomain,
+			backupengine.TagKeyBackupSet: set.String(),
+		},
+	}
+
+	broken := errors.New("the journal is locked")
+	rec := &snapshotlifecycle.Reconciler{
+		Catalog: unreadableMembership{Catalog: j, err: broken},
+		Now:     tick(),
+	}
+
+	if _, err := rec.Reconcile(context.Background(), reconcileRequest(set, repo)); !errors.Is(err, broken) {
+		t.Fatalf("reconciling with an unreadable catalog returned %v, want the read failure", err)
+	}
+
+	if got := phaseOf(t, j, "run-1"); got != state.PhaseSnapshotWrite {
+		t.Errorf("the run moved to %s; a pass that could not ask the catalog must change nothing", got)
+	}
+}
+
+// A set whose source or domain changed lists its snapshots under a
+// different identity, so the repository read comes back holding none of
+// what the old identity wrote. Reading that as "every restore point is
+// gone" marks live snapshots LOST and clears last-known-good over a
+// configuration edit.
+func TestReconcile_ASourceIdentityChangeDoesNotDeclareOldSnapshotsLost(t *testing.T) {
+	t.Parallel()
+
+	j := journal(t)
+	set := setID(t, "postgres")
+
+	seed(t, j, set, "run-1", []state.SnapshotPhase{
+		state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted,
+		state.PhaseVerification, state.PhaseCatalogCommit, state.PhaseSuccess,
+	}, map[state.SnapshotPhase]state.SnapshotRunUpdate{
+		state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
+		state.PhaseCatalogCommit:     {VerificationStatus: new("passed")},
+	})
+
+	// The operator moved the source: same set, same lineage, a new source
+	// identity. The repository is asked about the NEW identity and holds
+	// nothing under it yet.
+	req := reconcileRequest(set, newFakeRepository())
+	req.SourceIdentity = model.SourceIdentity("ff99aa00")
+	req.Source = backupengine.Source{Host: "nas", User: "backupd", Path: "/srv/moved"}
+
+	rep, err := reconciler(t, j).Reconcile(context.Background(), req)
+	if err != nil {
+		t.Fatalf("reconciling: %v", err)
+	}
+
+	for _, v := range rep.Verdicts {
+		if v.Kind == snapshotlifecycle.VerdictRestorePointLost {
+			t.Fatalf("a source change produced %s for run %s; nothing was lost, the pass was looking somewhere else", v.Kind, v.RunID)
+		}
+	}
+
+	after, err := j.GetSnapshotRun(context.Background(), "run-1")
+	if err != nil {
+		t.Fatalf("reading run: %v", err)
+	}
+
+	if after.Phase != state.PhaseSuccess {
+		t.Errorf("run-1 is at %s, want %s", after.Phase, state.PhaseSuccess)
+	}
+
+	if !after.LastKnownGood || rep.LastKnownGoodRunID != "run-1" {
+		t.Errorf("last-known-good is %q (flag %v), want run-1 (true): a source change must not withdraw a restore point that is still there",
+			rep.LastKnownGoodRunID, after.LastKnownGood)
 	}
 }
 
@@ -544,7 +837,7 @@ func TestReconcile_ADeleteIntentIsCompletedOnlyWhenTheSnapshotIsActuallyGone(t *
 		state.PhaseVerification, state.PhaseCatalogCommit, state.PhaseSuccess,
 	}
 	updates := map[state.SnapshotPhase]state.SnapshotRunUpdate{
-		state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+		state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 		state.PhaseCatalogCommit:     {VerificationStatus: new("passed")},
 	}
 
@@ -614,7 +907,7 @@ func TestReconcile_AnUnreadableRepositoryDecidesNothing(t *testing.T) {
 			state.PhaseVerification, state.PhaseCatalogCommit, state.PhaseSuccess,
 		},
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+			state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 			state.PhaseCatalogCommit:     {VerificationStatus: new("passed")},
 		})
 
@@ -629,7 +922,7 @@ func TestReconcile_AnUnreadableRepositoryDecidesNothing(t *testing.T) {
 		t.Errorf("an unreachable repository moved a restore point to %s", got)
 	}
 
-	lkg, err := j.LastKnownGoodSnapshot(context.Background(), set)
+	lkg, err := j.LastKnownGoodSnapshot(context.Background(), setUUID(set))
 	if err != nil {
 		t.Fatalf("reading last-known-good: %v", err)
 	}
@@ -651,7 +944,7 @@ func TestReconcile_AnInterruptedMaintenanceIsReportedAndChangesNothing(t *testin
 			state.PhaseVerification, state.PhaseCatalogCommit, state.PhaseSuccess,
 		},
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+			state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 			state.PhaseCatalogCommit:     {VerificationStatus: new("passed")},
 		})
 
@@ -700,7 +993,7 @@ func TestReconcile_ASecondPassOverAReconciledDeploymentChangesNothing(t *testing
 		"run-committed",
 		[]state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted},
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+			state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 		})
 
 	repo := newFakeRepository()

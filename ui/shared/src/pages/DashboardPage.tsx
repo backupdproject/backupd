@@ -41,6 +41,7 @@ import { EmptyState, ErrorState } from "@shared/components/EmptyState";
 import { RunControlNotice } from "@shared/components/RunControlNotice";
 import { useRunControls } from "@shared/hooks/useRunControls";
 import { isNotConfigured } from "@shared/api/failure";
+import { useHoverTitle } from "@shared/hooks/useTooltips";
 import { bytes } from "@shared/utilities/format";
 import { backupSetPath } from "@shared/utilities/routes";
 
@@ -127,6 +128,9 @@ export function DashboardPage({
   // why summing that list cannot answer it), and it is the one this
   // panel is meant to show.
   const storage = useAsync(() => api.getStorage(), [api]);
+  // #829: hover copy is a tooltip, and goes with the rest of them when
+  // they are off. Above the early returns below, where hooks belong.
+  const hoverTitle = useHoverTitle();
 
   // #275: an instance with no configuration refuses every read here, and
   // that is not a fault to report, it is a setup step nobody has taken.
@@ -197,7 +201,7 @@ export function DashboardPage({
             <button
               className="btn"
               disabled={readOnly || run.busy}
-              title="Runs one pass over every enabled backup set."
+              title={hoverTitle("Runs one pass over every enabled backup set.")}
               onClick={run.runAll}
             >
               Run all enabled sets

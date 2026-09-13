@@ -77,8 +77,13 @@ type crashRepository struct {
 }
 
 // newCrashRepository holds the given manifests, all of them started just
-// after the run that might have written them, which is what makes an
-// unclaimed one adoptable (see Reconciler.orphanFor).
+// after the run that might have written them.
+//
+// They are held UNATTRIBUTED: no tags. Adoption is an identity match on
+// the three tags the adapter writes (see Reconciler.orphanFor), so a
+// manifest that merely exists is not adoptable, and the matrix says
+// which of its manifests the crashed run can prove it wrote by calling
+// attribute.
 func newCrashRepository(start time.Time, ids ...string) *crashRepository {
 	repo := &crashRepository{snapshots: make(map[string]backupengine.SnapshotInfo, len(ids))}
 	for _, id := range ids {
@@ -94,6 +99,19 @@ func newCrashRepository(start time.Time, ids ...string) *crashRepository {
 	}
 
 	return repo
+}
+
+// attribute stamps one manifest with the tags the adapter writes on
+// every snapshot this product stores, so a crashed row can prove it was
+// the one that wrote it.
+func (f *crashRepository) attribute(id, runID string, set model.BackupSetID) {
+	info := f.snapshots[id]
+	info.Tags = map[string]string{
+		backupengine.TagKeyRun:       runID,
+		backupengine.TagKeyDomain:    testDomain,
+		backupengine.TagKeyBackupSet: set.String(),
+	}
+	f.snapshots[id] = info
 }
 
 func (f *crashRepository) record(call string) {
@@ -223,6 +241,23 @@ type crashCase struct {
 	// catalog knows about it or not.
 	repository []string
 
+	// attributed is every manifest in `repository` carrying the crashed
+	// run's own attribution tags -- the run id, the domain and the
+	// backup set the adapter writes on every snapshot this product
+	// stores. Only a manifest a pass can PROVE the run wrote is
+	// adoptable (see Reconciler.orphanFor), so "the repository holds it"
+	// and "this run demonstrably wrote it" are two different fixtures
+	// and the matrix keeps them apart.
+	attributed []string
+
+	// sourceComplete is the source side's own verdict, durably on the
+	// row at the crash. #783's completeness gate promotes only a
+	// recorded true, so a boundary whose verdict is a restore point has
+	// to carry one; a boundary that cannot -- an adopted manifest, a
+	// pass that died before writing any verdict -- is what produces
+	// source_incomplete instead.
+	sourceComplete *bool
+
 	// deleteIntent records the durable "delete this snapshot" this
 	// product asked for before the crash.
 	deleteIntent bool
@@ -287,21 +322,37 @@ var crashMatrix = []crashCase{{
 	want:  []snapshotlifecycle.VerdictKind{snapshotlifecycle.VerdictAbandonedUpload},
 	rest:  state.PhaseFailed,
 }, {
+	// Adopted and deliberately not promoted. The manifest is provably
+	// this run's, so the row claims it; but the process that would have
+	// recorded whether the source pass covered the source died before
+	// it could, so #783's completeness gate refuses to advertise it.
 	what:       "an unclaimed manifest this run must have written",
 	crash:      state.PhaseSnapshotWrite,
 	repository: []string{"snap-orphan"},
+	attributed: []string{"snap-orphan"},
 	want: []snapshotlifecycle.VerdictKind{
 		snapshotlifecycle.VerdictManifestAdopted,
-		snapshotlifecycle.VerdictVerified,
+		snapshotlifecycle.VerdictSourceIncomplete,
 	},
-	rest: state.PhaseSuccess,
+	rest: state.PhaseFailed,
 }, {
-	what:       "the manifest is durable and unproven",
+	what:           "the manifest is durable and unproven",
+	crash:          state.PhaseManifestCommitted,
+	snapshotID:     "snap-1",
+	repository:     []string{"snap-1"},
+	sourceComplete: new(true),
+	want:           []snapshotlifecycle.VerdictKind{snapshotlifecycle.VerdictVerified},
+	rest:           state.PhaseSuccess,
+}, {
+	// The same phase and the same durable manifest, with the one fact
+	// the row above carries taken away: a boundary of its own, because
+	// the snapshot verifies perfectly and must still not be promoted.
+	what:       "the manifest is durable and nothing vouched for the source pass",
 	crash:      state.PhaseManifestCommitted,
 	snapshotID: "snap-1",
 	repository: []string{"snap-1"},
-	want:       []snapshotlifecycle.VerdictKind{snapshotlifecycle.VerdictVerified},
-	rest:       state.PhaseSuccess,
+	want:       []snapshotlifecycle.VerdictKind{snapshotlifecycle.VerdictSourceIncomplete},
+	rest:       state.PhaseFailed,
 }, {
 	what:       "the manifest the row names is gone",
 	crash:      state.PhaseManifestCommitted,
@@ -309,13 +360,14 @@ var crashMatrix = []crashCase{{
 	want:       []snapshotlifecycle.VerdictKind{snapshotlifecycle.VerdictManifestMissing},
 	rest:       state.PhaseFailed,
 }, {
-	what:         "the verification never finished",
-	crash:        state.PhaseVerification,
-	snapshotID:   "snap-1",
-	verification: "pending",
-	repository:   []string{"snap-1"},
-	want:         []snapshotlifecycle.VerdictKind{snapshotlifecycle.VerdictVerified},
-	rest:         state.PhaseSuccess,
+	what:           "the verification never finished",
+	crash:          state.PhaseVerification,
+	snapshotID:     "snap-1",
+	verification:   "pending",
+	repository:     []string{"snap-1"},
+	sourceComplete: new(true),
+	want:           []snapshotlifecycle.VerdictKind{snapshotlifecycle.VerdictVerified},
+	rest:           state.PhaseSuccess,
 }, {
 	what:         "the verification never finished and the manifest is gone",
 	crash:        state.PhaseVerification,
@@ -324,13 +376,14 @@ var crashMatrix = []crashCase{{
 	want:         []snapshotlifecycle.VerdictKind{snapshotlifecycle.VerdictManifestMissing},
 	rest:         state.PhaseFailed,
 }, {
-	what:         "verified, and interrupted before the catalog said so",
-	crash:        state.PhaseCatalogCommit,
-	snapshotID:   "snap-1",
-	verification: "passed",
-	repository:   []string{"snap-1"},
-	want:         []snapshotlifecycle.VerdictKind{snapshotlifecycle.VerdictCommitCompleted},
-	rest:         state.PhaseSuccess,
+	what:           "verified, and interrupted before the catalog said so",
+	crash:          state.PhaseCatalogCommit,
+	snapshotID:     "snap-1",
+	verification:   "passed",
+	repository:     []string{"snap-1"},
+	sourceComplete: new(true),
+	want:           []snapshotlifecycle.VerdictKind{snapshotlifecycle.VerdictCommitCompleted},
+	rest:           state.PhaseSuccess,
 }, {
 	what:         "at the catalog commit without a verification that passed",
 	crash:        state.PhaseCatalogCommit,
@@ -512,7 +565,7 @@ func driveCrashCase(t *testing.T, c crashCase, f crashFixture) crashRun {
 	older := f.older || c.olderRestorePoint
 	if older {
 		seed(t, j, set, crashOlderRun, crashPath(t, state.PhaseSuccess), map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new(crashOlderSnapshot)},
+			state.PhaseManifestCommitted: {SnapshotID: new(crashOlderSnapshot), SourceComplete: new(true)},
 			state.PhaseCatalogCommit:     {VerificationStatus: new("passed")},
 		})
 	}
@@ -528,6 +581,11 @@ func driveCrashCase(t *testing.T, c crashCase, f crashFixture) crashRun {
 	}
 
 	repo := newCrashRepository(subject.StartedAt.Add(time.Second), held...)
+
+	for _, id := range c.attributed {
+		repo.attribute(id, crashSubjectRun, set)
+	}
+
 	if f.unreadable {
 		repo.listErr = errors.New("the repository is not answering")
 	}
@@ -577,7 +635,7 @@ func (c crashCase) seedUpdates(t *testing.T) map[state.SnapshotPhase]state.Snaps
 	if len(path) == 0 {
 		// A row still at PENDING has walked no edge and so carries
 		// nothing a later phase would have written.
-		if c.snapshotID != "" || c.verification != "" {
+		if c.snapshotID != "" || c.verification != "" || c.sourceComplete != nil {
 			t.Fatalf("the matrix row for %s claims facts a row that has walked no edge cannot carry", c.crash)
 		}
 
@@ -595,6 +653,15 @@ func (c crashCase) seedUpdates(t *testing.T) map[state.SnapshotPhase]state.Snaps
 	if c.snapshotID != "" {
 		u := upd[at(state.PhaseManifestCommitted)]
 		u.SnapshotID = &c.snapshotID
+		upd[at(state.PhaseManifestCommitted)] = u
+	}
+
+	// The source pass's own verdict lands where the run driver writes
+	// it: on the same edge as the manifest, because they are one fact
+	// about one pass (see Runner.commitManifest).
+	if c.sourceComplete != nil {
+		u := upd[at(state.PhaseManifestCommitted)]
+		u.SourceComplete = c.sourceComplete
 		upd[at(state.PhaseManifestCommitted)] = u
 	}
 
@@ -634,6 +701,7 @@ func seedConfigured(
 		RunID:             runID,
 		IdempotencyKey:    runID,
 		Set:               set,
+		SetUUID:           setUUID(set),
 		Engine:            model.EngineKopia.String(),
 		Domain:            testDomain,
 		SourceIdentity:    "ab12cd34",
@@ -668,7 +736,7 @@ func seedConfigured(
 func lastKnownGoodOf(t *testing.T, j *state.Journal, set model.BackupSetID) string {
 	t.Helper()
 
-	run, err := j.LastKnownGoodSnapshot(context.Background(), set)
+	run, err := j.LastKnownGoodSnapshot(context.Background(), setUUID(set))
 	switch {
 	case err == nil:
 		return run.RunID
@@ -830,7 +898,7 @@ func TestCrashMatrixNeverLosesTheLastKnownGoodRestorePoint(t *testing.T) {
 				t.Errorf("the report says the restore point is %q and the journal says %q", run.report.LastKnownGoodRunID, want)
 			}
 
-			flagged, err := run.journal.LastKnownGoodSnapshot(context.Background(), run.set)
+			flagged, err := run.journal.LastKnownGoodSnapshot(context.Background(), setUUID(run.set))
 			if err != nil {
 				t.Fatalf("reading the last-known-good row: %v", err)
 			}
@@ -916,7 +984,7 @@ func TestCrashMatrixDecidesNothingWhenTheRepositoryCannotBeRead(t *testing.T) {
 				t.Errorf("an unreadable repository moved the restore point from %q to %q", run.lkgBefore, got)
 			}
 
-			rows, err := run.journal.ListSnapshotRuns(context.Background(), run.set, 50)
+			rows, err := run.journal.ListSnapshotRuns(context.Background(), setUUID(run.set), 50)
 			if err != nil {
 				t.Fatalf("listing the set's runs: %v", err)
 			}
@@ -959,14 +1027,17 @@ func TestCrashMatrixNeverEarnsARestorePointFromAShallowerCheckThanTheSetAsked(t 
 	set := setID(t, "postgres")
 
 	seed(t, j, set, crashOlderRun, crashPath(t, state.PhaseSuccess), map[state.SnapshotPhase]state.SnapshotRunUpdate{
-		state.PhaseManifestCommitted: {SnapshotID: new(crashOlderSnapshot)},
+		state.PhaseManifestCommitted: {SnapshotID: new(crashOlderSnapshot), SourceComplete: new(true)},
 		state.PhaseCatalogCommit:     {VerificationStatus: new("passed")},
 	})
 
+	// The source pass covered the source, durably: #783's completeness
+	// gate comes before the verification, and a row that fell at that
+	// gate would never reach the level rule this test is about.
 	subject := seedConfigured(t, j, set, crashSubjectRun, model.LevelContentFull,
 		crashPath(t, state.PhaseManifestCommitted),
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+			state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 		})
 
 	repo := newCrashRepository(subject.StartedAt.Add(time.Second), "snap-1", crashOlderSnapshot)

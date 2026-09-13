@@ -372,6 +372,7 @@ func largeNSSnapshot(t *testing.T, n int) (backupengine.TreeRepository, backupen
 	cost := largeNSMeasure(t, n, func() {
 		info, err = rep.SnapshotTree(context.Background(), backupengine.TreeSnapshotRequest{
 			Source:      src,
+			RunID:       treeRunID,
 			Root:        root,
 			Description: fmt.Sprintf("one directory holding %d objects", n),
 		})

@@ -166,7 +166,7 @@ func TestRun_AVerificationShallowerThanTheSetRequiresIsNotARestorePoint(t *testi
 		t.Errorf("the recorded reason is %q; it must name what was proved and what was required", res.Reason)
 	}
 
-	lkg, err := j.LastKnownGoodSnapshot(context.Background(), set)
+	lkg, err := j.LastKnownGoodSnapshot(context.Background(), setUUID(set))
 	if err != nil {
 		t.Fatalf("reading last-known-good: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestRun_ASetConfiguredForRestoreDrillsIsRefusedWithNowhereToRestoreTo(t *te
 		t.Errorf("the source was read %d time(s) before the refusal", repo.treeCalls)
 	}
 
-	if runs, err := j.ListSnapshotRuns(context.Background(), set, 10); err != nil || len(runs) != 0 {
+	if runs, err := j.ListSnapshotRuns(context.Background(), setUUID(set), 10); err != nil || len(runs) != 0 {
 		t.Errorf("the refusal left %d row(s) behind (err %v); nothing should have to reconcile a run that never started", len(runs), err)
 	}
 }
@@ -411,10 +411,13 @@ func TestReconcile_RecoveryProvesTheLevelTheRowWasAdmittedUnder(t *testing.T) {
 	j := journal(t)
 	set := setID(t, "postgres")
 
+	// SourceComplete is seeded because #783's completeness gate comes
+	// before the verification: a row without it is failed rather than
+	// verified, and this test is about what the verification ASKS for.
 	seed(t, j, set, "run-1",
 		[]state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted},
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+			state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 		})
 
 	repo := newFakeRepository()
@@ -472,7 +475,7 @@ func TestReconcile_ARecoveryDrillRestoresIntoAFreshDirectory(t *testing.T) {
 		seedConfigured(t, j, set, "run-1", model.LevelRestoreDrill,
 			[]state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted},
 			map[state.SnapshotPhase]state.SnapshotRunUpdate{
-				state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+				state.PhaseManifestCommitted: {SnapshotID: new("snap-1"), SourceComplete: new(true)},
 			})
 
 		repo.snapshots["snap-1"] = backupengine.SnapshotInfo{ID: "snap-1", Source: testSource, Files: 3, Bytes: 4096}
@@ -564,7 +567,7 @@ func seedAchieved(t *testing.T, j *state.Journal, set model.BackupSetID, runID s
 			state.PhaseVerification, state.PhaseCatalogCommit, state.PhaseSuccess,
 		},
 		map[state.SnapshotPhase]state.SnapshotRunUpdate{
-			state.PhaseManifestCommitted: {SnapshotID: new(runID + "-snap")},
+			state.PhaseManifestCommitted: {SnapshotID: new(runID + "-snap"), SourceComplete: new(true)},
 			state.PhaseCatalogCommit: {
 				VerificationStatus:        new("passed"),
 				VerificationLevelAchieved: new(string(achieved)),

@@ -17,16 +17,19 @@ import (
 	"github.com/backupdproject/backupd/core/internal/secretref"
 )
 
-// This file holds the two claims about a tree snapshot that the boundary
+// This file holds the claims about a tree snapshot that the boundary
 // cannot express and therefore cannot be tested from outside the package.
 //
-// backupengine.SnapshotInfo has no Tags field and no notion of the
-// vendor's own source namespace, deliberately: neither belongs in a port
-// that has to survive the engine being replaced. But "one run writes ONE
-// source, carrying the caller's attribution" is the entire difference
-// between this port and the per-object one it replaces, and a claim
-// nothing checks is a claim that lasts one refactor. So it is checked
-// here, where the vendor's names are allowed to be spoken.
+// backupengine.SnapshotInfo reports a snapshot's Tags, so the tags a run
+// stored are checkable from out there and tree_test.go checks them. What
+// is not is the vendor's own source namespace: it has no place in a port
+// that has to survive the engine being replaced, and "one run writes ONE
+// source" is nonetheless the entire difference between this port and the
+// per-object one it replaces. The same goes for the manifest's tags seen
+// as the vendor holds them, which is where "the adapter added the run id
+// and invented nothing else" is true or not. A claim nothing checks is a
+// claim that lasts one refactor, so both are checked here, where the
+// vendor's names are allowed to be spoken.
 
 // treeInternalPassphrase is this file's repository passphrase. It is a
 // literal rather than a shared constant because the constant belongs to
@@ -128,11 +131,18 @@ func (f staticSourceFile) Open(context.Context) (io.ReadCloser, error) {
 // that is downstream and indirect, which is why it is asserted here at
 // the point where it is true or not.
 //
-// The tags are the other half. The engine synthesises neither of them:
-// the caller owns attribution because the caller is the only thing that
-// knows which backup set is running, and this asserts that what the
-// caller passed is what the manifest holds, unaltered.
-func TestSnapshotTreeStoresOneKopiaSourceCarryingTheCallersTags(t *testing.T) {
+// The tags are the other half, and they have two owners. The engine
+// synthesises no set and no domain: the caller owns that attribution,
+// because the caller is the only thing that knows which backup set is
+// running, and this asserts that what the caller passed is what the
+// manifest holds, unaltered. The run id is the one tag the ADAPTER
+// writes, from the RunID the request had to carry, and it is written
+// here rather than trusted to the caller because a caller that forgot it
+// would produce a manifest crash reconciliation could only match by
+// timestamp -- and a timestamp does not tell this set's snapshot from a
+// co-tenant's. So the assertion is that the manifest holds exactly the
+// caller's tags plus that one, and nothing else invented along the way.
+func TestSnapshotTreeStoresOneKopiaSourceCarryingTheRunsAttribution(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -153,6 +163,7 @@ func TestSnapshotTreeStoresOneKopiaSourceCarryingTheCallersTags(t *testing.T) {
 
 	info, err := rep.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
 		Source:      backupengine.Source{Host: "tree-host", User: "tree-user", Path: "/sets/nightly"},
+		RunID:       "run-4b7d2e10",
 		Root:        root,
 		Description: "nightly run",
 		Tags:        want,
@@ -185,9 +196,21 @@ func TestSnapshotTreeStoresOneKopiaSourceCarryingTheCallersTags(t *testing.T) {
 		}
 	}
 
-	if len(man.Tags) != len(want) {
-		t.Errorf("the manifest carries %d tags (%v), want only the %d the caller passed; the engine must not synthesise attribution",
+	if got := man.Tags[backupengine.TagKeyRun]; got != "run-4b7d2e10" {
+		t.Errorf("the manifest carries %s=%q, want the run id the request carried; without it an orphaned manifest can only be matched to a run by its timestamp",
+			backupengine.TagKeyRun, got)
+	}
+
+	if len(man.Tags) != len(want)+1 {
+		t.Errorf("the manifest carries %d tags (%v), want the %d the caller passed plus the run id; the adapter writes attribution, it does not invent it",
 			len(man.Tags), man.Tags, len(want))
+	}
+
+	// The caller's own map is untouched. A request is the caller's value
+	// and may be reused for the next run; an adapter that recorded its
+	// run id in it would make the second run carry the first one's.
+	if _, ok := want[backupengine.TagKeyRun]; ok {
+		t.Errorf("the adapter wrote its run tag into the caller's own map (%v); a request is not the adapter's to edit", want)
 	}
 
 	if man.Description != "nightly run" {

@@ -34,6 +34,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/backupdproject/backupd/core/internal/backupengine"
 	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
 	"github.com/backupdproject/backupd/core/internal/model"
@@ -63,6 +65,11 @@ type fixture struct {
 	repo    backupengine.TreeRepository
 	journal *state.Journal
 	set     model.BackupSetID
+
+	// setUUID is the durable identifier the catalog keys this set's
+	// snapshot lineage on (migration 0010). One per fixture, because
+	// each fixture is its own deployment.
+	setUUID string
 	source  backupengine.Source
 }
 
@@ -143,6 +150,7 @@ func newFixture(t *testing.T) *fixture {
 		repo:    repo,
 		journal: journal,
 		set:     set,
+		setUUID: uuid.NewString(),
 		source:  backupengine.Source{Host: "nas-01", User: "backupd", Path: srcDir},
 	}
 }
@@ -158,6 +166,7 @@ func (f *fixture) run(t *testing.T, runID string, level model.VerificationLevel,
 		RunID:             runID,
 		IdempotencyKey:    runID,
 		Set:               f.set,
+		SetUUID:           f.setUUID,
 		Engine:            model.EngineKopia,
 		Domain:            f.loc.Domain,
 		SourceIdentity:    model.SourceIdentity("ab12cd34"),
@@ -346,7 +355,7 @@ func TestDamageToTheRepositoryFailsTheRunAndKeepsThePreviousRestorePoint(t *test
 		t.Errorf("the row's reason is %q; an operator reading it has to learn that the verification is what failed", second.Reason)
 	}
 
-	lkg, err := f.journal.LastKnownGoodSnapshot(ctx, f.set)
+	lkg, err := f.journal.LastKnownGoodSnapshot(ctx, f.setUUID)
 	if err != nil {
 		t.Fatalf("reading last-known-good: %v", err)
 	}
@@ -437,7 +446,7 @@ func TestASetConfiguredForADrillWithNowhereToRunItNeverStartsARun(t *testing.T) 
 		t.Fatal("a set configured for restore drills ran with nowhere to restore to")
 	}
 
-	runs, err := f.journal.ListSnapshotRuns(context.Background(), f.set, 10)
+	runs, err := f.journal.ListSnapshotRuns(context.Background(), f.setUUID, 10)
 	if err != nil {
 		t.Fatalf("listing runs: %v", err)
 	}
@@ -477,10 +486,13 @@ func TestACrashDuringARestoreDrillIsRecoveredRatherThanFailed(t *testing.T) {
 
 	// The manifest the crashed run committed, written the way the driver
 	// writes it so the row below names a snapshot that really is there.
+	const runID = "run-1"
+
 	info, err := f.repo.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
 		Source:      f.source,
 		Root:        localTree(f.srcDir).Root(),
 		Description: "the run that died during its drill",
+		RunID:       runID,
 		Tags: map[string]string{
 			backupengine.TagKeyBackupSet: f.set.String(),
 			backupengine.TagKeyDomain:    f.loc.Domain.String(),
@@ -489,8 +501,6 @@ func TestACrashDuringARestoreDrillIsRecoveredRatherThanFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("storing the snapshot the crashed run committed: %v", err)
 	}
-
-	const runID = "run-1"
 
 	seedCrashedDrill(t, f, runID, string(info.ID))
 
@@ -509,6 +519,7 @@ func TestACrashDuringARestoreDrillIsRecoveredRatherThanFailed(t *testing.T) {
 
 	report, err := rec.Reconcile(ctx, snapshotlifecycle.ReconcileRequest{
 		Set:            f.set,
+		SetUUID:        f.setUUID,
 		Domain:         f.loc.Domain,
 		Source:         f.source,
 		SourceIdentity: model.SourceIdentity("ab12cd34"),
@@ -534,7 +545,7 @@ func TestACrashDuringARestoreDrillIsRecoveredRatherThanFailed(t *testing.T) {
 		t.Errorf("the recovered row records %q as proved; the row was admitted at %q", got, model.LevelRestoreDrill)
 	}
 
-	lkg, err := f.journal.LastKnownGoodSnapshot(ctx, f.set)
+	lkg, err := f.journal.LastKnownGoodSnapshot(ctx, f.setUUID)
 	if err != nil {
 		t.Fatalf("reading last-known-good after the recovery: %v", err)
 	}
@@ -572,6 +583,7 @@ func seedCrashedDrill(t *testing.T, f *fixture, runID, snapshotID string) {
 		RunID:             runID,
 		IdempotencyKey:    runID,
 		Set:               f.set,
+		SetUUID:           f.setUUID,
 		Engine:            model.EngineKopia.String(),
 		Domain:            f.loc.Domain.String(),
 		SourceIdentity:    "ab12cd34",
@@ -588,6 +600,12 @@ func seedCrashedDrill(t *testing.T, f *fixture, runID, snapshotID string) {
 		upd := state.SnapshotRunUpdate{At: at.Add(time.Duration(i+1) * time.Second)}
 		if phase == state.PhaseManifestCommitted {
 			upd.SnapshotID = &snapshotID
+
+			// The source pass's own verdict, on the same edge the
+			// driver writes it: #783's completeness gate refuses to
+			// promote a row without it, so a crashed drill missing it
+			// would never reach the drill this test is about.
+			upd.SourceComplete = new(true)
 		}
 
 		if err := f.journal.AdvanceSnapshotRun(ctx, runID, phase, upd); err != nil {

@@ -48,6 +48,14 @@ func setID(t *testing.T, name string) model.BackupSetID {
 	return id
 }
 
+// setUUID is the durable identifier the catalog keys a set's snapshot
+// lineage on. Derived from the names here only so each set gets its own;
+// the point of the column is that the names may change afterwards and
+// this may not.
+func setUUID(set model.BackupSetID) string {
+	return "uuid-" + set.Source + "-" + set.Set
+}
+
 // fakeRepository is the four calls a run and a reconciliation make of a
 // repository, and nothing else. It counts them, because "did this pass
 // re-verify a snapshot it did not have to" is one of the properties under
@@ -102,9 +110,18 @@ func (f *fakeRepository) SnapshotTree(_ context.Context, req backupengine.TreeSn
 			Files:       3,
 			Directories: 1,
 			Bytes:       3000,
+
+			// The adapter's own contract: the tags the caller supplied
+			// plus the run id it was given. Reconciliation adopts an
+			// orphan manifest on exactly these, so a fake that dropped
+			// them would make every adoption test pass for the wrong
+			// reason.
+			Tags: storedTags(req),
 		},
 		SourceBytesRead:        3000,
 		RepositoryBytesWritten: 900,
+		ContentReusedBytes:     2_048,
+		ContentReuseMeasured:   true,
 	}
 	f.snapshots[string(info.ID)] = info.SnapshotInfo
 
@@ -171,6 +188,19 @@ func (f *fakeRepository) ListSnapshots(_ context.Context, src backupengine.Sourc
 	return out, nil
 }
 
+// storedTags is what a repository adapter records on a manifest: the
+// caller's tags, plus the run id the adapter writes itself.
+func storedTags(req backupengine.TreeSnapshotRequest) map[string]string {
+	tags := make(map[string]string, len(req.Tags)+1)
+	for k, v := range req.Tags {
+		tags[k] = v
+	}
+
+	tags[backupengine.TagKeyRun] = req.RunID
+
+	return tags
+}
+
 // fakeTree is a source that reports what a test tells it to. Root is nil
 // because the fake repository never walks it; the walk itself is
 // backupengine/source's and backupengine/kopia's own subject.
@@ -214,6 +244,7 @@ func request(set model.BackupSetID, repo snapshotlifecycle.Repository, tree *fak
 		IdempotencyKey:    "key-1",
 		OperationID:       "op-1",
 		Set:               set,
+		SetUUID:           setUUID(set),
 		Engine:            model.EngineKopia,
 		Domain:            model.RepositoryDomainID("vault"),
 		SourceIdentity:    model.SourceIdentity("ab12cd34"),
@@ -271,7 +302,7 @@ func TestRun_ASuccessfulRunWalksEveryPhaseInOrderAndOnlyThenAdvertisesARestorePo
 		}
 	}
 
-	lkg, err := j.LastKnownGoodSnapshot(context.Background(), set)
+	lkg, err := j.LastKnownGoodSnapshot(context.Background(), setUUID(set))
 	if err != nil {
 		t.Fatalf("reading last-known-good: %v", err)
 	}
@@ -327,6 +358,14 @@ func TestRun_TheFourByteNumbersAreRecordedAsFourDifferentFacts(t *testing.T) {
 			},
 			SourceBytesRead:        90_000,
 			RepositoryBytesWritten: 4_000,
+
+			// The engine's own dedup accounting, which is nothing like
+			// read minus written (86000): that difference is reuse plus
+			// compression plus the pack and index overhead of storing
+			// anything at all, and recording it as reuse credits a run
+			// with content it actually re-uploaded.
+			ContentReusedBytes:   12_000,
+			ContentReuseMeasured: true,
 		}, nil
 	}
 
@@ -347,8 +386,13 @@ func TestRun_TheFourByteNumbersAreRecordedAsFourDifferentFacts(t *testing.T) {
 		t.Errorf("repository bytes written %d, want 4000", res.RepositoryBytesWritten)
 	}
 
-	if res.ContentReusedBytes != 86_000 {
-		t.Errorf("content reused %d, want 86000 (read minus written)", res.ContentReusedBytes)
+	if res.ContentReusedBytes != 12_000 {
+		t.Errorf("content reused %d, want 12000: the engine's dedup accounting, not read minus written", res.ContentReusedBytes)
+	}
+
+	if res.Entries != completeScan().Entries {
+		t.Errorf("entries scanned %d, want %d: the source side's own census, not files plus directories",
+			res.Entries, completeScan().Entries)
 	}
 
 	// The point of the four fields: nothing may present the logical size
@@ -396,7 +440,7 @@ func TestRun_AFailedSnapshotWriteLeavesNoRestorePointAndDoesNotDisturbLastKnownG
 		t.Errorf("a run that stored nothing recorded snapshot id %q", res.SnapshotID)
 	}
 
-	lkg, err := j.LastKnownGoodSnapshot(context.Background(), set)
+	lkg, err := j.LastKnownGoodSnapshot(context.Background(), setUUID(set))
 	if err != nil {
 		t.Fatalf("reading last-known-good: %v", err)
 	}
@@ -437,7 +481,7 @@ func TestRun_AnIncompleteSourcePassFailsTheRunAndKeepsTheManifestAttributed(t *t
 		t.Error("a failed run recorded no reason")
 	}
 
-	if _, err := j.LastKnownGoodSnapshot(context.Background(), set); !errors.Is(err, state.ErrSnapshotRunNotFound) {
+	if _, err := j.LastKnownGoodSnapshot(context.Background(), setUUID(set)); !errors.Is(err, state.ErrSnapshotRunNotFound) {
 		t.Errorf("an incomplete pass produced a last-known-good snapshot (err %v)", err)
 	}
 }
@@ -467,7 +511,7 @@ func TestRun_AFailedVerificationIsNotARestorePoint(t *testing.T) {
 		t.Errorf("a failed verification recorded an achieved level %q", res.VerificationAchieved)
 	}
 
-	if _, err := j.LastKnownGoodSnapshot(context.Background(), set); !errors.Is(err, state.ErrSnapshotRunNotFound) {
+	if _, err := j.LastKnownGoodSnapshot(context.Background(), setUUID(set)); !errors.Is(err, state.ErrSnapshotRunNotFound) {
 		t.Errorf("a failed verification produced a last-known-good snapshot (err %v)", err)
 	}
 }
@@ -553,6 +597,7 @@ func TestRun_AReplayOfAnInFlightRunIsRefusedRatherThanStartingASecondPass(t *tes
 		RunID:             "run-1",
 		IdempotencyKey:    "key-1",
 		Set:               set,
+		SetUUID:           setUUID(set),
 		Engine:            model.EngineKopia.String(),
 		Domain:            "vault",
 		SourceIdentity:    "ab12cd34",

@@ -39,6 +39,7 @@ import { EmptyState, ErrorState } from "@shared/components/EmptyState";
 import { isNotConfigured } from "@shared/api/failure";
 import { RetentionPreviewDialog } from "./RetentionPreviewDialog";
 import { bytes, stamp } from "@shared/utilities/format";
+import { useHoverTitle } from "@shared/hooks/useTooltips";
 import { artifactPath } from "@shared/utilities/routes";
 import type { BackupArtifact } from "@shared/types/backup";
 
@@ -49,6 +50,10 @@ export function BackupsPage({ readOnly }: { readOnly: boolean }) {
   const navigate = useNavigate();
   const [setFilter, setSetFilter] = useState("");
   const [previewFor, setPreviewFor] = useState<string | null>(null);
+  // #829: this button's hover copy says why it is disabled, and it is a
+  // tooltip like any other — an operator who turned them off gets the
+  // disabled state and no pop-up, which is what they asked for.
+  const hoverTitle = useHoverTitle();
 
   // The shared sets node (App.tsx fetches it once, #106) — not this page's
   // own listSets() call. App.tsx always mounts above every route, so the
@@ -118,7 +123,7 @@ export function BackupsPage({ readOnly }: { readOnly: boolean }) {
             <button
               className="btn"
               disabled={readOnly || !setFilter}
-              title={setFilter ? undefined : "Choose a backup set to preview its retention plan"}
+              title={hoverTitle(setFilter ? undefined : "Choose a backup set to preview its retention plan")}
               onClick={() => setPreviewFor(setFilter)}
             >
               Preview retention

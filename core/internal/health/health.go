@@ -497,13 +497,20 @@ type SnapshotHealth struct {
 	// died. A surface renders that as "not measured", never as zero.
 	Measured bool
 
-	// VerificationStatus and VerificationLevel are what was proven and
-	// how far the set asked for it to be proven. They are two fields for
-	// the reason the catalog keeps two columns: a set configured for a
-	// restore drill whose run only verified content must not read as
-	// having drilled.
-	VerificationStatus string
-	VerificationLevel  string
+	// VerificationStatus is whether a verification ran and what it
+	// concluded ("", "pending", "passed", "failed").
+	//
+	// VerificationLevel is the level the SET IS CONFIGURED FOR -- what
+	// the operator asked for -- and VerificationAchieved is the level the
+	// newest run actually PROVED, empty when nothing was proven. They are
+	// three fields because they are three claims, for the reason the
+	// catalog keeps three columns: a set configured for a restore drill
+	// whose run only verified content must read as exactly that, and a
+	// report carrying the configured level alone asserts a verification
+	// nobody performed.
+	VerificationStatus   string
+	VerificationLevel    string
+	VerificationAchieved string
 
 	// LastKnownGoodAt is when the set's last-known-good snapshot
 	// completed, nil when it has none: no successful run yet, or every
