@@ -39,6 +39,16 @@ import (
 // ability to tell it from a hold that is there.
 var ErrSnapshotHoldNotFound = errors.New("state: snapshot hold not found")
 
+// ErrSnapshotHoldReleased is what replaying a hold id whose hold has since
+// been RELEASED gets instead of that row.
+//
+// It is its own value because the two ways a replay can fail demand
+// different responses: a hold id already recorded against a different run
+// is a caller bug, and a hold id that is spent is a decision somebody else
+// took -- the protection was ended on purpose, and a caller that wants it
+// back places a new hold, with its own id, reason and author.
+var ErrSnapshotHoldReleased = errors.New("state: snapshot hold has been released")
+
 // SnapshotHold is one row of the hold table, read back exactly as stored.
 type SnapshotHold struct {
 	HoldID string
@@ -128,9 +138,13 @@ func validateSnapshotHoldRequest(req SnapshotHoldRequest) error {
 // caller its snapshot is protected while the protection sits on somebody
 // else's.
 //
-// It refuses a run with no committed manifest and a run whose snapshot has
-// already been deleted. Neither can be protected, and a hold that is
-// accepted and protects nothing is worse than no hold at all.
+// It refuses every run a hold could not actually protect: one with no
+// committed manifest, one whose snapshot this product already deleted, one
+// whose delete intent is already durable (the manifest is going and the
+// row still says SUCCESS for a few seconds longer), and one at LOST, whose
+// manifest is not in the repository at all. Each of those would be
+// accepted-and-useless in the shape that costs the most: somebody reads
+// the hold list, sees a hold, and stops worrying.
 func (j *Journal) PlaceSnapshotHold(ctx context.Context, req SnapshotHoldRequest) (SnapshotHold, error) {
 	if err := validateSnapshotHoldRequest(req); err != nil {
 		return SnapshotHold{}, err
@@ -150,6 +164,14 @@ func (j *Journal) PlaceSnapshotHold(ctx context.Context, req SnapshotHoldRequest
 		return SnapshotHold{}, fmt.Errorf(
 			"state: hold %q is already recorded against run %s, so it cannot also answer for run %s",
 			req.HoldID, existing.RunID, req.RunID)
+	case err == nil && existing.ReleasedAt != nil:
+		// Somebody ended this protection on purpose. Handing the row
+		// back with a nil error would read as "your hold is in place"
+		// to every caller that checks the error rather than Active().
+		return SnapshotHold{}, fmt.Errorf(
+			"%w: hold %q on run %s was released at %s by %s; a snapshot that needs protecting again needs a new hold, with its own reason and author",
+			ErrSnapshotHoldReleased, req.HoldID, existing.RunID,
+			existing.ReleasedAt.UTC().Format(time.RFC3339), existing.ReleasedBy)
 	case err == nil:
 		// A replay of the caller's own hold. Nothing is rewritten:
 		// placed_at is how long this hold has stood, and a retry that
@@ -173,6 +195,18 @@ func (j *Journal) PlaceSnapshotHold(ctx context.Context, req SnapshotHoldRequest
 		return SnapshotHold{}, fmt.Errorf(
 			"state: run %s is at %s: its snapshot has already been removed from the repository and a hold cannot bring one back",
 			run.RunID, run.Phase)
+	}
+	if run.Phase == PhaseLost {
+		return SnapshotHold{}, fmt.Errorf(
+			"state: run %s is at %s: its snapshot is not in the repository, so a hold on it would protect nothing; "+
+				"reconciliation records this state when a manifest has gone without a delete ever being recorded",
+			run.RunID, run.Phase)
+	}
+	if run.DeleteRequestedAt != nil {
+		return SnapshotHold{}, fmt.Errorf(
+			"state: run %s already carries a durable delete intent, recorded at %s: its manifest is being removed and this row will say %s shortly, "+
+				"so a hold accepted now would protect nothing",
+			run.RunID, run.DeleteRequestedAt.UTC().Format(time.RFC3339), PhaseDeleted)
 	}
 
 	reason := j.redact.Load().Filter(req.Reason)

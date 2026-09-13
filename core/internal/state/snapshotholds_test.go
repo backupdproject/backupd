@@ -265,3 +265,92 @@ func TestPlaceSnapshotHoldReplaysItsOwnIdAndRefusesSomebodyElsesRun(t *testing.T
 		t.Error("PlaceSnapshotHold let one hold id answer for two different runs")
 	}
 }
+
+// TestPlaceSnapshotHoldRefusesAHoldThatArrivesTooLate is the race the
+// phase check alone does not close.
+//
+// A retention pass records its delete INTENT durably before it asks the
+// repository for anything, precisely so that a crash in the middle is
+// decidable. Between that write and the manifest actually going, the run
+// is still at SUCCESS -- so a hold placed in that window used to be
+// accepted, against a snapshot whose deletion was already under way and
+// would complete moments later. The same goes for a run at LOST, whose
+// manifest is not in the repository at all.
+//
+// Both are the failure this write exists to prevent, in its most
+// expensive shape: a person places a legal hold, gets a row back, and
+// stops worrying about a snapshot that is already gone.
+func TestPlaceSnapshotHoldRefusesAHoldThatArrivesTooLate(t *testing.T) {
+	j, _ := openJournal(t)
+	ctx := context.Background()
+	set := testSnapshotSet(t, "production", "postgres")
+
+	// A delete this product has already committed to.
+	going := heldRun(t, j, "run-going", "key-going", set, "manifest-going")
+	if err := j.MarkSnapshotDeleteRequested(ctx, going.RunID, snapshotRunAt.Add(time.Hour)); err != nil {
+		t.Fatalf("MarkSnapshotDeleteRequested: %v", err)
+	}
+	if _, err := j.PlaceSnapshotHold(ctx, SnapshotHoldRequest{
+		HoldID: "hold-going", RunID: going.RunID, Reason: "litigation", PlacedBy: "ops", At: snapshotRunAt.Add(2 * time.Hour),
+	}); err == nil {
+		t.Error("PlaceSnapshotHold accepted a hold on a snapshot whose delete this product had already recorded; " +
+			"the run is still at SUCCESS for a few more seconds and the hold protects nothing")
+	}
+
+	// A run whose manifest has gone without a delete ever being recorded.
+	lost := heldRun(t, j, "run-lost", "key-lost", set, "manifest-lost")
+	if err := j.AdvanceSnapshotRun(ctx, lost.RunID, PhaseLost, SnapshotRunUpdate{At: snapshotRunAt.Add(time.Hour)}); err != nil {
+		t.Fatalf("AdvanceSnapshotRun(LOST): %v", err)
+	}
+	if _, err := j.PlaceSnapshotHold(ctx, SnapshotHoldRequest{
+		HoldID: "hold-lost", RunID: lost.RunID, Reason: "litigation", PlacedBy: "ops", At: snapshotRunAt.Add(2 * time.Hour),
+	}); err == nil {
+		t.Error("PlaceSnapshotHold accepted a hold on a run at LOST, whose manifest is not in the repository to protect")
+	}
+}
+
+// TestPlaceSnapshotHoldRefusesToReplayAReleasedHold is the other
+// accepted-and-protects-nothing shape, and the one a careful caller still
+// walks into.
+//
+// Replaying a hold id is how a caller that crashed mid-write resolves what
+// it did, and the answer it gets back is a hold row. If that hold has
+// since been RELEASED, returning it with a nil error tells a caller which
+// checks the error -- and not Active() -- that its snapshot is protected,
+// when the protection was deliberately ended by somebody else. The refusal
+// is its own error so that a caller can tell "this id is spent" from "this
+// id belongs to another run".
+func TestPlaceSnapshotHoldRefusesToReplayAReleasedHold(t *testing.T) {
+	j, _ := openJournal(t)
+	ctx := context.Background()
+	set := testSnapshotSet(t, "production", "postgres")
+	run := heldRun(t, j, "run-replay", "key-replay", set, "manifest-replay")
+
+	placed := snapshotRunAt.Add(time.Hour)
+	if _, err := j.PlaceSnapshotHold(ctx, SnapshotHoldRequest{
+		HoldID: "hold-spent", RunID: run.RunID, Reason: "audit", PlacedBy: "ops", At: placed,
+	}); err != nil {
+		t.Fatalf("PlaceSnapshotHold: %v", err)
+	}
+	if err := j.ReleaseSnapshotHold(ctx, "hold-spent", placed.Add(time.Hour), "ops"); err != nil {
+		t.Fatalf("ReleaseSnapshotHold: %v", err)
+	}
+
+	replay, err := j.PlaceSnapshotHold(ctx, SnapshotHoldRequest{
+		HoldID: "hold-spent", RunID: run.RunID, Reason: "audit", PlacedBy: "ops", At: placed.Add(2 * time.Hour),
+	})
+	if !errors.Is(err, ErrSnapshotHoldReleased) {
+		t.Errorf("PlaceSnapshotHold replaying a released hold returned (%+v, %v), want ErrSnapshotHoldReleased: "+
+			"a caller that reads the error and not Active() would believe this snapshot is protected", replay, err)
+	}
+
+	// The released row is untouched: releasing is a fact, and a refused
+	// replay must not resurrect or rewrite it.
+	all, err := j.SnapshotHolds(ctx, run.RunID)
+	if err != nil {
+		t.Fatalf("SnapshotHolds: %v", err)
+	}
+	if len(all) != 1 || all[0].Active() {
+		t.Errorf("the hold history is %+v, want the one released hold left as it was", all)
+	}
+}

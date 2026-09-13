@@ -226,6 +226,10 @@ func (r *repository) SnapshotTree(
 		m.Description = req.Description
 		m.Tags = tags
 
+		// See enginepolicy.go: a manifest this adapter saves is pinned,
+		// so the engine's own retention cannot expire it.
+		pinManifest(m)
+
 		sid, serr := snapshot.SaveSnapshot(ctx, w, m)
 		if serr != nil {
 			return fmt.Errorf("saving snapshot of %s: %w", si.Path, serr)

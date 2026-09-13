@@ -108,6 +108,12 @@ type Catalog interface {
 
 	// AdvanceSnapshotRun records the delete once it has happened.
 	AdvanceSnapshotRun(ctx context.Context, runID string, to state.SnapshotPhase, upd state.SnapshotRunUpdate) error
+
+	// ClearSnapshotDeleteRequested withdraws an intent a later pass has
+	// decided against, so that a delete this product no longer means to
+	// perform stops being reported as one it owes. See
+	// withdrawStaleIntent.
+	ClearSnapshotDeleteRequested(ctx context.Context, runID string, at time.Time) error
 }
 
 // Repository is everything retention may ask of an open repository, and
@@ -437,7 +443,7 @@ func (p Pruner) evaluate(
 			run.SnapshotID)
 		return v
 
-	case run.LastKnownGood:
+	case run.LastKnownGood && lkg.Enabled:
 		// The catalog's own durable flag, which is a different fact from
 		// the classifier's computed protection: the flag says which
 		// snapshot this product ADVERTISES as its restore point right now,
@@ -446,6 +452,13 @@ func (p Pruner) evaluate(
 		// because a calculation disagreed with the row would leave every
 		// caller asking "what may I restore" holding a manifest id that
 		// resolves to nothing.
+		//
+		// Gated on the resolved protect_last_known_good reading for
+		// restorePointUnconfirmed's reason: the column is set on EVERY
+		// successful run, so an operator who explicitly turned protection
+		// off would otherwise find the newest snapshot in the set refused
+		// for ever, by a flag they had said out loud they did not want
+		// honoured.
 		v.Reason = fmt.Sprintf(
 			"refusing to delete snapshot %s: the catalog marks run %s as this set's last-known-good restore point, whatever the retention calculation concluded",
 			run.SnapshotID, run.RunID)
@@ -519,7 +532,7 @@ func keepReason(tiers []retention.GFSTierSelection, holds []state.SnapshotHold) 
 // has nothing to say about it -- overriding that would silently stop a
 // documented configuration working the first time a manifest went missing.
 func (p Pruner) restorePointUnconfirmed(ctx context.Context, bs config.BackupSet) (string, error) {
-	if bs.Retention.ProtectLastKnownGood != nil && !*bs.Retention.ProtectLastKnownGood {
+	if !protectsLastKnownGood(bs) {
 		return "", nil
 	}
 
@@ -551,6 +564,20 @@ func (p Pruner) restorePointUnconfirmed(ctx context.Context, bs config.BackupSet
 			bs.ID, lkg.SnapshotID, err), nil
 	}
 	return "", nil
+}
+
+// protectsLastKnownGood is the resolved protect_last_known_good reading
+// for one backup set: absent means protect, and only an explicit false
+// turns it off.
+//
+// It is spelled once because three places need the same answer -- the
+// set-wide restore-point guard, the per-snapshot refusal in evaluate and
+// the re-derivation in refusesNow -- and three copies of "nil means true"
+// is three chances for one of them to read an explicit false as
+// protection. It matches retention.LastKnownGoodDecide's own reading of
+// the same field, which is what LastKnownGoodResult.Enabled reports.
+func protectsLastKnownGood(bs config.BackupSet) bool {
+	return bs.Retention.ProtectLastKnownGood == nil || *bs.Retention.ProtectLastKnownGood
 }
 
 // holdEveryDelete turns every Delete in verdicts into a Refuse naming why,
@@ -603,6 +630,11 @@ func holdEveryDelete(verdicts []Verdict, why string) {
 // investigate. Reversed, this product would raise an incident about a
 // deletion it performed on purpose. A catalog that cannot record the
 // intent therefore stops the delete: the repository is never asked.
+//
+// A pass also withdraws a delete intent it has decided against: a run this
+// pass KEEPS whose row still carries the intent of an earlier one has that
+// intent cleared, so that a delete this product no longer means to perform
+// stops being reported as one it owes. See withdrawStaleIntent.
 func (p Pruner) Apply(ctx context.Context, now time.Time, bs config.BackupSet) ([]Verdict, error) {
 	verdicts, byRun, err := p.plan(ctx, now, bs)
 	if err != nil {
@@ -611,6 +643,7 @@ func (p Pruner) Apply(ctx context.Context, now time.Time, bs config.BackupSet) (
 
 	for i := range verdicts {
 		if verdicts[i].Action != Delete {
+			p.withdrawStaleIntent(ctx, now, byRun[verdicts[i].Run], &verdicts[i])
 			continue
 		}
 
@@ -678,6 +711,40 @@ func (p Pruner) Apply(ctx context.Context, now time.Time, bs config.BackupSet) (
 	return verdicts, nil
 }
 
+// withdrawStaleIntent clears a delete intent left on a run whose snapshot
+// this pass has just decided to KEEP.
+//
+// An intent is durable because a crash between recording it and the
+// manifest going has to be decidable afterwards, and it is read as a
+// standing statement: snapshotlifecycle reports a run that carries one
+// while its manifest is still present as VerdictDeletePending, every
+// cycle. That is correct while the decision behind it stands. It stops
+// being correct the moment a later pass keeps the same snapshot -- an
+// operator widened a window, somebody placed a hold, a delete the
+// repository refused is now one this product no longer wants -- and what
+// is left is a permanent alarm about a deletion that is never coming,
+// indistinguishable from one that is.
+//
+// Only a KEEP withdraws it. A REFUSE means the delete did not happen THIS
+// time -- the repository denied it, the restore point could not be
+// confirmed, the row moved under the pass -- and the intent still
+// describes what this product means to do.
+//
+// A failure to withdraw is recorded on the verdict and never fails the
+// pass: nothing was deleted, and a stale intent is a false alarm rather
+// than a danger.
+func (p Pruner) withdrawStaleIntent(ctx context.Context, now time.Time, run state.SnapshotRun, v *Verdict) {
+	if v.Action != Keep || run.DeleteRequestedAt == nil {
+		return
+	}
+
+	if err := p.Catalog.ClearSnapshotDeleteRequested(ctx, v.Run, now); err != nil {
+		v.Reason += fmt.Sprintf(
+			"; a delete intent recorded at %s is still on run %s and could not be withdrawn (%v), so reconciliation will keep reporting a delete this pass has decided against",
+			run.DeleteRequestedAt.UTC().Format(time.RFC3339), v.Run, err)
+	}
+}
+
 // refusesNow re-derives, against a freshly read row, every condition that
 // made this snapshot a delete candidate, and returns the sentence that
 // refuses it or the empty string.
@@ -704,7 +771,7 @@ func (p Pruner) refusesNow(ctx context.Context, bs config.BackupSet, planned sta
 		return fmt.Sprintf(
 			"refusing to delete snapshot %s: run %s is now at %s with verification %q, which is not something this pass may delete",
 			v.Snapshot, run.RunID, run.Phase, run.VerificationStatus)
-	case run.LastKnownGood:
+	case run.LastKnownGood && protectsLastKnownGood(bs):
 		return fmt.Sprintf("refusing to delete snapshot %s: the catalog now marks run %s as this set's last-known-good restore point", v.Snapshot, run.RunID)
 	case !planned.StartedAt.IsZero() && !run.StartedAt.Equal(planned.StartedAt):
 		return fmt.Sprintf(

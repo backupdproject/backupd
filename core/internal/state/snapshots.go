@@ -969,6 +969,61 @@ func (j *Journal) MarkSnapshotDeleteRequested(ctx context.Context, runID string,
 	return nil
 }
 
+// ClearSnapshotDeleteRequested withdraws a delete intent that a later
+// retention pass has decided against.
+//
+// An intent is durable on purpose, and it is read as a standing statement:
+// snapshotlifecycle reports a run carrying one whose manifest is still
+// present as a delete this product owes the repository, every cycle,
+// forever. That is right while the decision stands and wrong the moment it
+// does not -- a hold placed after the intent was recorded, or a policy
+// change that puts the snapshot back inside a tier, makes the same row a
+// permanent false alarm about a delete that is never coming.
+//
+// Only retention withdraws an intent, and only from a fresh decision about
+// the same run: this is the counterpart to MarkSnapshotDeleteRequested and
+// not a general-purpose eraser.
+//
+// A run at DELETED is refused. There the intent is not a plan, it is the
+// record of something that has already happened, and clearing it would
+// leave a deleted snapshot looking like one that was lost.
+func (j *Journal) ClearSnapshotDeleteRequested(ctx context.Context, runID string, at time.Time) error {
+	if at.IsZero() {
+		return fmt.Errorf("state: withdrawing a delete intent for run %q requires a time", runID)
+	}
+
+	tx, err := j.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: begin clear snapshot delete intent: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit has succeeded
+
+	run, err := getSnapshotRunBy(ctx, tx, "run_id = ?", runID)
+	if err != nil {
+		return err
+	}
+	if run.Phase == PhaseDeleted {
+		return fmt.Errorf(
+			"state: run %s is at %s, and the delete intent on it records a deletion that already happened rather than one still intended",
+			runID, run.Phase)
+	}
+	if run.DeleteRequestedAt == nil {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE snapshot_runs SET delete_requested_at = NULL, updated_at = ? WHERE run_id = ?`,
+		formatTime(at), runID,
+	); err != nil {
+		return fmt.Errorf("state: clear snapshot delete intent for run %q: %w", runID, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: commit clear snapshot delete intent: %w", err)
+	}
+	return nil
+}
+
 // snapshotRunColumns is spelled once because scanSnapshotRun decodes it by
 // position, for selectColumns' reason: a read that listed its own columns
 // and got two of them the wrong way round would not fail, it would put a

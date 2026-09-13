@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -153,6 +154,16 @@ type fakeRepository struct {
 	missing map[backupengine.SnapshotID]bool
 	lookups []backupengine.SnapshotID
 	deleted []backupengine.SnapshotID
+
+	// refuseDeletes, when set, is what the repository answers instead of
+	// removing anything: the bucket policy that denies deletes, the NAS
+	// that went away mid-pass.
+	refuseDeletes error
+
+	// onDelete runs after a manifest has been removed and before the pass
+	// reaches the next one, which is the only place a test can act "while
+	// the pass is running".
+	onDelete func(backupengine.SnapshotID)
 }
 
 func newFakeRepository() *fakeRepository {
@@ -171,12 +182,22 @@ func (r *fakeRepository) LookupSnapshot(_ context.Context, id backupengine.Snaps
 
 func (r *fakeRepository) DeleteSnapshot(_ context.Context, id backupengine.SnapshotID) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.missing[id] {
+		r.mu.Unlock()
 		return backupengine.ErrSnapshotNotFound
+	}
+	if r.refuseDeletes != nil {
+		r.mu.Unlock()
+		return r.refuseDeletes
 	}
 	r.deleted = append(r.deleted, id)
 	r.missing[id] = true
+	hook := r.onDelete
+	r.mu.Unlock()
+
+	if hook != nil {
+		hook(id)
+	}
 	return nil
 }
 
@@ -703,4 +724,205 @@ type refusingIntent struct{ *state.Journal }
 
 func (refusingIntent) MarkSnapshotDeleteRequested(context.Context, string, time.Time) error {
 	return errors.New("catalog is read-only right now")
+}
+
+// TestProtectLastKnownGoodFalseLetsRetentionEmptyTheSet is the operator's
+// explicit choice, honoured.
+//
+// protect_last_known_good defaults to true and config.Validate keeps an
+// explicit false exactly as written, because that false says something a
+// person had to mean: retention may remove every snapshot in this backup
+// set, including the one it currently advertises as its restore point. A
+// pass that refused anyway -- on the strength of the catalog's own
+// last_known_good column, which is set on every successful run -- would
+// silently stop a documented configuration from ever working, and the
+// operator's only evidence would be a set that never shrinks.
+//
+// Both readings are driven, because "honours the flag" is only a claim if
+// the other setting does something else.
+func TestProtectLastKnownGoodFalseLetsRetentionEmptyTheSet(t *testing.T) {
+	ctx := context.Background()
+	off := false
+
+	for _, tc := range []struct {
+		name    string
+		protect *bool
+		want    []string
+	}{
+		{"absent means protected", nil, []string{"manifest-old-a"}},
+		{"explicitly off", &off, []string{"manifest-old-a", "manifest-old-b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			j := openCatalog(t)
+			set := mustSet(t, "production", "postgres")
+			cfg := dailyOnly()
+			cfg.ProtectLastKnownGood = tc.protect
+			bs := backupSet(t, set, "uuid-lkg-flag", cfg)
+
+			// Every run here is outside the seven-day window, so the only
+			// thing that can keep one is last-known-good protection. The
+			// newer of the two holds the catalog's flag.
+			record(t, j, set, bs.UUID, runSpec{runID: "run-old-a", snapshotID: "manifest-old-a", startedAt: pruneNow.AddDate(0, 0, -40)})
+			record(t, j, set, bs.UUID, runSpec{runID: "run-old-b", snapshotID: "manifest-old-b", startedAt: pruneNow.AddDate(0, 0, -39)})
+
+			lkg, err := j.LastKnownGoodSnapshot(ctx, bs.UUID)
+			if err != nil {
+				t.Fatalf("LastKnownGoodSnapshot: %v", err)
+			}
+			if lkg.RunID != "run-old-b" {
+				t.Fatalf("the fixture's restore point is %s, want run-old-b", lkg.RunID)
+			}
+
+			repo := newFakeRepository()
+			pruner := snapshotretention.Pruner{Catalog: j, Repository: repo}
+
+			applied, err := pruner.Apply(ctx, pruneNow, bs)
+			if err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			if got := deletes(applied); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("the pass deleted %v, want %v; verdict for the restore point: %s",
+					got, tc.want, verdictFor(t, applied, "manifest-old-b").Reason)
+			}
+			if got := repo.deletedIDs(); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("the repository was asked to delete %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAStaleDeleteIntentIsWithdrawnWhenTheNextPassDecidesToKeep closes a
+// row that would otherwise complain forever.
+//
+// A delete intent is durable and is read as a standing statement: while a
+// run carries one and its manifest is still in the repository,
+// snapshotlifecycle reports a delete this product owes the repository,
+// every cycle. That is right while the decision stands. When a later pass
+// decides the same snapshot is KEPT -- a policy an operator widened, a
+// hold somebody placed -- the intent is a permanent false alarm about a
+// delete that is never coming, and an operator watching reconciliation
+// cannot tell it from a real one.
+func TestAStaleDeleteIntentIsWithdrawnWhenTheNextPassDecidesToKeep(t *testing.T) {
+	ctx := context.Background()
+	j := openCatalog(t)
+	set := mustSet(t, "production", "postgres")
+	bs := backupSet(t, set, "uuid-stale-intent", dailyOnly())
+
+	record(t, j, set, bs.UUID, runSpec{runID: "run-old", snapshotID: "manifest-old", startedAt: pruneNow.AddDate(0, 0, -40)})
+	record(t, j, set, bs.UUID, runSpec{runID: "run-fresh", snapshotID: "manifest-fresh", startedAt: pruneNow.Add(-2 * time.Hour)})
+
+	// A pass that got as far as recording its intent and then could not
+	// carry the delete out: the repository refused it.
+	repo := newFakeRepository()
+	repo.refuseDeletes = errors.New("the bucket denied the delete")
+	pruner := snapshotretention.Pruner{Catalog: j, Repository: repo}
+
+	if _, err := pruner.Apply(ctx, pruneNow, bs); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	run, err := j.GetSnapshotRun(ctx, "run-old")
+	if err != nil {
+		t.Fatalf("GetSnapshotRun: %v", err)
+	}
+	if run.DeleteRequestedAt == nil {
+		t.Fatalf("the failed pass recorded no delete intent, so this test has nothing stale to withdraw")
+	}
+
+	// The operator widens the policy, and the same snapshot is now kept.
+	wider := dailyOnly()
+	wider.DailyDays = 90
+	kept := backupSet(t, set, bs.UUID, wider)
+
+	applied, err := pruner.Apply(ctx, pruneNow, kept)
+	if err != nil {
+		t.Fatalf("Apply under the wider policy: %v", err)
+	}
+	if v := verdictFor(t, applied, "manifest-old"); v.Action != snapshotretention.Keep {
+		t.Fatalf("the widened policy's verdict is %s, want %s: %s", v.Action, snapshotretention.Keep, v.Reason)
+	}
+
+	run, err = j.GetSnapshotRun(ctx, "run-old")
+	if err != nil {
+		t.Fatalf("GetSnapshotRun after the second pass: %v", err)
+	}
+	if run.DeleteRequestedAt != nil {
+		t.Errorf("run-old still carries a delete intent from %s after a pass decided to keep its snapshot; "+
+			"reconciliation will report a delete this product no longer intends, every cycle, forever", run.DeleteRequestedAt)
+	}
+	if run.Phase != state.PhaseSuccess {
+		t.Errorf("run-old is at %s, want %s: withdrawing an intent must not touch the run's own outcome", run.Phase, state.PhaseSuccess)
+	}
+}
+
+// TestAHoldPlacedDuringAPassStopsTheDeletesThatHaveNotHappened is the
+// guarantee refusesNow exists for, driven at the only moment it can fail.
+//
+// A pass over a long history takes real time, and a hold placed while it
+// runs is the most urgent hold there is: somebody is racing a deletion.
+// The holds are therefore re-read immediately before every single delete
+// rather than once for the pass, and this drives exactly that window by
+// placing the hold from inside the repository's delete call -- the last
+// instant at which a hold can still arrive "mid-pass".
+func TestAHoldPlacedDuringAPassStopsTheDeletesThatHaveNotHappened(t *testing.T) {
+	ctx := context.Background()
+	j := openCatalog(t)
+	set := mustSet(t, "production", "postgres")
+	bs := backupSet(t, set, "uuid-midpass", dailyOnly())
+
+	record(t, j, set, bs.UUID, runSpec{runID: "run-old-a", snapshotID: "manifest-old-a", startedAt: pruneNow.AddDate(0, 0, -40)})
+	record(t, j, set, bs.UUID, runSpec{runID: "run-old-b", snapshotID: "manifest-old-b", startedAt: pruneNow.AddDate(0, 0, -39)})
+	record(t, j, set, bs.UUID, runSpec{runID: "run-fresh", snapshotID: "manifest-fresh", startedAt: pruneNow.Add(-2 * time.Hour)})
+
+	repo := newFakeRepository()
+	repo.onDelete = func(id backupengine.SnapshotID) {
+		if id != "manifest-old-a" {
+			return
+		}
+		// The oldest manifest has just gone; the operator holds the next
+		// one in the same instant.
+		if _, err := j.PlaceSnapshotHold(ctx, state.SnapshotHoldRequest{
+			HoldID:   "hold-midpass",
+			RunID:    "run-old-b",
+			Reason:   "incident 9001 opened while retention was running",
+			PlacedBy: "ops@example.com",
+			At:       pruneNow,
+		}); err != nil {
+			t.Errorf("PlaceSnapshotHold mid-pass: %v", err)
+		}
+	}
+
+	pruner := snapshotretention.Pruner{Catalog: j, Repository: repo}
+
+	planned, err := pruner.Decide(ctx, pruneNow, bs)
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if got := deletes(planned); !reflect.DeepEqual(got, []string{"manifest-old-a", "manifest-old-b"}) {
+		t.Fatalf("the plan deletes %v, want both old manifests: the hold has to arrive against a planned delete", got)
+	}
+
+	applied, err := pruner.Apply(ctx, pruneNow, bs)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if got := repo.deletedIDs(); !reflect.DeepEqual(got, []string{"manifest-old-a"}) {
+		t.Fatalf("the repository was asked to delete %v; the hold arrived before manifest-old-b's delete and had to stop it", got)
+	}
+
+	held := verdictFor(t, applied, "manifest-old-b")
+	if held.Action != snapshotretention.Refuse {
+		t.Errorf("the held snapshot's action is %s, want %s: %s", held.Action, snapshotretention.Refuse, held.Reason)
+	}
+	if !strings.Contains(held.Reason, "hold-midpass") {
+		t.Errorf("the refusal does not name the hold that caused it: %s", held.Reason)
+	}
+
+	run, err := j.GetSnapshotRun(ctx, "run-old-b")
+	if err != nil {
+		t.Fatalf("GetSnapshotRun: %v", err)
+	}
+	if run.Phase != state.PhaseSuccess || run.DeleteRequestedAt != nil {
+		t.Errorf("run-old-b is at %s with intent %v, want an untouched %s: nothing may be recorded against a snapshot the pass refused to delete",
+			run.Phase, run.DeleteRequestedAt, state.PhaseSuccess)
+	}
 }

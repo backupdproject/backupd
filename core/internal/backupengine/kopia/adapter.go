@@ -108,6 +108,18 @@ type repository struct {
 	// own Close.
 	release func()
 
+	// engineRetention is the open-time attempt to neutralize this
+	// repository's own retention policy, kept as its error (nil when it
+	// took, or when there was nothing to correct).
+	//
+	// It is carried rather than returned because it must not refuse the
+	// open -- a restore from read-only storage is exactly the case that
+	// would break -- and it is not discarded because a repository whose
+	// policy this product could not correct is a repository where
+	// snapshots written by OTHER software can still be expired by the
+	// engine. Health reports it. See enginepolicy.go.
+	engineRetention error
+
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -155,6 +167,11 @@ func (r *repository) Snapshot(ctx context.Context, req backupengine.SnapshotRequ
 
 			m.Description = req.Description
 			m.Tags = req.Tags
+
+			// Pinned before it is saved: no retention policy in this
+			// repository, global or otherwise, may expire a manifest
+			// backupd wrote. enginepolicy.go carries the argument.
+			pinManifest(m)
 
 			id, err := snapshot.SaveSnapshot(ctx, w, m)
 			if err != nil {
