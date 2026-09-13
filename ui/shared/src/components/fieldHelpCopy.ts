@@ -485,6 +485,22 @@ export const FIELD_HELP = {
       "Every Save button on this page stays disabled until this is checked, alongside a trusted host and an imported key: it's a structural gate, not a formality. Checking it deletes nothing by itself; the remote copy is only removed once that specific artifact has cleared every step in the sequence shown above, never earlier (FR-15)."
   },
 
+  // ---------------------------------------------------- service behaviour
+
+  pollInterval: {
+    what: "How often Backupd checks every backup source for new backup files to collect.",
+    example: "15",
+    effect:
+      "The deployment-wide default, in minutes, and the cadence every backup set that does not set its own follows. It takes effect on the next check, with no restart. Shorter means a finished backup is collected sooner and every source is contacted more often; longer means the opposite. One minute is the shortest this product accepts, so a mistyped value cannot turn a schedule into pressure on the machine you are backing up. It changes only how often a pass runs, never what a pass is allowed to do."
+  },
+
+  editSetPollInterval: {
+    what: "How often this one backup set's source is checked, overriding the deployment-wide interval on the Settings page.",
+    example: "5",
+    effect:
+      "Leave it empty and this set follows the deployment's interval, including any later change to it. Type a number of minutes and this set alone polls at that cadence: useful for a source that produces backups far more often, or far less, than the rest. Clearing the box again returns the set to the deployment's interval rather than freezing today's value into it."
+  },
+
   // ------------------------------------------------------------- capacity
 
   storageCap: {

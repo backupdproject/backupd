@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -200,6 +201,24 @@ type backupSetResponse struct {
 	// /backup-sets/{source}/{set}/retention, which serves it on demand
 	// alongside the deployment's own.
 	RetentionIsOverride bool `json:"retention_is_override"`
+
+	// PollIntervalSeconds is this set's own poll-interval override
+	// (issue #845), and NULL when the set inherits the deployment's.
+	//
+	// Null is a real answer and a form has to render it as one: filling
+	// the box with the deployment's number would make the next save an
+	// explicit override, permanently detaching this set from a default
+	// it was tracking. That is capacity's backup_root_configured
+	// problem in a different field.
+	PollIntervalSeconds *int `json:"poll_interval_seconds"`
+
+	// EffectivePollIntervalSeconds is how often this set is actually
+	// polled: its override, or the deployment's default. Served beside
+	// the override so a form can label the inherit option with the real
+	// number without a second request, and resolved by the engine so no
+	// client combines the two scopes itself.
+	EffectivePollIntervalSeconds int `json:"effective_poll_interval_seconds"`
+
 	// TrustedHostKeys is what this set's known_hosts actually pins for its
 	// own address (service.BackupSet.TrustedHostKeys). Omitted, not sent
 	// as an empty list, and the difference is the whole point: absent
@@ -266,6 +285,9 @@ func toBackupSetResponse(bs service.BackupSet) backupSetResponse {
 		Disabled:            bs.Disabled,
 		ReadOnly:            bs.ReadOnly,
 		RetentionIsOverride: bs.RetentionIsOverride,
+
+		PollIntervalSeconds:          secondsPointerFromDuration(bs.PollInterval),
+		EffectivePollIntervalSeconds: int(bs.EffectivePollInterval / time.Second),
 
 		TrustedHostKeys:          trusted,
 		TrustedHostKeyRecordedAt: recordedAt,
@@ -726,6 +748,14 @@ type updateBackupSetRequest struct {
 	StableForSeconds   *int    `json:"stable_for_seconds"`
 	StaleAfterSeconds  *int    `json:"stale_after_seconds"`
 
+	// PollIntervalSeconds changes how often this set's source is checked
+	// (issue #845). Absent leaves it alone, like every field here; an
+	// explicit 0 is the spelling of "inherit the deployment's interval
+	// again", which is unambiguous because the engine's floor
+	// (schema.service.min_poll_interval_seconds) makes zero a value no
+	// caller could be asking for.
+	PollIntervalSeconds *int `json:"poll_interval_seconds"`
+
 	ValidatorID *string `json:"validator_id"`
 
 	// SSHKeyID and KnownHostsLine are issue #572's two: the key this set
@@ -794,6 +824,12 @@ func (h *handlers) updateBackupSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pollInterval, err := checkedSecondsPointerToDuration(body.PollIntervalSeconds, "poll_interval_seconds")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+
 	req := service.UpdateBackupSetRequest{
 		Host:               body.Host,
 		Port:               body.Port,
@@ -804,6 +840,7 @@ func (h *handlers) updateBackupSet(w http.ResponseWriter, r *http.Request) {
 		CompletionStrategy: body.CompletionStrategy,
 		StableFor:          secondsPointerToDuration(body.StableForSeconds),
 		StaleAfter:         secondsPointerToDuration(body.StaleAfterSeconds),
+		PollInterval:       pollInterval,
 		SSHKeyID:           body.SSHKeyID,
 		KnownHostsLine:     body.KnownHostsLine,
 
@@ -829,6 +866,18 @@ func (h *handlers) updateBackupSet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toBackupSetResponse(updated))
 }
 
+// secondsPointerFromDuration is the read direction of
+// secondsPointerToDuration: a duration a backup set may not have at all
+// becomes a nullable number, so "this set inherits" stays distinguishable
+// from "this set polls at the same interval the deployment does".
+func secondsPointerFromDuration(d *time.Duration) *int {
+	if d == nil {
+		return nil
+	}
+	s := int(*d / time.Second)
+	return &s
+}
+
 // secondsPointerToDuration is secondsToDuration for a field that has to
 // keep telling "absent" apart from "zero". It returns nil for nil, so a
 // body that never mentioned stable_for_seconds reaches core/service as a
@@ -840,4 +889,34 @@ func secondsPointerToDuration(s *int) *time.Duration {
 	}
 	d := secondsToDuration(*s)
 	return &d
+}
+
+// maxDurationSeconds is the largest whole number of seconds a
+// time.Duration can carry: it is nanoseconds in an int64, so anything
+// above this overflows.
+const maxDurationSeconds = int64(math.MaxInt64 / int64(time.Second))
+
+// checkedSecondsPointerToDuration is secondsPointerToDuration for a field
+// where the multiplication itself can lie.
+//
+// A JSON body may carry any number the decoder accepts, and seconds ×
+// 1e9 wraps silently: 2^55 seconds lands on exactly zero, and zero is
+// not a rejected value on a poll interval -- it is the spelling of
+// "inherit the deployment's interval again", so the largest number a
+// client can send would quietly CLEAR an operator's override and be
+// answered 200. Other values wrap to short, entirely plausible cadences,
+// which is the same failure pointed at the operator's sources.
+//
+// So the bound is checked before the multiply, and the refusal names the
+// number rather than the internal type: an operator who typed too many
+// zeroes needs to see that, not "invalid request".
+func checkedSecondsPointerToDuration(s *int, field string) (*time.Duration, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if int64(*s) > maxDurationSeconds || int64(*s) < -maxDurationSeconds {
+		return nil, fmt.Errorf("%s is %d seconds, which is longer than this engine can express as an interval (at most %d seconds)", field, *s, maxDurationSeconds)
+	}
+	d := secondsToDuration(*s)
+	return &d, nil
 }

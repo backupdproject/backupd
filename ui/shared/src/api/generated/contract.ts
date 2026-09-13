@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "968e886be082dec27483df797d8b085b7b754833c3a26d3be27d100ed463a14d";
+export const CONTRACT_SHA256 = "05d60cf9e86ac71f05897351b16a6ca16d95b00003931c7f1dcedd1faaf3ba09";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -1670,11 +1670,13 @@ export interface WireBackupSet {
   completion_strategy: "rename" | "marker" | "stable";
   connection_unverified?: boolean;
   disabled: boolean;
+  effective_poll_interval_seconds: number;
   host: string;
   id: string;
   include: string[];
   local_path: string;
   name: string;
+  poll_interval_seconds: number | null;
   port: number;
   read_only: boolean;
   remote_path: string;
@@ -2705,6 +2707,19 @@ export interface WireSSHKeyDiscoveryLocation {
   problem?: string;
 }
 
+/** The rules the service-behaviour settings are validated against,
+ *  served so a form does not keep its own copy of a bound the engine
+ *  enforces. */
+export interface WireServiceSchema {
+  min_poll_interval_seconds: number;
+}
+
+/** How this manager behaves, as opposed to what it keeps: the
+ *  service-behaviour settings. */
+export interface WireServiceSettings {
+  poll_interval_seconds: number;
+}
+
 /** GET /auth/session. */
 export interface WireSessionResponse {
   username: string;
@@ -2733,11 +2748,13 @@ export interface WireSettingsResponse {
   mediums: WireStorageMediumSummary[];
   retention: WireRetentionSettings;
   schema: WireSettingsSchema;
+  service: WireServiceSettings;
 }
 
 /** The schema half of the settings response. */
 export interface WireSettingsSchema {
   retention: WireRetentionSchema;
+  service: WireServiceSchema;
   storage: WireStorageSchema;
 }
 
@@ -2965,6 +2982,7 @@ export interface WireUpdateBackupSetRequest {
   include?: string[];
   known_hosts_line?: string;
   local_path?: string;
+  poll_interval_seconds?: number;
   port?: number;
   remote_path?: string;
   skip_connection_check?: boolean;
@@ -2996,12 +3014,19 @@ export interface WireUpdateRetentionSettings {
   week_starts_on?: string;
 }
 
+/** A PARTIAL service-behaviour update. An omitted field is left
+ *  exactly as the running configuration has it. */
+export interface WireUpdateServiceSettings {
+  poll_interval_seconds?: number;
+}
+
 /** PATCH /settings. An enumerated request type, never a configuration
  *  passthrough. */
 export interface WireUpdateSettingsRequest {
   acknowledge_medium_disclosure?: boolean;
   capacity?: WireUpdateCapacitySettings;
   retention?: WireUpdateRetentionSettings;
+  service?: WireUpdateServiceSettings;
 }
 
 /** One registered application validator. An id and a sentence, and

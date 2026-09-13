@@ -53,6 +53,8 @@ const SET: BackupSet = {
   completionMethod: "completion-marker", stableForSeconds: 0,
   destination: "/data/backups/production/postgres/",
   retentionIsOverride: false,
+  pollIntervalSeconds: null,
+  effectivePollIntervalSeconds: 900,
   validations: ["transfer", "checksum"],
   state: "healthy",
   stateNote: "Verified nightly dump.",
@@ -226,8 +228,15 @@ describe("SettingsPage reads the shared version node", () => {
  *  no save — see fieldHelpCopy.ts's module doc for why each was removed
  *  rather than wired) and a "Webhook notifications" row presenting
  *  "https://hooks.internal/bm" as a live delivery target config.Alerts'
- *  own doc says is deliberately not configurable. All three are gone
- *  from the page now, not merely unwired. */
+ *  own doc says is deliberately not configurable.
+ *
+ *  The polling interval came back in issue #845, as a real control over
+ *  a real write path ("Service behaviour", ServiceBehaviourCard), and
+ *  the case that asserted its absence went with it: it had stopped being
+ *  true and only still passed because it asked for the old label. What
+ *  that control does now is pinned by poll-interval-settings.test.tsx,
+ *  behaviourally. The webhook row below is still gone, and still worth
+ *  a case. */
 describe("SettingsPage no longer renders the controls #299 removed", () => {
   afterEach(() => {
     cleanup();
@@ -251,16 +260,6 @@ describe("SettingsPage no longer renders the controls #299 removed", () => {
     );
     await act(async () => {});
   }
-
-  it("has no Service card, and no Polling interval or Log level control", async () => {
-    await renderSettingsPage();
-
-    expect(screen.queryByText("Service")).toBeNull();
-    expect(screen.queryByText("Polling interval")).toBeNull();
-    expect(screen.queryByText("Log level")).toBeNull();
-    expect(screen.queryByText("15 seconds")).toBeNull();
-    expect(screen.queryByText("debug")).toBeNull();
-  });
 
   it("has no Webhook notifications checkbox row, and states no fake delivery URL anywhere on the page", async () => {
     await renderSettingsPage();

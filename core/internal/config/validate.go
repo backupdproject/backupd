@@ -87,6 +87,14 @@ func (c *Config) Validate() error {
 
 	if c.PollInterval.Duration() <= 0 {
 		v.addf("poll_interval: must be set to a positive duration (got %s)", c.PollInterval)
+	} else if c.PollInterval.Duration() < MinPollInterval {
+		// Issue #845's floor. Separate from the check above rather than
+		// folded into it because the two refusals answer different
+		// mistakes: a missing or negative key is a file that never said
+		// anything usable, and a 30s one is an operator who said
+		// something specific that this product will not do. See
+		// MinPollInterval for why it will not.
+		v.addf("poll_interval: must be at least %s (got %s)", MinPollInterval, c.PollInterval)
 	}
 
 	v.validateState(c.State)
@@ -396,6 +404,24 @@ func (v *validator) validateBackupSet(path, sourceName string, sourceReadOnly bo
 	// backup set, not about how one is produced.
 	if bs.StaleAfter.Duration() <= 0 {
 		v.addf("%s: stale_after must be set to a positive duration (got %s)", path, bs.StaleAfter)
+	}
+
+	// Issue #845's per-set cadence, held to exactly the floor the
+	// deployment-wide key is held to (MinPollInterval). An override is
+	// the field an operator reaches for when one source needs checking
+	// more often than the rest, which makes it the field most likely to
+	// be typed in a hurry; a "30s" that slipped through here would
+	// hammer that one source every half minute for as long as nobody
+	// noticed.
+	//
+	// nil is not a value to check: it means this set inherits, and the
+	// global it inherits is checked at the top of Validate.
+	if bs.PollInterval != nil {
+		if d := bs.PollInterval.Duration(); d <= 0 {
+			v.addf("%s: poll_interval must be a positive duration (got %s)", path, bs.PollInterval)
+		} else if d < MinPollInterval {
+			v.addf("%s: poll_interval must be at least %s (got %s)", path, MinPollInterval, bs.PollInterval)
+		}
 	}
 
 	// EPIC K's engine seam, resolved HERE rather than last, because which

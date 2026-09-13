@@ -76,7 +76,7 @@ func cmdDaemon(args []string) int {
 	}
 	defer func() { _ = stopServing() }()
 
-	svc, cfg, cleanup, err := openService(ctx, *cfgPath, true)
+	svc, _, cleanup, err := openService(ctx, *cfgPath, true)
 	if err != nil {
 		return fail(err)
 	}
@@ -84,7 +84,10 @@ func cmdDaemon(args []string) int {
 
 	logStartup(ctx, svc.Logger, app.BuildVersionInfo(version, commit))
 
-	if err := svc.Daemon(ctx, cfg.PollInterval.Duration()); err != nil {
+	// The cadence is read off the configuration svc was built from
+	// (issue #845: a backup set may override poll_interval, so there is
+	// no single number to pass in).
+	if err := svc.Daemon(ctx); err != nil {
 		return fail(err)
 	}
 	return 0

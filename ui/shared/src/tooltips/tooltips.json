@@ -375,6 +375,14 @@
     "label": "Affected backup set",
     "html": "One backup set, how many of its copies live here, and whether any of them is the last one this deployment can account for. The mark beside it means those copies cannot be asked about at the moment, not that they are gone."
   },
+  "service.card": {
+    "label": "Service behaviour",
+    "html": "How often this manager checks each backup source for new files. The deployment-wide default: a backup set can be given its own interval on its own page. Changes take effect on the next check, without a restart."
+  },
+  "service.save": {
+    "label": "Save service behaviour",
+    "html": "Writes the polling interval to the service's configuration. It is in effect immediately, and the scheduler picks it up on its next wake."
+  },
   "capacity.card": {
     "label": "Storage capacity",
     "html": "The ceiling this manager keeps its own backups under, and the two free-space lines that raise a warning and refuse further writes. Changes take effect without a restart."

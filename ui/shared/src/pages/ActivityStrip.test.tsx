@@ -36,6 +36,8 @@ const SET: BackupSet = {
   stableForSeconds: 0,
   destination: "/data/backups/api-server/var-backups",
   retentionIsOverride: false,
+  pollIntervalSeconds: null,
+  effectivePollIntervalSeconds: 900,
   validations: ["transfer", "checksum"],
   state: "healthy",
   stateNote: "Verified nightly.",

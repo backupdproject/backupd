@@ -30,7 +30,29 @@ import (
 // tail. See AlertTick.
 
 // Daemon is FR-1's `daemon` execution mode: it runs RunCycle once
-// immediately, then again every interval, until ctx is done.
+// immediately, then repeatedly, until ctx is done.
+//
+// # The cadence comes from the configuration, not from the caller
+//
+// It used to be an argument, and since issue #845 it cannot be: a backup
+// set may override the deployment-wide poll_interval, so "how often does
+// this loop wake" is a question about the whole configuration rather
+// than one number, and a caller passing one in would be passing half the
+// answer. The loop sleeps until the EARLIEST moment any enabled set is
+// due again (NextPollWake), recomputed after every pass, which for a
+// deployment that overrides nothing is exactly poll_interval, the loop
+// this has always been.
+//
+// Which sets a given wake actually processes is RunCycle's own decision,
+// made per set against that set's effective interval, because the cycle
+// is marked as a scheduled one here (WithScheduledCycle). A wake where
+// nothing is due does nothing. See pollschedule.go for why the cadence
+// lives inside one sequential loop rather than in a timer per set.
+//
+// The alerting pass below stays on the DEPLOYMENT's poll_interval rather
+// than on whatever the next wake happens to be: it reports on the
+// manager, not on any one source, so one set asking to be polled every
+// minute is not a reason to rebuild a health report every minute.
 //
 // cmd/backupd owns turning SIGTERM/SIGINT into ctx's cancellation
 // (via signal.NotifyContext), exactly as FR-1 asks for "handle
@@ -59,12 +81,13 @@ import (
 // right after a RunCycle call returns or while waiting out the interval
 // between cycles: either way this is FR-1's ordinary, expected shutdown
 // path, not an error condition cmd/backupd needs to distinguish
-// from a clean exit. It returns a non-nil error only for a genuine
-// argument problem (a non-positive interval) caught before the loop ever
+// from a clean exit. It returns a non-nil error only for a configuration
+// problem (a non-positive poll_interval) caught before the loop ever
 // starts.
-func (s *Service) Daemon(ctx context.Context, interval time.Duration) error {
+func (s *Service) Daemon(ctx context.Context) error {
+	interval := s.Config.PollInterval.Duration()
 	if interval <= 0 {
-		return fmt.Errorf("app: daemon needs a positive poll interval, got %s", interval)
+		return fmt.Errorf("app: daemon needs a positive poll_interval, got %s", interval)
 	}
 
 	s.logger().Event(ctx, obs.LevelInfo, "daemon_start", "daemon starting",
@@ -85,20 +108,38 @@ func (s *Service) Daemon(ctx context.Context, interval time.Duration) error {
 	defer func() { <-alertsStopped }()
 
 	for {
-		s.RunCycle(ctx)
+		s.RunCycle(WithScheduledCycle(ctx))
 
 		if ctx.Err() != nil {
 			s.logger().Event(ctx, obs.LevelInfo, "daemon_stop", "daemon shutting down", slog.String("reason", ctx.Err().Error()))
 			return nil
 		}
 
-		timer := time.NewTimer(interval)
+		// The next wake is the earliest moment any enabled set is due
+		// again, recomputed every pass (pollschedule.go's
+		// NextPollWake). Recomputed rather than held because the answer
+		// depends on what this cycle just attempted, and a fixed sleep
+		// of the tightest configured interval would round every other
+		// set's cadence up to a multiple of it -- a 7 minute set under
+		// a 5 minute wake is a 10 minute set, which is not what its
+		// operator asked for.
+		fire, stop := s.pollSleep(s.NextPollWake(s.now()))
 		select {
 		case <-ctx.Done():
-			timer.Stop()
+			stop()
 			s.logger().Event(ctx, obs.LevelInfo, "daemon_stop", "daemon shutting down", slog.String("reason", ctx.Err().Error()))
 			return nil
-		case <-timer.C:
+		case <-fire:
 		}
 	}
+}
+
+// pollSleep arms the loop's sleep: the injected timer when a test
+// installed one (Service.newTimer), and a real one otherwise.
+func (s *Service) pollSleep(d time.Duration) (<-chan time.Time, func() bool) {
+	if s.newTimer != nil {
+		return s.newTimer(d)
+	}
+	timer := time.NewTimer(d)
+	return timer.C, timer.Stop
 }

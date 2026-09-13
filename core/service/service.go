@@ -81,6 +81,18 @@ type BackupService struct {
 	// of this contract.
 	state atomic.Pointer[configState]
 
+	// configChanged wakes the scheduler loop when a configuration write
+	// lands, so a cadence saved through Settings takes effect on a loop
+	// that is ALREADY ASLEEP rather than at the end of the sleep it
+	// started before the save (scheduler.go, adoptConfig).
+	//
+	// It is buffered to one and signalled without blocking: the loop
+	// needs to know THAT the configuration moved, never how many times,
+	// and a write path must never wait on a scheduler that is busy
+	// running a cycle. A pending signal a loop has not read yet already
+	// says everything the next one would.
+	configChanged chan struct{}
+
 	journal *state.Journal
 	logger  *obs.Logger
 
@@ -91,12 +103,6 @@ type BackupService struct {
 	// installed as a progress observer on every cycle this package runs
 	// (operations.go, scheduler.go) for the numbers no event carries.
 	activity *liveActivity
-
-	// pollInterval is cfg.PollInterval.Duration(), copied out at
-	// construction time so PollInterval() (scheduler.go) can report it
-	// without exposing *config.Config itself, which a caller outside
-	// core/ cannot even name.
-	pollInterval time.Duration
 
 	// ctx/cancel give executeRunCycle a lifetime independent of both
 	// context.Background() and any single request's context: it is
@@ -272,10 +278,10 @@ func New(cfg *config.Config, journal *state.Journal, tr transport.Transport, log
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &BackupService{
 		journal:        journal,
-		pollInterval:   cfg.PollInterval.Duration(),
 		ctx:            ctx,
 		cancel:         cancel,
 		retentionPlans: make(map[string]retentionPlanRecord),
+		configChanged:  make(chan struct{}, 1),
 		progress:       newLiveProgress(),
 		holds:          newEditHolds(),
 		cycleWatch:     newCycleWatch(),

@@ -19,13 +19,13 @@
   ],
   "what_is_in_here": "One entry per CONFIGURATION field: something that changes what this deployment is, and that persists. Purely operational CLI flags are deliberately excluded, because they select an action rather than configure anything: --dry-run, --json, --limit, --follow, --scope, --severity, --source/--backup-set filters, --note, --content, --days, --medium, --acknowledge, --acknowledge-repoint, --acknowledge-host-key-change, --acknowledge-medium-disclosure, --release, --run, --inherit, --candidate, --stdin, --policy-file and --tier/--tier-medium as a preview override. Where such a flag is the only way to write a persistent field (--no-verify writing connection_unverified, --policy-file and --tier writing a retention chain) it is listed on that field instead.",
   "summary": {
-    "total": 119,
-    "ui_already": 47,
-    "ui_to_add": 29,
+    "total": 120,
+    "ui_already": 49,
+    "ui_to_add": 28,
     "file_only": 43,
     "by_scope": {
       "auth_smtp": 9,
-      "backup_set": 45,
+      "backup_set": 46,
       "capacity": 5,
       "deployment": 31,
       "medium": 13,
@@ -36,17 +36,16 @@
     "to_add_by_scope": {
       "backup_set": 19,
       "capacity": 2,
-      "deployment": 7,
+      "deployment": 6,
       "source": 1
     },
-    "yaml_fields": 93,
+    "yaml_fields": 94,
     "cli_reachable": 70,
     "env_reachable": 14
   },
   "known_asymmetries": [
     "storage_mediums[].path (a local_volume's directory) is configurable in the web UI through the manifest-driven destination wizard and has NO CLI flag at all: `medium add`/`medium edit` parse --type, --region, --endpoint, --bucket, --prefix, --storage-class, --upload-verification and the four credential spellings, and nothing else. The gap is the CLI's, not the UI's.",
-    "poll_interval is a real, required config key with no CLI flag and no UI control. SettingsPage carries a comment where a fake 'poll interval' row used to be: it was removed rather than wired (#299).",
-    "A per-backup-set poll_interval override (#845) does not exist in the schema at all yet, so it is neither UI- nor CLI-configurable; it is a field to be added, not a gap to be closed."
+    "poll_interval is configurable in the web UI, at two scopes, and has no CLI flag at either (#845): Settings > Service behaviour writes the deployment-wide default, and a backup set's own Edit form writes or clears its override. The gap is the CLI's, not the UI's."
   ],
   "fields": [
     {
@@ -58,11 +57,27 @@
       "default": null,
       "required": true,
       "scope": "deployment",
-      "description": "How often `backupd daemon` repeats the processing cycle. Validate refuses a non-positive value, so there is no default: every config states it.",
+      "description": "How often backupd checks each source for new backup files. The deployment-wide DEFAULT since #845: a backup set may override it for itself (sources[].backup_sets[].poll_interval). Validate refuses a non-positive value and anything under config.MinPollInterval (1m), so there is no default: every config states it.",
       "ui": {
-        "configurable": false,
-        "location": null,
-        "recommendation": "add: Settings > Service behaviour"
+        "configurable": true,
+        "location": "Settings > Service behaviour",
+        "recommendation": null
+      }
+    },
+    {
+      "field": "poll_interval",
+      "yaml_path": "sources[].backup_sets[].poll_interval",
+      "cli_flags": [],
+      "env": [],
+      "type": "duration",
+      "default": null,
+      "required": false,
+      "scope": "backup_set",
+      "description": "This backup set's own polling cadence (#845), overriding the deployment-wide poll_interval for this set alone. Absent means inherit, and inheritance TRACKS: a set that says nothing here follows a later edit to the global value. Held to the same 1m floor.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set > Edit > Polling interval",
+        "recommendation": null
       }
     },
     {

@@ -594,6 +594,11 @@ func writeRichTestConfigFile(t *testing.T) string {
 		// is the exact hollowing this fixture's own control exists to
 		// catch.
 		"        connection_unverified: true\n" +
+		// Issue #845's per-set poll interval, set for the same reason:
+		// an applier that dropped an operator's override on an unrelated
+		// edit would silently move that set back onto the deployment's
+		// cadence, and a fixture that omitted the key could not tell.
+		"        poll_interval: 5m\n" +
 		"        validation:\n          hash: sha256\n          validator_id: trailer-marker\n" +
 		"        retention:\n" +
 		"          daily_days: 90\n" +

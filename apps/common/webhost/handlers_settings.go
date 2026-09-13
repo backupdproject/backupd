@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/backupdproject/backupd/core/service"
 )
@@ -69,6 +70,7 @@ const maxSettingsBodyBytes = 64 << 10
 type settingsRequest struct {
 	Retention *retentionUpdateRequest `json:"retention"`
 	Capacity  *capacityUpdateRequest  `json:"capacity"`
+	Service   *serviceUpdateRequest   `json:"service"`
 
 	// AcknowledgeMediumDisclosure is the operator's acknowledgment of the
 	// storage-medium disclosure (EPIC E, FR-27), required on a write that
@@ -81,6 +83,23 @@ type settingsRequest struct {
 	// toUpdateSettingsRequest does not count it towards a request naming
 	// something to change.
 	AcknowledgeMediumDisclosure bool `json:"acknowledge_medium_disclosure,omitempty"`
+}
+
+// serviceUpdateRequest is issue #845's service-behaviour block on the
+// write side: how this manager runs, as opposed to what it keeps.
+//
+// Seconds, like every other duration on this API (stale_after_seconds,
+// stable_for_seconds), rather than a "15m" string: one spelling of a
+// duration on the wire, converted once at this boundary.
+type serviceUpdateRequest struct {
+	PollIntervalSeconds *int `json:"poll_interval_seconds"`
+}
+
+// namesNothing reports a service object that was sent but carries no
+// field at all, refused for exactly the reason
+// retentionUpdateRequest.namesNothing gives.
+func (r serviceUpdateRequest) namesNothing() bool {
+	return r.PollIntervalSeconds == nil
 }
 
 // capacityUpdateRequest is FR-21's block on the write side (issue #286).
@@ -204,6 +223,7 @@ func (t retentionTierBody) toService() service.RetentionTier {
 type settingsResponse struct {
 	Retention retentionSettingsBody `json:"retention"`
 	Capacity  capacitySettingsBody  `json:"capacity"`
+	Service   serviceSettingsBody   `json:"service"`
 	// Mediums is every storage medium this configuration declares, in
 	// declaration order, and empty for every configuration written before
 	// they existed. See storageMediumBody for what is deliberately not in
@@ -326,6 +346,24 @@ type capacitySettingsBody struct {
 	BackupRootConfigured bool   `json:"backup_root_configured"`
 }
 
+// serviceSettingsBody is how this manager behaves, as it is actually
+// running: issue #845's "Service behaviour" section.
+type serviceSettingsBody struct {
+	// PollIntervalSeconds is the deployment-wide DEFAULT cadence a
+	// source is checked at. A backup set may override it
+	// (BackupSet.poll_interval_seconds), so this is not a claim about
+	// any particular set.
+	PollIntervalSeconds int `json:"poll_interval_seconds"`
+}
+
+// serviceSchemaBody is the rule the field above is validated against,
+// served for retentionSchemaBody's reason: a form that kept its own copy
+// of the floor would eventually refuse a value the engine accepts, or
+// accept one it refuses.
+type serviceSchemaBody struct {
+	MinPollIntervalSeconds int `json:"min_poll_interval_seconds"`
+}
+
 type retentionSettingsBody struct {
 	Timezone     string `json:"timezone"`
 	WeekStartsOn string `json:"week_starts_on"`
@@ -349,6 +387,7 @@ type retentionSettingsBody struct {
 type settingsSchemaBody struct {
 	Retention retentionSchemaBody `json:"retention"`
 	Storage   storageSchemaBody   `json:"storage"`
+	Service   serviceSchemaBody   `json:"service"`
 }
 
 // storageSchemaBody is the vocabulary and the consent text a
@@ -480,7 +519,8 @@ func toUpdateSettingsRequest(body settingsRequest) (service.UpdateSettingsReques
 	// operator's file and move ConfigRevision for a request with no
 	// content.
 	namedSomething := (body.Retention != nil && !body.Retention.namesNothing()) ||
-		(body.Capacity != nil && !body.Capacity.namesNothing())
+		(body.Capacity != nil && !body.Capacity.namesNothing()) ||
+		(body.Service != nil && !body.Service.namesNothing())
 	if !namedSomething {
 		return service.UpdateSettingsRequest{}, errors.New("a settings write must name at least one setting to change")
 	}
@@ -489,7 +529,8 @@ func toUpdateSettingsRequest(body settingsRequest) (service.UpdateSettingsReques
 	// request is how a settings page reports success for an edit that
 	// never happened.
 	if (body.Retention != nil && body.Retention.namesNothing()) ||
-		(body.Capacity != nil && body.Capacity.namesNothing()) {
+		(body.Capacity != nil && body.Capacity.namesNothing()) ||
+		(body.Service != nil && body.Service.namesNothing()) {
 		return service.UpdateSettingsRequest{}, errors.New("a settings section was sent with no field in it; omit the section instead of sending an empty one")
 	}
 
@@ -519,6 +560,14 @@ func toUpdateSettingsRequest(body settingsRequest) (service.UpdateSettingsReques
 		}
 	}
 
+	if body.Service != nil {
+		pollInterval, err := checkedSecondsPointerToDuration(body.Service.PollIntervalSeconds, "service.poll_interval_seconds")
+		if err != nil {
+			return service.UpdateSettingsRequest{}, err
+		}
+		out.Service = &service.ServiceUpdate{PollInterval: pollInterval}
+	}
+
 	return out, nil
 }
 
@@ -538,9 +587,13 @@ func toSettingsResponse(s service.Settings) settingsResponse {
 	for _, m := range s.Mediums {
 		mediums = append(mediums, toStorageMediumBody(m))
 	}
+	serviceSchema := service.ServiceSchema()
 	return settingsResponse{
 		Mediums:   mediums,
 		Retention: toRetentionSettingsBody(s.Retention),
+		Service: serviceSettingsBody{
+			PollIntervalSeconds: int(s.Service.PollInterval / time.Second),
+		},
 		Capacity: capacitySettingsBody{
 			CapBytes:             s.Capacity.CapBytes,
 			WarningFreeBytes:     s.Capacity.WarningFreeBytes,
@@ -554,6 +607,9 @@ func toSettingsResponse(s service.Settings) settingsResponse {
 				VerificationClasses: classes,
 				MediumDisclosure:    storage.MediumDisclosure,
 				RetrievalDisclosure: storage.RetrievalDisclosure,
+			},
+			Service: serviceSchemaBody{
+				MinPollIntervalSeconds: int(serviceSchema.MinPollInterval / time.Second),
 			},
 			Retention: retentionSchemaBody{
 				Granularities:    schema.Granularities,

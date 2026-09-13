@@ -210,6 +210,18 @@ func (r *engineRoute) UpdateBackupSet(ctx context.Context, id string, req servic
 		}
 		body.StaleAfterSeconds = &seconds
 	}
+	// Issue #845's per-set cadence, with the same whole-seconds refusal
+	// the two completion windows get and the same nil/non-nil meaning:
+	// absent leaves the set's cadence alone, and an explicit ZERO is how
+	// "inherit the deployment's again" is spelled, so it has to cross as
+	// a zero rather than be mistaken for nothing to say.
+	if req.PollInterval != nil {
+		seconds, err := wireSeconds(*req.PollInterval, "--poll-interval")
+		if err != nil {
+			return service.BackupSet{}, err
+		}
+		body.PollIntervalSeconds = &seconds
+	}
 
 	updated, err := r.client.UpdateBackupSet(ctx, source, set, body)
 	if err != nil {
@@ -340,7 +352,26 @@ func backupSetFromWire(s apicontract.BackupSet) service.BackupSet {
 		// is the same reading the configuration file's own absent key
 		// gets.
 		ConnectionUnverified: s.ConnectionUnverified,
+
+		// Issue #845's two cadence fields, and the pair matters: the
+		// override is nullable and the effective value is not, so a
+		// route that carried only the second would report every set as
+		// pinning an interval, and the next routed edit would write
+		// that back as an explicit override.
+		PollInterval:          durationPointerFromWireSeconds(s.PollIntervalSeconds),
+		EffectivePollInterval: time.Duration(s.EffectivePollIntervalSeconds) * time.Second,
 	}
+}
+
+// durationPointerFromWireSeconds keeps the contract's null ("this set
+// inherits the deployment's cadence") distinct from a zero, which on this
+// field is a request rather than a value.
+func durationPointerFromWireSeconds(seconds *int) *time.Duration {
+	if seconds == nil {
+		return nil
+	}
+	d := time.Duration(*seconds) * time.Second
+	return &d
 }
 
 // wireSeconds converts a duration to the whole seconds the contract
@@ -409,6 +440,19 @@ func (r *engineRoute) UpdateSettings(ctx context.Context, req service.UpdateSett
 			SafetyMarginBytes: req.Capacity.SafetyMarginBytes,
 		}
 	}
+	// Issue #845's service-behaviour section. A cadence is carried as
+	// whole seconds like every other duration on this API, and one that
+	// would not survive that is refused here rather than rounded: an
+	// interval persisted as one value through the engine and another
+	// directly is two deployments running different schedules while both
+	// reported success.
+	if req.Service != nil && req.Service.PollInterval != nil {
+		seconds, err := wireSeconds(*req.Service.PollInterval, "--poll-interval")
+		if err != nil {
+			return service.Settings{}, err
+		}
+		body.Service = &apicontract.UpdateServiceSettings{PollIntervalSeconds: &seconds}
+	}
 
 	resp, err := r.client.UpdateSettings(ctx, body)
 	if err != nil {
@@ -439,6 +483,12 @@ func settingsFromWire(s apicontract.SettingsResponse) service.Settings {
 			SafetyMarginBytes:    s.Capacity.SafetyMarginBytes,
 			BackupRoot:           s.Capacity.BackupRoot,
 			BackupRootConfigured: s.Capacity.BackupRootConfigured,
+		},
+		// The deployment's own cadence, so a routed `settings show`
+		// reports what the engine is actually running rather than a
+		// zero this adapter invented by not mentioning the field.
+		Service: service.ServiceSettings{
+			PollInterval: time.Duration(s.Service.PollIntervalSeconds) * time.Second,
 		},
 	}
 	for _, t := range s.Retention.Tiers {

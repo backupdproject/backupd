@@ -427,6 +427,13 @@ func (e *fakeEngine) updateBackupSet(w http.ResponseWriter, r *http.Request, id 
 		d := time.Duration(*body.StaleAfterSeconds) * time.Second
 		req.StaleAfter = &d
 	}
+	// Issue #845's per-set cadence, carried for the reason the fixture
+	// carries everything else: a fake that silently ignored the field
+	// would make a route that never sent it look correct.
+	if body.PollIntervalSeconds != nil {
+		d := time.Duration(*body.PollIntervalSeconds) * time.Second
+		req.PollInterval = &d
+	}
 	if body.ValidatorID != nil {
 		v := service.ValidatorID(*body.ValidatorID)
 		req.ValidatorID = &v
@@ -485,6 +492,10 @@ func (e *fakeEngine) updateSettings(w http.ResponseWriter, r *http.Request) {
 			SafetyMarginBytes: body.Capacity.SafetyMarginBytes,
 		}
 	}
+	if body.Service != nil && body.Service.PollIntervalSeconds != nil {
+		d := time.Duration(*body.Service.PollIntervalSeconds) * time.Second
+		req.Service = &service.ServiceUpdate{PollInterval: &d}
+	}
 	settings, err := e.svc.UpdateSettings(r.Context(), req)
 	if err != nil {
 		refuseServiceError(w, "updateSettings", err)
@@ -510,6 +521,10 @@ func toContractSettings(s service.Settings) apicontract.SettingsResponse {
 			SafetyMarginBytes:    s.Capacity.SafetyMarginBytes,
 			BackupRoot:           s.Capacity.BackupRoot,
 			BackupRootConfigured: s.Capacity.BackupRootConfigured,
+		},
+		// The service-behaviour section, as the real host serves it.
+		Service: apicontract.ServiceSettings{
+			PollIntervalSeconds: int(s.Service.PollInterval / time.Second),
 		},
 	}
 	for _, t := range s.Retention.Tiers {
@@ -584,7 +599,27 @@ func toContractBackupSet(s service.BackupSet) apicontract.BackupSet {
 		// report a set as proven on the one path where it deliberately
 		// was not.
 		ConnectionUnverified: s.ConnectionUnverified,
+		// Issue #845: this set's own poll cadence, and the one actually
+		// in force. Both carried for the guard's reason, and the pair
+		// matters more than either alone: a fixture that reported the
+		// effective number as the override would show every set as
+		// pinning an interval, which is the exact confusion the
+		// nullable field exists to prevent.
+		PollIntervalSeconds:          contractSecondsOrNil(s.PollInterval),
+		EffectivePollIntervalSeconds: int(s.EffectivePollInterval / time.Second),
 	}
+}
+
+// contractSecondsOrNil mirrors apps/common/webhost's
+// secondsPointerFromDuration: a duration a set may not have at all
+// becomes a nullable number, so "inherits" stays distinguishable from
+// "polls at the same interval the deployment happens to use".
+func contractSecondsOrNil(d *time.Duration) *int {
+	if d == nil {
+		return nil
+	}
+	secs := int(*d / time.Second)
+	return &secs
 }
 
 // toContractTrustedHostKeys mirrors toBackupSetResponse's own loop,
@@ -652,6 +687,8 @@ func TestTheFixtureCarriesEveryFieldTheContractHas(t *testing.T) {
 		},
 		TrustedHostKeyRecordedAt: time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC),
 		ConnectionUnverified:     true,
+		PollInterval:             controlPollInterval(),
+		EffectivePollInterval:    7 * time.Minute,
 	}
 
 	// Nothing is exempt today, and that is the point of writing the list
@@ -673,6 +710,15 @@ func TestTheFixtureCarriesEveryFieldTheContractHas(t *testing.T) {
 			t.Errorf("toContractBackupSet drops %s, so every routed test in this package exercises an engine that does not report it and none exercises one that does. apps/common/webhost's toBackupSetResponse carries it, and a fixture that carries less than production is a different product", name)
 		}
 	}
+}
+
+// controlPollInterval is the fixture's per-set poll override. A helper
+// because the field is a pointer and a struct literal cannot take the
+// address of a constant, and a named one because "the control carries an
+// override" is the fact the guard above is checking.
+func controlPollInterval() *time.Duration {
+	d := 7 * time.Minute
+	return &d
 }
 
 // refuseServiceError maps a core/service refusal onto the status and code

@@ -72,8 +72,49 @@ type components struct {
 	Responses       map[string]json.RawMessage `json:"responses"`
 }
 
+// schemaType is a schema's "type", which OpenAPI 3.1 allows to be either
+// a single name or a list of them.
+//
+// The only list this contract is allowed to use is a nullable scalar,
+// ["integer","null"], and the restriction is the point: a property whose
+// value may be null is a fact both bindings have to carry (Go needs a
+// pointer, TypeScript needs `| null`), while a genuine union of two
+// value types is a shape neither binding can generate without inventing
+// a representation. Anything else is refused here rather than dropped,
+// for the reason refuseOneOf exists.
+type schemaType struct {
+	name     string
+	nullable bool
+}
+
+func (t *schemaType) UnmarshalJSON(b []byte) error {
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		t.name = one
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return fmt.Errorf("type must be a string or a list of strings, got %s", b)
+	}
+	for _, n := range many {
+		if n == "null" {
+			t.nullable = true
+			continue
+		}
+		if t.name != "" {
+			return fmt.Errorf(`type %s names two value types; this contract supports only ["<type>","null"]`, b)
+		}
+		t.name = n
+	}
+	if t.name == "" {
+		return fmt.Errorf(`type %s names no value type`, b)
+	}
+	return nil
+}
+
 type schema struct {
-	Type        string             `json:"type"`
+	Type        schemaType         `json:"type"`
 	Description string             `json:"description"`
 	Format      string             `json:"format"`
 	Enum        []string           `json:"enum"`
@@ -309,7 +350,7 @@ func refName(s *schema) string {
 func objectSchemaNames(doc document) []string {
 	var out []string
 	for name, s := range doc.Components.Schemas {
-		if s.Type == "object" || len(s.AllOf) > 0 {
+		if s.Type.name == "object" || len(s.AllOf) > 0 {
 			out = append(out, name)
 		}
 	}
@@ -392,7 +433,7 @@ func goType(doc document, s *schema) string {
 			}
 			return n
 		}
-		switch s.Type {
+		switch s.Type.name {
 		case "string":
 			return "string"
 		case "boolean":
@@ -411,10 +452,15 @@ func goType(doc document, s *schema) string {
 		case "array":
 			return "[]" + goType(doc, s.Items)
 		}
-		fatal("unsupported schema type %q", s.Type)
+		fatal("unsupported schema type %q", s.Type.name)
 		return ""
 	}()
-	if s.GoPointer {
+	// A nullable property is a pointer for the same reason an optional
+	// one is: nil is the only Go value that marshals back as the null the
+	// contract says this field carries. x-go-pointer says the same thing
+	// for a field that is merely absent, and a schema wearing both gets
+	// one pointer, not two.
+	if s.GoPointer || s.Type.nullable {
 		return "*" + base
 	}
 	return base
@@ -660,7 +706,20 @@ func wrapComment(text string) string {
 
 // -------------------------------------------------------------- TS output ---
 
+// tsType is the TypeScript spelling of a schema, with the null a nullable
+// property may carry spelled out in the type: a client that only knew the
+// field was optional would read a real null as "the server did not say",
+// and for poll_interval_seconds those are opposite configurations
+// ("inherits the deployment default" against "was not reported").
 func tsType(doc document, s *schema) string {
+	base := tsValueType(doc, s)
+	if s.Type.nullable {
+		return base + " | null"
+	}
+	return base
+}
+
+func tsValueType(doc document, s *schema) string {
 	if s.Ref != "" {
 		n := refName(s)
 		if n == "ApiErrorCode" {
@@ -668,7 +727,7 @@ func tsType(doc document, s *schema) string {
 		}
 		return "Wire" + n
 	}
-	switch s.Type {
+	switch s.Type.name {
 	case "string":
 		if len(s.Enum) > 0 {
 			quoted := make([]string, 0, len(s.Enum))
@@ -689,7 +748,7 @@ func tsType(doc document, s *schema) string {
 		}
 		return inner + "[]"
 	}
-	fatal("unsupported schema type %q", s.Type)
+	fatal("unsupported schema type %q", s.Type.name)
 	return ""
 }
 

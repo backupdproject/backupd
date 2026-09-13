@@ -78,7 +78,9 @@ func TestDaemon_NeverOverlapsCycles(t *testing.T) {
 	base := openJournal(t)
 	journal := &slowJournal{Journal: base, delay: 40 * time.Millisecond}
 
-	svc := New(testConfig(t, testSource("production", bs)), journal, tr, nil)
+	cfg := testConfig(t, testSource("production", bs))
+	cfg.PollInterval = config.Duration(10 * time.Millisecond)
+	svc := New(cfg, journal, tr, nil)
 	svc.Now = fixedNow(epoch)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 220*time.Millisecond)
@@ -87,7 +89,7 @@ func TestDaemon_NeverOverlapsCycles(t *testing.T) {
 	// A 10ms poll_interval against ~40ms-per-ListByBackupSet-call cycles:
 	// if Daemon ever let cycles overlap, maxInFlight would climb well past
 	// 1 over a 220ms run.
-	if err := svc.Daemon(ctx, 10*time.Millisecond); err != nil {
+	if err := svc.Daemon(ctx); err != nil {
 		t.Fatalf("Daemon: %v", err)
 	}
 
@@ -110,13 +112,15 @@ func TestDaemon_RepeatsAtPollInterval(t *testing.T) {
 	var cycles int32
 	countJournal := &countingCyclesJournal{Journal: openJournal(t), cycles: &cycles}
 
-	svc := New(testConfig(t, testSource("production", bs)), countJournal, tr, nil)
+	cfg := testConfig(t, testSource("production", bs))
+	cfg.PollInterval = config.Duration(20 * time.Millisecond)
+	svc := New(cfg, countJournal, tr, nil)
 	svc.Now = fixedNow(epoch)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 130*time.Millisecond)
 	defer cancel()
 
-	if err := svc.Daemon(ctx, 20*time.Millisecond); err != nil {
+	if err := svc.Daemon(ctx); err != nil {
 		t.Fatalf("Daemon: %v", err)
 	}
 
@@ -152,14 +156,16 @@ func TestDaemon_StopsOnCancellation(t *testing.T) {
 	tr.put("backup.dump", "daemon payload", epoch.Unix())
 
 	journal := openJournal(t)
-	svc := New(testConfig(t, testSource("production", bs)), journal, tr, nil)
+	cfg := testConfig(t, testSource("production", bs))
+	cfg.PollInterval = config.Duration(time.Hour)
+	svc := New(cfg, journal, tr, nil)
 	svc.Now = fixedNow(epoch)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled before Daemon is ever called
 
 	done := make(chan error, 1)
-	go func() { done <- svc.Daemon(ctx, time.Hour) }()
+	go func() { done <- svc.Daemon(ctx) }()
 
 	select {
 	case err := <-done:
@@ -171,12 +177,16 @@ func TestDaemon_StopsOnCancellation(t *testing.T) {
 	}
 }
 
-// TestDaemon_RejectsNonPositiveInterval is a small argument-validation
-// check: interval <= 0 has no sensible meaning for "repeat this cycle
-// every interval" and must be refused before the loop ever starts.
-func TestDaemon_RejectsNonPositiveInterval(t *testing.T) {
+// TestDaemon_RejectsNonPositivePollInterval is a small
+// configuration-validation check: a poll_interval of zero or less has no
+// sensible meaning for "repeat this cycle every interval" and must be
+// refused before the loop ever starts. config.Validate refuses it too,
+// but a Service built in memory never went through Validate, and a loop
+// that busy-spun on a zero interval is the worst possible way to find
+// that out.
+func TestDaemon_RejectsNonPositivePollInterval(t *testing.T) {
 	svc := New(&config.Config{}, openJournal(t), nil, nil)
-	if err := svc.Daemon(context.Background(), 0); err == nil {
-		t.Error("Daemon(ctx, 0) = nil error, want an error")
+	if err := svc.Daemon(context.Background()); err == nil {
+		t.Error("Daemon on a config with no poll_interval = nil error, want an error")
 	}
 }

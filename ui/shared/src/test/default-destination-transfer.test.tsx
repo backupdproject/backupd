@@ -106,8 +106,9 @@ function settingsFixture(mediums: StorageMedium[]): AppSettings {
       capBytes: 0, warningFreeBytes: 0, criticalFreeBytes: 0, safetyMarginBytes: 0,
       backupRoot: "/srv/backups", backupRootConfigured: false
     },
+    service: { pollIntervalSeconds: 900 },
     mediums,
-    schema: { retention: SCHEMA, storage: STORAGE }
+    schema: { retention: SCHEMA, storage: STORAGE, service: { minPollIntervalSeconds: 60 } }
   };
 }
 

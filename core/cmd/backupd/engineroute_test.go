@@ -487,3 +487,99 @@ func TestAWindowTheWireCannotCarryIsRefusedRatherThanTruncated(t *testing.T) {
 		t.Errorf("the create was sent anyway; a value the wire cannot carry has to be refused before the wire: %v", engine.requests())
 	}
 }
+
+// TestEngineRouteCarriesThePollIntervalBothWays is issue #845 across this
+// seam.
+//
+// A cadence is a configuration write like any other, so in
+// engine-attached mode it has to go through this adapter -- and an
+// adapter that simply does not mention a field neither fails nor
+// compiles differently: it reports success for a write the engine never
+// heard about, and reports a zero cadence for a set that has one. Both
+// directions are asserted here, for the global default and the per-set
+// override, against the engine's own state rather than the answer the
+// route echoed back.
+func TestEngineRouteCarriesThePollIntervalBothWays(t *testing.T) {
+	cliConfig := writeTestConfig(t)
+	engine := startFakeEngineFor(t, cliConfig)
+	engine.attach(t)
+
+	client, err := dialEngine()
+	if err != nil {
+		t.Fatalf("dialEngine: %v", err)
+	}
+	route := &engineRoute{client: client}
+	ctx := t.Context()
+
+	fortyFive := 45 * time.Minute
+	settings, err := route.UpdateSettings(ctx, service.UpdateSettingsRequest{
+		Service: &service.ServiceUpdate{PollInterval: &fortyFive},
+	})
+	if err != nil {
+		t.Fatalf("UpdateSettings through the engine: %v", err)
+	}
+	if settings.Service.PollInterval != fortyFive {
+		t.Errorf("the routed answer reports a %s poll interval, want 45m0s: the response mapping drops the service section, so a routed `settings show` reports no cadence at all", settings.Service.PollInterval)
+	}
+	held, err := engine.svc.Settings(ctx)
+	if err != nil {
+		t.Fatalf("reading the engine's settings back: %v", err)
+	}
+	if held.Service.PollInterval != fortyFive {
+		t.Errorf("the engine's poll interval is %s after a routed save of 45m0s: the write was dropped on the way out and reported as a success", held.Service.PollInterval)
+	}
+
+	// The read direction on its own, since a `settings show` beside a
+	// running engine takes this path and nothing else.
+	read, err := route.Settings(ctx)
+	if err != nil {
+		t.Fatalf("Settings through the engine: %v", err)
+	}
+	if read.Service.PollInterval != fortyFive {
+		t.Errorf("a routed settings read reports a %s poll interval, want 45m0s", read.Service.PollInterval)
+	}
+
+	five := 5 * time.Minute
+	set, err := route.UpdateBackupSet(ctx, cliSet, service.UpdateBackupSetRequest{PollInterval: &five})
+	if err != nil {
+		t.Fatalf("UpdateBackupSet through the engine: %v", err)
+	}
+	if set.PollInterval == nil || *set.PollInterval != five {
+		t.Errorf("the routed answer reports an override of %v, want 5m0s", set.PollInterval)
+	}
+	if set.EffectivePollInterval != five {
+		t.Errorf("the routed answer reports an effective cadence of %s, want the override's 5m0s", set.EffectivePollInterval)
+	}
+	heldSet, err := engine.svc.GetBackupSet(ctx, cliSet)
+	if err != nil {
+		t.Fatalf("reading the engine's backup set back: %v", err)
+	}
+	if heldSet.PollInterval == nil || *heldSet.PollInterval != five {
+		t.Errorf("the engine's override is %v after a routed save of 5m0s: the write was dropped", heldSet.PollInterval)
+	}
+
+	// Zero is "inherit again" on this field, and it has to survive the
+	// trip as a zero rather than as an omission, or the one way back to
+	// the deployment default is the one edit this route cannot make.
+	zero := time.Duration(0)
+	set, err = route.UpdateBackupSet(ctx, cliSet, service.UpdateBackupSetRequest{PollInterval: &zero})
+	if err != nil {
+		t.Fatalf("UpdateBackupSet (clear) through the engine: %v", err)
+	}
+	if set.PollInterval != nil {
+		t.Errorf("the set still overrides with %v after a routed clear", set.PollInterval)
+	}
+	if set.EffectivePollInterval != fortyFive {
+		t.Errorf("after a routed clear the effective cadence is %s, want the deployment's 45m0s", set.EffectivePollInterval)
+	}
+
+	// A cadence the wire cannot carry is refused here, before the
+	// request, exactly like the two completion windows: the contract
+	// carries whole seconds, and a value that changed on the way would be
+	// two deployments running different schedules while both reported
+	// success.
+	odd := 90*time.Second + 500*time.Millisecond
+	if _, err := route.UpdateBackupSet(ctx, cliSet, service.UpdateBackupSetRequest{PollInterval: &odd}); err == nil {
+		t.Error("a sub-second poll interval was sent to the engine; the wire carries whole seconds, so it would arrive as a different cadence from the one asked for")
+	}
+}

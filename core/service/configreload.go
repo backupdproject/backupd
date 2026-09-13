@@ -42,6 +42,18 @@ import (
 // one with a step the others needed too (see the removal holds below),
 // and seven files is not a place to keep a step. One place is.
 //
+// # The poll schedule across the swap
+//
+// The new Service adopts the schedule the old one is keeping
+// (AdoptPollSchedule, internal/app/pollschedule.go) BEFORE it is stored,
+// not after. Between the store and the adoption the running scheduler
+// loop can already have loaded the new Service, and a Service that has
+// not adopted yet believes nothing has ever been polled: it would poll
+// every source in the deployment, on the next wake, because somebody
+// saved a setting. Adoption is also a pointer share rather than a copy,
+// so an attempt the in-flight cycle records against the OLD Service
+// after this line still counts -- see AdoptPollSchedule's own doc.
+//
 // # Alerting across the swap
 //
 // Alerting is re-decided from the configuration file the caller just
@@ -89,8 +101,16 @@ func (b *BackupService) adoptConfig(cfg *config.Config) string {
 	if !newInner.AdoptAlerts(prevInner.Alerts) && b.alertSink != nil {
 		newInner.EnableAlerts(sinkAdapter{sink: b.alertSink})
 	}
+	// Before the store, deliberately: see this function's doc.
+	newInner.AdoptPollSchedule(prevInner)
 	revision := computeConfigRevision(cfg)
 	b.state.Store(&configState{inner: newInner, revision: revision})
 	b.holds.forgetRemovedNamedIn(cfg)
+	// Last, once everything a woken loop would read is in place: the
+	// scheduler is asleep on a timer computed from the configuration this
+	// call just replaced, and that timer can be a day long
+	// (scheduler.go). Telling it now is what makes "in effect now, with
+	// no restart" true of the cadence and not only of the file.
+	b.notifyConfigChanged()
 	return revision
 }

@@ -42,21 +42,64 @@ import (
 // every future tick and every future operator-submitted run waiting on a
 // lock nothing will ever release.
 
-// PollInterval reports the poll_interval this BackupService was
-// configured with (config.Config.PollInterval), the same value
-// cmd/backupd's own `daemon` command reads directly off a
-// *config.Config it constructed itself - a shortcut apps/ has no
-// equivalent for, since it cannot import internal/config at all (§7.2).
-// A caller composing this BackupService with an HTTP API (the generic
-// Web host's `serve` command) needs this to drive RunOnSchedule at the
-// operator's own configured cadence, rather than inventing a second,
-// possibly-drifting interval of its own.
+// PollInterval reports the deployment-wide poll_interval this
+// BackupService is currently running (config.Config.PollInterval), read
+// off the live configuration so a settings save is reflected
+// immediately rather than at the next restart.
+//
+// It is the DEPLOYMENT's default, not the loop's cadence: since issue
+// #845 a backup set may poll on its own interval, so the loop sleeps to
+// the earliest deadline across the sets (nextPollWake below) and decides
+// per set what is due. Nothing drives a schedule off this value any
+// more; it is reported for surfaces that want to show the operator what
+// the default is.
 func (b *BackupService) PollInterval() time.Duration {
-	return b.pollInterval
+	return b.state.Load().inner.Config.PollInterval.Duration()
 }
 
-// RunOnSchedule repeats one internal/app.Service.RunCycle pass at the
-// given interval until ctx is done, the same repeated-cycle shape
+// nextPollWake is how long the loop below sleeps before its next pass:
+// the earliest moment any enabled backup set is due again
+// (internal/app's NextPollWake), read from the live configuration and
+// the live schedule on every pass.
+//
+// Deadlines rather than a fixed sleep of the tightest configured
+// interval, for the reason NextPollWake's own doc gives: a fixed sleep
+// rounds every other cadence up to a multiple of itself, so a set asking
+// for 7 minutes under a 5 minute wake is polled every 10.
+//
+// Re-reading is the whole reason this is a method rather than a value
+// captured when the loop started. "Editable in Settings" has to mean the
+// cadence changes, and a loop holding the number it was born with would
+// have answered 200 to the save and gone on ticking at the old rate.
+func (b *BackupService) nextPollWake() time.Duration {
+	return b.state.Load().inner.NextPollWake(now())
+}
+
+// notifyConfigChanged tells a sleeping loop that the configuration it
+// computed its current sleep from is no longer the running one. It never
+// blocks: see BackupService.configChanged.
+func (b *BackupService) notifyConfigChanged() {
+	select {
+	case b.configChanged <- struct{}{}:
+	default:
+	}
+}
+
+// scheduleTimer is the loop's sleep, as a seam.
+//
+// A test asserting that a save reaches a SLEEPING loop has to be able to
+// see a sleep abandoned, and the sleeps this loop takes are measured in
+// minutes and hours: waiting one out is not an option, and shortening
+// every fixture until it is would be testing a cadence no deployment
+// runs.
+var scheduleTimer = func(d time.Duration) (<-chan time.Time, func() bool) {
+	timer := time.NewTimer(d)
+	return timer.C, timer.Stop
+}
+
+// RunOnSchedule repeats one internal/app.Service.RunCycle pass until ctx
+// is done, at the cadence the running configuration asks for — the same
+// repeated-cycle shape
 // internal/app.Service.Daemon already gives cmd/backupd's own
 // `daemon` command — but reachable from apps/ (core/internal is not,
 // docs/EPIC-B-multi-nas.md §7.2), which is what a process composing this
@@ -94,9 +137,29 @@ func (b *BackupService) PollInterval() time.Duration {
 // server's own graceful shutdown, which is what §9.3's "share ... a
 // process shutdown context" actually means in practice: both halves stop
 // because the same ctx was canceled, not because one tells the other to.
-func (b *BackupService) RunOnSchedule(ctx context.Context, interval time.Duration) error {
-	if interval <= 0 {
-		return fmt.Errorf("service: RunOnSchedule needs a positive poll interval, got %s", interval)
+//
+// # Where the cadence comes from (issue #845)
+//
+// It used to be an argument, and cannot be any more: a backup set may
+// override the deployment-wide poll_interval, so the cadence is a
+// property of the whole configuration rather than one number a caller
+// could hold. Each pass is marked as a scheduled cycle so internal/app
+// decides per set which ones are due, and the sleep between passes is
+// the earliest of those sets' deadlines (nextPollWake above), recomputed
+// every pass. A wake on which no set is due does nothing at all.
+//
+// # A save reaches a sleeping loop
+//
+// The sleep is abandoned when the configuration changes, rather than run
+// out first. This is what the Settings page's "in effect now, with no
+// restart" means for the cadence specifically: a deployment moved from
+// daily to hourly has a loop sitting in a timer that is up to a day
+// long, and waiting that out before honouring the save would make the
+// page's sentence false for exactly as long as the old interval. So
+// adoptConfig signals (configreload.go) and this loop recomputes.
+func (b *BackupService) RunOnSchedule(ctx context.Context) error {
+	if interval := b.PollInterval(); interval <= 0 {
+		return fmt.Errorf("service: RunOnSchedule needs a positive poll_interval, got %s", interval)
 	}
 
 	// Work Package 3.5's alerting pass runs on its own timer beside this
@@ -105,14 +168,16 @@ func (b *BackupService) RunOnSchedule(ctx context.Context, interval time.Duratio
 	// its end, and neither does a tick this loop skipped because an
 	// API-submitted operation is stuck holding runOnce - both of which are
 	// exactly "the manager is up and not producing backups", the situation
-	// the stale alert exists to report. It shares this loop's interval
-	// rather than inventing a second cadence, and stops when ctx does; the
-	// deferred receive keeps this method from returning while it is still
-	// running.
+	// the stale alert exists to report. It runs at the DEPLOYMENT's
+	// poll_interval rather than at this loop's wake interval: it reports
+	// on the manager rather than on any one source, so one set asking to
+	// be polled every minute is not a reason to rebuild a health report
+	// every minute. It stops when ctx does; the deferred receive keeps
+	// this method from returning while it is still running.
 	alertsStopped := make(chan struct{})
 	go func() {
 		defer close(alertsStopped)
-		b.runAlertTicks(ctx, interval)
+		b.runAlertTicks(ctx, b.PollInterval())
 	}()
 	defer func() { <-alertsStopped }()
 
@@ -123,12 +188,36 @@ func (b *BackupService) RunOnSchedule(ctx context.Context, interval time.Duratio
 			return nil
 		}
 
-		timer := time.NewTimer(interval)
+		if !b.sleepUntilDue(ctx) {
+			return nil
+		}
+	}
+}
+
+// sleepUntilDue waits out the gap to the next due backup set, and reports
+// false when ctx ended instead. A configuration change does not end the
+// wait: it restarts it, against the configuration that just landed,
+// because the sleep in hand was computed from one that is no longer
+// running.
+//
+// Re-arming rather than returning is what keeps a settings page from
+// driving cycles. The Web UI saves a box at a time, so a single visit is
+// several configuration writes in a row, and a loop that ran a pass for
+// each of them would turn editing a form into a burst of scheduled
+// cycles. Nothing is lost by not running one here: if the new
+// configuration has made a set due, the sleep this computes is the floor
+// (NextPollWake's minimum) and the pass follows in seconds.
+func (b *BackupService) sleepUntilDue(ctx context.Context) bool {
+	for {
+		fire, stop := scheduleTimer(b.nextPollWake())
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-			return nil
-		case <-timer.C:
+			stop()
+			return false
+		case <-b.configChanged:
+			stop()
+		case <-fire:
+			return true
 		}
 	}
 }
@@ -204,10 +293,16 @@ func (b *BackupService) runScheduledCycle(ctx context.Context) {
 	// operator looking at a dashboard is most likely to be watching.
 	b.activity.beginCycle()
 	defer b.activity.endCycle()
+	// WithScheduledCycle is what makes the per-set poll cadence real
+	// (issue #845): internal/app processes only the sets whose own
+	// interval has elapsed on a cycle marked this way, and every enabled
+	// set on one that is not. An operator-submitted run (executeRunCycle,
+	// operations.go) deliberately carries no such mark.
 	runCycle(b.state.Load().inner,
-		app.WithBackupSetHolds(
-			app.WithProgressObserver(ctx, progressFanout{b.cycleWatch, b.activity}),
-			b.holds))
+		app.WithScheduledCycle(
+			app.WithBackupSetHolds(
+				app.WithProgressObserver(ctx, progressFanout{b.cycleWatch, b.activity}),
+				b.holds)))
 }
 
 // runAlertTicks repeats one out-of-cycle alerting pass at interval until

@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/backupdproject/backupd/apps/common/auth/local"
 	"github.com/backupdproject/backupd/apps/common/webhost"
@@ -164,21 +163,15 @@ func (e *FirstRunEngine) Close() error {
 	return a.cleanup()
 }
 
-// PollInterval satisfies Scheduler. It is never the interval actually
-// used: there is no configuration to read one from until activation, so
-// RunOnSchedule below reads the real value off the activated backend
-// instead of trusting what RunEngine passes it. Zero is returned rather
-// than a guess, so nothing can silently schedule on a made-up interval.
-func (e *FirstRunEngine) PollInterval() time.Duration { return 0 }
-
 // RunOnSchedule satisfies Scheduler by waiting for activation and then
-// delegating to the real backend's own loop, on its own configured
-// interval. A process that is shut down before it is ever configured
-// returns nil: never having been configured is not a scheduler failure.
+// delegating to the real backend's own loop, which reads its cadence off
+// the configuration that activation just wrote. A process that is shut
+// down before it is ever configured returns nil: never having been
+// configured is not a scheduler failure.
 //
-// The interval argument is deliberately ignored, for the reason
-// PollInterval gives above.
-func (e *FirstRunEngine) RunOnSchedule(ctx context.Context, _ time.Duration) error {
+// There is nothing to schedule before activation, and nothing to read a
+// cadence from either, which is why waiting is the whole implementation.
+func (e *FirstRunEngine) RunOnSchedule(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return nil
@@ -192,7 +185,7 @@ func (e *FirstRunEngine) RunOnSchedule(ctx context.Context, _ time.Duration) err
 		// case already describes a host with nothing to tick.
 		return nil
 	}
-	return scheduler.RunOnSchedule(ctx, scheduler.PollInterval())
+	return scheduler.RunOnSchedule(ctx)
 }
 
 // newEngineHandler is NewEngine's body, with the backend and the

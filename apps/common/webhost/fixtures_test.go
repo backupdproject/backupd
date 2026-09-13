@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
@@ -1461,6 +1462,22 @@ func newBackupSetFakeBackend() *backupSetFakeBackend {
 // replacing the stored set wholesale: a field the request left nil must
 // stay exactly as it was, or a handler that quietly filled in everything
 // would look correct here.
+// setPollInterval arranges one stored set's poll-interval override and
+// the interval that is therefore in force, which the real service
+// resolves from the deployment's configuration (issue #845).
+func (f *backupSetFakeBackend) setPollInterval(t *testing.T, id string, override *time.Duration, effective time.Duration) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	set, ok := f.sets[id]
+	if !ok {
+		t.Fatalf("no seeded backup set %q", id)
+	}
+	set.PollInterval = override
+	set.EffectivePollInterval = effective
+	f.sets[id] = set
+}
+
 func (f *backupSetFakeBackend) UpdateBackupSet(_ context.Context, id string, req service.UpdateBackupSetRequest) (service.BackupSet, error) {
 	f.mu.Lock()
 	f.lastUpdateReq = req

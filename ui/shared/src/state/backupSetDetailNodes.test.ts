@@ -27,6 +27,7 @@ const SET_V1: BackupSet = {
   remoteFolder: "/backups/postgresql/", includePatterns: ["*.dump.zst"],
   excludePatterns: ["*.tmp"], completionMethod: "completion-marker", stableForSeconds: 0,
   destination: "/data/backups/production/postgres/", retentionIsOverride: false,
+  pollIntervalSeconds: null, effectivePollIntervalSeconds: 900,
   validations: ["transfer", "checksum"],
   state: "healthy",
   stateNote: "Verified nightly dump.",

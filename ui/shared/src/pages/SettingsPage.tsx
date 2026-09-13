@@ -33,6 +33,7 @@ import { apiErrorOf, describeFailure } from "@shared/api/failure";
 import type { OperatorFailure } from "@shared/api/failure";
 import { RetentionPolicyCard } from "@shared/pages/RetentionPolicyCard";
 import { CapacityCard } from "@shared/pages/CapacityCard";
+import { ServiceBehaviourCard } from "@shared/pages/ServiceBehaviourCard";
 import { StorageDestinationsCard } from "@shared/pages/StorageDestinationsCard";
 import { HelpField } from "@shared/components/FieldHelp";
 import { PasswordInput } from "@shared/components/PasswordInput";
@@ -90,15 +91,18 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.3fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* Issue #299: this used to be a "Service" card holding two
-              decorative controls, "Polling interval" (15/30/60 SECONDS)
-              and "Log level" — both `defaultValue`, no `onChange`, nothing
-              saved. Removed rather than wired: the real `poll_interval`
-              config key is a duration (minutes, defaults to 15m) so this
-              control was even answering the wrong unit, and there is no
-              log-level concept anywhere in config.Config to wire the
-              second one to. `poll_interval` is still real and still
-              editable — just directly in config.yaml, not here. */}
+          {/* Issue #845. A "Service" card stood here once (#299) holding
+              two decorative controls — a "Polling interval" picklist in
+              the wrong unit (15/30/60 SECONDS against a config key that
+              is a duration in minutes) and a "Log level" with no config
+              key behind it at all. Both were removed rather than wired,
+              and the note left here said poll_interval was still only
+              editable in config.yaml. It is not: this card is the real
+              thing, in the real unit, and the engine reads its cadence
+              from the running configuration on every wake. There is
+              still no log-level concept in config.Config, so the second
+              control has not come back. */}
+          <ServiceBehaviourCard readOnly={readOnly} />
 
           {/* Issue #286: the storage cap and its two FR-21 thresholds
               used to sit here as three decorative controls that saved

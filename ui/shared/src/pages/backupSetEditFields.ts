@@ -57,7 +57,8 @@ export type EditFieldKey =
   | "localPath"
   | "include"
   | "completion"
-  | "stableFor";
+  | "stableFor"
+  | "pollInterval";
 
 export interface ParsedField {
   /** The patch this field contributes, or undefined when `error` is set. */
@@ -83,6 +84,11 @@ export interface EditField {
    *  input with that HTML input type. */
   control: "text" | "number" | "select";
   options?: { value: string; label: string }[];
+  /** Placeholder text for the box, computed from the set it was loaded
+   *  from. Only for a field whose EMPTY value means something specific
+   *  ("inherit the deployment's interval"), where a blank box with no
+   *  placeholder would read as a value nobody has set. */
+  placeholder?(set: BackupSet): string;
   /** When present, this field is only rendered (and only dirty-checked,
    *  and only ever saved) while it returns true for the CURRENT draft.
    *  The draft rather than the persisted set, so choosing a completion
@@ -291,6 +297,48 @@ export const EDIT_FIELDS: EditField[] = [
         return { error: "Stable for must be a whole number of seconds greater than zero." };
       }
       return { patch: { stableForSeconds: value } };
+    }
+  },
+  {
+    key: "pollInterval",
+    label: "Polling interval (minutes)",
+    help: FIELD_HELP.editSetPollInterval,
+    control: "number",
+    // EMPTY IS A VALUE HERE, and the only one that means "inherit":
+    // `read` gives back "" for a set with no override rather than the
+    // deployment's number, because a box pre-filled with the inherited
+    // value would turn the next Save into an explicit override and
+    // detach this set from a default it was tracking.
+    // It divides rather than rounds, for the same reason it does not
+    // pre-fill: the box has to hold what this set is actually
+    // configured with. The wire is seconds and the engine's floor is
+    // sixty of them, so ninety is a legal override a hand-edited file
+    // can carry, and a box that drew it as "2" would rewrite it to 120
+    // the next time this field was saved.
+    read: (s) => (s.pollIntervalSeconds === null ? "" : String(s.pollIntervalSeconds / 60)),
+    // The placeholder is what tells an operator what inheriting
+    // currently gets them. It is read off the set's own effective
+    // interval, which for an inheriting set IS the deployment's, so the
+    // form never has to fetch the settings to label its own empty box.
+    placeholder: (s) => "Inherit global (" + Math.round(s.effectivePollIntervalSeconds / 60) + "m)",
+    parse: (raw) => {
+      const trimmed = raw.trim();
+      // Zero is the wire's spelling of "inherit again" (the server
+      // refuses any real interval under a minute, so zero cannot collide
+      // with one), which is what an emptied box asks for.
+      if (trimmed === "") return { patch: { pollIntervalSeconds: 0 } };
+      const value = Number(trimmed);
+      // Caught here because there is no request that expresses it: a
+      // value that does not land on whole seconds cannot cross a wire
+      // that carries seconds, one under the engine's own floor is
+      // refused there anyway, and NaN would serialise as null and read
+      // as "leave it alone", which is a silent no-op reported as a
+      // success.
+      const seconds = Math.round(value * 60);
+      if (!Number.isFinite(value) || Math.abs(value * 60 - seconds) > 1e-6 || seconds < 60) {
+        return { error: "Enter an interval of at least 1 minute that lands on whole seconds — or clear the box to follow the deployment's interval." };
+      }
+      return { patch: { pollIntervalSeconds: seconds } };
     }
   }
 ];

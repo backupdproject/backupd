@@ -93,6 +93,25 @@ type UpdateBackupSetRequest struct {
 
 	StaleAfter *time.Duration
 
+	// PollInterval changes how often this set's source is checked for
+	// new backup files (issue #845), overriding the deployment-wide
+	// poll_interval for this set alone.
+	//
+	// nil leaves it exactly as it is, like every other field here. An
+	// explicit ZERO is the spelling of "inherit the deployment's again",
+	// and it is unambiguous rather than a convention: poll_interval has
+	// a floor (config.MinPollInterval), so zero is not a cadence anyone
+	// could be asking for, and reading it as an omission would leave a
+	// set no way to give an override back through this request.
+	//
+	// The whole-policy argument backupsetretention.go makes for
+	// retention -- that "inherit again" needs its own named operation --
+	// does not reach here, and the difference is the shape of the value:
+	// a retention override is a chain of arbitrary length whose emptiness
+	// already means something else, while this is one number with an
+	// impossible value available to mean "none".
+	PollInterval *time.Duration
+
 	// SSHKeyID replaces the key this backup set authenticates with, by
 	// the id an earlier ImportSSHKey call returned (issue #572). A
 	// reference, never key material, exactly as on the create path: a
@@ -188,7 +207,8 @@ func (r UpdateBackupSetRequest) isEmpty() bool {
 		r.RemotePath == nil && r.LocalPath == nil && r.Include == nil &&
 		r.CompletionStrategy == nil && r.StableFor == nil &&
 		r.StaleAfter == nil && r.ValidatorID == nil &&
-		r.SSHKeyID == nil && r.KnownHostsLine == nil
+		r.SSHKeyID == nil && r.KnownHostsLine == nil &&
+		r.PollInterval == nil
 }
 
 // UpdateBackupSet applies req to the backup set named by id ("source/name"),
@@ -459,7 +479,7 @@ func (b *BackupService) UpdateBackupSet(ctx context.Context, id string, req Upda
 
 	b.adoptConfig(cfg)
 
-	return toServiceBackupSet(b.configPath, sourceName, findBackupSet(cfg, sourceName, setName)), nil
+	return toServiceBackupSet(cfg, b.configPath, sourceName, findBackupSet(cfg, sourceName, setName)), nil
 }
 
 // findBackupSetPointer returns a pointer INTO cfg for the named backup
@@ -536,6 +556,18 @@ func applyBackupSetUpdate(bs config.BackupSet, req UpdateBackupSetRequest) confi
 	}
 	if req.StaleAfter != nil {
 		bs.StaleAfter = config.Duration(*req.StaleAfter)
+	}
+	// Zero clears the override, so the set inherits the deployment's
+	// poll_interval again, and the key leaves the operator's file
+	// entirely (omitempty on the config field). See the request field's
+	// own doc for why zero can carry that meaning here.
+	if req.PollInterval != nil {
+		if *req.PollInterval == 0 {
+			bs.PollInterval = nil
+		} else {
+			d := config.Duration(*req.PollInterval)
+			bs.PollInterval = &d
+		}
 	}
 	if req.ValidatorID != nil {
 		bs.Validation.ValidatorID = string(*req.ValidatorID)

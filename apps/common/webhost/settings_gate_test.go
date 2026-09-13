@@ -402,6 +402,28 @@ var settingsWriteSurface = map[string]string{
 	"Capacity.WarningFreeBytes":  "the level at which a reading is reported as WARNING. Purely a report: internal/capacity never refuses on a warning, and nothing acts on one unattended.",
 	"Capacity.CriticalFreeBytes": "the floor at or below which a transfer is REFUSED. Refusing a transfer leaves the remote copy in place and the local one untouched; FR-21's second rule is that a full disk is never made room for by deleting anything.",
 	"Capacity.SafetyMarginBytes": "extra headroom held back before a transfer is admitted. Same direction as the floor: it can only make an admission stricter.",
+
+	// Issue #845's service-behaviour block. This is the first field on
+	// this surface the SCHEDULER itself reads to decide when to act, so
+	// #171's question has to be answered directly rather than by
+	// pointing at plan-bound apply: what a cycle does is reconcile,
+	// discover, transfer, verify, commit and -- for a set that is not
+	// read-only -- delete the REMOTE copy FR-15 already authorises
+	// deleting once the local one is durable. Changing how often that
+	// happens changes the rate, never the rule: no value here widens
+	// what any pass is allowed to delete, and none of them reaches
+	// internal/retention's apply path, which this module cannot import
+	// at all.
+	//
+	// The direction a hostile value moves the product in is bounded on
+	// both sides. Too long is fewer passes -- backups are taken later,
+	// which is an availability fault and a visible one (FR-24's
+	// staleness, and the alerting pass that reports a manager producing
+	// nothing). Too short is refused outright: config.MinPollInterval is
+	// a floor config.Validate enforces on the same value whether it
+	// arrives through this route or through a hand-edited config.yaml,
+	// so this field cannot be used to hammer a source host.
+	"Service.PollInterval": "the deployment-wide DEFAULT cadence the scheduler wakes and polls sources at (config.Config.PollInterval; a backup set may override it for itself). Read by the scheduler loop and by nothing that deletes: it decides HOW OFTEN a pass runs, never what a pass is permitted to do. config.Validate holds it to a positive duration of at least config.MinPollInterval, so it can neither stop the loop nor spin it.",
 }
 
 // TestTheSettingsWriteSurfaceReachesNothingButRetention is the structural

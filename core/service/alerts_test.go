@@ -294,10 +294,17 @@ func TestRunOnSchedule_AlertsWhileACycleIsStuck(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// The loop reads its cadence off the running configuration since
+	// issue #845, and config.Validate will not accept a millisecond
+	// poll_interval in a file (config.MinPollInterval), so the in-memory
+	// copy is what this test winds down. It is the same in-memory reach
+	// the Capacity line above already makes.
+	svc.state.Load().inner.Config.PollInterval = config.Duration(10 * time.Millisecond)
+
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		if err := svc.RunOnSchedule(ctx, 10*time.Millisecond); err != nil {
+		if err := svc.RunOnSchedule(ctx); err != nil {
 			t.Errorf("RunOnSchedule: %v", err)
 		}
 	}()
