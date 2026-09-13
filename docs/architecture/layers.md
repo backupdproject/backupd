@@ -25,6 +25,7 @@ them.
 | `api/` | the authoritative `/api/v1` contract that both the Go host and the shared UI are generated from |
 | `apps/common/webhost/` | the `/api/v1` host |
 | `apps/common/auth/` | the reusable local authentication service |
+| `apps/common/email/` | the SMTP sender the local authentication service's confirmation and password-reset mail goes out through |
 | `apps/common/csrf/` | the shared double-submit CSRF primitive |
 | `apps/common/platform/` | the `PlatformCapabilities` / `PlatformAdapter` **contract**, and the generic sink that consumes it |
 | `ui/shared/` | the one React/TypeScript UI |

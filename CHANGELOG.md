@@ -4,6 +4,56 @@
 
 ### Added
 
+- **The administrator account is recoverable, and enrolment is where that is
+  arranged** (#830). The one-time enrolment form now also takes a recovery email
+  address and the SMTP details to reach it, and the server sends a confirmation
+  message to that address, over exactly those details, *before* it writes the
+  administrator record: a send the mail server will not accept answers
+  `SMTP_SEND_FAILED`, creates no account, and leaves enrolment open. A recovery
+  address nobody has ever delivered to is worth nothing on the day it is needed,
+  and the day it is needed is the day nobody can sign in to configure it, so it is
+  verified on the day it is given. The username is unchanged as the login
+  identity; the address is an additional field on the same record.
+
+  What it buys is the sign-in page's new **Forgot password?**: it takes the
+  username alone and answers identically whether or not that name is the
+  administrator's — an endpoint that answered differently would tell an
+  unauthenticated caller what the account is called — and where it does match, a
+  single-use link valid for 30 minutes is mailed to the recovery address.
+  Completing the reset sets the new password and revokes every live session,
+  including the browser that asked, so the answer to a successful reset is the
+  sign-in page rather than a dashboard; a reset is also what an operator does when
+  they think somebody else holds a session, and one that left sessions running
+  would not be a recovery. The link is built from the same `PUBLIC_BASE_URL` the
+  enrolment notice already uses, which is worth setting properly at install time:
+  unlike the enrolment notice, nobody is reading a log to notice it points at
+  `localhost`.
+
+  The SMTP password is never persisted, logged or returned. `local-auth.json`
+  gains `recovery_email`, `recovery_email_confirmed_at` and an `smtp` object whose
+  password is held as a secret reference in the same form every other secret in
+  this project uses, and `GET /api/v1/auth/recovery` answers with no password
+  property at all and a `passwordSet` boolean in its place — absent rather than
+  masked, because a form that round-trips what it was served would otherwise write
+  the mask in as the new password. Both the address and the SMTP details are
+  editable afterwards from Settings' **Account recovery** card, with a test send
+  beside them, and changing the address re-verifies it by confirmation message
+  rather than trusting the new value.
+
+  Two smaller consequences. A *failed* enrolment no longer spends the bootstrap
+  token: it is consumed only on success, so a rejected password, a malformed
+  address or an SMTP server that would not accept the message all leave the same
+  `/enroll?token=…` link usable — correct the field and submit again, where a
+  too-short password used to burn the link and leave the operator restarting the
+  engine for a fresh one. And `backupd-web auth create-admin` takes the same
+  details as optional flags (`--recovery-email`, `--smtp-host`, `--smtp-port`,
+  `--smtp-security`, `--smtp-username`, `--smtp-password-stdin`, `--smtp-from`),
+  because a provisioning run in a pipeline often has no mail credential to give
+  and refusing to create the account there would buy no security; given an
+  endpoint it sends the same confirmation and fails the command if that send
+  fails, and given none it leaves recovery unconfigured for the operator to finish
+  in Settings.
+
 - **A backup set can name a subtree discovery must not walk into** (#737).
   `exclude_paths` on a backup set lists directories, relative to
   `remote_path`, that the listing skips: "recurse into `uploads/`, never into
