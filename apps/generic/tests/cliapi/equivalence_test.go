@@ -33,8 +33,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/backupdproject/backupd/apps/common/auth/local"
+	"github.com/backupdproject/backupd/apps/common/email/emailtest"
 	"github.com/backupdproject/backupd/apps/common/platform/profile"
 	"github.com/backupdproject/backupd/apps/common/webhost/serve"
 	"github.com/backupdproject/backupd/core/service"
@@ -250,9 +252,17 @@ func enroll(t *testing.T, authSvc *local.Service, client *http.Client, base stri
 	}
 	token := strings.Fields(notice.String()[i+len(marker):])[0]
 
+	// Enrollment sends a confirmation message and refuses if the send
+	// fails (#830), so it needs somewhere to send: an in-process SMTP
+	// sink on 127.0.0.1, started and stopped by this test
+	// (apps/common/email/emailtest). Never a real mail service.
+	sink := emailtest.Start(t)
+
 	// Generated nowhere near disk: this password exists for the length of
 	// this request and is never written, logged or asserted on.
-	payload := []byte(`{"username":"cliapi","password":"correct-horse-battery-staple"}`)
+	payload := []byte(fmt.Sprintf(
+		`{"username":"cliapi","password":"correct-horse-battery-staple","recoveryEmail":"cliapi@example.test","smtp":{"host":%q,"port":%d,"security":"none","username":"","from":"backupd@example.test"}}`,
+		sink.Host(), sink.Port()))
 	req, err := http.NewRequest(http.MethodPost, base+"/api/v1/auth/enroll", bytes.NewReader(payload))
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
@@ -270,6 +280,7 @@ func enroll(t *testing.T, authSvc *local.Service, client *http.Client, base stri
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("enroll returned %d: %s", resp.StatusCode, b)
 	}
+	sink.WaitForMessage(t, "backupd: verify your recovery email", 10*time.Second)
 }
 
 func normalise(in []verdict) []verdict {

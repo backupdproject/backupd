@@ -38,6 +38,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -964,7 +965,18 @@ func TestComposeStack_WebUIProxiesToTheEngineEndToEnd(t *testing.T) {
 	}
 	token := bootstrapTokenFromLogs(t, string(logs))
 
-	enrollBody := strings.NewReader(`{"username":"bm-admin","password":"correct-horse-battery"}`)
+	// #830: enrollment sends a confirmation message over the SMTP
+	// endpoint the request names and refuses if that send fails. The
+	// engine here is inside a container on the project's own private
+	// network, so a sink on THIS host is not reachable from it: the sink
+	// is a container of its own, joined to that same network, addressed
+	// by its container name. Ephemeral, removed by t.Cleanup, and
+	// swept on the way in by dockerlease like every other fixture here.
+	sinkHost, sinkAPI := startComposeMailSink(t, project)
+
+	enrollBody := strings.NewReader(fmt.Sprintf(
+		`{"username":"bm-admin","password":"correct-horse-battery","recoveryEmail":"admin@example.test","smtp":{"host":%q,"port":2500,"security":"none","username":"","from":"backupd@example.test"}}`,
+		sinkHost))
 	enrollReq, err := http.NewRequest(http.MethodPost, base+"/api/v1/auth/enroll", enrollBody)
 	if err != nil {
 		t.Fatalf("NewRequest enroll: %v", err)
@@ -981,6 +993,11 @@ func TestComposeStack_WebUIProxiesToTheEngineEndToEnd(t *testing.T) {
 	if enrollResp.StatusCode != http.StatusNoContent {
 		t.Fatalf("enroll via web-ui proxy status = %d, want %d; body=%s", enrollResp.StatusCode, http.StatusNoContent, enrollBodyBytes)
 	}
+
+	// The confirmation really left the engine's container and arrived at
+	// the sink: the 204 above already implies the send succeeded, and
+	// this is what proves the message exists and is the one it claims.
+	waitForSinkMessage(t, sinkAPI, "admin", "backupd: verify your recovery email")
 
 	versionResp, err := client.Get(base + "/api/v1/system/version")
 	if err != nil {
@@ -1022,4 +1039,102 @@ func bootstrapTokenFromLogs(t *testing.T, logs string) string {
 		t.Fatalf("could not parse token out of engine logs: %q", logs)
 	}
 	return fields[0]
+}
+
+// mailSinkAlias is the network alias the engine dials the sink at. Short
+// on purpose: a DNS label may not exceed 63 bytes, and this test's own
+// container names are longer than that.
+const mailSinkAlias = "mailsink"
+
+// startComposeMailSink runs an ephemeral SMTP sink container on project's
+// own private network and returns the hostname the engine reaches it at
+// (its container name, resolved by Docker's embedded DNS on a
+// user-defined network) plus the host-side base URL of its HTTP API, so
+// this test can read what arrived.
+//
+// The SMTP port is deliberately NOT published: nothing on this host has
+// any business submitting mail to it, and the only client that needs it
+// is the engine container sharing the network. The HTTP API is published
+// on 127.0.0.1 only.
+func startComposeMailSink(t *testing.T, project *composeProject) (host string, apiBase string) {
+	t.Helper()
+	dockerlease.Sweep()
+
+	name := "backupd-dockercli-mailsink-" + sanitizeProjectName(t.Name())
+	// A stale container from a killed run would hold the name, and the
+	// project network it is attached to would then also refuse to go
+	// away. Removing it first makes this re-runnable.
+	_ = exec.Command("docker", "rm", "-f", name).Run()
+
+	args := []string{
+		"run", "-d", "--name", name,
+		"--network", project.name + "_internal",
+		// A short, fixed DNS alias rather than the container name: the
+		// per-test container name runs well past a DNS label's 63-byte
+		// limit, so Docker's embedded resolver cannot answer for it and
+		// the engine's send fails with "no such host". The alias is what
+		// the engine actually dials.
+		"--network-alias", mailSinkAlias,
+		dockerlease.LabelFlag, dockerlease.LabelSpec,
+		"-p", "127.0.0.1::9000",
+		"inbucket/inbucket:latest",
+	}
+	if out, err := exec.Command("docker", args...).CombinedOutput(); err != nil {
+		t.Fatalf("docker run mail sink: %v\n%s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+
+	out, err := exec.Command("docker", "port", name, "9000/tcp").Output()
+	if err != nil {
+		t.Fatalf("docker port %s 9000/tcp: %v", name, err)
+	}
+	published := strings.TrimSpace(strings.Split(strings.TrimSpace(string(out)), "\n")[0])
+	apiBase = "http://" + published
+
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		resp, err := http.Get(apiBase + "/api/v1/mailbox/readiness-probe")
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return mailSinkAlias, apiBase
+			}
+		}
+		if time.Now().After(deadline) {
+			logs, _ := exec.Command("docker", "logs", name).CombinedOutput()
+			t.Fatalf("the mail sink never answered its API within 60s; logs:\n%s", logs)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// waitForSinkMessage polls the sink until a message with subject arrives
+// in mailbox. Polled because SMTP delivery completes on the server's own
+// schedule, and "not yet" is not "never".
+func waitForSinkMessage(t *testing.T, apiBase, mailbox, subject string) {
+	t.Helper()
+	type sinkMessage struct {
+		Subject string `json:"subject"`
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var msgs []sinkMessage
+		resp, err := http.Get(apiBase + "/api/v1/mailbox/" + mailbox)
+		if err == nil {
+			if resp.StatusCode == http.StatusOK {
+				_ = json.NewDecoder(resp.Body).Decode(&msgs)
+			}
+			_ = resp.Body.Close()
+		}
+		for _, m := range msgs {
+			if m.Subject == subject {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no message with subject %q arrived in the sink's %q mailbox within 30s; the engine could not send its confirmation", subject, mailbox)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }

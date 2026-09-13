@@ -242,8 +242,13 @@ this criterion is the one most likely to differ between the two.
 3. Click it.
 4. Expect: it opens the shared Web UI, served by the package's own UI
    host on port 8477, showing the local-auth login or enrollment screen.
-5. Complete enrollment with the token from step 2, choose an
-   administrator password, and log in.
+5. Complete enrollment with the token from step 2: an administrator
+   password, a recovery email address, and the SMTP details to reach it.
+   Use a mail account you control and keep its password out of the
+   evidence. Expect a confirmation message at that address before the
+   account exists, and expect a deliberately wrong SMTP port to be
+   refused with `SMTP_SEND_FAILED`, to create nothing, and to leave the
+   same token usable. Then log in.
 6. Expect: the shared UI loads and `GET /api/v1/system/capabilities`
    succeeds, and it reports the **Synology** bridge. Since the
    package carries this provider's own UI bundle in its payload and
@@ -296,11 +301,12 @@ this criterion is the one most likely to differ between the two.
    diff /tmp/before-upgrade.txt /tmp/after-upgrade.txt
    ```
 6. Expect: every line of `sha256sum -c` says OK, the diff is empty, the
-   local-auth record still exists, and the enrolled administrator can
-   still log in without re-enrolling. `target/` is documented to be
-   replaced on upgrade and `var/`+`etc/` to persist; this step is what
-   proves the package actually put its state on the right side of that
-   line.
+   local-auth record still exists — with its recovery address and SMTP
+   settings, which a test send from Settings proves still work — and the
+   enrolled administrator can still log in without re-enrolling.
+   `target/` is documented to be replaced on upgrade and `var/`+`etc/` to
+   persist; this step is what proves the package actually put its state on
+   the right side of that line.
 7. Expect: the UI, after the upgrade, still shows the same backup set and
    the same artifact row.
 8. Confirm the new binaries are again byte-identical to the release
@@ -382,7 +388,8 @@ This is the destructive-safety step. Read it fully before starting.
   uninstall result, retained-backup safety, evidence location.
 
 Store the evidence with the issue this procedure is executed for. Do not
-store any credential, token, key or the enrollment token alongside it.
+store any credential, token, key, SMTP password or the enrollment token
+alongside it.
 
 ## Accept / reject
 

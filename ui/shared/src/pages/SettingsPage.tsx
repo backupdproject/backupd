@@ -20,9 +20,11 @@ import { useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "@shared/api/ApiContext";
 import { usePlatform } from "@shared/platform/PlatformContext";
+import type { RecoverySettings } from "@shared/api/contracts";
+import { useAsync } from "@shared/hooks/useAsync";
 import { notificationCopy } from "@shared/platform/capabilities";
 import { useCausl } from "@shared/state/graph";
-import { configuredNode, versionNode } from "@shared/state/appNodes";
+import { configuredNode, publishRecoverySettings, versionNode } from "@shared/state/appNodes";
 import { Banner } from "@shared/components/Banner";
 import { PageHeader } from "@shared/components/PageHeader";
 import { PlatformBadge } from "@shared/components/PlatformBadge";
@@ -35,6 +37,15 @@ import { StorageDestinationsCard } from "@shared/pages/StorageDestinationsCard";
 import { HelpField } from "@shared/components/FieldHelp";
 import { PasswordInput } from "@shared/components/PasswordInput";
 import { FIELD_HELP } from "@shared/components/fieldHelpCopy";
+import {
+  DEFAULT_SMTP,
+  RecoveryAttention,
+  SmtpFields,
+  looksLikeEmail,
+  smtpFieldsComplete,
+  smtpInput
+} from "@shared/components/RecoveryFields";
+import type { SmtpFieldValues } from "@shared/components/RecoveryFields";
 import { useTooltipsEnabled } from "@shared/hooks/useTooltips";
 import { setTooltipsEnabled } from "@shared/state/tooltipNodes";
 
@@ -177,6 +188,12 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
           </section>
 
           <ChangePasswordCard readOnly={readOnly} />
+
+          {/* Issue #830. Beside the password card deliberately: the two
+              are one subject from an operator's side, since the recovery
+              endpoint below is what stands in for the password above when
+              it is lost. */}
+          <AccountRecoveryCard readOnly={readOnly} />
 
           {/* #275: on an instance with no configuration there is no
               storage location, so there is nothing this card could
@@ -426,4 +443,321 @@ function ChangePasswordCard({ readOnly }: { readOnly: boolean }) {
       </div>
     </section>
   );
+}
+
+/**
+ * Issue #830: the account's way back in, after enrolment has set it up.
+ *
+ * The card exists because a mail endpoint that worked on the day it was
+ * configured is not a mail endpoint that works: providers withdraw
+ * credentials, ports change, a relay is decommissioned, and the moment
+ * this is needed is the one moment nobody can find out by trying. So it
+ * offers both halves — edit the configuration, and prove it still sends —
+ * rather than only the first.
+ *
+ * Two properties of the write are worth knowing before reading the
+ * handler. A blank SMTP password means KEEP the stored one, because no
+ * read of this configuration can ever return a password to prefill the
+ * field with (SmtpSettingsView), so blank is the only thing an unedited
+ * field could be. And a changed recovery address is re-verified by the
+ * service as part of the same request: it sends a confirmation over the
+ * endpoint this request establishes and refuses the whole update if that
+ * send fails, so `recoveryEmailConfirmed` coming back true is a message
+ * having been delivered rather than a request having succeeded.
+ */
+function AccountRecoveryCard({ readOnly }: { readOnly: boolean }) {
+  const api = useApi();
+  const recovery = useAsync<RecoverySettings>(() => api.getRecoverySettings(), [api]);
+
+  return (
+    <section className="card">
+      <div className="card__header"><h2 className="eyebrow">Account recovery</h2></div>
+      <div className="card__body">
+        {recovery.error ? (
+          <ErrorState
+            message={recovery.error.message}
+            remediation="The recovery settings could not be read, so they cannot be edited here yet."
+            correlationId={recovery.error.correlationId}
+            onRetry={recovery.reload}
+          />
+        ) : recovery.data ? (
+          <RecoveryEditor loaded={recovery.data} readOnly={readOnly} />
+        ) : (
+          <p style={{ margin: 0, fontSize: 13, color: "var(--text-3)" }}>
+            Loading recovery settings…
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** A refusal from either recovery write, in the words that separate them.
+ *  `sendFailed` is what was NOT done when the mail server refused, and it
+ *  differs between the two callers: a failed save changed nothing, while a
+ *  failed test was never going to change anything. Quoting the server's
+ *  own message is the point of both — "connection refused" and "535
+ *  authentication failed" are the two different problems this card
+ *  exists to surface, and no sentence written here could tell them
+ *  apart. */
+function describeRecoveryFailure(
+  e: unknown,
+  { fallback, sendFailed }: { fallback: string; sendFailed: string }
+): OperatorFailure {
+  const api = apiErrorOf(e);
+  if (api?.code === "SMTP_SEND_FAILED") {
+    return {
+      message: sendFailed,
+      remediation: "The mail server said: " + api.message,
+      correlationId: api.correlationId
+    };
+  }
+  if (api?.code === "INVALID_EMAIL") {
+    return {
+      message: "That address was not accepted as an email address.",
+      remediation:
+        "Backupd checks the recovery address and the From address against the mail standard rather than against a rough pattern. Check both for a missing domain, a stray space or a trailing comma.",
+      correlationId: api.correlationId
+    };
+  }
+  if (api?.code === "UNAUTHENTICATED") {
+    // The one refusal on this card that is not about mail. It covers a
+    // wrong password and a session that has since lapsed, because the
+    // service deliberately does not distinguish them, and saying so is
+    // more useful than picking one.
+    return {
+      message: "That password was not accepted, so nothing was changed.",
+      remediation:
+        "Re-type the administrator password. If it is definitely right, the session has expired instead — sign in again and repeat the change.",
+      correlationId: api.correlationId
+    };
+  }
+  return describeFailure(e, fallback);
+}
+
+function RecoveryEditor({ loaded, readOnly }: { loaded: RecoverySettings; readOnly: boolean }) {
+  const api = useApi();
+  // What the service last told us it holds. Replaced by the answer to a
+  // save rather than by a guess at it, which is what makes the confirmed
+  // badge below report a delivered message instead of a successful
+  // request.
+  const [current, setCurrent] = useState(loaded);
+  const [email, setEmail] = useState(loaded.recoveryEmail);
+  const [smtp, setSmtp] = useState<SmtpFieldValues>(() => smtpFieldsOf(loaded.smtp));
+  // The re-authentication this write requires (#830 security review).
+  // Held here rather than in the SMTP block because it is not part of
+  // the configuration at all: it proves who is changing it, and it is
+  // cleared the moment the change lands.
+  const [password, setPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [tested, setTested] = useState<string | null>(null);
+  const [failure, setFailure] = useState<OperatorFailure | null>(null);
+
+  const badEmailId = useId();
+  const badEmail = email.length > 0 && !looksLikeEmail(email);
+  const valid = looksLikeEmail(email) && smtpFieldsComplete(smtp) && password.length > 0;
+
+  const save = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!valid || readOnly) return;
+    const addressChanged = email.trim() !== current.recoveryEmail;
+    setSaving(true);
+    setFailure(null);
+    setSaved(null);
+    setTested(null);
+    api
+      .updateRecoverySettings({ currentPassword: password, recoveryEmail: email.trim(), smtp: smtpInput(smtp) })
+      .then((next) => {
+        // Re-rendered from the answer, including the password field, which
+        // goes back to blank: whatever was typed is stored now and there
+        // is nothing to show in its place.
+        setCurrent(next);
+        setEmail(next.recoveryEmail);
+        setSmtp(smtpFieldsOf(next.smtp));
+        // The administrator's own password is not kept for a second
+        // save: it is a credential, this form has no reason to hold one
+        // after the write it authorised, and re-typing it is the point
+        // of asking.
+        setPassword("");
+        // And published, because this answer is also what the unverified
+        // banner above every page is drawn from (#830 §§8-9). A changed
+        // address comes back UNVERIFIED - a verification link was just
+        // mailed to it and nobody has opened it - so without this the
+        // banner would keep reporting the previous address's proof until
+        // the next full page load.
+        publishRecoverySettings(next);
+        setSaved(
+          addressChanged
+            ? "Saved. A verification link has been delivered to " + next.recoveryEmail + "."
+            : "Saved."
+        );
+      })
+      .catch((e: unknown) =>
+        setFailure(
+          describeRecoveryFailure(e, {
+            fallback: "The recovery settings were not saved.",
+            sendFailed: "The confirmation email could not be sent, so nothing was saved."
+          })
+        )
+      )
+      .finally(() => setSaving(false));
+  };
+
+  const sendTest = () => {
+    if (readOnly) return;
+    setTesting(true);
+    setFailure(null);
+    setSaved(null);
+    setTested(null);
+    api
+      .sendRecoveryTestEmail()
+      .then(() => setTested("Test message sent to " + current.recoveryEmail + "."))
+      .catch((e: unknown) =>
+        setFailure(
+          describeRecoveryFailure(e, {
+            fallback: "The test message could not be sent.",
+            sendFailed: "The mail server refused the test message, so recovery mail would not arrive either."
+          })
+        )
+      )
+      .finally(() => setTesting(false));
+  };
+
+  return (
+    <form onSubmit={save} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <RecoveryAttention />
+      {current.smtp === null ? (
+        // A real state, not an empty form: `auth create-admin` leaves
+        // recovery optional, so a headlessly provisioned administrator has
+        // no endpoint at all and no way back until one is filled in here.
+        <Banner tone="warn" dismissible={false} style={{ fontSize: "var(--text-sm)" }}>
+          No SMTP endpoint is configured on this instance, so no reset link can
+          be sent. Until one is saved below, a forgotten password is recovered
+          at the host or not at all.
+        </Banner>
+      ) : null}
+      <HelpField label="Recovery email" help={FIELD_HELP.recoveryEmail}>
+        {/* Named by its label id rather than by the label's text, the same
+            way the wizard's copy of this field is: the validation message
+            below sits inside the label and would otherwise be swept into
+            the field's own name. */}
+        {(helpId, field) => (
+          <>
+            <input
+              className="input input--mono"
+              type="email"
+              aria-labelledby={field.id}
+              aria-describedby={badEmail ? helpId + " " + badEmailId : helpId}
+              autoComplete="email"
+              disabled={readOnly}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+            {badEmail ? (
+              <span id={badEmailId} style={{ fontSize: "var(--text-sm)", color: "var(--danger)" }}>
+                Enter an email address, such as ops@example.com.
+              </span>
+            ) : null}
+          </>
+        )}
+      </HelpField>
+      {/* Typed and reachable are different facts, and only the second one
+          means recovery works, so the card reports which it has. */}
+      <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)" }}>
+        {current.recoveryEmailConfirmed
+          ? "A confirmation message has been delivered to " + current.recoveryEmail + ", so this address is known to be reachable."
+          : "No message has reached " + (current.recoveryEmail || "this address") + " yet, so it is not known to be reachable. Saving sends a confirmation to it."}
+      </p>
+      <SmtpFields
+        values={smtp}
+        onChange={(patch) => setSmtp((currentValues) => ({ ...currentValues, ...patch }))}
+        disabled={readOnly}
+        passwordAutoComplete="off"
+        passwordNote={
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
+            {current.smtp?.passwordSet
+              ? "A password is stored. Leave this blank to keep it, or type a new one to replace it."
+              : "No password is stored for this endpoint yet."}
+          </span>
+        }
+      />
+      {/* Last, immediately above the button it authorises, and only on
+          the save path: the test send changes nothing and is not gated
+          by it. Whoever controls this address and this endpoint controls
+          where a password reset link is delivered, so this write asks
+          for the password itself rather than accepting a session cookie
+          - the same re-authentication the password-change card above
+          performs, for a change of the same weight. */}
+      <HelpField label="Administrator password" help={FIELD_HELP.recoveryCurrentPassword}>
+        {(helpId, field) => (
+          <PasswordInput
+            label={field.label}
+            labelledBy={field.id}
+            autoComplete="current-password"
+            describedBy={helpId}
+            value={password}
+            onChange={setPassword}
+            disabled={readOnly}
+            required
+          />
+        )}
+      </HelpField>
+      {saved ? (
+        <Banner tone="ok" style={{ fontSize: "var(--text-sm)" }}>{saved}</Banner>
+      ) : null}
+      {tested ? (
+        <Banner tone="ok" style={{ fontSize: "var(--text-sm)" }}>{tested}</Banner>
+      ) : null}
+      {failure ? (
+        <ErrorState
+          message={failure.message}
+          remediation={failure.remediation}
+          correlationId={failure.correlationId}
+          detail={failure.detail}
+        />
+      ) : null}
+      <div style={{ display: "flex", gap: 10 }}>
+        <button
+          className="btn btn--primary"
+          type="submit"
+          disabled={!valid || saving || readOnly}
+          style={{ height: 40 }}
+        >
+          {saving ? "Saving…" : "Save recovery settings"}
+        </button>
+        {/* Sends over what is STORED, not over what is in the form, which
+            is why it is a plain button rather than a second submit: a test
+            that quietly saved the fields first would report on a
+            configuration the operator had not agreed to keep. */}
+        <button
+          className="btn"
+          type="button"
+          onClick={sendTest}
+          disabled={testing || readOnly || current.smtp === null}
+          style={{ height: 40 }}
+        >
+          {testing ? "Sending…" : "Send test email"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** The stored endpoint as this form holds it: every field except the
+ *  password, which no read returns and which therefore starts blank,
+ *  meaning "keep whatever is stored". An instance with no endpoint gets
+ *  the same defaults the enrolment wizard starts from. */
+function smtpFieldsOf(view: RecoverySettings["smtp"]): SmtpFieldValues {
+  if (view === null) return DEFAULT_SMTP;
+  return {
+    host: view.host,
+    port: String(view.port),
+    security: view.security,
+    username: view.username,
+    password: "",
+    from: view.from
+  };
 }

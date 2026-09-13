@@ -16,16 +16,20 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "8931517bab2ce08b25b70346fee7f150f58f5d7c91cf0d05de437fbe80646bbd";
+export const CONTRACT_SHA256 = "968e886be082dec27483df797d8b085b7b754833c3a26d3be27d100ed463a14d";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
   "UNAUTHENTICATED",
   "RATE_LIMITED",
   "INVALID_REQUEST",
+  "INVALID_EMAIL",
   "ENROLLMENT_CLOSED",
   "BOOTSTRAP_TOKEN_INVALID",
+  "RESET_TOKEN_INVALID",
+  "VERIFY_TOKEN_INVALID",
   "INTERNAL_ERROR",
+  "SMTP_SEND_FAILED",
   "CSRF_TOKEN_MISSING",
   "CSRF_TOKEN_MISMATCH",
   "RETENTION_PLAN_STALE",
@@ -98,9 +102,13 @@ export const API_ERROR_CODES = [
   "UNAUTHENTICATED",
   "RATE_LIMITED",
   "INVALID_REQUEST",
+  "INVALID_EMAIL",
   "ENROLLMENT_CLOSED",
   "BOOTSTRAP_TOKEN_INVALID",
+  "RESET_TOKEN_INVALID",
+  "VERIFY_TOKEN_INVALID",
   "INTERNAL_ERROR",
+  "SMTP_SEND_FAILED",
   "CSRF_TOKEN_MISSING",
   "CSRF_TOKEN_MISMATCH",
   "RETENTION_PLAN_STALE",
@@ -145,14 +153,14 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 /** Codes grouped by the refusal they represent, so a caller can assert
  *  the RIGHT refusal rather than any refusal. */
 export const API_ERROR_CLASSES = {
-  "authentication": ["UNAUTHENTICATED", "BOOTSTRAP_TOKEN_INVALID"],
+  "authentication": ["UNAUTHENTICATED", "BOOTSTRAP_TOKEN_INVALID", "RESET_TOKEN_INVALID", "VERIFY_TOKEN_INVALID"],
   "authorization": ["ENROLLMENT_CLOSED", "DESTRUCTIVE_OPERATIONS_DISABLED", "CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
   "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN"],
   "internal": ["INTERNAL", "INTERNAL_ERROR"],
   "not-found": ["BACKUP_SET_NOT_FOUND", "OPERATION_NOT_FOUND", "RETENTION_PLAN_NOT_FOUND", "ARTIFACT_NOT_FOUND", "MEDIUM_NOT_FOUND"],
   "throttling": ["RATE_LIMITED"],
-  "unavailable": ["NOT_CONFIGURED"],
-  "validation": ["INVALID_REQUEST", "SSH_KEY_NOT_FOUND", "HOST_KEY_PROBE_FAILED", "MEDIUM_DISCLOSURE_REQUIRED"],
+  "unavailable": ["NOT_CONFIGURED", "SMTP_SEND_FAILED"],
+  "validation": ["INVALID_REQUEST", "INVALID_EMAIL", "SSH_KEY_NOT_FOUND", "HOST_KEY_PROBE_FAILED", "MEDIUM_DISCLOSURE_REQUIRED"],
 } as const satisfies Record<string, readonly ApiErrorCode[]>;
 
 /** The platform-capability set GET /system/capabilities reports, as wire
@@ -232,15 +240,33 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
     idempotencyKey: "none",
     destructiveGate: false,
     concurrency: "",
-    requestSchema: "CredentialsRequest",
+    requestSchema: "EnrollRequest",
     responseSchema: "",
     successStatus: 204,
     errorCodes: {
-      400: ["INVALID_REQUEST"],
+      400: ["INVALID_REQUEST", "INVALID_EMAIL"],
       401: ["BOOTSTRAP_TOKEN_INVALID"],
       403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH", "ENROLLMENT_CLOSED"],
       429: ["RATE_LIMITED"],
       500: ["INTERNAL_ERROR"],
+      502: ["SMTP_SEND_FAILED"],
+    }
+  },
+  {
+    id: "requestPasswordReset",
+    method: "POST",
+    path: "/auth/forgot-password",
+    authenticated: false,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "ForgotPasswordRequest",
+    responseSchema: "",
+    successStatus: 204,
+    errorCodes: {
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      429: ["RATE_LIMITED"],
     }
   },
   {
@@ -300,6 +326,83 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
     }
   },
   {
+    id: "getRecoverySettings",
+    method: "GET",
+    path: "/auth/recovery",
+    authenticated: true,
+    csrfRequired: false,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "RecoverySettingsResponse",
+    successStatus: 200,
+    errorCodes: {
+      401: ["UNAUTHENTICATED"],
+      500: ["INTERNAL_ERROR"],
+    }
+  },
+  {
+    id: "updateRecoverySettings",
+    method: "PATCH",
+    path: "/auth/recovery",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "RecoverySettingsUpdate",
+    responseSchema: "RecoverySettingsResponse",
+    successStatus: 200,
+    errorCodes: {
+      400: ["INVALID_REQUEST", "INVALID_EMAIL"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      500: ["INTERNAL_ERROR"],
+      502: ["SMTP_SEND_FAILED"],
+    }
+  },
+  {
+    id: "sendRecoveryTestEmail",
+    method: "POST",
+    path: "/auth/recovery/test",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "",
+    successStatus: 204,
+    errorCodes: {
+      400: ["INVALID_REQUEST", "INVALID_EMAIL"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      500: ["INTERNAL_ERROR"],
+      502: ["SMTP_SEND_FAILED"],
+    }
+  },
+  {
+    id: "resetPassword",
+    method: "POST",
+    path: "/auth/reset-password",
+    authenticated: false,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "ResetPasswordRequest",
+    responseSchema: "",
+    successStatus: 204,
+    errorCodes: {
+      400: ["INVALID_REQUEST"],
+      401: ["RESET_TOKEN_INVALID"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      429: ["RATE_LIMITED"],
+      500: ["INTERNAL_ERROR"],
+    }
+  },
+  {
     id: "getSession",
     method: "GET",
     path: "/auth/session",
@@ -313,6 +416,47 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
     successStatus: 200,
     errorCodes: {
       401: ["UNAUTHENTICATED"],
+    }
+  },
+  {
+    id: "verifyRecoveryEmail",
+    method: "POST",
+    path: "/auth/verify-email",
+    authenticated: false,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "VerifyEmailRequest",
+    responseSchema: "",
+    successStatus: 204,
+    errorCodes: {
+      400: ["INVALID_REQUEST"],
+      401: ["VERIFY_TOKEN_INVALID"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      429: ["RATE_LIMITED"],
+      500: ["INTERNAL_ERROR"],
+    }
+  },
+  {
+    id: "resendRecoveryEmailVerification",
+    method: "POST",
+    path: "/auth/verify-email/resend",
+    authenticated: true,
+    csrfRequired: true,
+    idempotencyKey: "none",
+    destructiveGate: false,
+    concurrency: "",
+    requestSchema: "",
+    responseSchema: "",
+    successStatus: 204,
+    errorCodes: {
+      400: ["INVALID_REQUEST", "INVALID_EMAIL"],
+      401: ["UNAUTHENTICATED"],
+      403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      429: ["RATE_LIMITED"],
+      500: ["INTERNAL_ERROR"],
+      502: ["SMTP_SEND_FAILED"],
     }
   },
   {
@@ -1793,6 +1937,25 @@ export interface WireCycleOutcome {
   moves?: WireCycleMoveOutcome;
 }
 
+/** POST /auth/enroll. The credentials, plus the two things issue #830
+ *  makes part of creating the administrator: the address account
+ *  recovery mails to, and the SMTP endpoint it goes out over. Both
+ *  are required, because an administrator with no proven way to reach
+ *  its owner is an account that is permanently lost the first time a
+ *  password is forgotten, and enrollment is the last moment at which
+ *  somebody who can still sign in is present to fix the mail
+ *  configuration. The runtime SENDS a confirmation message to
+ *  `recoveryEmail` over `smtp` before it writes anything, and refuses
+ *  the whole enrollment with SMTP_SEND_FAILED if that send does not
+ *  succeed - leaving the single-use enrollment token unspent, so the
+ *  same link can be used again once the configuration is fixed. */
+export interface WireEnrollRequest {
+  password: string;
+  recoveryEmail: string;
+  smtp: WireSmtpSettings;
+  username: string;
+}
+
 /** The nested error body every operation outside /auth returns. code
  *  is stable and machine-readable; message is human-readable and MAY
  *  change without notice. */
@@ -1813,6 +1976,16 @@ export interface WireErrorResponse {
  *  NOT_CONFIGURED needs to know which screen to show, not why. */
 export interface WireFirstRunStatusResponse {
   configured: boolean;
+}
+
+/** POST /auth/forgot-password. One field, and the answer never varies
+ *  with it: that operation answers 204 for an unenrolled deployment,
+ *  for a username that is not the administrator's, for an
+ *  administrator with no recovery address, and for an SMTP endpoint
+ *  that refused the message alike. It answers BEFORE any mail is
+ *  attempted, so the response time does not vary either. */
+export interface WireForgotPasswordRequest {
+  username: string;
 }
 
 /** GET /system/health. Every configured backup set's freshness
@@ -2284,6 +2457,48 @@ export interface WirePlacement {
   verified_at?: string;
 }
 
+/** GET /auth/recovery and PATCH /auth/recovery: the recovery address,
+ *  the two proofs about it, the deadline an unverified one lapses at,
+ *  and the SMTP endpoint without its password. `smtp` is ABSENT on a
+ *  deployment whose administrator was provisioned headlessly (`auth
+ *  create-admin` leaves recovery optional), which is a state a
+ *  settings page has to report rather than hide - absent rather than
+ *  null, the same optional-member convention every other response in
+ *  this contract uses for a fact that does not exist yet. */
+export interface WireRecoverySettingsResponse {
+  recoveryEmail: string;
+  recoveryEmailConfirmed: boolean;
+  recoveryEmailVerified: boolean;
+  smtp?: WireSmtpSettingsView;
+  verificationDeadline?: string;
+}
+
+/** PATCH /auth/recovery. `currentPassword` is required on every call,
+ *  and at least one of `recoveryEmail`/`smtp` has to be named: a
+ *  request may change the recovery address, the SMTP endpoint, or
+ *  both. A changed address is re-verified by sending a confirmation
+ *  over the endpoint this same request establishes, and a changed
+ *  SMTP endpoint is proven the same way, with the whole update
+ *  refused with SMTP_SEND_FAILED if that send fails - so a settings
+ *  page cannot leave the account with a recovery address nothing has
+ *  ever been delivered to, nor claim a confirmed address over an
+ *  endpoint nothing has ever been delivered through. */
+export interface WireRecoverySettingsUpdate {
+  currentPassword: string;
+  recoveryEmail?: string;
+  smtp?: WireSmtpSettings;
+}
+
+/** POST /auth/reset-password: the token out of the emailed link, and
+ *  the password to set. The token is single-use and expires;
+ *  redeeming it revokes every live session and issues no new one, so
+ *  whoever set the password proves they know it by signing in with
+ *  it. */
+export interface WireResetPasswordRequest {
+  newPassword: string;
+  token: string;
+}
+
 /** The restore_placement action's own parameters. Present only when
  *  action is restore_placement, and refused when it is not: a body
  *  carrying restore parameters for a run_cycle is a request that has
@@ -2524,6 +2739,38 @@ export interface WireSettingsResponse {
 export interface WireSettingsSchema {
   retention: WireRetentionSchema;
   storage: WireStorageSchema;
+}
+
+/** One SMTP submission endpoint an operator typed in: where to
+ *  connect, how the connection is protected, who to authenticate as,
+ *  and what address the mail is from. camelCase like the rest of
+ *  /auth. `password` is writeOnly and appears in NO response schema
+ *  anywhere in this contract: the runtime stores it as an opaque
+ *  reference to a mode-0600 file of its own and reports only whether
+ *  one is set (SmtpSettingsView.passwordSet). On an update, an absent
+ *  or empty `password` means "keep the stored one", which is what
+ *  lets a port or a from-address be corrected by somebody who does
+ *  not have the provider's API key in front of them. */
+export interface WireSmtpSettings {
+  from: string;
+  host: string;
+  password?: string;
+  port: number;
+  security: "starttls" | "tls" | "none";
+  username: string;
+}
+
+/** SmtpSettings as a READ answers it: every field except the
+ *  password, plus `passwordSet`. The password is absent structurally
+ *  rather than blanked, so this shape has no field for a buggy
+ *  handler to serialise material into. */
+export interface WireSmtpSettingsView {
+  from: string;
+  host: string;
+  passwordSet: boolean;
+  port: number;
+  security: "starttls" | "tls" | "none";
+  username: string;
 }
 
 /** Where one storage medium's credentials come from. Exactly one of
@@ -2775,6 +3022,16 @@ export interface WireVerificationClassInfo {
   downloads_object: boolean;
   proves: string;
   requires: string;
+}
+
+/** POST /auth/verify-email: the token out of the emailed verification
+ *  link, and nothing else. The token names the account by itself, so
+ *  there is deliberately no username or address field - one would be
+ *  a second thing to check and a way to ask whether an address is the
+ *  administrator's. The token is single-use and expires; redeeming it
+ *  makes a provisional administrator permanent. */
+export interface WireVerifyEmailRequest {
+  token: string;
 }
 
 /** GET /system/version. Nothing here names an implementation: no

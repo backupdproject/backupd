@@ -68,9 +68,13 @@
           "UNAUTHENTICATED",
           "RATE_LIMITED",
           "INVALID_REQUEST",
+          "INVALID_EMAIL",
           "ENROLLMENT_CLOSED",
           "BOOTSTRAP_TOKEN_INVALID",
+          "RESET_TOKEN_INVALID",
+          "VERIFY_TOKEN_INVALID",
           "INTERNAL_ERROR",
+          "SMTP_SEND_FAILED",
           "CSRF_TOKEN_MISSING",
           "CSRF_TOKEN_MISMATCH",
           "RETENTION_PLAN_STALE",
@@ -162,12 +166,18 @@
           "STORAGE_CREDENTIAL_NOT_FOUND": "wire",
           "SSH_KEY_CANDIDATE_NOT_FOUND": "wire",
           "BACKUP_SET_CONNECTION_NOT_PROVEN": "wire",
-          "MEDIUM_CONNECTION_NOT_PROVEN": "wire"
+          "MEDIUM_CONNECTION_NOT_PROVEN": "wire",
+          "RESET_TOKEN_INVALID": "wire",
+          "INVALID_EMAIL": "wire",
+          "SMTP_SEND_FAILED": "wire",
+          "VERIFY_TOKEN_INVALID": "wire"
         },
         "x-error-classes": {
           "authentication": [
             "UNAUTHENTICATED",
-            "BOOTSTRAP_TOKEN_INVALID"
+            "BOOTSTRAP_TOKEN_INVALID",
+            "RESET_TOKEN_INVALID",
+            "VERIFY_TOKEN_INVALID"
           ],
           "authorization": [
             "ENROLLMENT_CLOSED",
@@ -177,6 +187,7 @@
           ],
           "validation": [
             "INVALID_REQUEST",
+            "INVALID_EMAIL",
             "SSH_KEY_NOT_FOUND",
             "HOST_KEY_PROBE_FAILED",
             "MEDIUM_DISCLOSURE_REQUIRED"
@@ -215,7 +226,8 @@
             "INTERNAL_ERROR"
           ],
           "unavailable": [
-            "NOT_CONFIGURED"
+            "NOT_CONFIGURED",
+            "SMTP_SEND_FAILED"
           ]
         }
       },
@@ -730,7 +742,7 @@
       },
       "OperationProgress": {
         "type": "object",
-        "description": "Live progress for an operation that is running in THIS process right now (docs/EPIC-B-multi-nas.md §52). It is sampled from the transfer engine while a run cycle executes and is never written to the operations table: an operation record is durable and crash-safe, and progress is neither, so persisting it would put a tick-rate write path on the one record whose durability guarantees exist to avoid exactly that, and would resurrect a dead cycle's last reading after a restart as though it were live. So this field is present only while the cycle producing it is executing here. A finished operation, and one that was running before a restart, both carry no progress object at all, which is not the same answer as zero and must not be rendered as one. Nothing here is a percentage of the whole operation: a run cycle is a pass over every enabled backup set, and the artifacts it will find are not known when it starts, so no honest denominator for the whole exists. The byte counters describe the ONE artifact being copied at observed_at; the counters beside them say where in the cycle that artifact sits.",
+        "description": "Live progress for an operation that is running in THIS process right now (docs/EPIC-B-multi-nas.md \u00a752). It is sampled from the transfer engine while a run cycle executes and is never written to the operations table: an operation record is durable and crash-safe, and progress is neither, so persisting it would put a tick-rate write path on the one record whose durability guarantees exist to avoid exactly that, and would resurrect a dead cycle's last reading after a restart as though it were live. So this field is present only while the cycle producing it is executing here. A finished operation, and one that was running before a restart, both carry no progress object at all, which is not the same answer as zero and must not be rendered as one. Nothing here is a percentage of the whole operation: a run cycle is a pass over every enabled backup set, and the artifacts it will find are not known when it starts, so no honest denominator for the whole exists. The byte counters describe the ONE artifact being copied at observed_at; the counters beside them say where in the cycle that artifact sits.",
         "additionalProperties": false,
         "properties": {
           "observed_at": {
@@ -1642,6 +1654,216 @@
         "required": [
           "username",
           "password"
+        ]
+      },
+      "SmtpSettings": {
+        "type": "object",
+        "description": "One SMTP submission endpoint an operator typed in: where to connect, how the connection is protected, who to authenticate as, and what address the mail is from. camelCase like the rest of /auth. `password` is writeOnly and appears in NO response schema anywhere in this contract: the runtime stores it as an opaque reference to a mode-0600 file of its own and reports only whether one is set (SmtpSettingsView.passwordSet). On an update, an absent or empty `password` means \"keep the stored one\", which is what lets a port or a from-address be corrected by somebody who does not have the provider's API key in front of them.",
+        "additionalProperties": false,
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "security": {
+            "type": "string",
+            "enum": [
+              "starttls",
+              "tls",
+              "none"
+            ],
+            "description": "How the connection is protected. `starttls` is plaintext upgraded before authentication, which is what every hosted provider documents for port 587, SMTP2go and Gmail included; `tls` is TLS from the first byte, conventionally port 465; `none` is plaintext throughout and is only reasonable for a relay on the same host or the same private network - the runtime will not send a password over it to anything but a loopback server."
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "writeOnly": true
+          },
+          "from": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "port",
+          "security",
+          "username",
+          "from"
+        ]
+      },
+      "SmtpSettingsView": {
+        "type": "object",
+        "description": "SmtpSettings as a READ answers it: every field except the password, plus `passwordSet`. The password is absent structurally rather than blanked, so this shape has no field for a buggy handler to serialise material into.",
+        "additionalProperties": false,
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "security": {
+            "type": "string",
+            "enum": [
+              "starttls",
+              "tls",
+              "none"
+            ]
+          },
+          "username": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "passwordSet": {
+            "type": "boolean",
+            "description": "Whether an SMTP password is stored at all. The whole of what this API will say about it: enough for a settings form to offer \"leave blank to keep the stored password\" honestly, and nothing a caller could use to learn the value."
+          }
+        },
+        "required": [
+          "host",
+          "port",
+          "security",
+          "username",
+          "from",
+          "passwordSet"
+        ]
+      },
+      "EnrollRequest": {
+        "type": "object",
+        "description": "POST /auth/enroll. The credentials, plus the two things issue #830 makes part of creating the administrator: the address account recovery mails to, and the SMTP endpoint it goes out over. Both are required, because an administrator with no proven way to reach its owner is an account that is permanently lost the first time a password is forgotten, and enrollment is the last moment at which somebody who can still sign in is present to fix the mail configuration. The runtime SENDS a confirmation message to `recoveryEmail` over `smtp` before it writes anything, and refuses the whole enrollment with SMTP_SEND_FAILED if that send does not succeed - leaving the single-use enrollment token unspent, so the same link can be used again once the configuration is fixed.",
+        "additionalProperties": false,
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "writeOnly": true
+          },
+          "recoveryEmail": {
+            "type": "string",
+            "description": "Where a forgotten-password reset link is sent. An ADDITIONAL identity field rather than a replacement for `username`, which remains the login identity: this address is used for recovery and notification only. Validated as a bare RFC 5322 address, without a display name, and refused with INVALID_EMAIL otherwise."
+          },
+          "smtp": {
+            "$ref": "#/components/schemas/SmtpSettings"
+          }
+        },
+        "required": [
+          "username",
+          "password",
+          "recoveryEmail",
+          "smtp"
+        ]
+      },
+      "ForgotPasswordRequest": {
+        "type": "object",
+        "description": "POST /auth/forgot-password. One field, and the answer never varies with it: that operation answers 204 for an unenrolled deployment, for a username that is not the administrator's, for an administrator with no recovery address, and for an SMTP endpoint that refused the message alike. It answers BEFORE any mail is attempted, so the response time does not vary either.",
+        "additionalProperties": false,
+        "properties": {
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ]
+      },
+      "ResetPasswordRequest": {
+        "type": "object",
+        "description": "POST /auth/reset-password: the token out of the emailed link, and the password to set. The token is single-use and expires; redeeming it revokes every live session and issues no new one, so whoever set the password proves they know it by signing in with it.",
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string",
+            "writeOnly": true
+          },
+          "newPassword": {
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "token",
+          "newPassword"
+        ]
+      },
+      "VerifyEmailRequest": {
+        "type": "object",
+        "description": "POST /auth/verify-email: the token out of the emailed verification link, and nothing else. The token names the account by itself, so there is deliberately no username or address field - one would be a second thing to check and a way to ask whether an address is the administrator's. The token is single-use and expires; redeeming it makes a provisional administrator permanent.",
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "RecoverySettingsResponse": {
+        "type": "object",
+        "description": "GET /auth/recovery and PATCH /auth/recovery: the recovery address, the two proofs about it, the deadline an unverified one lapses at, and the SMTP endpoint without its password. `smtp` is ABSENT on a deployment whose administrator was provisioned headlessly (`auth create-admin` leaves recovery optional), which is a state a settings page has to report rather than hide - absent rather than null, the same optional-member convention every other response in this contract uses for a fact that does not exist yet.",
+        "additionalProperties": false,
+        "properties": {
+          "recoveryEmail": {
+            "type": "string"
+          },
+          "recoveryEmailConfirmed": {
+            "type": "boolean",
+            "description": "Whether a confirmation message to this address has been accepted by the operator's own SMTP server. False after the address is changed until its own confirmation send succeeds: an address nothing has ever been delivered to is not a recovery path, and reporting it as one is the silent lockout this whole feature exists to prevent."
+          },
+          "recoveryEmailVerified": {
+            "type": "boolean",
+            "description": "Whether somebody has actually OPENED the verification link that message carried (#830 s8). Separate from recoveryEmailConfirmed because the two prove different things: a mail server accepting a message proves the endpoint works and nothing more, since a typo that lands in the neighbouring domain is accepted just as happily as the right address, while a redeemed link proves the operator can READ what was sent - which is the whole of what account recovery depends on."
+          },
+          "verificationDeadline": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC3339 instant after which an administrator whose recovery address is still unverified is DELETED and enrollment reopens (#830 s9). ABSENT when this record cannot lapse - a verified address, or an administrator provisioned with no SMTP endpoint at all, which was never mailed a link to open. It is computed once, when the account is created, as max(enrollment-link window end, created_at + 30 minutes), and no later request moves it.",
+            "x-go-omitempty": true
+          },
+          "smtp": {
+            "$ref": "#/components/schemas/SmtpSettingsView",
+            "x-go-omitempty": true,
+            "x-go-pointer": true
+          }
+        },
+        "required": [
+          "recoveryEmail",
+          "recoveryEmailConfirmed",
+          "recoveryEmailVerified"
+        ]
+      },
+      "RecoverySettingsUpdate": {
+        "type": "object",
+        "description": "PATCH /auth/recovery. `currentPassword` is required on every call, and at least one of `recoveryEmail`/`smtp` has to be named: a request may change the recovery address, the SMTP endpoint, or both. A changed address is re-verified by sending a confirmation over the endpoint this same request establishes, and a changed SMTP endpoint is proven the same way, with the whole update refused with SMTP_SEND_FAILED if that send fails - so a settings page cannot leave the account with a recovery address nothing has ever been delivered to, nor claim a confirmed address over an endpoint nothing has ever been delivered through.",
+        "additionalProperties": false,
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "The signed-in administrator's CURRENT password, re-checked before anything is resolved, sent or written, exactly as POST /auth/password re-checks it (and refused the same way: 401 UNAUTHENTICATED). The recovery address and the SMTP endpoint are credential-equivalent - whoever controls them controls where a reset link is delivered - so a live session alone must not be enough to repoint them, or a stolen cookie escalates into a permanent account takeover through forgot-password."
+          },
+          "recoveryEmail": {
+            "type": "string",
+            "x-go-pointer": true
+          },
+          "smtp": {
+            "$ref": "#/components/schemas/SmtpSettings",
+            "x-go-pointer": true
+          }
+        },
+        "required": [
+          "currentPassword"
         ]
       },
       "RotatePasswordRequest": {
@@ -5863,7 +6085,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CredentialsRequest"
+                "$ref": "#/components/schemas/EnrollRequest"
               }
             }
           }
@@ -5873,7 +6095,7 @@
             "description": "Success, no body."
           },
           "400": {
-            "description": "Refused: INVALID_REQUEST.",
+            "description": "Refused: INVALID_REQUEST, INVALID_EMAIL.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5882,7 +6104,8 @@
               }
             },
             "x-error-codes": [
-              "INVALID_REQUEST"
+              "INVALID_REQUEST",
+              "INVALID_EMAIL"
             ]
           },
           "401": {
@@ -5937,6 +6160,19 @@
             },
             "x-error-codes": [
               "INTERNAL_ERROR"
+            ]
+          },
+          "502": {
+            "description": "Refused: SMTP_SEND_FAILED. The confirmation message could not be sent, so no administrator was created and the enrollment link is still usable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "SMTP_SEND_FAILED"
             ]
           }
         },
@@ -6130,6 +6366,634 @@
         "x-idempotency-key": "none",
         "x-optimistic-concurrency": null,
         "x-csrf-required": false,
+        "x-authenticated": true
+      }
+    },
+    "/auth/forgot-password": {
+      "post": {
+        "operationId": "requestPasswordReset",
+        "summary": "Email a single-use password reset link to the administrator's recovery address.",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted, no body - and answered identically whether or not anything was sent. No account enumeration: an unknown username, an administrator with no recovery address and a mail server that refused the message are all this same answer, written before any send is attempted so the timing does not distinguish them either."
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "429": {
+            "description": "Refused: RATE_LIMITED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "RATE_LIMITED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": false
+      }
+    },
+    "/auth/reset-password": {
+      "post": {
+        "operationId": "resetPassword",
+        "summary": "Set a new password from an emailed reset token, revoking every live session.",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Success, no body. Every session is revoked, including the caller's, and no new one is issued: signing in with the new password is the proof it was set by whoever intended to."
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "401": {
+            "description": "Refused: RESET_TOKEN_INVALID. Missing, expired or already-used reset token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "RESET_TOKEN_INVALID"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "429": {
+            "description": "Refused: RATE_LIMITED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "RATE_LIMITED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL_ERROR.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL_ERROR"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": false
+      }
+    },
+    "/auth/verify-email": {
+      "post": {
+        "operationId": "verifyRecoveryEmail",
+        "summary": "Verify the administrator's recovery email from the emailed single-use link.",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Success, no body. The recovery address is recorded as verified, the account stops being provisional and its verification deadline is cleared. Unauthenticated on purpose: the link is opened from a mail client that may never have signed into this deployment, and the token is the credential."
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "401": {
+            "description": "Refused: VERIFY_TOKEN_INVALID. Missing, expired, already-used or unknown verification token - and the one answer for all of them, including a deployment with no administrator at all, so that an unauthenticated caller cannot probe the account's state one request at a time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "VERIFY_TOKEN_INVALID"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "429": {
+            "description": "Refused: RATE_LIMITED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "RATE_LIMITED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL_ERROR.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL_ERROR"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": false
+      }
+    },
+    "/auth/verify-email/resend": {
+      "post": {
+        "operationId": "resendRecoveryEmailVerification",
+        "summary": "Mail a fresh verification link to the stored recovery address.",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Success, no body, once a fresh link has actually gone out over the stored SMTP endpoint. The previous link stops working, so only one is ever live. It does NOT move the verification deadline: a resend inside a window that has nearly closed is honest about that, and a deadline a resend could push out would be no deadline at all."
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST (already verified, or no SMTP connection is configured yet), INVALID_EMAIL (no recovery address is configured to verify).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST",
+              "INVALID_EMAIL"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "429": {
+            "description": "Refused: RATE_LIMITED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "RATE_LIMITED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL_ERROR.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "502": {
+            "description": "Refused: SMTP_SEND_FAILED. The operator is watching this one, so the SMTP error is surfaced verbatim; it never contains the SMTP password.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "SMTP_SEND_FAILED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": true
+      }
+    },
+    "/auth/recovery": {
+      "get": {
+        "operationId": "getRecoverySettings",
+        "summary": "The administrator's recovery address and the SMTP endpoint, never its password.",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoverySettingsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL_ERROR.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL_ERROR"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": false,
+        "x-authenticated": true
+      },
+      "patch": {
+        "operationId": "updateRecoverySettings",
+        "summary": "Change the recovery address and/or the SMTP endpoint, re-authenticated and re-verified by sending a confirmation.",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoverySettingsUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success: the settings as they now stand, so a form re-renders from the answer rather than from its own optimistic guess.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoverySettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST (nothing named to change, a malformed SMTP block, or no SMTP endpoint configured to send over), INVALID_EMAIL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST",
+              "INVALID_EMAIL"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED - no live session, or a `currentPassword` that is not this administrator's. The two are one refusal on purpose: this route is a password-gated route now, and which half failed is not a caller's business.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL_ERROR.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "502": {
+            "description": "Refused: SMTP_SEND_FAILED. The verification message could not be sent over the endpoint this request establishes, and nothing was changed. Sent whenever the address OR the endpoint changes, so a stored endpoint nothing has ever delivered through can never be reported beside a confirmed address.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "SMTP_SEND_FAILED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
+        "x-authenticated": true
+      }
+    },
+    "/auth/recovery/test": {
+      "post": {
+        "operationId": "sendRecoveryTestEmail",
+        "summary": "Send a test message to the stored recovery address over the stored SMTP endpoint.",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "session": [],
+            "csrf": [],
+            "csrfCookie": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Success, no body - and it means the message was actually accepted by the mail server, not that a send was started."
+          },
+          "400": {
+            "description": "Refused: INVALID_REQUEST, INVALID_EMAIL. Nothing is configured to send to, or over.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INVALID_REQUEST",
+              "INVALID_EMAIL"
+            ]
+          },
+          "401": {
+            "description": "Refused: UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "UNAUTHENTICATED"
+            ]
+          },
+          "403": {
+            "description": "Refused: CSRF_TOKEN_MISSING, CSRF_TOKEN_MISMATCH.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "CSRF_TOKEN_MISSING",
+              "CSRF_TOKEN_MISMATCH"
+            ]
+          },
+          "500": {
+            "description": "Refused: INTERNAL_ERROR.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "502": {
+            "description": "Refused: SMTP_SEND_FAILED. The message could not be sent, and nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "x-error-codes": [
+              "SMTP_SEND_FAILED"
+            ]
+          }
+        },
+        "x-destructive-gate": false,
+        "x-idempotency-key": "none",
+        "x-optimistic-concurrency": null,
+        "x-csrf-required": true,
         "x-authenticated": true
       }
     },

@@ -3,11 +3,16 @@ package local
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/backupdproject/backupd/apps/common/email"
 )
 
 // The command-line path has to produce a record indistinguishable from the
@@ -156,7 +161,7 @@ func TestCreateAdmin_RefusesWhileARunningServiceHoldsTheStore(t *testing.T) {
 	// New acquires the store's exclusive lock and (deliberately) never
 	// releases it for as long as this Service value is reachable,
 	// exactly like the real long-lived server process.
-	svc, err := New(Config{StorePath: path})
+	svc, err := New(Config{StorePath: path, SendMail: (&mailRecorder{}).send, Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -198,7 +203,7 @@ func TestCreateAdmin_ThenTheSameCredentialsLogInThroughTheNormalHTTPFlow(t *test
 	// Only now does the server start, against the store CreateAdmin just
 	// wrote to - CreateAdmin's own lock was released when it returned
 	// above, so this must succeed rather than hit ErrStoreLocked.
-	svc, err := New(Config{StorePath: path})
+	svc, err := New(Config{StorePath: path, SendMail: (&mailRecorder{}).send, Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -254,5 +259,111 @@ func TestCreateAdmin_ThenTheSameCredentialsLogInThroughTheNormalHTTPFlow(t *test
 	}
 	if got.Username != username {
 		t.Errorf("session username = %q, want %q", got.Username, username)
+	}
+}
+
+// The headless path's half of #830 §§8-9, and the reason the challenge is
+// persisted rather than held in memory: the process that MAILS the link
+// (this command) exits before the process that REDEEMS it (the server)
+// has started, so a token kept in RAM would be a link nobody could ever
+// open and an account guaranteed to lapse.
+func TestCreateAdmin_MailsAVerificationLinkTheNextServiceCanRedeem(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	mail := &mailRecorder{}
+	created := time.Now().UTC()
+
+	admin, err := CreateAdmin(CreateAdminConfig{
+		StorePath:     path,
+		Username:      "bm-admin",
+		Password:      "correct-horse-battery-staple",
+		RecoveryEmail: "headless@example.test",
+		SMTP:          &email.Config{Host: "smtp.example.test", Port: 587, Security: email.SecurityStartTLS, From: "backupd@example.test"},
+		SendMail:      mail.send,
+		BaseURL:       "https://nas.example.test:8080/",
+		Now:           func() time.Time { return created },
+	})
+	if err != nil {
+		t.Fatalf("CreateAdmin: %v", err)
+	}
+	if admin.RecoveryEmailVerifiedAt != nil {
+		t.Error("a freshly provisioned administrator is already verified")
+	}
+	if admin.VerificationDeadline == nil || !admin.VerificationDeadline.Equal(created.Add(minVerificationWindow)) {
+		t.Errorf("deadline = %v, want %v (created_at + 30m; this process has no enrollment window)", admin.VerificationDeadline, created.Add(minVerificationWindow))
+	}
+
+	sent := mail.delivered()
+	if len(sent) != 1 || sent[0].msg.Subject != verifySubject {
+		t.Fatalf("sent %d messages (%v), want one verification", len(sent), sent)
+	}
+	// The trailing slash on BaseURL is trimmed rather than doubled: an
+	// operator's --public-base-url is frequently copied with one.
+	if !strings.Contains(sent[0].msg.Body, "https://nas.example.test:8080/verify-email?token=") {
+		t.Fatalf("the message carries no openable link:\n%s", sent[0].msg.Body)
+	}
+	_, after, _ := strings.Cut(sent[0].msg.Body, "verify-email?token=")
+	token := strings.TrimSpace(strings.Fields(after)[0])
+
+	// A DIFFERENT process: a Service opening the same store afterwards,
+	// exactly as `serve` does once the provisioning script finishes.
+	svc, err := New(Config{StorePath: path, SendMail: mail.send, Log: io.Discard, Notice: io.Discard})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(svc.stopReaping)
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/auth/", http.StripPrefix("/api/v1/auth", svc.Handler()))
+	server := httptest.NewServer(EnsureCSRFCookie(false)(mux))
+	t.Cleanup(server.Close)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	seedCSRFCookie(t, client, server)
+	csrf := csrfTokenFromJar(t, client, server)
+
+	resp := postJSON(t, client, server.URL+"/api/v1/auth/verify-email",
+		verifyEmailRequest{Token: token}, map[string]string{CSRFHeaderName: csrf})
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("verifying the link a previous process mailed: status = %d, want 204; body=%s", resp.StatusCode, body)
+	}
+	stored, err := svc.store.Admin()
+	if err != nil || stored == nil || stored.RecoveryEmailVerifiedAt == nil {
+		t.Fatalf("after verification, Admin = %+v (%v), want a verified record", stored, err)
+	}
+}
+
+// The unattended deployment that has no mail server at all: nothing was
+// mailed, so there is no link to open, so nothing may lapse. A reaper
+// that deleted this record would take out the only administrator of every
+// headlessly provisioned deployment half an hour after it was created.
+func TestCreateAdmin_WithoutSMTPHasNoDeadlineAndIsNeverReaped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	created := time.Now().UTC()
+
+	admin, err := CreateAdmin(CreateAdminConfig{
+		StorePath: path,
+		Username:  "bm-admin",
+		Password:  "correct-horse-battery-staple",
+		Now:       func() time.Time { return created },
+	})
+	if err != nil {
+		t.Fatalf("CreateAdmin: %v", err)
+	}
+	if admin.VerificationDeadline != nil {
+		t.Fatalf("deadline = %v, want none for a record nothing was ever mailed about", admin.VerificationDeadline)
+	}
+
+	clock := created.Add(10 * 365 * 24 * time.Hour)
+	svc, err := New(Config{StorePath: path, Now: func() time.Time { return clock }, Log: io.Discard, Notice: io.Discard})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(svc.stopReaping)
+	if deleted, err := svc.reapUnverifiedAdmin(); err != nil || deleted {
+		t.Fatalf("reap a decade later: deleted=%v err=%v, want false/nil", deleted, err)
+	}
+	if got, err := svc.store.Admin(); err != nil || got == nil {
+		t.Fatalf("the headlessly provisioned administrator was deleted: %v %v", got, err)
 	}
 }

@@ -95,11 +95,22 @@ export const FROZEN_TIME = new Date("2026-08-29T06:15:00+02:00");
 /** Never a real host, never a real port, never real key material, never a
  *  real credential. The SSH port in particular is deliberately
  *  uncommitted in this project, so the pictures carry a placeholder that
- *  cannot be mistaken for one. */
+ *  cannot be mistaken for one. The same rule covers the recovery mail
+ *  block #830 added to enrolment: `example.com` is reserved by RFC 2606,
+ *  so nothing here can reach a mailbox or a submission service even if a
+ *  capture were pointed at a real engine by mistake, and the SMTP
+ *  password stays empty because the mock asks for no credential and a
+ *  placeholder in a password field is the one kind of placeholder that
+ *  gets copied into production.
+ */
 export const EXAMPLE = {
   token: "EXAMPLE-TOKEN-not-a-real-one",
   adminUser: "nas-admin",
   adminPassword: "correct-horse-battery-staple",
+  recoveryEmail: "nas-admin@example.com",
+  smtpHost: "smtp.example.com",
+  smtpPort: "587",
+  smtpFrom: "backupd@example.com",
   setName: "api-server-nightly",
   host: "api-server.example.net",
   port: "<your-ssh-port>",

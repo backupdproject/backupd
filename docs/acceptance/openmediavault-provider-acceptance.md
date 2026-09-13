@@ -261,16 +261,28 @@ Web host provides (§13A).
    ```
 
 2. Open it, enrol an administrator with a password you generate now, log out, log
-   back in, then open the enrollment link a second time.
+   back in, then open the enrollment link a second time. Enrollment also asks for
+   a recovery email address and the SMTP details to reach it: use a mail account
+   you control, and keep that password out of this repository.
+3. Submit once with a deliberately wrong SMTP port before the good attempt, and
+   once signed out again, use **Forgot password** with an invented username and
+   then with the real one.
 
 - No account exists before enrollment
 - The token appears only in the service log, never in any file under
       `apps/openmediavault/`
+- The wrong-port attempt fails with `SMTP_SEND_FAILED`, creates no account, and
+      leaves the same enrollment link usable
+- A confirmation message reaches the recovery address before the account exists
 - Enrollment succeeds, logout then login succeeds
 - The enrollment link is refused the second time
+- Forgot password answers the same for an invented username as for the real one,
+      and the reset link works once and signs every session out when spent
 - `GET /api/v1/system/capabilities` reports `nativeAuth: false`
 - `$DISK/appdata/backupd/state/local-auth.json` holds an Argon2id
-      hash, never a plaintext password
+      hash, never a plaintext password, and holds the recovery address and SMTP
+      settings with the SMTP password as a secret reference rather than a value:
+      `grep` it for the password you typed and find nothing
 - Backupd's login is completely independent of the OMV Workbench
       login, and neither can log into the other
 
@@ -336,7 +348,8 @@ sets. Record only that it was taken, and the canary's hash, in the evidence tabl
 - Pull and Up both complete, and both services return to healthy
 - `diff` of the retained-artifact listing is empty: the update moved no
       backup data
-- The administrator account still exists (no re-enrollment prompt)
+- The administrator account still exists (no re-enrollment prompt), with its
+      recovery address and SMTP settings intact
 - Logging back in with the same password works
 - Every backup set is still configured
 - Every artifact is still present and still listed
@@ -357,7 +370,7 @@ docker compose -p backupd up -d
 - Both services come back healthy
 - Retained backup data survives untouched
 - The catalog survives
-- The administrator account survives
+- The administrator account survives, recovery address and SMTP settings included
 
 ---
 

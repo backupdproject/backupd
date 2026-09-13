@@ -186,7 +186,14 @@ describe("httpApi CSRF/bootstrap-token wiring", () => {
     const fetchMock = mockFetchOk(undefined, 204);
     vi.stubGlobal("fetch", fetchMock);
 
-    await httpApi.enrollAdministrator("bm-admin", "hunter22222222");
+    await httpApi.enrollAdministrator("bm-admin", "hunter22222222", "ops@example.com", {
+      host: "smtp.example.net",
+      port: 587,
+      security: "starttls",
+      username: "backupd@example.com",
+      password: "smtp-secret",
+      from: "backupd@example.com"
+    });
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const headers = init.headers as Record<string, string>;

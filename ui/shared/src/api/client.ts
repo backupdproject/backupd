@@ -85,6 +85,8 @@ import type {
   WireStorageMediumUsageResponse,
   WireOperation,
   WirePlacement,
+  WireRecoverySettingsResponse,
+  WireRecoverySettingsUpdate,
   WireRetentionOverride,
   WireRetentionPlan,
   WireRetentionSettings,
@@ -93,6 +95,7 @@ import type {
   WireRetentionTier,
   WireRunningWork,
   WireSettingsResponse,
+  WireSmtpSettings,
   WireUpdateCapacitySettings,
   WireVersionResponse
 } from "./generated/contract";
@@ -113,12 +116,15 @@ import type {
   CreatedBackupSet,
   ManagerStorage,
   MediumPreflight,
+  RecoverySettings,
+  RecoverySettingsUpdate,
   RetentionOverride,
   RetentionSettings,
   RetentionTierSetting,
   RunningWork,
   SSHKeyImportResult,
   SSHKeyListing,
+  SmtpSettingsInput,
   UpdateSettingsRequest
 } from "./contracts";
 import type {
@@ -1887,6 +1893,77 @@ const quarantinedArtifactPath = (id: string) =>
 const retentionPath = (source: string, set: string) => backupSetPath(source, set) + "/retention";
 
 /**
+ * Issue #830's three mappings, and the one rule all of them exist for:
+ * an SMTP password travels in exactly one direction.
+ *
+ * `wireSmtpSettings` DROPS an empty password rather than sending `""`.
+ * Those are not the same request. An absent field means "keep the stored
+ * one", which is what lets somebody who does not have the provider's API
+ * key in front of them correct a port or a from-address; an empty string
+ * is a password, and would ask the server to authenticate with nothing.
+ * The enrolment call goes through the same helper even though nothing is
+ * stored yet, because the server's own validation rejects an endpoint
+ * with no password the same way either way, and one helper is one place
+ * for this rule to be right.
+ */
+function wireSmtpSettings(smtp: SmtpSettingsInput): WireSmtpSettings {
+  const body: WireSmtpSettings = {
+    host: smtp.host,
+    port: smtp.port,
+    security: smtp.security,
+    username: smtp.username,
+    from: smtp.from
+  };
+  if (smtp.password !== "") body.password = smtp.password;
+  return body;
+}
+
+/** A PATCH body carrying the re-authentication and only the halves the
+ *  caller actually named. Spreading the update straight through would
+ *  turn "I did not touch the address" into `recoveryEmail: undefined`,
+ *  which JSON.stringify drops silently today and would carry as null the
+ *  moment anything in front of it started serialising differently.
+ *
+ *  `currentPassword` is unconditional: the service refuses the whole
+ *  request without it (RecoverySettingsUpdate's own doc has the
+ *  escalation it closes), so omitting it here would only turn a missing
+ *  field into a 401 nobody could explain. */
+function wireRecoverySettingsUpdate(update: RecoverySettingsUpdate): WireRecoverySettingsUpdate {
+  const body: WireRecoverySettingsUpdate = { currentPassword: update.currentPassword };
+  if (update.recoveryEmail !== undefined) body.recoveryEmail = update.recoveryEmail;
+  if (update.smtp !== undefined) body.smtp = wireSmtpSettings(update.smtp);
+  return body;
+}
+
+/** The read, whose two interesting fields are the absences. `smtp` is
+ *  omitted for an administrator provisioned headlessly, and
+ *  `verificationDeadline` for an account that cannot lapse. Both are
+ *  normalised HERE - to null and to "" - so every surface tests one
+ *  thing for each instead of each inventing its own handling of an
+ *  optional member. */
+function fromWireRecoverySettings(r: WireRecoverySettingsResponse): RecoverySettings {
+  return {
+    recoveryEmail: r.recoveryEmail,
+    recoveryEmailConfirmed: r.recoveryEmailConfirmed,
+    // Issue #830 §§8-9. Two fields, one question each, and the banner
+    // needs both: whether the link has been OPENED, and by when it has
+    // to be.
+    recoveryEmailVerified: r.recoveryEmailVerified,
+    verificationDeadline: r.verificationDeadline ?? "",
+    smtp: r.smtp
+      ? {
+          host: r.smtp.host,
+          port: r.smtp.port,
+          security: r.smtp.security,
+          username: r.smtp.username,
+          from: r.smtp.from,
+          passwordSet: r.smtp.passwordSet
+        }
+      : null
+  };
+}
+
+/**
  * The contract, implemented against a running service.
  *
  * Every method is one request and one mapping, and the object is flat on
@@ -2358,7 +2435,46 @@ export const httpApi: BackupdApi = {
   rebuildCatalog: () => post("/catalog/rebuild"),
 
   login: (username, password) => post("/auth/login", { username, password }),
-  enrollAdministrator: (username, password) => post("/auth/enroll", { username, password }),
+  enrollAdministrator: (username, password, recoveryEmail, smtp) =>
+    post("/auth/enroll", { username, password, recoveryEmail, smtp: wireSmtpSettings(smtp) }),
+
+  // Issue #830's three unauthenticated recovery calls. Every one of them
+  // resolves with nothing: the reset request answers 204 for every
+  // username by design (it must not enumerate), and redeeming a token
+  // revokes every session rather than issuing one, so there is no session
+  // body to read back either.
+  requestPasswordReset: (username) => post("/auth/forgot-password", { username }),
+  resetPassword: (token, newPassword) => post("/auth/reset-password", { token, newPassword }),
+
+  // Issue #830 §8. Unauthenticated by necessity, exactly like the two
+  // above: the link is opened out of a mail client, on whatever device
+  // happened to be holding the mailbox, and requiring a session would
+  // mean proving you hold the account in order to prove you can read its
+  // recovery address.
+  verifyRecoveryEmail: (token) => post("/auth/verify-email", { token }),
+
+  // The resend is the one that needs a session, because it makes the
+  // service SEND to an address the caller does not choose. No body: the
+  // address, the endpoint and the deadline are all already on the
+  // record, and a body would be a second place for one of them to be
+  // wrong.
+  resendRecoveryEmailVerification: () => post("/auth/verify-email/resend"),
+
+  getRecoverySettings: () =>
+    request<WireRecoverySettingsResponse>("/auth/recovery").then(fromWireRecoverySettings),
+
+  // PATCH rather than PUT because a request may carry either half: an
+  // operator correcting a port has not restated the recovery address, and
+  // a PUT would make the untouched half of the block travel on every save
+  // for no reason.
+  updateRecoverySettings: (update) =>
+    request<WireRecoverySettingsResponse>("/auth/recovery", {
+      method: "PATCH",
+      body: JSON.stringify(wireRecoverySettingsUpdate(update))
+    }).then(fromWireRecoverySettings),
+
+  sendRecoveryTestEmail: () => post("/auth/recovery/test"),
+
   rotatePassword: (currentPassword, newPassword) =>
     post("/auth/password", { currentPassword, newPassword }),
   logout: () => post("/auth/logout")

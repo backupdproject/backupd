@@ -133,6 +133,13 @@ function SignInForm({ onSignedIn }: { onSignedIn(): void }) {
       <p style={{ margin: "18px 0 0", fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
         First time here? <Link to="/enroll">Create the administrator account</Link>.
       </p>
+      {/* Issue #830. Below the enrolment line rather than beside the
+          password field: the moment somebody needs this they have already
+          tried the password and failed, so it belongs where the other
+          "this is not working" route out of the screen already is. */}
+      <p style={{ margin: "6px 0 0", fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+        <Link to="/forgot-password">Forgot password?</Link>
+      </p>
     </AuthFrame>
   );
 }

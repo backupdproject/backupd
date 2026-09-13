@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/backupdproject/backupd/apps/common/email"
 )
 
 // The five HTTP routes this package serves, and the two conventions that
@@ -94,12 +96,21 @@ type authErrorResponse struct {
 var errorCodeStatus = map[string]int{
 	"UNAUTHENTICATED":         http.StatusUnauthorized,
 	"BOOTSTRAP_TOKEN_INVALID": http.StatusUnauthorized,
+	"RESET_TOKEN_INVALID":     http.StatusUnauthorized,
+	"VERIFY_TOKEN_INVALID":    http.StatusUnauthorized,
 	"ENROLLMENT_CLOSED":       http.StatusForbidden,
 	"CSRF_TOKEN_MISSING":      http.StatusForbidden,
 	"CSRF_TOKEN_MISMATCH":     http.StatusForbidden,
 	"INVALID_REQUEST":         http.StatusBadRequest,
+	"INVALID_EMAIL":           http.StatusBadRequest,
 	"RATE_LIMITED":            http.StatusTooManyRequests,
 	"INTERNAL_ERROR":          http.StatusInternalServerError,
+	// A 502 rather than a 500 or a 400: the request was well-formed and
+	// this process did its part, and what failed was the mail server the
+	// operator named. Reporting it as this deployment's own internal
+	// error would send somebody reading their own logs instead of their
+	// SMTP provider's.
+	"SMTP_SEND_FAILED": http.StatusBadGateway,
 }
 
 // writeAuthError serves one refusal, and panics if the caller asked for a
@@ -147,23 +158,32 @@ func correlationID() string {
 	return "cid_" + base64.RawURLEncoding.EncodeToString(b)
 }
 
-// Handler returns the http.Handler serving this package's five routes,
+// Handler returns the http.Handler serving this package's twelve routes,
 // relative to whatever prefix the caller mounts it at (apps/generic
 // mounts it at /api/v1/auth, matching ui/shared's own expectation):
 //
-//	POST /login    - {username, password} -> 204 + session cookie
-//	POST /enroll   - {username, password} + X-Bootstrap-Token -> 204 + session cookie
-//	POST /password - {currentPassword, newPassword}, session required -> 204 + fresh session cookie
-//	POST /logout   - -> 204, session cookie cleared
-//	GET  /session  - -> 200 {username} if authenticated, 401 otherwise
+//	POST  /login               - {username, password} -> 204 + session cookie
+//	POST  /enroll              - {username, password, recoveryEmail, smtp} + X-Bootstrap-Token -> 204 + session cookie
+//	POST  /password            - {currentPassword, newPassword}, session required -> 204 + fresh session cookie
+//	POST  /logout              - -> 204, session cookie cleared
+//	GET   /session             - -> 200 {username} if authenticated, 401 otherwise
+//	POST  /forgot-password     - {username} -> 204, ALWAYS (recovery.go)
+//	POST  /reset-password      - {token, newPassword} -> 204, every session revoked
+//	POST  /verify-email        - {token} -> 204, the recovery address is verified (verify.go)
+//	POST  /verify-email/resend - session required -> 204 once a fresh link has gone out
+//	GET   /recovery            - session required -> 200 recovery + SMTP settings, never the SMTP password
+//	PATCH /recovery            - session required -> 200, re-verifies by mailing a fresh link
+//	POST  /recovery/test       - session required -> 204 once a test message has actually gone out
 //
-// login/enroll/logout/password are wrapped in requireCSRF (they mutate
-// server-side state - a new or cleared session, or the persisted password
-// hash - so they need the same protection as any other state-changing
-// route); login/enroll/password are also rate-limited by remote IP. GET
-// /session deliberately has neither: it mutates nothing, and gating a
-// read with CSRF or a login-attempt budget would only make the page's
-// own "am I signed in" check flaky for no security benefit.
+// Every route but GET /session and GET /recovery is wrapped in
+// requireCSRF (they mutate server-side state - a new or cleared session,
+// the persisted password hash, the recovery settings - or they make this
+// process send mail, which is state on somebody else's server; either way
+// they need the same protection as any other state-changing route), and
+// every one of those is also rate-limited by remote IP. The two GETs
+// deliberately have neither: they mutate nothing, and gating a read with
+// CSRF or an attempt budget would only make the page's own "am I signed
+// in" check flaky for no security benefit.
 //
 // # This handler alone is NOT self-sufficient - callers MUST also wrap
 //
@@ -187,6 +207,13 @@ func (s *Service) Handler() http.Handler {
 	r.With(requireCSRF).Post("/password", s.handleRotatePassword)
 	r.With(requireCSRF).Post("/logout", s.handleLogout)
 	r.Get("/session", s.handleSession)
+	r.With(requireCSRF).Post("/forgot-password", s.handleForgotPassword)
+	r.With(requireCSRF).Post("/reset-password", s.handleResetPassword)
+	r.With(requireCSRF).Post("/verify-email", s.handleVerifyEmail)
+	r.With(requireCSRF).Post("/verify-email/resend", s.handleResendVerifyEmail)
+	r.Get("/recovery", s.handleGetRecovery)
+	r.With(requireCSRF).Patch("/recovery", s.handleUpdateRecovery)
+	r.With(requireCSRF).Post("/recovery/test", s.handleTestRecoveryEmail)
 	return r
 }
 
@@ -279,12 +306,48 @@ var dummyPasswordHash = sync.OnceValue(func() string {
 // handleEnroll implements POST /enroll, the one route that can create the
 // administrator account.
 //
-// The order of its checks is the interesting part. Whether an
-// administrator already exists is decided before the bootstrap token is
-// even looked at, so a stale token can never produce a refusal that hints
-// it would have worked; and the store's own Enroll guard is checked again
-// afterwards, because the read above and the write below are not atomic
-// and a concurrent enrollment can land in between.
+// The order of its checks is the whole of what is interesting here, and
+// #830 changed it. It runs:
+//
+//	rate limit -> already enrolled? -> validate the body ->
+//	VERIFY the bootstrap token -> mail the verification link ->
+//	SPEND the bootstrap token -> write the PROVISIONAL record ->
+//	issue a session
+//
+// Four properties fall out of that order, and each one is there because
+// the alternative has a specific failure.
+//
+// Whether an administrator already exists is decided before the
+// bootstrap token is even looked at, so a stale token can never produce
+// a refusal that hints it would have worked.
+//
+// The token is verified but NOT spent until the message has actually
+// been accepted by the operator's own SMTP server. Enrollment has work
+// between authenticating the caller and committing anything, and that
+// work is allowed to fail: a mistyped SMTP password used to be
+// unrecoverable if it burned the token, because the only way to get
+// another is to restart the process, and an operator debugging their
+// mail provider would have needed one restart per attempt. Spending it
+// only on the way to a successful write keeps single-shot intact - the
+// token is still never accepted twice, and Store.Enroll's own guard is
+// still what actually decides a race - while making a refusal cost
+// nothing but a retry with the same link.
+//
+// The send is what makes the SMTP endpoint PROVEN rather than merely
+// declared (#830 §4). It runs before the record is written, so an
+// enrollment that could not reach the recovery address does not create
+// an account at all: an administrator with an unreachable recovery
+// address is exactly the silent lockout this feature exists to prevent,
+// and refusing loudly at the one moment somebody is watching is the only
+// place it can be prevented.
+//
+// And the ONE message it sends is the VERIFICATION link (#830 §8,
+// verify.go), not a separate "this worked" note. The record it writes is
+// provisional: unverified, carrying the hash of that link's token and a
+// deadline after which the reaper deletes it. Two messages to the same
+// address in the same second - one saying the endpoint works, one asking
+// for a click - would make the operator guess which one mattered, and
+// the one that matters is the one that can lose the account.
 func (s *Service) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	if !s.enrollLimiter.Allow(remoteIP(r, s.trustForwardedHeaders)) {
 		writeAuthError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many enrollment attempts; wait before trying again")
@@ -305,19 +368,7 @@ func (s *Service) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.bootstrap.consume(r.Header.Get(BootstrapTokenHeader)) {
-		// 401, not 403: this is a credential the caller presented that
-		// wasn't accepted (the bootstrap token), same class of refusal as
-		// UNAUTHENTICATED, which is exactly where api/v1/openapi.json's
-		// own x-error-classes files it (issue #289). ENROLLMENT_CLOSED
-		// above stays a 403 - that one really is "you are who you say,
-		// but this route isn't open to you," a genuine authorization
-		// refusal rather than a rejected credential.
-		writeAuthError(w, http.StatusUnauthorized, "BOOTSTRAP_TOKEN_INVALID", "missing, expired or already-used bootstrap token")
-		return
-	}
-
-	var req credentialsRequest
+	var req enrollRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAuthError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed request body")
 		return
@@ -330,26 +381,114 @@ func (s *Service) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusBadRequest, "INVALID_REQUEST", "password must be at least 12 characters")
 		return
 	}
+	if err := email.ValidateAddress(req.RecoveryEmail); err != nil {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_EMAIL", "recovery email must be a valid email address")
+		return
+	}
+	if err := req.SMTP.validate(); err != nil {
+		writeAuthError(w, http.StatusBadRequest, "INVALID_REQUEST", "the SMTP configuration is incomplete: "+err.Error())
+		return
+	}
+
+	if !s.bootstrap.valid(r.Header.Get(BootstrapTokenHeader)) {
+		// 401, not 403: this is a credential the caller presented that
+		// wasn't accepted (the bootstrap token), same class of refusal as
+		// UNAUTHENTICATED, which is exactly where api/v1/openapi.json's
+		// own x-error-classes files it (issue #289). ENROLLMENT_CLOSED
+		// above stays a 403 - that one really is "you are who you say,
+		// but this route isn't open to you," a genuine authorization
+		// refusal rather than a rejected credential.
+		//
+		// Checked before the send and not spent by it: a valid token is
+		// what authorises this process to connect to the host the body
+		// names, so nothing below is reachable without one.
+		writeAuthError(w, http.StatusUnauthorized, "BOOTSTRAP_TOKEN_INVALID", "missing, expired or already-used bootstrap token")
+		return
+	}
+
+	// The window this account gets, fixed now and never moved again
+	// (verify.go's verificationDeadline). The bootstrap token's own
+	// expiry is read BEFORE it is spent below, because it is the
+	// enrollment-link-active-window end half of the rule and spending it
+	// does not end the window it defined.
+	createdAt := s.now().UTC()
+	linkWindowEnd, _ := s.bootstrap.expiry()
+	deadline := verificationDeadline(createdAt, linkWindowEnd)
+
+	challenge, err := mintVerificationChallenge(createdAt)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
+		return
+	}
+
+	// A challenge minted for an enrollment that then fails is inert:
+	// nothing persisted its hash, so POST /verify-email has nothing to
+	// match it against.
+	if err := s.send(r.Context(), req.SMTP.config(req.SMTP.Password),
+		verifyMessage(req.RecoveryEmail, req.Username, challenge.Token, s.baseURL, &deadline)); err != nil {
+		// The operator IS watching this one, and the SMTP error is the
+		// entire content of what they need (wrong port, wrong password,
+		// certificate not trusted, recipient refused). It is surfaced
+		// verbatim, which is safe because apps/common/email is
+		// responsible for never putting the credential in it.
+		writeAuthError(w, http.StatusBadGateway, "SMTP_SEND_FAILED", "could not send the verification email: "+err.Error())
+		return
+	}
 
 	hash, err := hashPassword(req.Password)
 	if err != nil {
 		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
 		return
 	}
+	passwordRef := ""
+	if req.SMTP.Password != "" {
+		// Into its own 0600 file, never into the record (secrets.go).
+		passwordRef, err = s.secrets.put(req.SMTP.Password)
+		if err != nil {
+			writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
+			return
+		}
+	}
+
+	if !s.bootstrap.consume(r.Header.Get(BootstrapTokenHeader)) {
+		// Spent here, atomically, and refused if something else spent it
+		// between the check above and this line - two concurrent
+		// enrollments cannot both get past this.
+		s.secrets.remove(passwordRef)
+		writeAuthError(w, http.StatusUnauthorized, "BOOTSTRAP_TOKEN_INVALID", "missing, expired or already-used bootstrap token")
+		return
+	}
 
 	err = s.store.Enroll(AdminRecord{
-		Username:     req.Username,
-		PasswordHash: hash,
-		CreatedAt:    s.now().UTC(),
+		Username:      req.Username,
+		PasswordHash:  hash,
+		RecoveryEmail: req.RecoveryEmail,
+		// Confirmed: the mail server took the message. NOT verified:
+		// nobody has opened the link yet, and until somebody does this
+		// record lapses at its deadline (#830 §§8-9).
+		RecoveryEmailConfirmedAt:   &createdAt,
+		VerificationDeadline:       &deadline,
+		VerificationTokenHash:      challenge.Hash,
+		VerificationTokenExpiresAt: &challenge.ExpiresAt,
+		CreatedAt:                  createdAt,
+	}, &SMTPRecord{
+		Host:        req.SMTP.Host,
+		Port:        req.SMTP.Port,
+		Security:    req.SMTP.Security,
+		Username:    req.SMTP.Username,
+		PasswordRef: passwordRef,
+		From:        req.SMTP.From,
 	})
 	if errors.Is(err, ErrAlreadyEnrolled) {
 		// Lost a race against a concurrent enrollment between the Admin()
 		// check above and this call - still correctly refused, just via
 		// the store's own guard rather than this handler's own read.
+		s.secrets.remove(passwordRef)
 		writeAuthError(w, http.StatusForbidden, "ENROLLMENT_CLOSED", "an administrator account already exists")
 		return
 	}
 	if err != nil {
+		s.secrets.remove(passwordRef)
 		writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
 		return
 	}

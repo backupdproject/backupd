@@ -105,6 +105,20 @@ await withDevServer(async (app) => {
   // well as the field and a label lookup is ambiguous. The role pins
   // which of the two is meant.
   await page.getByRole("textbox", { name: "Confirm password" }).fill(EXAMPLE.adminPassword);
+
+  // #830: the account is only as recoverable as the address enrolment
+  // was given, so the same form takes one and the SMTP details to reach
+  // it, and the server sends a confirmation before it writes the record.
+  // Four fields are filled here and three are deliberately left alone:
+  // Security defaults to STARTTLS, and the mock's submission asks for no
+  // credential, so SMTP username and SMTP password stay empty rather
+  // than carrying a placeholder somebody could copy into a real
+  // deployment.
+  await page.getByLabel("Recovery email").fill(EXAMPLE.recoveryEmail);
+  await page.getByLabel("SMTP host").fill(EXAMPLE.smtpHost);
+  await page.getByLabel("Port").fill(EXAMPLE.smtpPort);
+  await page.getByLabel("From address").fill(EXAMPLE.smtpFrom);
+
   await page.getByRole("button", { name: "Create administrator" }).waitFor({ state: "visible" });
   await take("03-enrolment-ready", AUTH_CARD);
 

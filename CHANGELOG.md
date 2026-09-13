@@ -4,6 +4,127 @@
 
 ### Added
 
+- **The administrator account is recoverable, and enrolment is where that is
+  arranged** (#830). The one-time enrolment form now also takes a recovery email
+  address and the SMTP details to reach it, and the server sends a confirmation
+  message to that address, over exactly those details, *before* it writes the
+  administrator record: a send the mail server will not accept answers
+  `SMTP_SEND_FAILED`, creates no account, and leaves enrolment open. A recovery
+  address nobody has ever delivered to is worth nothing on the day it is needed,
+  and the day it is needed is the day nobody can sign in to configure it, so it is
+  verified on the day it is given. The username is unchanged as the login
+  identity; the address is an additional field on the same record.
+
+  What it buys is the sign-in page's new **Forgot password?**: it takes the
+  username alone and answers identically whether or not that name is the
+  administrator's — an endpoint that answered differently would tell an
+  unauthenticated caller what the account is called — and where it does match, a
+  single-use link valid for 30 minutes is mailed to the recovery address.
+  Completing the reset sets the new password and revokes every live session,
+  including the browser that asked, so the answer to a successful reset is the
+  sign-in page rather than a dashboard; a reset is also what an operator does when
+  they think somebody else holds a session, and one that left sessions running
+  would not be a recovery. The link is built from the same `PUBLIC_BASE_URL` the
+  enrolment notice already uses, which is worth setting properly at install time:
+  unlike the enrolment notice, nobody is reading a log to notice it points at
+  `localhost`.
+
+  The SMTP password is never persisted, logged or returned. `local-auth.json`
+  gains `recovery_email`, `recovery_email_confirmed_at` and an `smtp` object whose
+  password is held as a secret reference in the same form every other secret in
+  this project uses, and `GET /api/v1/auth/recovery` answers with no password
+  property at all and a `passwordSet` boolean in its place — absent rather than
+  masked, because a form that round-trips what it was served would otherwise write
+  the mask in as the new password. Both the address and the SMTP details are
+  editable afterwards from Settings' **Account recovery** card, with a test send
+  beside them, and changing the address re-verifies it by confirmation message
+  rather than trusting the new value.
+
+  Two smaller consequences. A *failed* enrolment no longer spends the bootstrap
+  token: it is consumed only on success, so a rejected password, a malformed
+  address or an SMTP server that would not accept the message all leave the same
+  `/enroll?token=…` link usable — correct the field and submit again, where a
+  too-short password used to burn the link and leave the operator restarting the
+  engine for a fresh one. And `backupd-web auth create-admin` takes the same
+  details as optional flags (`--recovery-email`, `--smtp-host`, `--smtp-port`,
+  `--smtp-security`, `--smtp-username`, `--smtp-password-stdin`, `--smtp-from`),
+  because a provisioning run in a pipeline often has no mail credential to give
+  and refusing to create the account there would buy no security; given an
+  endpoint it sends the same confirmation and fails the command if that send
+  fails, and given none it leaves recovery unconfigured for the operator to finish
+  in Settings.
+
+  **The address is not merely mailed to — it is verified, and an account whose
+  address nobody verifies is deleted** (#830, scope additions 8-9). The one
+  message enrolment sends now IS the verification: it carries a single-use link
+  (`PUBLIC_BASE_URL` + `/verify-email?token=…`, expiring in 30 minutes) and the
+  account it creates is **provisional** — `local-auth.json` gains
+  `recovery_email_verified_at`, a `verification_deadline`, and the SHA-256 of the
+  outstanding token, never the token itself. `POST /api/v1/auth/verify-email`
+  redeems the link (single-use, expiring, and one `VERIFY_TOKEN_INVALID` refusal
+  for expired, spent, unknown and no-such-account alike, so nothing can be probed
+  with it); `POST /api/v1/auth/verify-email/resend` mails a fresh one to whoever
+  can still sign in.
+
+  If the address is never verified, a reaper **deletes the administrator record**,
+  revokes its sessions and reopens enrolment with a fresh bootstrap token. The
+  deadline is `max(enrolment-link window end, created_at + 30 minutes)`, fixed at
+  creation and moved by nothing afterwards — a resend that extended it would be no
+  deadline at all. It is enforced on a timer *and* at service start, so a
+  deployment that was shut down through its whole window still cleans up on its
+  next start. That is deliberately harsher than a warning: an SMTP server
+  accepting a message proves the endpoint works and nothing more, since a typo
+  that lands in the neighbouring domain is accepted just as happily as the right
+  address, and an administrator nobody can mail is already lost — 30 seconds of
+  re-enrolment now is cheaper than discovering it the day a password is forgotten.
+  Verifying clears the deadline for good, so an established administrator who
+  later edits the address gets an unverified address and a nudge, never a deleted
+  account, and `auth create-admin` run with no SMTP endpoint at all never gets a
+  deadline, because no link was ever mailed for anybody to open.
+
+  While the address is unverified the console carries a banner that cannot be
+  dismissed, naming the address, the deadline and a **Resend link** action, plus a
+  `/verify-email` page that reports what the link did. `auth create-admin` prints
+  the same warning to stdout and takes `--public-base-url` for the link it mails.
+
+  **Changing where recovery mail goes now asks for the password** (#830, security
+  review). `PATCH /api/v1/auth/recovery` takes `currentPassword` and re-checks it
+  before it resolves the SMTP credential, sends anything or writes anything,
+  refusing with the same 401 `UNAUTHENTICATED` that `POST /auth/password` gives.
+  The recovery address and the SMTP endpoint decide where a reset link is
+  delivered, so a caller holding a live session but not the password could
+  otherwise repoint them, press **Forgot password?**, receive the link and take
+  the account over for good — a stolen cookie turning into permanent ownership.
+  Settings' **Account recovery** card grows an **Administrator password** field
+  to match; **Send test email** does not ask for one, because it changes nothing.
+
+  Three narrower holes in the same routes are closed with it. A change to the
+  **SMTP endpoint** is now proven like a change of address: the verification (or,
+  on an already-verified mailbox, the test message) goes out over the endpoint
+  the request establishes and the whole update is refused with
+  `SMTP_SEND_FAILED` if it cannot be delivered, so a new host can no longer be
+  stored beside an untouched `recoveryEmailConfirmed: true` and fail silently at
+  the one moment it is needed. Redeeming a verification link now spends the
+  **exact challenge** it matched, re-compared under the store's own lock, so an
+  address change or a resend landing in between can no longer leave the NEW
+  address verified on the OLD address's token. And the reaper's decision and its
+  deletion happen in one critical section (`Store.DeleteUnverifiedAdmin`), so a
+  verification committing at the deadline instant can no longer be answered 204
+  by a process that deletes the account a moment later.
+
+  A reap that reopens enrolment **at runtime** also prints the fresh enrolment
+  notice, to the same stream the startup one goes to. A host prints that notice
+  once, at startup, so a token minted an hour into a process's life used to
+  expire in 30 minutes with nothing having shown it to anybody — a deployment
+  locked out by the mechanism that exists to prevent lockouts.
+
+  Two contract corrections: `PATCH /auth/recovery` answers 400 `INVALID_REQUEST`
+  rather than 500 when no SMTP endpoint is configured to prove an address over
+  (the answer its siblings already gave, and the one the contract already
+  declared), and `RecoverySettingsResponse`'s `smtp` and `verificationDeadline`
+  are optional members that are OMITTED when there is nothing to report, instead
+  of a null against a non-nullable schema and an empty-string sentinel.
+
 - **A backup set can name a subtree discovery must not walk into** (#737).
   `exclude_paths` on a backup set lists directories, relative to
   `remote_path`, that the listing skips: "recurse into `uploads/`, never into

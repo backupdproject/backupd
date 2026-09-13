@@ -308,8 +308,23 @@ reached at the guest's own address and published port.
 ## Step 4 — Authentication (local-account only)
 
 - First start printed a one-time enrollment link (keep it out of the evidence table)
-- Enrollment sets an administrator password, stored as an Argon2id hash
+- Enrollment asked for a recovery email address and the SMTP details to reach it,
+      beside the username and password. Use a mail account you control and keep the
+      SMTP password out of the evidence table; record the host and port only
+- The confirmation message arrived at the recovery address, and it arrived
+      **before** any account existed. Provoke the failure once, with a deliberately
+      wrong port: the API answers `SMTP_SEND_FAILED` and no administrator is created
+- That failure did not consume the link. The same URL completed the enrollment
+      once the SMTP details were corrected
+- Enrollment sets an administrator password, stored as an Argon2id hash, with the
+      recovery address beside it in the same record and the SMTP password held as a
+      secret reference rather than a value
 - The enrollment link is single-use and rejected the second time
+- Forgot password answers identically for the administrator's username and for a
+      name that does not exist, and mails a single-use reset link to the recovery
+      address; completing the reset sets the new password and signs out the session
+      that asked. The mail leaves the guest, and it is the only outbound connection
+      in this procedure that is not SFTP
 - An unauthenticated request to `/api/v1/` is refused
 - The UI reports auth mode `local-account`, not a PVE session
 - No PVE realm, PAM user, or PVE API token was created or used
@@ -359,7 +374,9 @@ ssh admin@<guest> '
 - `diff` of the retained-artifact listing is empty: the update moved no
       backup data
 - New image version reported by the UI
-- Backup sets, schedules, retained artifacts and the administrator account all survive
+- Backup sets, schedules, retained artifacts and the administrator account all survive,
+      the account's recovery address and SMTP settings with it (a test send from
+      Settings still succeeds after the update)
 - No re-enrollment was required
 - Nothing on the PVE host changed (step 9 re-checks)
 

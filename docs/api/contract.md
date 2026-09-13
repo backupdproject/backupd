@@ -536,6 +536,55 @@ work and would go stale, since nothing would hold the two lists together. The
 shared base holds them together by construction: a field added to a backup set
 appears on both operations or on neither.
 
+## Recorded decision: the shapes #830's account-recovery routes declare
+
+#830 makes the local administrator account recoverable, which adds a field to
+enrollment and four operations beside it: `POST /auth/forgot-password`,
+`POST /auth/reset-password`, `GET`/`PATCH /auth/recovery` and
+`POST /auth/recovery/test`. Four shape questions had answers worth recording.
+
+**They are camelCase, like the rest of `/auth`.** `recoveryEmail`,
+`newPassword`, `passwordSet`. The convention split between `/auth` and
+everything else is recorded below as a defect to fix in its own issue, and the
+way to keep it one defect rather than two is to not open a snake_case island
+inside `/auth` while that issue is outstanding. The on-disk record is unaffected:
+`local-auth.json` is snake_case already (`password_hash`, `created_at`) and gains
+`recovery_email`, `recovery_email_confirmed_at` and an `smtp` object in the same
+style. Wire and file are different documents and always were.
+
+**The SMTP password is write-only, and absent rather than masked on read.**
+`GET /auth/recovery` declares an `smtp` object with `host`, `port`, `security`,
+`username`, `from` and a `passwordSet` boolean, and no password property at all.
+`PATCH` takes the same block with every field optional, and an omitted
+`smtp.password` keeps the stored one. Returning a masked string was the
+alternative and it is a trap: a form that round-trips what it was served would
+write the mask in as the new password, and the only way to stop it is for every
+client to special-case a sentinel value. A field that does not exist cannot be
+round-tripped by accident. `passwordSet` is there because a form still has to
+distinguish "no credential configured" from "one is configured and you cannot
+see it", and that is a fact about the deployment rather than a fragment of the
+secret.
+
+**`POST /auth/forgot-password` declares a `204` and no other success.** It takes
+`{username}` and answers the same way whether that name is the administrator's,
+is somebody's guess, or is empty of meaning entirely. A `404`, a different code
+or a body saying "sent" would each answer an unauthenticated caller's real
+question, which is what the account is called. The operator learns the outcome
+from their mailbox, which is the one channel that already proves who they are.
+
+**`GET /auth/session` keeps returning `{username}` alone.** The recovery address
+is read through `GET /auth/recovery` instead. The session probe is the one auth
+response a browser fetches before anything else is known to be authorised, and
+widening it to carry an email address puts a piece of operator contact data in
+the response that is hardest to reason about. Nothing renders it that cannot
+make a second call.
+
+`AuthErrorResponse` gains two codes rather than a shape: `INVALID_EMAIL` for an
+address that is not one, and `SMTP_SEND_FAILED` for a confirmation, reset or test
+message the configured server would not accept. The second one is why enrollment
+can now fail after passing validation, and the contract says so on the operation
+rather than leaving a client to discover a 502 it did not expect.
+
 ## Migration record: what was removed and what replaced it
 
 | removed | replaced by |

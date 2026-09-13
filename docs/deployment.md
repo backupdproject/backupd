@@ -455,13 +455,75 @@ parameter, not a form field: neither `EnrollmentPage.tsx` nor the design canvas
 it off `window.location.search` and attaches it as the `X-Bootstrap-Token` header
 instead.
 
+A *failed* enrollment does not spend it. The handler verifies the token, sends the
+confirmation mail described below, and only then consumes it and writes the record, so a
+rejected password, a malformed recovery address or an SMTP server that would not accept
+the message all leave the same link usable: correct the field and submit again. That is
+worth stating because it did not used to be true — a too-short password once burned the
+token and left the operator restarting the engine for a fresh one.
+
+**What enrollment asks for, and why it needs an SMTP server.** `POST
+/api/v1/auth/enroll` takes a `username` and a `password`, and beside them a
+`recoveryEmail` and the `smtp` block used to reach it: `host`, `port`, `security`
+(`starttls`, `tls` or `none`), `username`, `password` and `from`. The username is still
+the login identity; the recovery address is an additional field on the same
+administrator record. Before that record is written, the handler sends a confirmation
+message to the address over exactly those details, and a send that fails fails the
+enrollment: `SMTP_SEND_FAILED`, no account, enrollment still open. A malformed address
+is refused as `INVALID_EMAIL` before any connection is attempted. This is deliberate
+and it is the whole point of asking at enrollment rather than later — a recovery address
+nobody has ever delivered to is worth nothing on the day it is needed, and the day it is
+needed is the day nobody can sign in to fix it.
+
+`PUBLIC_BASE_URL` is therefore load-bearing twice over. The reset mail's link is built
+from the same value as the enrollment notice above, so a deployment left on
+`compose.yaml`'s default of `http://localhost:${LISTEN_PORT}` mails a link that resolves
+only on the NAS itself — which, unlike the enrollment notice, nobody is watching a log
+to notice.
+
+**Losing the password.** `POST /api/v1/auth/forgot-password` takes `{username}` and
+answers `204` every time, whether or not that name is the administrator's: an endpoint
+that answered differently would tell an unauthenticated caller the account's name. Where
+it does match and a confirmed recovery address exists, a single-use reset link valid for
+30 minutes is mailed to that address, and `POST /api/v1/auth/reset-password`
+`{token, newPassword}` spends it. The reset token lives in the process, like the
+bootstrap one, so a restart invalidates whatever links are outstanding. Completing a
+reset sets the new hash and revokes every live session, including the browser that asked:
+the answer to a successful reset is the sign-in page, not a session.
+
+**The SMTP password is a reference, not a value.** `state/local-auth.json` gains
+`recovery_email`, `recovery_email_confirmed_at` and an `smtp` object beside the existing
+`password_hash`, and that object's password is held in the project's secret-reference form
+(`core/internal/secretref`) rather than as the secret itself. Nothing reads it back out
+over the API: `GET /api/v1/auth/recovery` returns the SMTP block with no password field
+at all and a `passwordSet` boolean in its place, `PATCH` leaves the stored one alone when
+the field is omitted, and `POST /api/v1/auth/recovery/test` proves the credential by
+using it rather than by showing it. Same rule as the SSH key: the operator supplies it,
+the deployment holds it, and no response or log line ever carries it back.
+
+**Provisioning without a browser (`/backupd-web auth create-admin`).** The other way
+an administrator comes into existence is the subcommand an automated deployment runs
+instead of opening a link: `--username`, `--password-stdin`, `--auth-store`. Recovery is
+**optional** there — `--recovery-email`, `--smtp-host`, `--smtp-port`, `--smtp-security`,
+`--smtp-username`, `--smtp-password-stdin`, `--smtp-from` — and the two stdin secrets are
+read as two lines in that order: the account password first, the SMTP password second.
+Given an SMTP endpoint it sends the same confirmation message and fails the command if
+that send fails, exactly as the HTTP route does. Given none, it provisions the account
+and leaves recovery unconfigured, which is the deliberate difference: a provisioning run
+in a pipeline often has no mail credential to give, and refusing to create the account
+would make that pipeline unusable to no security benefit. The operator finishes it in
+Settings, and until they do, a forgotten password has no self-service route back. A
+deployment provisioned this way should treat `GET /api/v1/auth/recovery` returning no
+address as an open task rather than as a state to leave alone.
+
 **Trusting `web-ui`'s reverse proxy (`TRUST_FORWARDED_HEADERS`).** `backupd`
 only ever sees requests from `web-ui`'s own reverse proxy, over the `internal` network -
 every request's `RemoteAddr` is `web-ui`'s own container address, never the real
 external client's. Left uncorrected, that collapses per-IP rate limiting on
-`/api/v1/auth/login` and `/api/v1/auth/enroll` into one shared bucket for every client
-on the internet-facing side (an attacker-usable denial-of-service against the admin's
-own login), and permanently prevents the session/CSRF cookies' `Secure` flag from ever
+`/api/v1/auth/login`, `/api/v1/auth/enroll` and `/api/v1/auth/forgot-password` into one
+shared bucket for every client on the internet-facing side (an attacker-usable
+denial-of-service against the admin's own login), and permanently prevents the
+session/CSRF cookies' `Secure` flag from ever
 being `true`, regardless of TLS in front of `web-ui`'s published port ('s
 review, findings 1 and 4). `container/compose.yaml` sets
 `TRUST_FORWARDED_HEADERS=true` for `backupd` only, which makes it trust

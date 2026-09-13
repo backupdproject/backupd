@@ -37,6 +37,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/backupdproject/backupd/apps/common/email/emailtest"
 )
 
 // proxyCostRecord is what this harness prints.
@@ -196,7 +198,16 @@ func enrollReturningCredentials(t *testing.T, c *http.Client, base, bootstrapTok
 	const username = "perf"
 	password := base64.RawURLEncoding.EncodeToString(raw)
 
-	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
+	// Enrollment sends a confirmation message over the SMTP endpoint the
+	// request names and refuses if that send fails (#830), so this
+	// harness starts an in-process SMTP sink on 127.0.0.1 for it
+	// (apps/common/email/emailtest) and points enrollment at that. No
+	// mail service, no container, and still nothing written to disk.
+	sink := emailtest.Start(t)
+
+	body := fmt.Sprintf(
+		`{"username":%q,"password":%q,"recoveryEmail":"perf@example.test","smtp":{"host":%q,"port":%d,"security":"none","username":"","from":"backupd@example.test"}}`,
+		username, password, sink.Host(), sink.Port())
 	req, err := http.NewRequest(http.MethodPost, base+"/api/v1/auth/enroll", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
@@ -214,6 +225,7 @@ func enrollReturningCredentials(t *testing.T, c *http.Client, base, bootstrapTok
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("enroll: status %d: %s", resp.StatusCode, payload)
 	}
+	sink.WaitForMessage(t, "backupd: verify your recovery email", 10*time.Second)
 	return username, password
 }
 
