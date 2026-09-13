@@ -351,6 +351,45 @@
   screenshot of a failed `fetch` can still be matched to the server's record of
   the same request.
 
+- **Every workflow script step has its own read-only terminal, and it refuses
+  to be a terminal** (#815). Selecting a step in a run shows that step's own
+  live or historical output, with the script, the phase, where it ran, the
+  state, the exit code, the duration and the script's short SHA-256 above it,
+  and live follow, pause, scrollback, copy, wrap, timestamps and a download in
+  the toolbar.
+
+  **The bytes are a hook script's stdout on a source host, so the view is
+  hardened rather than configured.** There is no terminal emulator: the
+  renderer is first party and in this repository, which is how "a pinned
+  production release and no runtime-loaded third-party terminal code" is met in
+  its strongest form — nothing is version-resolved, fetched or dynamically
+  imported, and the suite asserts the whole dependency closure. There is no
+  input path, no link activation, no title or window-control integration and no
+  device reporting, and captured bytes reach the DOM as text nodes only.
+  Sequence classes an emulator cannot be trusted with are swallowed BEFORE
+  drawing — OSC 8 hyperlinks, window and icon titles, clipboard writes, window
+  manipulation, device reports, DCS/SOS/PM/APC payloads, cursor movement and
+  erase, and the bidi overrides that are the cheapest spoof on a web surface —
+  and what was removed is reported in a line under the log rather than quietly
+  shown as less than the hook wrote. A carriage return is a line break, not a
+  repaint: forty repaints are the forty lines the script actually wrote.
+
+  **A slow, paused or reconnecting browser cannot lose a line or ask for one
+  twice.** The follower holds two numbers — the sequence that reached the
+  screen, and the read position — and one rule: when the bounded queue is
+  full, live delivery is dropped and the next read replays the durable log from
+  the last line drawn. A throttled consumer, a paused follow and a reconnect
+  are therefore the same case, and none of them can extend a script's
+  wall-clock duration, because every buffer is in the browser and bounded. A
+  100-step run keeps exactly one mounted viewer: per-step cursors and
+  scrollbacks are swapped inside it, so switching back to a step is instant and
+  resumes from its cursor. Browser scrollback is bounded and says what it
+  dropped and what still holds it; the truncation marker is drawn in this
+  product's words at the position it happened. A download or a copy is the
+  sanitised content with the header facts, the capture-order caveat and the
+  removal tally — because a saved log is opened in a terminal, which is the one
+  place those sequences still work.
+
 ### Changed
 
 - **The debug shortcut is `BACKUPD_DEBUG`, and `RM_DEBUG` is deprecated**
