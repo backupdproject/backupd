@@ -29,8 +29,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
-	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -42,8 +40,6 @@ import (
 	"github.com/kopia/kopia/repo/manifest"
 	"github.com/kopia/kopia/snapshot"
 	"github.com/kopia/kopia/snapshot/policy"
-	"github.com/kopia/kopia/snapshot/restore"
-	"github.com/kopia/kopia/snapshot/snapshotfs"
 	"github.com/kopia/kopia/snapshot/snapshotmaintenance"
 	"github.com/kopia/kopia/snapshot/upload"
 
@@ -200,66 +196,9 @@ func (r *repository) ListSnapshots(ctx context.Context, src backupengine.Source)
 	return out, nil
 }
 
-// Restore implements backupengine.Repository.
-func (r *repository) Restore(ctx context.Context, id backupengine.SnapshotID, req backupengine.RestoreRequest) (backupengine.RestoreReport, error) {
-	man, err := r.load(ctx, id)
-	if err != nil {
-		return backupengine.RestoreReport{}, err
-	}
-
-	root, err := snapshotfs.SnapshotRoot(r.rep, man)
-	if err != nil {
-		return backupengine.RestoreReport{}, fmt.Errorf("resolving snapshot root: %w", err)
-	}
-
-	target, err := filepath.Abs(req.TargetPath)
-	if err != nil {
-		return backupengine.RestoreReport{}, fmt.Errorf("resolving restore target %s: %w", req.TargetPath, err)
-	}
-
-	if err := os.MkdirAll(target, 0o750); err != nil {
-		return backupengine.RestoreReport{}, fmt.Errorf("creating restore target %s: %w", target, err)
-	}
-
-	out := &restore.FilesystemOutput{
-		TargetPath:           target,
-		OverwriteDirectories: req.Overwrite,
-		OverwriteFiles:       req.Overwrite,
-		OverwriteSymlinks:    req.Overwrite,
-		SkipOwners:           req.SkipOwners,
-
-		// A restore that crashed halfway must not leave a file that looks
-		// complete and is not, because the next thing to read it is a
-		// verification that will say it is fine.
-		WriteFilesAtomically: true,
-	}
-
-	if err := out.Init(ctx); err != nil {
-		return backupengine.RestoreReport{}, fmt.Errorf("preparing restore output: %w", err)
-	}
-
-	// RestoreDirEntryAtDepth is the depth below which Kopia stops writing
-	// real files and starts writing `.kopia-entry` placeholder stubs for a
-	// later shallow expansion. Its zero value is depth zero, meaning the
-	// whole restore is placeholders, which is a restore that passes every
-	// statistic and contains none of the data. MaxInt32 is how Kopia's own
-	// CLI spells "actually restore everything" (cli.unlimitedDepth), and it
-	// has to be said explicitly because the useful default is not the zero
-	// value here.
-	stats, err := restore.Entry(ctx, r.rep, out, root, restore.Options{
-		RestoreDirEntryAtDepth: math.MaxInt32,
-	})
-	if err != nil {
-		return backupengine.RestoreReport{}, fmt.Errorf("restoring snapshot: %w", err)
-	}
-
-	return backupengine.RestoreReport{
-		Files:       int64(stats.RestoredFileCount),
-		Directories: int64(stats.RestoredDirCount),
-		Symlinks:    int64(stats.RestoredSymlinkCount),
-		Bytes:       stats.RestoredTotalFileSize,
-	}, nil
-}
+// The restore path lives in localrestore.go: a snapshot's entry names are
+// untrusted input, and the extraction that treats them as such is enough
+// code to own a file.
 
 // DeleteSnapshot implements backupengine.Repository.
 func (r *repository) DeleteSnapshot(ctx context.Context, id backupengine.SnapshotID) error {

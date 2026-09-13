@@ -248,7 +248,7 @@ func TestInProcessLifecycle(t *testing.T) {
 
 	restored, err := rep.Restore(ctx, second.ID, backupengine.RestoreRequest{
 		TargetPath: restoreDir,
-		Overwrite:  true,
+		Conflict:   backupengine.ConflictOverwrite,
 		SkipOwners: true,
 	})
 	if err != nil {

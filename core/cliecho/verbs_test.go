@@ -146,8 +146,34 @@ func TestOperationsReadsTheActionsTheContractDefines(t *testing.T) {
 		t.Errorf("%s printed the command %v; `"+Binary+" run` opens the service in the operator's own process and runs a cycle THERE", apicontract.ActionRunCycle, cycle.Command)
 	}
 
-	// And the examples drive all three, because an arm no example visits
+	// A snapshot restore is its own action too, and the sentence it
+	// prints must not be the archived-copy retrieval's: `restore` is a
+	// billed provider retrieval of a different object, so answering a
+	// "get this file back out of the restore point" request with it
+	// sends an operator to spend money on the wrong thing.
+	snapshot := Echo(Action{Method: "POST", Route: "/operations",
+		Body: []byte(`{"action":"` + apicontract.ActionRestoreSnapshot + `","config_revision":"r1","backup_set_id":"api-server/var-backups"}`)})
+	if len(snapshot.Command) != 0 {
+		t.Errorf("%s printed the command %v; no shipped verb restores a snapshot to a local directory",
+			apicontract.ActionRestoreSnapshot, snapshot.Command)
+	}
+	if snapshot.GapDetail == restore.Shell() || !strings.Contains(snapshot.GapDetail, "ARCHIVED COPY") {
+		t.Errorf("the %s gap does not say why `restore` is not the answer:\n  %s",
+			apicontract.ActionRestoreSnapshot, snapshot.GapDetail)
+	}
+
+	// And the examples drive every arm, because an arm no example visits
 	// is an arm the dispatcher-driven parse test never sees.
+	contractActions := []string{
+		apicontract.ActionRunCycle,
+		apicontract.ActionRunBackupSet,
+		apicontract.ActionRestorePlacement,
+		apicontract.ActionRestoreSnapshot,
+	}
+	defined := map[string]bool{}
+	for _, action := range contractActions {
+		defined[action] = true
+	}
 	seen := map[string]bool{}
 	for _, ex := range Examples() {
 		if ex.Method != "POST" || ex.Route != "/operations" {
@@ -160,15 +186,13 @@ func TestOperationsReadsTheActionsTheContractDefines(t *testing.T) {
 		}
 		seen[req.Action] = true
 	}
-	for _, action := range []string{apicontract.ActionRunCycle, apicontract.ActionRunBackupSet, apicontract.ActionRestorePlacement} {
+	for _, action := range contractActions {
 		if !seen[action] {
 			t.Errorf("no example carries action %q, so nothing drives that arm", action)
 		}
 	}
 	for action := range seen {
-		switch action {
-		case apicontract.ActionRunCycle, apicontract.ActionRunBackupSet, apicontract.ActionRestorePlacement:
-		default:
+		if !defined[action] {
 			t.Errorf("an example carries action %q, which the contract does not define; the last one of those certified a branch no client can reach", action)
 		}
 	}
