@@ -37,6 +37,8 @@ import { PasswordInput } from "@shared/components/PasswordInput";
 import { FIELD_HELP } from "@shared/components/fieldHelpCopy";
 import { useTooltipsEnabled } from "@shared/hooks/useTooltips";
 import { setTooltipsEnabled } from "@shared/state/tooltipNodes";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 export function SettingsPage({ readOnly }: { readOnly: boolean }) {
   const navigate = useNavigate();
@@ -71,6 +73,7 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
     <>
       <PageHeader
         title="Settings"
+        tip="nav.settings"
         subtitle="Service behaviour, platform integration and build information"
       />
 
@@ -117,7 +120,11 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
           />
 
           <section className="card">
-            <div className="card__header"><h2 className="eyebrow">Notifications</h2></div>
+            <div className="card__header">
+              <InfoTooltip id="settings.notifications">
+                <h2 className="eyebrow">Notifications</h2>
+              </InfoTooltip>
+            </div>
             <div className="card__body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {/* Honest capability copy — never present a fallback as native (§22). */}
               <Banner tone="info" style={{ fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
@@ -147,26 +154,32 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
               unusable would mean an operator who turned tooltips off
               having no way to turn them back on. */}
           <section className="card">
-            <div className="card__header"><h2 className="eyebrow">Interface</h2></div>
+            <div className="card__header">
+              <InfoTooltip id="settings.interface">
+                <h2 className="eyebrow">Interface</h2>
+              </InfoTooltip>
+            </div>
             <div className="card__body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <label
-                style={{
-                  display: "flex", alignItems: "center", gap: 10, padding: "11px 13px",
-                  border: "1px solid var(--border)", borderRadius: 7, fontSize: 13,
-                  cursor: "pointer"
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={tooltipsEnabled}
-                  style={{ accentColor: "var(--accent)" }}
-                  onChange={(e) => setTooltipsEnabled(e.target.checked)}
-                />
-                <span style={{ flex: 1 }}>Show tooltips on hover</span>
-                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
-                  {tooltipsEnabled ? "on" : "off"}
-                </span>
-              </label>
+              <InfoTooltip id="settings.tooltips-toggle" block>
+                <label
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10, padding: "11px 13px",
+                    border: "1px solid var(--border)", borderRadius: 7, fontSize: 13,
+                    cursor: "pointer"
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={tooltipsEnabled}
+                    style={{ accentColor: "var(--accent)" }}
+                    onChange={(e) => setTooltipsEnabled(e.target.checked)}
+                  />
+                  <span style={{ flex: 1 }}>Show tooltips on hover</span>
+                  <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+                    {tooltipsEnabled ? "on" : "off"}
+                  </span>
+                </label>
+              </InfoTooltip>
               <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", maxWidth: "74ch" }}>
                 Tooltips explain what a field does and what it changes. With this off,
                 no tooltip appears on hover anywhere in this interface. The setting is
@@ -183,7 +196,11 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
               truthfully claim was found in one. */}
           {configured === false ? null : (
             <section className="card" style={{ borderColor: "var(--warn)" }}>
-              <div className="card__header"><h2 className="eyebrow">Catalog recovery</h2></div>
+              <div className="card__header">
+                <InfoTooltip id="settings.catalog-recovery">
+                  <h2 className="eyebrow">Catalog recovery</h2>
+                </InfoTooltip>
+              </div>
               <div className="card__body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 600 }}>Existing backup data detected</div>
                 <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", maxWidth: "74ch" }}>
@@ -192,9 +209,11 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
                   read-only — no files will be deleted.
                 </p>
                 <div>
-                  <button className="btn btn--primary" disabled={readOnly} onClick={() => navigate("/catalog-recovery")}>
-                    Scan backup storage
-                  </button>
+                  <InfoTooltip id="settings.catalog-scan">
+                    <button className="btn btn--primary" disabled={readOnly} onClick={() => navigate("/catalog-recovery")}>
+                      Scan backup storage
+                    </button>
+                  </InfoTooltip>
                 </div>
               </div>
             </section>
@@ -203,41 +222,61 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <section className="card">
-            <div className="card__header"><h2 className="eyebrow">Platform</h2></div>
+            <div className="card__header">
+              <InfoTooltip id="settings.platform">
+                <h2 className="eyebrow">Platform</h2>
+              </InfoTooltip>
+            </div>
             <div className="card__body">
               <PlatformBadge />
-              <div className="eyebrow" style={{ fontSize: 10.5, margin: "16px 0 8px" }}>Capabilities</div>
+              <InfoTooltip id="settings.capabilities" block>
+                <div className="eyebrow" style={{ fontSize: 10.5, margin: "16px 0 8px" }}>Capabilities</div>
+              </InfoTooltip>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {capabilityCopy.map((c) => (
-                  <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: "var(--text-sm)" }}>
-                    <span
-                      aria-hidden="true"
-                      style={{ width: 12, textAlign: "center", color: c.supported ? "var(--ok)" : "var(--text-3)" }}
-                    >
-                      {c.supported ? "\u2713" : "\u2013"}
-                    </span>
-                    <span style={{ flex: 1 }}>{c.label}</span>
-                    <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
-                      {c.detail}
-                    </span>
-                  </div>
+                  <InfoTooltip key={c.label} id="settings.capability" block>
+                    <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: "var(--text-sm)" }}>
+                      <span
+                        aria-hidden="true"
+                        style={{ width: 12, textAlign: "center", color: c.supported ? "var(--ok)" : "var(--text-3)" }}
+                      >
+                        {c.supported ? "\u2713" : "\u2013"}
+                      </span>
+                      <span style={{ flex: 1 }}>{c.label}</span>
+                      <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+                        {c.detail}
+                      </span>
+                    </div>
+                  </InfoTooltip>
                 ))}
               </div>
             </div>
           </section>
 
           <section className="card">
-            <div className="card__header"><h2 className="eyebrow">System information</h2></div>
+            <div className="card__header">
+              <InfoTooltip id="settings.system-information">
+                <h2 className="eyebrow">System information</h2>
+              </InfoTooltip>
+            </div>
             <div className="card__body">
               {version.data ? (
                 <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "1fr auto", gap: "10px 14px", fontSize: "var(--text-sm)" }}>
-                  <Row label="Service version" value={version.data.service} />
-                  <Row label="API contract" value={version.data.api} />
-                  <Row label="Backup engine" value={version.data.engine} />
-                  <Row label="Go toolchain" value={version.data.goVersion} />
-                  <Row label="Configuration revision" value={version.data.configRevision} />
-                  <Row label="Platform adapter" value={bridge.deployment.adapterVersion} />
-                  <Row label="Build commit" value={version.data.buildCommit} />
+                  <Row label="Service version" tip="settings.version.service" value={version.data.service} />
+                  <Row label="API contract" tip="settings.version.api" value={version.data.api} />
+                  <Row label="Backup engine" tip="settings.version.engine" value={version.data.engine} />
+                  <Row label="Go toolchain" tip="settings.version.go" value={version.data.goVersion} />
+                  <Row
+                    label="Configuration revision"
+                    tip="settings.version.config-revision"
+                    value={version.data.configRevision}
+                  />
+                  <Row
+                    label="Platform adapter"
+                    tip="settings.version.adapter"
+                    value={bridge.deployment.adapterVersion}
+                  />
+                  <Row label="Build commit" tip="settings.version.build-commit" value={version.data.buildCommit} />
                 </dl>
               ) : version.error ? (
                 // versionNode's one fetch is owned by App.tsx, not this page,
@@ -265,10 +304,22 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+/** One row of the build-information list.
+ *
+ *  `tip` is required rather than optional (issue #834): every one of these
+ *  values is a version string or a hash, which is exactly the kind of
+ *  thing an operator is asked to quote and given no way to interpret. A
+ *  row that cannot say what its own value means should not be here. */
+function Row({ label, tip, value }: { label: string; tip: TooltipId; value: string }) {
   return (
     <>
-      <dt style={{ color: "var(--text-2)" }}>{label}</dt>
+      <dt style={{ color: "var(--text-2)" }}>
+        {/* The term keeps an element of its own, so something on the page
+            still reads exactly "Build commit" for anything looking for it,
+            and the icon beside it stays out of that text. */}
+        <span>{label}</span>
+        <InfoTooltip id={tip} />
+      </dt>
       <dd className="mono" style={{ margin: 0 }}>{value}</dd>
     </>
   );
@@ -341,7 +392,11 @@ function ChangePasswordCard({ readOnly }: { readOnly: boolean }) {
 
   return (
     <section className="card">
-      <div className="card__header"><h2 className="eyebrow">Administrator password</h2></div>
+      <div className="card__header">
+        <InfoTooltip id="settings.password">
+          <h2 className="eyebrow">Administrator password</h2>
+        </InfoTooltip>
+      </div>
       <div className="card__body">
         <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <HelpField label="Current password" help={FIELD_HELP.currentPassword}>
@@ -413,14 +468,16 @@ function ChangePasswordCard({ readOnly }: { readOnly: boolean }) {
             />
           ) : null}
           <div>
-            <button
-              className="btn btn--primary"
-              type="submit"
-              disabled={!valid || busy || readOnly}
-              style={{ height: 40 }}
-            >
-              {busy ? "Changing…" : "Change password"}
-            </button>
+            <InfoTooltip id="settings.change-password">
+              <button
+                className="btn btn--primary"
+                type="submit"
+                disabled={!valid || busy || readOnly}
+                style={{ height: 40 }}
+              >
+                {busy ? "Changing…" : "Change password"}
+              </button>
+            </InfoTooltip>
           </div>
         </form>
       </div>

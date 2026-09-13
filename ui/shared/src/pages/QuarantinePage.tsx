@@ -26,6 +26,7 @@ import { isNotConfigured } from "@shared/api/failure";
 import { Icon } from "@shared/design-system/icons";
 import { useHoverTitle } from "@shared/hooks/useTooltips";
 import { stamp } from "@shared/utilities/format";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import type { BackupArtifact, QuarantineReason } from "@shared/types/backup";
 
 const REASON: Record<QuarantineReason, string> = {
@@ -168,16 +169,18 @@ export function QuarantinePage({
       <>
         <PageHeader
           title="Quarantine"
+          tip="nav.quarantine"
           subtitle="Artifacts held back from the catalog. Their remote originals are retained until the issue is resolved."
         />
-        <EmptyState title="Nothing in quarantine">
+        <EmptyState title="Nothing in quarantine" tip="quarantine.empty-unconfigured">
           Quarantine holds backups that arrived but did not pass validation. This instance
           has no configuration yet, so nothing has arrived.
         </EmptyState>
       </>
     );
 
-  if (quarantine.error) return <ErrorState {...quarantine.error} onRetry={quarantine.reload} />;
+  if (quarantine.error)
+    return <ErrorState {...quarantine.error} onRetry={quarantine.reload} tip="quarantine.load-failed" />;
 
   const data = quarantine.data ?? [];
 
@@ -185,6 +188,7 @@ export function QuarantinePage({
     <>
       <PageHeader
         title="Quarantine"
+        tip="nav.quarantine"
         subtitle="Artifacts held back from the catalog. Their remote originals are retained until the issue is resolved."
       />
 
@@ -194,6 +198,7 @@ export function QuarantinePage({
             message={outcome.message}
             remediation={outcome.remediation}
             correlationId={outcome.correlationId}
+            tip="quarantine.action-failed"
           />
         </div>
       ) : null}
@@ -204,6 +209,7 @@ export function QuarantinePage({
             tone="warn"
             eyebrow="Not reinstated"
             title={"\"" + outcome.filename + "\" stays in quarantine."}
+            tip="quarantine.outcome-refused"
           >
             <p style={{ margin: 0 }}>{"The checks ran and did not carry it: " + outcome.reason + "."}</p>
             <p style={{ margin: "6px 0 0" }}>
@@ -222,6 +228,7 @@ export function QuarantinePage({
             tone="ok"
             eyebrow="Reinstated"
             title={"\"" + outcome.filename + "\" is back in service."}
+            tip="quarantine.outcome-restored"
           >
             <p style={{ margin: 0 }}>{"The checks carried it: " + outcome.reason + "."}</p>
             <p style={{ margin: "6px 0 0" }}>
@@ -233,7 +240,7 @@ export function QuarantinePage({
       ) : null}
 
       {data.length === 0 ? (
-        <EmptyState title="No quarantined backups">
+        <EmptyState title="No quarantined backups" tip="quarantine.empty">
           No backup artifacts currently require attention.
         </EmptyState>
       ) : (
@@ -254,15 +261,33 @@ export function QuarantinePage({
                 <tbody>
                   {data.map((a) => (
                     <tr key={a.id}>
-                      <td className="mono" style={{ fontSize: "var(--text-sm)" }}>{a.filename}</td>
-                      <td>{a.setName}</td>
+                      <td className="mono" style={{ fontSize: "var(--text-sm)" }}>
+                        {/* The value in an element of its own inside the
+                            host, so the artifact's name stays findable as
+                            its own text rather than merging with the
+                            explanation's (#834). */}
+                        <InfoTooltip id="quarantine.filename">
+                          <span>{a.filename}</span>
+                        </InfoTooltip>
+                      </td>
                       <td>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          <span aria-hidden="true" style={{ color: "var(--danger)", display: "inline-flex" }}>
-                            <Icon name="failure" />
+                        <InfoTooltip id="quarantine.set-name">
+                          <span>{a.setName}</span>
+                        </InfoTooltip>
+                      </td>
+                      <td>
+                        {/* The chip only. The detail line below it already
+                            carries its full text on hover (#829), and a
+                            second pop-up over the same words would be two
+                            explanations of one thing. */}
+                        <InfoTooltip id="quarantine.reason">
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <span aria-hidden="true" style={{ color: "var(--danger)", display: "inline-flex" }}>
+                              <Icon name="failure" />
+                            </span>
+                            {a.quarantine ? REASON[a.quarantine.reason] : "\u2014"}
                           </span>
-                          {a.quarantine ? REASON[a.quarantine.reason] : "\u2014"}
-                        </span>
+                        </InfoTooltip>
                         {/* The literal sentence the journal recorded when this
                             backup was quarantined (issue #308), not just the
                             category badge above it. Only rendered when the
@@ -288,37 +313,51 @@ export function QuarantinePage({
                         ) : null}
                       </td>
                       <td className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
-                        {a.quarantine ? stamp(a.quarantine.detectedAt) : "\u2014"}
+                        <InfoTooltip id="quarantine.detected">
+                          <span>{a.quarantine ? stamp(a.quarantine.detectedAt) : "\u2014"}</span>
+                        </InfoTooltip>
                       </td>
-                      <td style={{ fontSize: "var(--text-sm)", color: "var(--text-2)" }}>Retained on remote</td>
+                      <td style={{ fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
+                        <InfoTooltip id="quarantine.remote-source">
+                          <span>Retained on remote</span>
+                        </InfoTooltip>
+                      </td>
                       <td>
                         <span style={{ display: "flex", gap: 7, justifyContent: "flex-end" }}>
-                          <button className="btn btn--sm">Inspect</button>
-                          <button className="btn btn--sm" disabled={readOnly} onClick={() => revalidate(a)}>
-                            Revalidate
-                          </button>
-                          <button className="btn btn--sm" disabled={readOnly} onClick={() => retryIngestion(a)}>
-                            Retry ingestion
-                          </button>
+                          <InfoTooltip id="quarantine.inspect" alignEnd>
+                            <button className="btn btn--sm">Inspect</button>
+                          </InfoTooltip>
+                          <InfoTooltip id="quarantine.revalidate" alignEnd>
+                            <button className="btn btn--sm" disabled={readOnly} onClick={() => revalidate(a)}>
+                              Revalidate
+                            </button>
+                          </InfoTooltip>
+                          <InfoTooltip id="quarantine.retry-ingestion" alignEnd>
+                            <button className="btn btn--sm" disabled={readOnly} onClick={() => retryIngestion(a)}>
+                              Retry ingestion
+                            </button>
+                          </InfoTooltip>
                           {/* Last, in the caution tier, glyphed, and with the
                               trailing ellipsis this UI already uses for "this
                               opens a confirmation" ("Apply retention now…",
                               "Remove set configuration…"). Four differences
                               from its neighbours, because it is the only one
                               of the four that cannot be undone. */}
-                          <button
-                            className="btn btn--sm btn--caution"
-                            disabled={readOnly}
-                            onClick={() => {
-                              setOutcome(null);
-                              setConfirming(a);
-                            }}
-                          >
-                            <span aria-hidden="true" style={{ color: "var(--warn)", display: "inline-flex" }}>
-                              <Icon name="warning" />
-                            </span>
-                            Reinstate…
-                          </button>
+                          <InfoTooltip id="quarantine.reinstate" alignEnd>
+                            <button
+                              className="btn btn--sm btn--caution"
+                              disabled={readOnly}
+                              onClick={() => {
+                                setOutcome(null);
+                                setConfirming(a);
+                              }}
+                            >
+                              <span aria-hidden="true" style={{ color: "var(--warn)", display: "inline-flex" }}>
+                                <Icon name="warning" />
+                              </span>
+                              Reinstate…
+                            </button>
+                          </InfoTooltip>
                         </span>
                       </td>
                     </tr>

@@ -1,4 +1,6 @@
 import { bytes } from "@shared/utilities/format";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 import type { ManagerStorage } from "@shared/api/contracts";
 
 /**
@@ -31,14 +33,22 @@ import type { ManagerStorage } from "@shared/api/contracts";
  * and one at 80% of a 100 GB allowance are different facts, and the
  * caption states which one this is rather than leaving both to look
  * identical.
+ *
+ * # Who names the explanation
+ *
+ * `tip` is optional and comes from the caller (issue #834), because this
+ * gauge is drawn beside different questions on different pages and the
+ * page knows which one it is asking. Absent, nothing is drawn but the
+ * gauge, which is what keeps this component renderable on its own.
  */
-export function StorageGauge({ storage }: { storage: ManagerStorage }) {
+export function StorageGauge({ storage, tip }: { storage: ManagerStorage; tip?: TooltipId }) {
   if (!storage.known) {
-    return (
+    const unknown = (
       <div style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
         {unknownCopy(storage)}
       </div>
     );
+    return tip ? <InfoTooltip id={tip} block>{unknown}</InfoTooltip> : unknown;
   }
 
   // limitBytes is 0 only when known is false (an empty backup root has no
@@ -52,7 +62,7 @@ export function StorageGauge({ storage }: { storage: ManagerStorage }) {
     storage.level === "CRITICAL" ? "var(--danger)" : storage.level === "WARNING" ? "var(--warn)" : "var(--ok)";
   const denominatorLabel = storage.denominator === "cap" ? "of configured cap" : "of total disk space";
 
-  return (
+  const gauge = (
     <div>
       <div
         role="meter"
@@ -72,6 +82,8 @@ export function StorageGauge({ storage }: { storage: ManagerStorage }) {
       </div>
     </div>
   );
+
+  return tip ? <InfoTooltip id={tip} block>{gauge}</InfoTooltip> : gauge;
 }
 
 /** One sentence per reason, matching core/service.StorageUnknownReason's

@@ -544,7 +544,13 @@ describe("the storage destinations card (#622)", () => {
     await waitFor(() => expect(card().getByText("offsite_s3")).toBeTruthy());
     const remove = row("offsite_s3").getByRole("button", { name: "Remove" });
     expect(remove).toBeDisabled();
-    const said = document.getElementById(remove.getAttribute("aria-describedby") ?? "")?.textContent ?? "";
+    // An id LIST since #834: the control is described by the refusal and
+    // by the tooltip saying what Remove does, and a screen reader reads
+    // both.
+    const said = (remove.getAttribute("aria-describedby") ?? "")
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .join(" ");
     expect(said).toMatch(/cannot be removed while it carries the mark/i);
   });
 

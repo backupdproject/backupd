@@ -168,13 +168,25 @@ const control = (id: string, name: string) => row(id).getByRole("button", { name
  *  some text, because "there is an explanation somewhere on this row" is
  *  satisfied by a row that happens to carry any prose at all. What has to
  *  be true is that THIS control says why it is off, which is also what a
- *  screen reader announces. */
+ *  screen reader announces.
+ *
+ *  The attribute is an id LIST, not an id: since #834 a control can also
+ *  be described by the tooltip explaining what it does, and a screen
+ *  reader reads both. So every id is resolved and the descriptions are
+ *  joined the way one would be announced — asserting a single id would be
+ *  asserting how many descriptions a control happens to have. */
 function explanationFor(button: HTMLButtonElement): string {
-  const id = button.getAttribute("aria-describedby");
-  expect(id, "a disabled control with no aria-describedby explains nothing").toBeTruthy();
-  const node = document.getElementById(id!);
-  expect(node, "aria-describedby names #" + id + ", which is not on the page").toBeTruthy();
-  return node!.textContent ?? "";
+  const described = button.getAttribute("aria-describedby");
+  expect(described, "a disabled control with no aria-describedby explains nothing").toBeTruthy();
+  return (described ?? "")
+    .split(/\s+/)
+    .filter((id) => id.length > 0)
+    .map((id) => {
+      const node = document.getElementById(id);
+      expect(node, "aria-describedby names #" + id + ", which is not on the page").toBeTruthy();
+      return node?.textContent ?? "";
+    })
+    .join(" ");
 }
 
 describe("handing the default from one destination to another (#671)", () => {

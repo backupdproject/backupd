@@ -46,6 +46,7 @@ import type { ActivityResult, SetActivity, SetActivityEvent, UnfinishedAction } 
 import { bytes, clock, rate, relativeAge } from "@shared/utilities/format";
 import { StatusBadge } from "@shared/components/StatusBadge";
 import type { StatusTone } from "@shared/components/StatusBadge";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 /** How each line is coloured in the log. It is a display decision made
  *  here on purpose: the service carries the engine's own level, outcome
@@ -597,13 +598,15 @@ function stepSentence(activity: SetActivity, stale: boolean): { lead: string; su
 export function UnfinishedActionsNotice({ actions }: { actions: UnfinishedAction[] }) {
   if (actions.length === 0) return null;
   return (
-    <div style={{ padding: "0 var(--space-5) var(--space-3)", color: "var(--warn)", fontSize: "var(--text-xs)" }}>
-      {actions.map((a) => (
-        <div key={a.actionId}>
-          {a.action} started {relativeAge(a.startedAt)} and has not reported an outcome.
-        </div>
-      ))}
-    </div>
+    <InfoTooltip id="activity.unfinished-action" block>
+      <div style={{ padding: "0 var(--space-5) var(--space-3)", color: "var(--warn)", fontSize: "var(--text-xs)" }}>
+        {actions.map((a) => (
+          <div key={a.actionId}>
+            {a.action} started {relativeAge(a.startedAt)} and has not reported an outcome.
+          </div>
+        ))}
+      </div>
+    </InfoTooltip>
   );
 }
 
@@ -684,20 +687,35 @@ function ActivityToolbar({
 
   return (
     <div className="activity-toolbar">
-      <button type="button" className="activity-toolbar__toggle" onClick={onToggle} aria-expanded={open}>
-        {open ? "Hide log" : "Show log"}
-      </button>
-      <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-3)" }}>
-        {events.length} {events.length === 1 ? "line" : "lines"}
-      </span>
+      <InfoTooltip id="activity.strip.toggle-log">
+        <button type="button" className="activity-toolbar__toggle" onClick={onToggle} aria-expanded={open}>
+          {open ? "Hide log" : "Show log"}
+        </button>
+      </InfoTooltip>
+      <InfoTooltip id="activity.strip.line-count">
+        <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-3)" }}>
+          {events.length} {events.length === 1 ? "line" : "lines"}
+        </span>
+      </InfoTooltip>
+      {/* No control of its own to hang off: what a log line's parts mean
+          belongs beside the log rather than repeated on every line in it. */}
+      <InfoTooltip id="activity.strip.log-format" />
       <span className="activity-toolbar__spacer" />
-      {copied ? <span style={{ color: "var(--ok)", fontWeight: 600 }}>copied</span> : null}
-      <button type="button" className="activity-toolbar__button" onClick={copy}>
-        Copy
-      </button>
-      <button type="button" className="activity-toolbar__button" onClick={save}>
-        Save .txt
-      </button>
+      {copied ? (
+        <InfoTooltip id="activity.strip.copied" alignEnd>
+          <span style={{ color: "var(--ok)", fontWeight: 600 }}>copied</span>
+        </InfoTooltip>
+      ) : null}
+      <InfoTooltip id="activity.strip.copy" alignEnd>
+        <button type="button" className="activity-toolbar__button" onClick={copy}>
+          Copy
+        </button>
+      </InfoTooltip>
+      <InfoTooltip id="activity.strip.save" alignEnd>
+        <button type="button" className="activity-toolbar__button" onClick={save}>
+          Save .txt
+        </button>
+      </InfoTooltip>
     </div>
   );
 }
@@ -748,10 +766,14 @@ export function ActivityStrip({
   if (activity === null) {
     return (
       <section aria-label={label} style={{ padding: "var(--space-4) var(--space-5)" }}>
-        <div style={{ fontWeight: 600, fontSize: "var(--text-md)" }}>{set.name}</div>
-        <div style={{ color: "var(--text-2)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>
-          Checking what this set is doing{"…"}
-        </div>
+        <InfoTooltip id="activity.strip.name" block>
+          <div style={{ fontWeight: 600, fontSize: "var(--text-md)" }}>{set.name}</div>
+        </InfoTooltip>
+        <InfoTooltip id="activity.strip.checking" block>
+          <div style={{ color: "var(--text-2)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>
+            Checking what this set is doing{"…"}
+          </div>
+        </InfoTooltip>
       </section>
     );
   }
@@ -791,68 +813,82 @@ export function ActivityStrip({
           }}
         >
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 600, fontSize: "var(--text-md)" }}>{set.name}</div>
-            <div style={{ color: "var(--text-3)", fontSize: "var(--text-xs)", fontFamily: "var(--font-mono)" }}>
-              {set.remoteFolder}
-              {set.readOnly ? " · read-only" : ""}
-            </div>
+            <InfoTooltip id="activity.strip.name" block>
+              <div style={{ fontWeight: 600, fontSize: "var(--text-md)" }}>{set.name}</div>
+            </InfoTooltip>
+            <InfoTooltip id="activity.strip.remote" block>
+              <div style={{ color: "var(--text-3)", fontSize: "var(--text-xs)", fontFamily: "var(--font-mono)" }}>
+                {set.remoteFolder}
+                {set.readOnly ? " · read-only" : ""}
+              </div>
+            </InfoTooltip>
           </div>
-          <StatusBadge tone={badge.tone} glyph={badge.glyph}>
-            {badge.label}
-          </StatusBadge>
+          <InfoTooltip id="activity.strip.state" alignEnd>
+            <StatusBadge tone={badge.tone} glyph={badge.glyph}>
+              {badge.label}
+            </StatusBadge>
+          </InfoTooltip>
         </div>
       ) : null}
 
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", padding: "var(--space-3) var(--space-5) 0" }}>
-        <div
-          className="activity-bar"
-          style={{ flex: 1 }}
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          {...(fraction === null ? {} : { "aria-valuenow": fraction })}
-          aria-label={barLabel}
-        >
+        <InfoTooltip id="activity.strip.progress" style={{ flex: 1 }}>
           <div
-            className={"activity-bar__fill" + fill.className}
-            style={{ width: (fraction ?? 0) + "%", ...fill.style }}
-          />
-        </div>
-        <span
-          style={{
-            fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)", color: "var(--text-2)",
-            minWidth: 42, textAlign: "right", fontVariantNumeric: "tabular-nums"
-          }}
-        >
-          {fraction === null ? "—" : fraction + "%"}
-        </span>
+            className="activity-bar"
+            style={{ flex: 1 }}
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            {...(fraction === null ? {} : { "aria-valuenow": fraction })}
+            aria-label={barLabel}
+          >
+            <div
+              className={"activity-bar__fill" + fill.className}
+              style={{ width: (fraction ?? 0) + "%", ...fill.style }}
+            />
+          </div>
+        </InfoTooltip>
+        <InfoTooltip id="activity.strip.percent" alignEnd>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)", color: "var(--text-2)",
+              minWidth: 42, textAlign: "right", fontVariantNumeric: "tabular-nums"
+            }}
+          >
+            {fraction === null ? "—" : fraction + "%"}
+          </span>
+        </InfoTooltip>
       </div>
 
-      <div
-        style={{
-          padding: "var(--space-2) var(--space-5) var(--space-3)",
-          color: "var(--text-2)", fontSize: "var(--text-sm)",
-          display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap"
-        }}
-      >
-        {live ? <span className="activity-spinner" aria-hidden="true" /> : null}
-        <span>{step.lead}</span>
-        {step.subject ? <strong style={{ color: "var(--text)" }}>{step.subject}</strong> : null}
-        <span>
-          {step.trail ? "· " : ""}
-          {step.trail}
-        </span>
-      </div>
+      <InfoTooltip id="activity.strip.step" block>
+        <div
+          style={{
+            padding: "var(--space-2) var(--space-5) var(--space-3)",
+            color: "var(--text-2)", fontSize: "var(--text-sm)",
+            display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap"
+          }}
+        >
+          {live ? <span className="activity-spinner" aria-hidden="true" /> : null}
+          <span>{step.lead}</span>
+          {step.subject ? <strong style={{ color: "var(--text)" }}>{step.subject}</strong> : null}
+          <span>
+            {step.trail ? "· " : ""}
+            {step.trail}
+          </span>
+        </div>
+      </InfoTooltip>
 
       {dropped ? (
-        <div
-          style={{
-            padding: "0 var(--space-5) var(--space-3)",
-            color: "var(--text-3)", fontSize: "var(--text-xs)"
-          }}
-        >
-          Earlier lines are not held here any more. The full record is on the Activity page.
-        </div>
+        <InfoTooltip id="activity.strip.dropped" block>
+          <div
+            style={{
+              padding: "0 var(--space-5) var(--space-3)",
+              color: "var(--text-3)", fontSize: "var(--text-xs)"
+            }}
+          >
+            Earlier lines are not held here any more. The full record is on the Activity page.
+          </div>
+        </InfoTooltip>
       ) : null}
 
       <UnfinishedActionsNotice actions={activity.unfinishedActions ?? []} />

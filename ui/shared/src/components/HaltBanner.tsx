@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { WarningBanner } from "./WarningBanner";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 import type { BackupSet } from "@shared/types/backup";
 
 /**
@@ -67,7 +68,19 @@ const HALT_COPY: Record<NonNullable<BackupSet["haltReason"]>, (host: string) => 
   })
 };
 
-export function HaltBanner({ set, actions }: { set: BackupSet; actions?: ReactNode }) {
+/** `tip` defaults rather than being left to each page, because a halt
+ *  means one thing wherever it is raised and the two screens that raise
+ *  it must not explain it differently — the same argument the copy above
+ *  settles for the words (#834). */
+export function HaltBanner({
+  set,
+  actions,
+  tip = "common.halt-banner"
+}: {
+  set: BackupSet;
+  actions?: ReactNode;
+  tip?: TooltipId;
+}) {
   if (!set.haltReason) return null;
   const copy = HALT_COPY[set.haltReason](set.host);
   return (
@@ -77,6 +90,7 @@ export function HaltBanner({ set, actions }: { set: BackupSet; actions?: ReactNo
       title={copy.title}
       actions={actions}
       dismissible={false}
+      tip={tip}
     >
       {copy.body}
     </WarningBanner>

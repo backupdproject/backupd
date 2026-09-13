@@ -32,6 +32,7 @@ import {
   WEEKDAYS
 } from "./retentionChain";
 import type { TierDraft } from "./retentionChain";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 /**
  * Issue #333: which retention policy this backup set is retained under,
@@ -262,11 +263,13 @@ function RetentionPanel({
         // this card saying which policy decides deletions for this set.
         dismissKey={r.isOverride ? "override" : "deployment"}
       >
-        <span>
-          {r.isOverride
-            ? "Retained under this backup set's own policy. Editing the deployment's retention policy will not change it."
-            : "Retained under the deployment's retention policy. Editing that policy changes this set too."}
-        </span>
+        <InfoTooltip id="retention.set.policy-source">
+          <span>
+            {r.isOverride
+              ? "Retained under this backup set's own policy. Editing the deployment's retention policy will not change it."
+              : "Retained under the deployment's retention policy. Editing that policy changes this set too."}
+          </span>
+        </InfoTooltip>
       </Banner>
 
       <PolicyChain policy={r.effective} />
@@ -294,7 +297,9 @@ function RetentionPanel({
           <span aria-hidden="true" style={{ color: "var(--ok)", lineHeight: 1.5 }}>
             <Icon name="success" />
           </span>
-          <span>Newest known-good backup is protected from deletion</span>
+          <InfoTooltip id="retention.set.lkg-protected">
+            <span>Newest known-good backup is protected from deletion</span>
+          </InfoTooltip>
         </Banner>
       ) : (
         // Not dismissible (#620). This is FR-19's protection reported as
@@ -307,9 +312,11 @@ function RetentionPanel({
           <span aria-hidden="true" style={{ color: "var(--warn)", lineHeight: 1.5 }}>
             <Icon name="warning" />
           </span>
-          <span>
-            Newest known-good backup is NOT protected from deletion under this policy
-          </span>
+          <InfoTooltip id="retention.set.lkg-unprotected">
+            <span>
+              Newest known-good backup is NOT protected from deletion under this policy
+            </span>
+          </InfoTooltip>
         </Banner>
       )}
 
@@ -339,23 +346,29 @@ function RetentionPanel({
       ) : null}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        <button className="btn btn--sm" disabled={readOnly || busy} onClick={() => setEditing(true)}>
-          {r.isOverride ? "Edit this set's policy" : "Give this set its own policy"}
-        </button>
-        {r.isOverride ? (
-          <button
-            className="btn btn--sm btn--caution"
-            disabled={readOnly || busy}
-            onClick={() => setClearing(true)}
-          >
-            Return to the deployment's policy
+        <InfoTooltip id="retention.set.edit-policy">
+          <button className="btn btn--sm" disabled={readOnly || busy} onClick={() => setEditing(true)}>
+            {r.isOverride ? "Edit this set's policy" : "Give this set its own policy"}
           </button>
+        </InfoTooltip>
+        {r.isOverride ? (
+          <InfoTooltip id="retention.set.clear-override">
+            <button
+              className="btn btn--sm btn--caution"
+              disabled={readOnly || busy}
+              onClick={() => setClearing(true)}
+            >
+              Return to the deployment's policy
+            </button>
+          </InfoTooltip>
         ) : null}
       </div>
 
-      <button className="btn btn--caution" disabled={readOnly} onClick={onPreview}>
-        Preview retention plan
-      </button>
+      <InfoTooltip id="retention.set.preview">
+        <button className="btn btn--caution" disabled={readOnly} onClick={onPreview}>
+          Preview retention plan
+        </button>
+      </InfoTooltip>
 
       <ConfirmationDialog
         open={clearing}
@@ -380,11 +393,15 @@ function RetentionPanel({
             afterwards in a preview. */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div>
-            <div className="eyebrow" style={{ fontSize: 10.5 }}>This set&rsquo;s own policy, now</div>
+            <InfoTooltip id="retention.set.chain-now" block>
+              <div className="eyebrow" style={{ fontSize: 10.5 }}>This set&rsquo;s own policy, now</div>
+            </InfoTooltip>
             <PolicyChain policy={r.effective} />
           </div>
           <div>
-            <div className="eyebrow" style={{ fontSize: 10.5 }}>The deployment&rsquo;s policy, after</div>
+            <InfoTooltip id="retention.set.chain-after" block>
+              <div className="eyebrow" style={{ fontSize: 10.5 }}>The deployment&rsquo;s policy, after</div>
+            </InfoTooltip>
             <PolicyChain policy={r.deployment} />
           </div>
         </div>
@@ -413,17 +430,23 @@ function PolicyChain({ policy }: { policy: RetentionSettings }) {
       <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
         {policy.tiers.map((t) => (
           <li key={t.name} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <span className="mono">{t.name}</span>
-            <span style={{ color: "var(--text-2)" }}>{tierSentence(t)}</span>
+            <InfoTooltip id="retention.chain.tier-name">
+              <span className="mono">{t.name}</span>
+            </InfoTooltip>
+            <InfoTooltip id="retention.chain.tier-sentence" alignEnd>
+              <span style={{ color: "var(--text-2)" }}>{tierSentence(t)}</span>
+            </InfoTooltip>
           </li>
         ))}
       </ul>
-      <div style={{ color: "var(--text-2)" }}>
-        {policy.timezone + " · weeks start " + policy.weekStartsOn + " · " +
-          (policy.protectLastKnownGood
-            ? "newest known-good backup protected"
-            : "newest known-good backup NOT protected")}
-      </div>
+      <InfoTooltip id="retention.chain.calendar" block>
+        <div style={{ color: "var(--text-2)" }}>
+          {policy.timezone + " · weeks start " + policy.weekStartsOn + " · " +
+            (policy.protectLastKnownGood
+              ? "newest known-good backup protected"
+              : "newest known-good backup NOT protected")}
+        </div>
+      </InfoTooltip>
     </div>
   );
 }
@@ -550,60 +573,68 @@ function RetentionOverrideEditor({
         it exists, editing the deployment&rsquo;s retention policy no longer changes this set.
       </WarningBanner>
 
-      <label style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
-        <input
-          type="checkbox"
-          checked={inheritCalendar}
-          disabled={busy}
-          onChange={(e) => setInheritCalendar(e.target.checked)}
-        />
-        <span>
-          Reckon this policy in the deployment&rsquo;s calendar and follow its last-known-good
-          protection
-          <span style={{ display: "block", color: "var(--text-2)" }}>
-            {"Currently " + current.deployment.timezone + ", weeks start " +
-              current.deployment.weekStartsOn + ", newest known-good backup " +
-              (current.deployment.protectLastKnownGood ? "protected" : "not protected") +
-              ". Leaving this on means a later change to the deployment's calendar moves this set too."}
+      <InfoTooltip id="retention.set.inherit-calendar" block>
+        <label style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
+          <input
+            type="checkbox"
+            checked={inheritCalendar}
+            disabled={busy}
+            onChange={(e) => setInheritCalendar(e.target.checked)}
+          />
+          <span>
+            Reckon this policy in the deployment&rsquo;s calendar and follow its last-known-good
+            protection
+            <span style={{ display: "block", color: "var(--text-2)" }}>
+              {"Currently " + current.deployment.timezone + ", weeks start " +
+                current.deployment.weekStartsOn + ", newest known-good backup " +
+                (current.deployment.protectLastKnownGood ? "protected" : "not protected") +
+                ". Leaving this on means a later change to the deployment's calendar moves this set too."}
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+      </InfoTooltip>
 
       {inheritCalendar ? null : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px 16px" }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <span className="eyebrow" style={{ fontSize: 10.5 }}>Timezone</span>
-            <input
-              className="input input--mono"
-              value={timezone}
-              disabled={busy}
-              onChange={(e) => setTimezone(e.target.value)}
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <span className="eyebrow" style={{ fontSize: 10.5 }}>Week starts on</span>
-            <select
-              className="select"
-              value={weekStartsOn}
-              disabled={busy}
-              onChange={(e) => setWeekStartsOn(e.target.value)}
-            >
-              {WEEKDAYS.map((d) => (
-                <option key={d} value={d}>
-                  {d.charAt(0).toUpperCase() + d.slice(1)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={{ display: "flex", gap: 9, alignItems: "center" }}>
-            <input
-              type="checkbox"
-              checked={protect}
-              disabled={busy}
-              onChange={(e) => setProtect(e.target.checked)}
-            />
-            <span>Protect the newest known-good backup</span>
-          </label>
+          <InfoTooltip id="retention.set.timezone" block>
+            <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              <span className="eyebrow" style={{ fontSize: 10.5 }}>Timezone</span>
+              <input
+                className="input input--mono"
+                value={timezone}
+                disabled={busy}
+                onChange={(e) => setTimezone(e.target.value)}
+              />
+            </label>
+          </InfoTooltip>
+          <InfoTooltip id="retention.set.week-starts-on" block>
+            <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              <span className="eyebrow" style={{ fontSize: 10.5 }}>Week starts on</span>
+              <select
+                className="select"
+                value={weekStartsOn}
+                disabled={busy}
+                onChange={(e) => setWeekStartsOn(e.target.value)}
+              >
+                {WEEKDAYS.map((d) => (
+                  <option key={d} value={d}>
+                    {d.charAt(0).toUpperCase() + d.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </InfoTooltip>
+          <InfoTooltip id="retention.set.protect" block>
+            <label style={{ display: "flex", gap: 9, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={protect}
+                disabled={busy}
+                onChange={(e) => setProtect(e.target.checked)}
+              />
+              <span>Protect the newest known-good backup</span>
+            </label>
+          </InfoTooltip>
         </div>
       )}
 
@@ -633,39 +664,41 @@ function RetentionOverrideEditor({
           />
         ))}
         <div>
-          <button
-            className="btn btn--sm"
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              setTiers((cur) => [
-                ...cur,
-                // On the deployment's DEFAULT destination, exactly as the
-                // settings page's chain editor seeds its own (#622, and
-                // the omission #634 caught). "Both editors" is #622's own
-                // acceptance wording, and these are the two: a per-set
-                // override is a whole chain in its own right, so a tier
-                // created here is as much a newly created tier as one
-                // created there.
-                //
-                // The default is a deployment-wide fact and this is a
-                // per-set policy, which is the reading that would make
-                // starting on the drive regardless defensible. It is the
-                // wrong one: what the mark governs is where a NEW tier
-                // starts, an operator who set it did so to stop choosing
-                // the same destination repeatedly, and a per-set chain is
-                // where that repetition actually happens.
-                toDraft({
-                  name: "",
-                  granularity: schema.granularities[0] ?? "day",
-                  keep: 1,
-                  medium: defaultDestinationId(mediums)
-                })
-              ])
-            }
-          >
-            Add tier
-          </button>
+          <InfoTooltip id="retention.add-tier">
+            <button
+              className="btn btn--sm"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                setTiers((cur) => [
+                  ...cur,
+                  // On the deployment's DEFAULT destination, exactly as the
+                  // settings page's chain editor seeds its own (#622, and
+                  // the omission #634 caught). "Both editors" is #622's own
+                  // acceptance wording, and these are the two: a per-set
+                  // override is a whole chain in its own right, so a tier
+                  // created here is as much a newly created tier as one
+                  // created there.
+                  //
+                  // The default is a deployment-wide fact and this is a
+                  // per-set policy, which is the reading that would make
+                  // starting on the drive regardless defensible. It is the
+                  // wrong one: what the mark governs is where a NEW tier
+                  // starts, an operator who set it did so to stop choosing
+                  // the same destination repeatedly, and a per-set chain is
+                  // where that repetition actually happens.
+                  toDraft({
+                    name: "",
+                    granularity: schema.granularities[0] ?? "day",
+                    keep: 1,
+                    medium: defaultDestinationId(mediums)
+                  })
+                ])
+              }
+            >
+              Add tier
+            </button>
+          </InfoTooltip>
         </div>
       </div>
 
@@ -695,16 +728,20 @@ function RetentionOverrideEditor({
       ) : null}
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button
-          className="btn btn--primary"
-          disabled={busy || invalid || !dirty || (needsDisclosure && !acknowledged)}
-          onClick={submit}
-        >
-          {busy ? "Saving…" : "Save this set's policy"}
-        </button>
-        <button className="btn" disabled={busy} onClick={onCancel}>
-          Cancel
-        </button>
+        <InfoTooltip id="retention.set.save-policy">
+          <button
+            className="btn btn--primary"
+            disabled={busy || invalid || !dirty || (needsDisclosure && !acknowledged)}
+            onClick={submit}
+          >
+            {busy ? "Saving…" : "Save this set's policy"}
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="retention.set.cancel-edit">
+          <button className="btn" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+        </InfoTooltip>
       </div>
     </div>
   );

@@ -15,38 +15,47 @@
  */
 import type { ReactNode } from "react";
 import { Icon } from "@shared/design-system/icons";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 export function PageHeader({
   title,
   subtitle,
   back,
-  actions
+  actions,
+  tip
 }: {
   title: ReactNode;
   subtitle?: ReactNode;
   back?: { label: string; onClick(): void };
   actions?: ReactNode;
+  /** What this page is, in the tooltip registry (issue #834). Drawn as
+   *  the "i" beside the title, because a page heading has no control of
+   *  its own to hang an explanation off. */
+  tip?: TooltipId;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {back ? (
-        <button
-          className="btn btn--quiet"
-          onClick={back.onClick}
-          style={{
-            alignSelf: "flex-start", height: "auto", padding: 0, border: "none",
-            background: "none", color: "var(--accent)", fontSize: "var(--text-sm)",
-            display: "inline-flex", alignItems: "center", gap: 7
-          }}
-        >
-          {/* The arrow is a picture now rather than a character in the
-              label (#621), which also fixes something that was wrong
-              before it: a button's accessible name is its text, so this
-              control used to be announced as "left arrow Backups". It is
-              named by its words alone now. */}
-          <Icon name="arrow-left" />
-          {back.label}
-        </button>
+        <InfoTooltip id="page.back" style={{ alignSelf: "flex-start" }}>
+          <button
+            className="btn btn--quiet"
+            onClick={back.onClick}
+            style={{
+              alignSelf: "flex-start", height: "auto", padding: 0, border: "none",
+              background: "none", color: "var(--accent)", fontSize: "var(--text-sm)",
+              display: "inline-flex", alignItems: "center", gap: 7
+            }}
+          >
+            {/* The arrow is a picture now rather than a character in the
+                label (#621), which also fixes something that was wrong
+                before it: a button's accessible name is its text, so this
+                control used to be announced as "left arrow Backups". It is
+                named by its words alone now. */}
+            <Icon name="arrow-left" />
+            {back.label}
+          </button>
+        </InfoTooltip>
       ) : null}
       <div
         style={{
@@ -55,7 +64,14 @@ export function PageHeader({
         }}
       >
         <div>
-          <h1>{title}</h1>
+          {/* The "i" is a SIBLING of the heading, never a child of it: a
+              control inside a heading contributes its own name to the
+              heading's, and every page in this app is found by that name
+              (issue #834, and see InfoTooltip's module doc). */}
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <h1>{title}</h1>
+            {tip ? <InfoTooltip id={tip} /> : null}
+          </div>
           {subtitle ? (
             <p style={{ margin: "4px 0 0", color: "var(--text-2)", fontSize: 13 }}>{subtitle}</p>
           ) : null}

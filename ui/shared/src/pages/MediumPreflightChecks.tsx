@@ -36,6 +36,7 @@
 import type { ReactNode } from "react";
 import type { MediumPreflight, MediumPreflightCheck } from "@shared/api/contracts";
 import { Icon } from "@shared/design-system/icons";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 export function MediumPreflightChecks({ report }: { report: MediumPreflight }) {
   return (
@@ -49,18 +50,24 @@ export function MediumPreflightChecks({ report }: { report: MediumPreflight }) {
 
 function CheckRow({ check }: { check: MediumPreflightCheck }) {
   return (
-    <div style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 12.5 }}>
-      <span aria-hidden="true" style={{ width: 12, textAlign: "center", color: markColour(check.outcome) }}>
-        {mark(check.outcome)}
-      </span>
-      <span className="mono" style={{ width: 110, color: "var(--text-2)" }}>
-        {check.step}
-      </span>
-      <span className="mono" style={{ width: 150, color: markColour(check.outcome) }}>
-        {check.category ? `${check.outcome}(${check.category})` : check.outcome}
-      </span>
-      <span style={{ flex: 1, color: "var(--text-2)" }}>{check.detail}</span>
-    </div>
+    // The row is one hoverable region and its copy covers every column
+    // in it — the mark, the step, the outcome, the category and the
+    // sentence. A host per column would open four pop-ups from one
+    // hover across a row (#834).
+    <InfoTooltip id="wizard.preflight.check" block>
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 12.5 }}>
+        <span aria-hidden="true" style={{ width: 12, textAlign: "center", color: markColour(check.outcome) }}>
+          {mark(check.outcome)}
+        </span>
+        <span className="mono" style={{ width: 110, color: "var(--text-2)" }}>
+          {check.step}
+        </span>
+        <span className="mono" style={{ width: 150, color: markColour(check.outcome) }}>
+          {check.category ? `${check.outcome}(${check.category})` : check.outcome}
+        </span>
+        <span style={{ flex: 1, color: "var(--text-2)" }}>{check.detail}</span>
+      </div>
+    </InfoTooltip>
   );
 }
 

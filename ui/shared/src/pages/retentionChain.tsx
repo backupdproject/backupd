@@ -10,6 +10,7 @@ import { CommandEcho } from "@shared/pages/CommandEcho";
 import { MediumPreflightChecks } from "@shared/pages/MediumPreflightChecks";
 import { S3DestinationWizard } from "@shared/pages/S3DestinationWizard";
 import { testConnectionCommand, tierMediumCommand } from "@shared/pages/storageDestinationCommands";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import type {
   MediumPreflight,
   RetentionSchema,
@@ -434,15 +435,17 @@ export function TierRow({
       </div>
 
       <div style={{ alignSelf: "end" }}>
-        <button
-          className="btn btn--sm"
-          type="button"
-          aria-label={"Remove tier " + position}
-          disabled={readOnly || !canRemove}
-          onClick={onRemove}
-        >
-          Remove
-        </button>
+        <InfoTooltip id="retention.tier.remove" alignEnd>
+          <button
+            className="btn btn--sm"
+            type="button"
+            aria-label={"Remove tier " + position}
+            disabled={readOnly || !canRemove}
+            onClick={onRemove}
+          >
+            Remove
+          </button>
+        </InfoTooltip>
       </div>
     </div>
   );
@@ -598,20 +601,26 @@ function TierDestinationActions({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <button className="btn btn--sm" type="button" disabled={busy} onClick={test}>
-          {busy ? "Testing…" : "Test connection"}
-        </button>
-        {onDestinationsChanged ? (
-          <button className="btn btn--sm" type="button" disabled={readOnly} onClick={() => setAdding(true)}>
-            Add a destination
+        <InfoTooltip id="retention.tier.test-connection">
+          <button className="btn btn--sm" type="button" disabled={busy} onClick={test}>
+            {busy ? "Testing…" : "Test connection"}
           </button>
+        </InfoTooltip>
+        {onDestinationsChanged ? (
+          <InfoTooltip id="retention.tier.add-destination">
+            <button className="btn btn--sm" type="button" disabled={readOnly} onClick={() => setAdding(true)}>
+              Add a destination
+            </button>
+          </InfoTooltip>
         ) : null}
         {shown ? (
-          <span style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}>
-            {shown.ok
-              ? "This destination is ready for a backup."
-              : "This destination is not ready. Saving is still allowed; the checks below say why."}
-          </span>
+          <InfoTooltip id="retention.tier.readiness">
+            <span style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}>
+              {shown.ok
+                ? "This destination is ready for a backup."
+                : "This destination is not ready. Saving is still allowed; the checks below say why."}
+            </span>
+          </InfoTooltip>
         ) : null}
       </div>
 
@@ -864,17 +873,21 @@ export function MediumDisclosure({
       dismissible={false}
       style={{ flexDirection: "column", gap: 10 }}
     >
-      <div style={{ fontWeight: 600 }}>Saving this sends backups off this machine.</div>
-      <ul style={{ margin: 0, paddingLeft: 20, fontSize: "var(--text-sm)" }}>
-        {introduced.map((t) => (
-          <li key={t.name}>
-            <span className="mono">{t.name}</span>
-            {" keeps its backups on "}
-            <span className="mono">{t.medium}</span>
-            {" from now on."}
-          </li>
-        ))}
-      </ul>
+      <InfoTooltip id="retention.disclosure.headline" block>
+        <div style={{ fontWeight: 600 }}>Saving this sends backups off this machine.</div>
+      </InfoTooltip>
+      <InfoTooltip id="retention.disclosure.mappings" block>
+        <ul style={{ margin: 0, paddingLeft: 20, fontSize: "var(--text-sm)" }}>
+          {introduced.map((t) => (
+            <li key={t.name}>
+              <span className="mono">{t.name}</span>
+              {" keeps its backups on "}
+              <span className="mono">{t.medium}</span>
+              {" from now on."}
+            </li>
+          ))}
+        </ul>
+      </InfoTooltip>
       <p style={{ margin: 0, fontSize: "var(--text-sm)", maxWidth: "78ch" }}>
         {storage.mediumDisclosure}
       </p>
@@ -891,18 +904,20 @@ export function MediumDisclosure({
         mediumIds={[...new Set(introduced.map((t) => t.medium).filter((id): id is string => !!id))]}
         disabled={disabled}
       />
-      <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: "var(--text-base)" }}>
-        <input
-          type="checkbox"
-          checked={acknowledged}
-          disabled={disabled}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-        <span>
-          I understand that backups these tiers keep will be deleted from this machine after
-          they upload, and that reading them back costs money and, on an archive class, hours.
-        </span>
-      </label>
+      <InfoTooltip id="retention.disclosure.acknowledge" block>
+        <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: "var(--text-base)" }}>
+          <input
+            type="checkbox"
+            checked={acknowledged}
+            disabled={disabled}
+            onChange={(e) => onChange(e.target.checked)}
+          />
+          <span>
+            I understand that backups these tiers keep will be deleted from this machine after
+            they upload, and that reading them back costs money and, on an archive class, hours.
+          </span>
+        </label>
+      </InfoTooltip>
     </Banner>
   );
 }
@@ -972,38 +987,44 @@ function MediumPreflightRow({ mediumId, disabled }: { mediumId: string; disabled
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
-        <button
-          className="btn btn--sm"
-          type="button"
-          disabled={disabled || busy}
-          onClick={run}
-        >
-          {busy ? "Checking..." : "Check " + mediumId + " now"}
-        </button>
+        <InfoTooltip id="retention.preflight.check">
+          <button
+            className="btn btn--sm"
+            type="button"
+            disabled={disabled || busy}
+            onClick={run}
+          >
+            {busy ? "Checking..." : "Check " + mediumId + " now"}
+          </button>
+        </InfoTooltip>
         {report ? (
-          <span style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}>
-            {report.ok
-              ? "This medium is ready for a backup."
-              : "This medium is not ready. Saving is still allowed; the checks below say why."}
-          </span>
+          <InfoTooltip id="retention.preflight.readiness">
+            <span style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}>
+              {report.ok
+                ? "This medium is ready for a backup."
+                : "This medium is not ready. Saving is still allowed; the checks below say why."}
+            </span>
+          </InfoTooltip>
         ) : null}
       </div>
       {error ? (
         <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--danger)" }}>{error}</p>
       ) : null}
       {report ? (
-        <ul style={{ margin: 0, paddingLeft: 20, fontSize: "var(--text-sm)" }}>
-          {report.checks.map((c) => (
-            <li key={c.step}>
-              <span className="mono">{c.step}</span>
-              {": "}
-              <strong>{c.outcome}</strong>
-              {c.category ? " (" + c.category + ")" : ""}
-              {". "}
-              {c.detail}
-            </li>
-          ))}
-        </ul>
+        <InfoTooltip id="retention.preflight.checks" block>
+          <ul style={{ margin: 0, paddingLeft: 20, fontSize: "var(--text-sm)" }}>
+            {report.checks.map((c) => (
+              <li key={c.step}>
+                <span className="mono">{c.step}</span>
+                {": "}
+                <strong>{c.outcome}</strong>
+                {c.category ? " (" + c.category + ")" : ""}
+                {". "}
+                {c.detail}
+              </li>
+            ))}
+          </ul>
+        </InfoTooltip>
       ) : null}
     </div>
   );

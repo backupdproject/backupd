@@ -16,6 +16,8 @@
  * does.
  */
 import type { BackupArtifact } from "@shared/types/backup";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 import { clock } from "@shared/utilities/format";
 
 interface Phase {
@@ -23,6 +25,10 @@ interface Phase {
   detail: string;
   at: string | null;
   terminalRemote?: boolean;
+  /** The registry entry explaining what this phase means and what its
+   *  unreached state says (issue #834). Authored per phase rather than
+   *  derived from the label, so the compiler checks every one of them. */
+  tip: TooltipId;
 }
 
 /** The timeline is derived, not authored: remote deletion can only ever render
@@ -30,22 +36,25 @@ interface Phase {
  *  sets only once the safe state is persisted (§14, §15). */
 export function buildPhases(artifact: BackupArtifact): Phase[] {
   const phases: Phase[] = [
-    { label: "DISCOVERED", detail: "Completion signal seen on the remote server", at: artifact.producedAt },
-    { label: "TRANSFERRED", detail: "Received over SFTP", at: artifact.receivedAt },
+    { label: "DISCOVERED", detail: "Completion signal seen on the remote server", at: artifact.producedAt, tip: "backups.lifecycle.discovered" },
+    { label: "TRANSFERRED", detail: "Received over SFTP", at: artifact.receivedAt, tip: "backups.lifecycle.transferred" },
     {
       label: "VERIFIED",
       detail: artifact.checksumAlgorithm.toUpperCase() + " matched the producer manifest",
-      at: artifact.validation === "verified" ? artifact.receivedAt : null
+      at: artifact.validation === "verified" ? artifact.receivedAt : null,
+      tip: "backups.lifecycle.verified"
     },
     {
       label: "COMMITTED",
       detail: "Durably written and fsynced to NAS storage",
-      at: artifact.validation === "verified" ? artifact.receivedAt : null
+      at: artifact.validation === "verified" ? artifact.receivedAt : null,
+      tip: "backups.lifecycle.committed"
     },
     {
       label: "SAFE STATE PERSISTED",
       detail: "Catalog records this artifact as known-good",
-      at: artifact.validation === "verified" ? artifact.receivedAt : null
+      at: artifact.validation === "verified" ? artifact.receivedAt : null,
+      tip: "backups.lifecycle.safe-state"
     },
     {
       label: "REMOTE SOURCE DELETED",
@@ -53,7 +62,8 @@ export function buildPhases(artifact: BackupArtifact): Phase[] {
         ? "Original removed from the remote server after commit"
         : "Pending \u2014 the remote original is still retained",
       at: artifact.remoteSourceRemovedAt,
-      terminalRemote: true
+      terminalRemote: true,
+      tip: "backups.lifecycle.remote-deleted"
     }
   ];
   return phases;
@@ -96,28 +106,36 @@ export function LifecycleTimeline({ artifact }: { artifact: BackupArtifact }) {
                 }}
               />
             </span>
-            <div style={{ paddingBottom: 18 }}>
+            {/* One host per phase, wrapping the phase's own text rather
+                than the whole row: the marker and the time beside it are
+                separate hover regions, and a host around the <li> would
+                put a <span> between the list and its item. */}
+            <InfoTooltip id={p.tip} block>
+              <div style={{ paddingBottom: 18 }}>
+                <div
+                  style={{
+                    fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)",
+                    letterSpacing: "0.07em", fontWeight: 600,
+                    color: reached ? "var(--text)" : "var(--text-3)"
+                  }}
+                >
+                  {p.label}
+                </div>
+                <div style={{ marginTop: 3, fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
+                  {p.detail}
+                </div>
+              </div>
+            </InfoTooltip>
+            <InfoTooltip id="backups.lifecycle.time" block alignEnd>
               <div
                 style={{
                   fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)",
-                  letterSpacing: "0.07em", fontWeight: 600,
-                  color: reached ? "var(--text)" : "var(--text-3)"
+                  color: "var(--text-3)", paddingTop: 1
                 }}
               >
-                {p.label}
+                {p.at ? clock(p.at) : "\u2014"}
               </div>
-              <div style={{ marginTop: 3, fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
-                {p.detail}
-              </div>
-            </div>
-            <div
-              style={{
-                fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)",
-                color: "var(--text-3)", paddingTop: 1
-              }}
-            >
-              {p.at ? clock(p.at) : "\u2014"}
-            </div>
+            </InfoTooltip>
           </li>
         );
       })}

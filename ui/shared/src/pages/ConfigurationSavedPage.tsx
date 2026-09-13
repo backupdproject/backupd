@@ -15,10 +15,18 @@
  * every route really would refuse and offering navigation would be
  * offering something that cannot work.
  */
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+
 export function ConfigurationSavedPage() {
   return (
     <div style={{ maxWidth: 720, margin: "0 auto", padding: "48px 20px" }}>
-      <h1 style={{ marginTop: 0 }}>Configuration saved</h1>
+      {/* The heading is WRAPPED rather than given an icon host inside
+          it: a host inside an <h1> joins the heading's accessible name
+          and its text content, which is a heading nothing can address by
+          its own words any more (#834). */}
+      <InfoTooltip id="wizard.configuration-saved" block>
+        <h1 style={{ marginTop: 0 }}>Configuration saved</h1>
+      </InfoTooltip>
       <p style={{ color: "var(--text-2)" }}>
         Your configuration has been written and is safe. This instance could not start
         serving it without a restart, so restart the Backupd container or service

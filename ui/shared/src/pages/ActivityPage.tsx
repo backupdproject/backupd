@@ -22,6 +22,7 @@ import { ActivityTimeline } from "@shared/components/ActivityTimeline";
 import { EmptyState, ErrorState } from "@shared/components/EmptyState";
 import { isNotConfigured, describeFailure } from "@shared/api/failure";
 import { isDebugEnabled } from "@shared/api/debug";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import type { ApiError } from "@shared/api/contracts";
 import type { ActivityEvent, Severity } from "@shared/types/operation";
 
@@ -112,8 +113,8 @@ export function ActivityPage() {
   if (isNotConfigured(page.error))
     return (
       <>
-        <PageHeader title="Activity" subtitle="Nothing has happened yet" />
-        <EmptyState title="No activity yet">
+        <PageHeader title="Activity" subtitle="Nothing has happened yet" tip="nav.activity" />
+        <EmptyState title="No activity yet" tip="activity.page.empty-unconfigured">
           Backupd records what it does here. It has done nothing yet, because this
           instance has no configuration and no backup set to run.
         </EmptyState>
@@ -123,9 +124,10 @@ export function ActivityPage() {
   if (page.error)
     return (
       <>
-        <PageHeader title="Activity" subtitle="Operational timeline across all backup sets" />
+        <PageHeader title="Activity" subtitle="Operational timeline across all backup sets" tip="nav.activity" />
         <ErrorState
           {...page.error}
+          tip="activity.page.error"
           retriedAt={retriedAt ?? undefined}
           onRetry={() => {
             setRetriedAt(new Date().toLocaleTimeString());
@@ -144,7 +146,7 @@ export function ActivityPage() {
 
   return (
     <>
-      <PageHeader title="Activity" subtitle="Operational timeline across all backup sets" />
+      <PageHeader title="Activity" subtitle="Operational timeline across all backup sets" tip="nav.activity" />
 
       <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
         {/* These two carry an aria-label rather than a visible one, so the
@@ -202,7 +204,7 @@ export function ActivityPage() {
           without resetting data, so the alternative is a stale list
           presented as the current one. */}
       {!page.data || page.loading ? null : filtered.length === 0 ? (
-        <EmptyState title="No matching events">
+        <EmptyState title="No matching events" tip="activity.page.empty-filtered">
           Nothing has happened in this window for the selected filters.
         </EmptyState>
       ) : (
@@ -219,13 +221,17 @@ export function ActivityPage() {
           the whole record in the first place. */}
       {cursor ? (
         <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
-          <button className="btn" type="button" disabled={loadingOlder} onClick={loadOlder}>
-            {loadingOlder ? "Loading older events…" : "Load older events"}
-          </button>
+          <InfoTooltip id="activity.page.load-older">
+            <button className="btn" type="button" disabled={loadingOlder} onClick={loadOlder}>
+              {loadingOlder ? "Loading older events…" : "Load older events"}
+            </button>
+          </InfoTooltip>
           {olderFailure ? (
-            <span role="alert" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-              {olderFailure}
-            </span>
+            <InfoTooltip id="activity.page.load-older-failed">
+              <span role="alert" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+                {olderFailure}
+              </span>
+            </InfoTooltip>
           ) : null}
         </div>
       ) : null}
@@ -265,17 +271,19 @@ function DebugFailure({ error }: { error: ApiError }) {
   ].filter((line): line is string => !!line);
 
   return (
-    <div
-      className="mono"
-      style={{
-        marginTop: 8,
-        fontSize: "var(--text-sm)",
-        color: "var(--text-3)",
-        whiteSpace: "pre-wrap",
-        userSelect: "text"
-      }}
-    >
-      {"[rm-debug]\n" + lines.join("\n")}
-    </div>
+    <InfoTooltip id="activity.page.debug" block>
+      <div
+        className="mono"
+        style={{
+          marginTop: 8,
+          fontSize: "var(--text-sm)",
+          color: "var(--text-3)",
+          whiteSpace: "pre-wrap",
+          userSelect: "text"
+        }}
+      >
+        {"[rm-debug]\n" + lines.join("\n")}
+      </div>
+    </InfoTooltip>
   );
 }

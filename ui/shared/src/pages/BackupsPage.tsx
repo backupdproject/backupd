@@ -40,6 +40,7 @@ import { isNotConfigured } from "@shared/api/failure";
 import { RetentionPreviewDialog } from "./RetentionPreviewDialog";
 import { bytes, stamp } from "@shared/utilities/format";
 import { useHoverTitle } from "@shared/hooks/useTooltips";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import { artifactPath } from "@shared/utilities/routes";
 import type { BackupArtifact } from "@shared/types/backup";
 
@@ -71,7 +72,7 @@ export function BackupsPage({ readOnly }: { readOnly: boolean }) {
   if (isNotConfigured(artifacts.error))
     return (
       <>
-        <PageHeader title="Backups" subtitle="Nothing retained yet" />
+        <PageHeader title="Backups" subtitle="Nothing retained yet" tip="nav.backups" />
         <EmptyState title="No backups yet">
           Backups appear here once a backup set exists and has run. This instance has no
           configuration yet, so nothing has run.
@@ -100,7 +101,12 @@ export function BackupsPage({ readOnly }: { readOnly: boolean }) {
     <>
       <PageHeader
         title="Backups"
-        subtitle={rows.length + " retained artifacts \u00b7 " + bytes(totalBytes)}
+        tip="nav.backups"
+        subtitle={
+          <InfoTooltip id="backups.summary">
+            <span>{rows.length + " retained artifacts \u00b7 " + bytes(totalBytes)}</span>
+          </InfoTooltip>
+        }
         actions={
           <>
             <FieldHelp label="Filter by backup set" help={FIELD_HELP.backupsSetFilter}>
@@ -157,18 +163,22 @@ export function BackupsPage({ readOnly }: { readOnly: boolean }) {
           <div className="table-scroll">
             <table className="table" style={{ minWidth: 820 }}>
               <caption className="eyebrow" style={{ textAlign: "left", padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
-                Retained backups
+                <InfoTooltip id="backups.table"><span>Retained backups</span></InfoTooltip>
               </caption>
               <thead>
+                {/* The columns carry the explanations for the cells below
+                    them: a row is a link to the artifact's own page, so a
+                    pop-up inside one would be a pop-up whose own click
+                    navigates away from the thing it is explaining. */}
                 <tr>
-                  <th scope="col">Time</th>
-                  <th scope="col">Backup set</th>
-                  <th scope="col">Artifact</th>
-                  <th scope="col" style={{ textAlign: "right" }}>Size</th>
-                  <th scope="col">Validation</th>
-                  <th scope="col">Retention</th>
-                  {showsMedium ? <th scope="col">Medium</th> : null}
-                  <th scope="col">Status</th>
+                  <th scope="col"><InfoTooltip id="backups.col.time"><span>Time</span></InfoTooltip></th>
+                  <th scope="col"><InfoTooltip id="backups.col.set"><span>Backup set</span></InfoTooltip></th>
+                  <th scope="col"><InfoTooltip id="backups.col.artifact"><span>Artifact</span></InfoTooltip></th>
+                  <th scope="col" style={{ textAlign: "right" }}><InfoTooltip id="backups.col.size"><span>Size</span></InfoTooltip></th>
+                  <th scope="col"><InfoTooltip id="backups.col.validation"><span>Validation</span></InfoTooltip></th>
+                  <th scope="col"><InfoTooltip id="backups.col.retention"><span>Retention</span></InfoTooltip></th>
+                  {showsMedium ? <th scope="col"><InfoTooltip id="backups.col.medium"><span>Medium</span></InfoTooltip></th> : null}
+                  <th scope="col"><InfoTooltip id="backups.col.status"><span>Status</span></InfoTooltip></th>
                 </tr>
               </thead>
               <tbody>
@@ -244,7 +254,9 @@ export function BackupsPage({ readOnly }: { readOnly: boolean }) {
             className="card__footer"
             style={{ display: "flex", justifyContent: "space-between", gap: 16, fontSize: "var(--text-sm)", color: "var(--text-2)" }}
           >
-            <span>{"Showing " + rows.length + " artifacts"}</span>
+            <InfoTooltip id="backups.showing">
+              <span>{"Showing " + rows.length + " artifacts"}</span>
+            </InfoTooltip>
             <span style={{ color: "var(--text-3)" }}>
               Backupd does not perform application restore — these are
               retained, verified copies.

@@ -22,32 +22,40 @@
  * secret, so there is nothing here to redact. That argument lives in full
  * in storageDestinationCommands.ts.
  */
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+
 export function CommandEcho({ label, commands }: { label: string; commands: string[] }) {
   if (commands.length === 0) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div className="eyebrow" style={{ fontSize: 10 }}>
-        {label}
+    // One tooltip over the whole block rather than one per line: the
+    // explanation is the same for the eyebrow and for every command
+    // under it, and a host per line would open several pop-ups from one
+    // hover down a list (#834).
+    <InfoTooltip id="wizard.command-echo" block>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div className="eyebrow" style={{ fontSize: 10 }}>
+          {label}
+        </div>
+        {commands.map((c) => (
+          <code
+            key={c}
+            className="mono"
+            style={{
+              display: "block",
+              fontSize: "var(--text-xs)",
+              color: "var(--text-2)",
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-md)",
+              padding: "5px 8px",
+              overflowX: "auto",
+              whiteSpace: "pre"
+            }}
+          >
+            {c}
+          </code>
+        ))}
       </div>
-      {commands.map((c) => (
-        <code
-          key={c}
-          className="mono"
-          style={{
-            display: "block",
-            fontSize: "var(--text-xs)",
-            color: "var(--text-2)",
-            background: "var(--surface-2)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius-md)",
-            padding: "5px 8px",
-            overflowX: "auto",
-            whiteSpace: "pre"
-          }}
-        >
-          {c}
-        </code>
-      ))}
-    </div>
+    </InfoTooltip>
   );
 }

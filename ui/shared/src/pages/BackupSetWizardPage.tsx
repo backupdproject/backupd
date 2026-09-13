@@ -40,6 +40,8 @@ import { graph, useCausl } from "@shared/state/graph";
 import { setsNode } from "@shared/state/appNodes";
 import { fetchResource } from "@shared/state/resource";
 import { resetWizardAnswers, wizardCanSaveNode, wizardHostKeyChangedNode } from "@shared/state/wizardNodes";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 const STEPS = [
   "Source",
@@ -627,29 +629,35 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
           const done = step > n;
           return (
             <li key={label}>
-              <button
-                onClick={() => setStep(n)}
-                // Without this the accessible name is "01 Authentication",
-                // because the step-number span is part of the button. A
-                // screen reader should hear the step, not the numeral glued
-                // to the label.
-                aria-label={label}
-                aria-current={active ? "step" : undefined}
-                style={{
-                  display: "flex", flexDirection: "column", gap: 5, width: "100%",
-                  padding: "9px 10px", borderRadius: "var(--radius-lg)", textAlign: "left",
-                  border: "1px solid " + (active ? "var(--accent)" : "var(--border)"),
-                  background: active ? "var(--accent-quiet)" : "var(--surface)",
-                  color: active ? "var(--text)" : "var(--text-2)",
-                  font: "inherit", cursor: "pointer"
-                }}
-              >
-                <span className="mono" style={{ display: "flex", alignItems: "center", gap: 7, fontSize: "var(--text-xs)" }}>
-                  {"0" + n}
-                  <span aria-hidden="true" style={{ color: "var(--ok)", opacity: done ? 1 : 0 }}>✓</span>
-                </span>
-                <span style={{ fontSize: "var(--text-sm)", fontWeight: 500 }}>{label}</span>
-              </button>
+              {/* One id for all six rows: what a step is, and that any of
+                  them can be revisited, is one explanation (#834). The
+                  host wraps the button, so the button keeps its own
+                  accessible name. */}
+              <InfoTooltip id="wizard.set.step" block>
+                <button
+                  onClick={() => setStep(n)}
+                  // Without this the accessible name is "01 Authentication",
+                  // because the step-number span is part of the button. A
+                  // screen reader should hear the step, not the numeral glued
+                  // to the label.
+                  aria-label={label}
+                  aria-current={active ? "step" : undefined}
+                  style={{
+                    display: "flex", flexDirection: "column", gap: 5, width: "100%",
+                    padding: "9px 10px", borderRadius: "var(--radius-lg)", textAlign: "left",
+                    border: "1px solid " + (active ? "var(--accent)" : "var(--border)"),
+                    background: active ? "var(--accent-quiet)" : "var(--surface)",
+                    color: active ? "var(--text)" : "var(--text-2)",
+                    font: "inherit", cursor: "pointer"
+                  }}
+                >
+                  <span className="mono" style={{ display: "flex", alignItems: "center", gap: 7, fontSize: "var(--text-xs)" }}>
+                    {"0" + n}
+                    <span aria-hidden="true" style={{ color: "var(--ok)", opacity: done ? 1 : 0 }}>✓</span>
+                  </span>
+                  <span style={{ fontSize: "var(--text-sm)", fontWeight: 500 }}>{label}</span>
+                </button>
+              </InfoTooltip>
             </li>
           );
         })}
@@ -771,37 +779,42 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                     </div>
                   ) : (
                     managedKeys.map((k) => (
-                      <button
-                        key={k.id}
-                        type="button"
-                        className="btn"
-                        aria-pressed={importedKeyId === k.id}
-                        disabled={k.passphraseProtected || k.fingerprint === ""}
-                        style={{
-                          textAlign: "left",
-                          height: "auto",
-                          padding: "10px 14px",
-                          borderColor: importedKeyId === k.id ? "var(--accent)" : undefined
-                        }}
-                        onClick={() => {
-                          setImportedKeyId(k.id);
-                          setImportedFingerprint(k.fingerprint);
-                        }}
-                      >
-                        <span style={{ display: "block", fontWeight: 600, fontSize: "var(--text-base)" }}>
-                          {(k.algorithm || "key") + (k.importedAt ? ", imported " + k.importedAt.slice(0, 10) : "")}
-                        </span>
-                        <span className="mono" style={{ display: "block", marginTop: 3, fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
-                          {k.fingerprint === "" ? "no fingerprint available" : k.fingerprint}
-                        </span>
-                        <span style={{ display: "block", marginTop: 3, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-                          {k.passphraseProtected
-                            ? "Needs its passphrase to be resolvable before it can be used."
-                            : k.usedBy.length === 0
-                              ? "Not used by any backup set"
-                              : "Used by " + k.usedBy.join(", ")}
-                        </span>
-                      </button>
+                      // The host, not the button, carries what makes the
+                      // row full width: a flex host stretches its one
+                      // child exactly as the column did, so the button's
+                      // own style is left as it was.
+                      <InfoTooltip key={k.id} id="wizard.set.key-stored" block style={{ display: "flex" }}>
+                        <button
+                          type="button"
+                          className="btn"
+                          aria-pressed={importedKeyId === k.id}
+                          disabled={k.passphraseProtected || k.fingerprint === ""}
+                          style={{
+                            textAlign: "left",
+                            height: "auto",
+                            padding: "10px 14px",
+                            borderColor: importedKeyId === k.id ? "var(--accent)" : undefined
+                          }}
+                          onClick={() => {
+                            setImportedKeyId(k.id);
+                            setImportedFingerprint(k.fingerprint);
+                          }}
+                        >
+                          <span style={{ display: "block", fontWeight: 600, fontSize: "var(--text-base)" }}>
+                            {(k.algorithm || "key") + (k.importedAt ? ", imported " + k.importedAt.slice(0, 10) : "")}
+                          </span>
+                          <span className="mono" style={{ display: "block", marginTop: 3, fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
+                            {k.fingerprint === "" ? "no fingerprint available" : k.fingerprint}
+                          </span>
+                          <span style={{ display: "block", marginTop: 3, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+                            {k.passphraseProtected
+                              ? "Needs its passphrase to be resolvable before it can be used."
+                              : k.usedBy.length === 0
+                                ? "Not used by any backup set"
+                                : "Used by " + k.usedBy.join(", ")}
+                          </span>
+                        </button>
+                      </InfoTooltip>
                     ))
                   )}
                 </div>
@@ -821,15 +834,17 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                           The pasted key material has already been discarded from this screen. It cannot be shown again.
                         </span>
                       </span>
-                      <button
-                        className="btn btn--sm"
-                        onClick={() => {
-                          setImportedFingerprint(null);
-                          setImportPasted("");
-                        }}
-                      >
-                        Replace
-                      </button>
+                      <InfoTooltip id="wizard.set.key-replace" alignEnd>
+                        <button
+                          className="btn btn--sm"
+                          onClick={() => {
+                            setImportedFingerprint(null);
+                            setImportPasted("");
+                          }}
+                        >
+                          Replace
+                        </button>
+                      </InfoTooltip>
                     </div>
                   ) : (
                     <>
@@ -856,26 +871,28 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                         )}
                       </HelpField>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <button
-                          className="btn btn--primary"
-                          disabled={importPasted.trim().length === 0 || importing}
-                          onClick={async () => {
-                            setImporting(true);
-                            setImportError(null);
-                            try {
-                              const result = await api.importSSHKey(importPasted);
-                              setImportedFingerprint(result.algorithm + " · " + result.fingerprint);
-                              setImportedKeyId(result.id);
-                              setImportPasted("");
-                            } catch (e) {
-                              setImportError(errorMessage(e, "Could not import this key."));
-                            } finally {
-                              setImporting(false);
-                            }
-                          }}
-                        >
-                          {importing ? "Importing…" : "Import key"}
-                        </button>
+                        <InfoTooltip id="wizard.set.key-import">
+                          <button
+                            className="btn btn--primary"
+                            disabled={importPasted.trim().length === 0 || importing}
+                            onClick={async () => {
+                              setImporting(true);
+                              setImportError(null);
+                              try {
+                                const result = await api.importSSHKey(importPasted);
+                                setImportedFingerprint(result.algorithm + " · " + result.fingerprint);
+                                setImportedKeyId(result.id);
+                                setImportPasted("");
+                              } catch (e) {
+                                setImportError(errorMessage(e, "Could not import this key."));
+                              } finally {
+                                setImporting(false);
+                              }
+                            }}
+                          >
+                            {importing ? "Importing…" : "Import key"}
+                          </button>
+                        </InfoTooltip>
                         <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
                           {importPasted.trim().length === 0
                             ? "Paste a private key to enable Import."
@@ -939,16 +956,20 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                 trustedAt={hostTrusted && !hostKeyChanged ? new Date().toISOString() : null}
               />
               <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap", alignItems: "center" }}>
-                <button
-                  className={"btn " + (hostKeyChanged ? "btn--destructive-confirm" : "btn--primary")}
-                  disabled={(hostTrusted && !hostKeyChanged) || probing || !probedFingerprint}
-                  onClick={trustHost}
-                >
-                  {hostKeyChanged ? "Trust new fingerprint" : hostTrusted ? "Host trusted" : "Trust host"}
-                </button>
-                <button className="btn" disabled={probing} onClick={() => void probeHost()}>
-                  {probing ? "Fetching…" : "Re-fetch fingerprint"}
-                </button>
+                <InfoTooltip id="wizard.set.trust-host">
+                  <button
+                    className={"btn " + (hostKeyChanged ? "btn--destructive-confirm" : "btn--primary")}
+                    disabled={(hostTrusted && !hostKeyChanged) || probing || !probedFingerprint}
+                    onClick={trustHost}
+                  >
+                    {hostKeyChanged ? "Trust new fingerprint" : hostTrusted ? "Host trusted" : "Trust host"}
+                  </button>
+                </InfoTooltip>
+                <InfoTooltip id="wizard.set.refetch-fingerprint">
+                  <button className="btn" disabled={probing} onClick={() => void probeHost()}>
+                    {probing ? "Fetching…" : "Re-fetch fingerprint"}
+                  </button>
+                </InfoTooltip>
               </div>
               <div style={{ marginTop: 16 }}>
                 <WarningBanner tone="danger" eyebrow="If this ever changes">
@@ -1146,8 +1167,8 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                   borderRadius: "var(--radius-lg)", overflow: "hidden"
                 }}
               >
-                <Summary label="Source" lines={[source.host, remoteFolder]} />
-                <Summary label="Destination" lines={[localDestination]} />
+                <Summary label="Source" tip="wizard.set.review.source" lines={[source.host, remoteFolder]} />
+                <Summary label="Destination" tip="wizard.set.review.destination" lines={[localDestination]} />
                 {/* Issue #299: this card used to show a hardcoded
                     "7 daily" / "13 weekly" / "12 monthly" that summarized
                     fields removed above — retention is one global policy
@@ -1157,6 +1178,7 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                     product never actually sets a hash algorithm. */}
                 <Summary
                   label="Validation"
+                  tip="wizard.set.review.validation"
                   lines={[
                     "transfer verify",
                     validatorId || "no application validator",
@@ -1165,6 +1187,7 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                 />
                 <Summary
                   label="Host trust"
+                  tip="wizard.set.review.host-trust"
                   lines={[hostKeyChanged ? "Host key changed — blocked" : hostTrusted ? "Trusted" : "Not yet trusted"]}
                 />
               </div>
@@ -1197,14 +1220,16 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                   <span className="eyebrow" style={{ fontSize: "var(--text-xs)", color: "var(--text)", fontWeight: 600, flex: 1 }}>
                     Connection
                   </span>
-                  <button
-                    className="btn btn--primary btn--sm"
-                    type="button"
-                    disabled={testing || !importedKeyId || !trustedKnownHostsLine}
-                    onClick={() => void runConnectionTest()}
-                  >
-                    {testing ? "Testing…" : "Test connection"}
-                  </button>
+                  <InfoTooltip id="wizard.set.test-connection" alignEnd>
+                    <button
+                      className="btn btn--primary btn--sm"
+                      type="button"
+                      disabled={testing || !importedKeyId || !trustedKnownHostsLine}
+                      onClick={() => void runConnectionTest()}
+                    >
+                      {testing ? "Testing…" : "Test connection"}
+                    </button>
+                  </InfoTooltip>
                 </div>
                 <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
                   {connectionError ? (
@@ -1221,35 +1246,41 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                     </p>
                   ) : (
                     <>
-                      <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 7 }}>
-                        {connectionResult.checks.map((c) => (
-                          <li key={c.step} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 13 }}>
-                            <span
-                              aria-hidden="true"
-                              style={{
-                                color:
-                                  c.outcome === "passed"
-                                    ? "var(--ok)"
-                                    : c.outcome === "failed"
-                                      ? "var(--danger)"
-                                      : "var(--text-3)"
-                              }}
-                            >
-                              {c.outcome === "passed" ? "✓" : c.outcome === "failed" ? "!" : "–"}
-                            </span>
-                            <span className="mono" style={{ minWidth: 108, fontSize: "var(--text-xs)", color: "var(--text-2)" }}>
-                              {c.step}
-                            </span>
-                            <span style={{ flex: 1 }}>
-                              {/* The outcome word is printed as well as
-                                  drawn, because "skipped" and "passed"
-                                  must not be told apart by colour alone. */}
-                              <strong style={{ fontWeight: 600 }}>{c.outcome}</strong>
-                              {c.detail ? " · " + c.detail : ""}
-                            </span>
-                          </li>
-                        ))}
-                      </ol>
+                      {/* One region for the whole report: the mark, the
+                          step name, the outcome word and the detail are
+                          one explanation, and a host per row would open
+                          six pop-ups down one list (#834). */}
+                      <InfoTooltip id="wizard.set.connection-checks" block>
+                        <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 7 }}>
+                          {connectionResult.checks.map((c) => (
+                            <li key={c.step} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 13 }}>
+                              <span
+                                aria-hidden="true"
+                                style={{
+                                  color:
+                                    c.outcome === "passed"
+                                      ? "var(--ok)"
+                                      : c.outcome === "failed"
+                                        ? "var(--danger)"
+                                        : "var(--text-3)"
+                                }}
+                              >
+                                {c.outcome === "passed" ? "✓" : c.outcome === "failed" ? "!" : "–"}
+                              </span>
+                              <span className="mono" style={{ minWidth: 108, fontSize: "var(--text-xs)", color: "var(--text-2)" }}>
+                                {c.step}
+                              </span>
+                              <span style={{ flex: 1 }}>
+                                {/* The outcome word is printed as well as
+                                    drawn, because "skipped" and "passed"
+                                    must not be told apart by colour alone. */}
+                                <strong style={{ fontWeight: 600 }}>{c.outcome}</strong>
+                                {c.detail ? " · " + c.detail : ""}
+                              </span>
+                            </li>
+                          ))}
+                        </ol>
+                      </InfoTooltip>
                       {connectionResult.checks.length === 0 ? (
                         <p style={{ margin: 0, fontSize: 13.5, color: "var(--text-2)" }}>
                           This deployment reported a verdict and no breakdown of it.
@@ -1280,9 +1311,11 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                   }}
                 >
                   <span aria-hidden="true" style={{ color: "var(--warn)" }}>▲</span>
-                  <span className="eyebrow" style={{ fontSize: "var(--text-xs)", color: "var(--text)", fontWeight: 600 }}>
-                    Remote source handling
-                  </span>
+                  <InfoTooltip id="wizard.set.remote-handling">
+                    <span className="eyebrow" style={{ fontSize: "var(--text-xs)", color: "var(--text)", fontWeight: 600 }}>
+                      Remote source handling
+                    </span>
+                  </InfoTooltip>
                 </div>
                 <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
                   {/* Issue #316: declared here, at the point this page
@@ -1374,9 +1407,11 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                     tone="warn"
                     eyebrow="Saved, but the run did not start"
                     actions={
-                      <button className="btn" onClick={() => navigate("/sets")}>
-                        Go to backup sets
-                      </button>
+                      <InfoTooltip id="wizard.set.go-to-sets">
+                        <button className="btn" onClick={() => navigate("/sets")}>
+                          Go to backup sets
+                        </button>
+                      </InfoTooltip>
                     }
                   >
                     The backup set was created and is enabled. The immediate run did not
@@ -1393,18 +1428,22 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                     eyebrow="This id already has backups on record"
                     actions={
                       <>
-                        <button
-                          className="btn btn--primary"
-                          disabled={saving}
-                          onClick={() =>
-                            void handleSave(repointRefusal.disabled, repointRefusal.runImmediately, true)
-                          }
-                        >
-                          Create anyway
-                        </button>
-                        <button className="btn" disabled={saving} onClick={() => setRepointRefusal(null)}>
-                          Go back and change it
-                        </button>
+                        <InfoTooltip id="wizard.set.create-anyway">
+                          <button
+                            className="btn btn--primary"
+                            disabled={saving}
+                            onClick={() =>
+                              void handleSave(repointRefusal.disabled, repointRefusal.runImmediately, true)
+                            }
+                          >
+                            Create anyway
+                          </button>
+                        </InfoTooltip>
+                        <InfoTooltip id="wizard.set.change-id">
+                          <button className="btn" disabled={saving} onClick={() => setRepointRefusal(null)}>
+                            Go back and change it
+                          </button>
+                        </InfoTooltip>
                       </>
                     }
                   >
@@ -1415,37 +1454,45 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
 
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 18 }}>
                 {firstRun ? null : (
-                  <button
-                    className="btn btn--primary"
-                    disabled={saveDisabled || saving || runNotStarted !== null}
-                    onClick={() => void handleSave(false, true)}
-                  >
-                    {saving ? "Saving…" : "Save, enable & run"}
-                  </button>
+                  <InfoTooltip id="wizard.set.save-enable-run">
+                    <button
+                      className="btn btn--primary"
+                      disabled={saveDisabled || saving || runNotStarted !== null}
+                      onClick={() => void handleSave(false, true)}
+                    >
+                      {saving ? "Saving…" : "Save, enable & run"}
+                    </button>
+                  </InfoTooltip>
                 )}
-                <button
-                  className={firstRun ? "btn btn--primary" : "btn"}
-                  disabled={saveDisabled || saving || runNotStarted !== null}
-                  onClick={() => void handleSave(false, false)}
-                >
-                  {saving ? "Saving…" : firstRun ? "Finish setup" : "Save & enable"}
-                </button>
-                <button
-                  className="btn btn--quiet"
-                  disabled={saving || runNotStarted !== null}
-                  onClick={() => void handleSave(true, false)}
-                >
-                  {saving ? "Saving…" : "Save disabled"}
-                </button>
-                {saveHint ? (
-                  <span
-                    style={{
-                      fontSize: "var(--text-sm)",
-                      color: hostKeyChanged || saveError ? "var(--danger)" : "var(--text-3)"
-                    }}
+                <InfoTooltip id="wizard.set.save-enable">
+                  <button
+                    className={firstRun ? "btn btn--primary" : "btn"}
+                    disabled={saveDisabled || saving || runNotStarted !== null}
+                    onClick={() => void handleSave(false, false)}
                   >
-                    {saveHint}
-                  </span>
+                    {saving ? "Saving…" : firstRun ? "Finish setup" : "Save & enable"}
+                  </button>
+                </InfoTooltip>
+                <InfoTooltip id="wizard.set.save-disabled">
+                  <button
+                    className="btn btn--quiet"
+                    disabled={saving || runNotStarted !== null}
+                    onClick={() => void handleSave(true, false)}
+                  >
+                    {saving ? "Saving…" : "Save disabled"}
+                  </button>
+                </InfoTooltip>
+                {saveHint ? (
+                  <InfoTooltip id="wizard.set.save-hint">
+                    <span
+                      style={{
+                        fontSize: "var(--text-sm)",
+                        color: hostKeyChanged || saveError ? "var(--danger)" : "var(--text-3)"
+                      }}
+                    >
+                      {saveHint}
+                    </span>
+                  </InfoTooltip>
                 ) : null}
               </div>
             </StepBody>
@@ -1453,13 +1500,19 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
         </div>
 
         <div className="card__footer" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <button className="btn" onClick={() => setStep(Math.max(1, step - 1))} disabled={step === 1}>Back</button>
-          <span className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-            {"Step " + step + " of 6"}
-          </span>
-          <button className="btn btn--primary" onClick={() => setStep(Math.min(6, step + 1))} disabled={step === 6}>
-            Continue
-          </button>
+          <InfoTooltip id="wizard.set.back">
+            <button className="btn" onClick={() => setStep(Math.max(1, step - 1))} disabled={step === 1}>Back</button>
+          </InfoTooltip>
+          <InfoTooltip id="wizard.set.step-count">
+            <span className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+              {"Step " + step + " of 6"}
+            </span>
+          </InfoTooltip>
+          <InfoTooltip id="wizard.set.continue" alignEnd>
+            <button className="btn btn--primary" onClick={() => setStep(Math.min(6, step + 1))} disabled={step === 6}>
+              Continue
+            </button>
+          </InfoTooltip>
         </div>
       </section>
     </div>
@@ -1607,10 +1660,16 @@ function Toggle({
   );
 }
 
-function Summary({ label, lines }: { label: string; lines: string[] }) {
+function Summary({ label, tip, lines }: { label: string; tip: TooltipId; lines: string[] }) {
   return (
     <div style={{ background: "var(--surface)", padding: "14px 16px" }}>
-      <div className="eyebrow" style={{ fontSize: "var(--text-xs)" }}>{label}</div>
+      {/* The tile's own label is wrapped rather than given an icon
+          beside it: a host inside this div would become part of the
+          label's text, and the label is what a reader looks the tile up
+          by (#834). */}
+      <InfoTooltip id={tip} block>
+        <div className="eyebrow" style={{ fontSize: "var(--text-xs)" }}>{label}</div>
+      </InfoTooltip>
       <div className="mono" style={{ marginTop: 7, fontSize: "var(--text-sm)", lineHeight: 1.7 }}>
         {lines.map((l) => <div key={l}>{l}</div>)}
       </div>

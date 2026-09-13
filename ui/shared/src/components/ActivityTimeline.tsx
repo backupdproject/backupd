@@ -15,6 +15,7 @@
 import type { ActivityEvent, Severity } from "@shared/types/operation";
 import { Icon } from "@shared/design-system/icons";
 import type { IconName } from "@shared/design-system/icons";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import { stamp } from "@shared/utilities/format";
 
 /** Issue #621 turned this column into artwork, and info is the one row
@@ -53,23 +54,31 @@ export function ActivityTimeline({
               fontSize: dense ? "var(--text-sm)" : 13
             }}
           >
-            <span
-              className="mono"
-              style={{ color: "var(--text-3)", fontSize: "var(--text-sm)" }}
-            >
-              {dense ? stamp(e.at).slice(7) : stamp(e.at)}
-            </span>
-            <span aria-hidden="true" style={{ color: sev.color, textAlign: "center" }}>
-              <Icon name={sev.icon} />
-            </span>
-            <span>
-              <span style={{ fontWeight: e.severity === "warn" || e.severity === "error" ? 600 : 400 }}>
-                {e.text}
-              </span>{" "}
-              <span style={{ color: "var(--text-3)" }}>{e.detail}</span>
-            </span>
+            <InfoTooltip id="activity.timeline.time">
+              <span
+                className="mono"
+                style={{ color: "var(--text-3)", fontSize: "var(--text-sm)" }}
+              >
+                {dense ? stamp(e.at).slice(7) : stamp(e.at)}
+              </span>
+            </InfoTooltip>
+            <InfoTooltip id="activity.timeline.severity" style={{ justifyContent: "center" }}>
+              <span aria-hidden="true" style={{ color: sev.color, textAlign: "center" }}>
+                <Icon name={sev.icon} />
+              </span>
+            </InfoTooltip>
+            <InfoTooltip id="activity.timeline.event" block>
+              <span>
+                <span style={{ fontWeight: e.severity === "warn" || e.severity === "error" ? 600 : 400 }}>
+                  {e.text}
+                </span>{" "}
+                <span style={{ color: "var(--text-3)" }}>{e.detail}</span>
+              </span>
+            </InfoTooltip>
             {dense ? null : (
-              <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>{e.setName}</span>
+              <InfoTooltip id="activity.timeline.set" alignEnd>
+                <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>{e.setName}</span>
+              </InfoTooltip>
             )}
           </li>
         );

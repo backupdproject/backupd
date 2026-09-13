@@ -85,6 +85,7 @@ import { useAsync } from "@shared/hooks/useAsync";
 import { ErrorState } from "@shared/components/EmptyState";
 import { refuseInstanceName } from "@shared/pages/destinationInstanceName";
 import type { InstanceNameRefusal } from "@shared/pages/destinationInstanceName";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 export function AddDestinationWizard({
   existing,
@@ -158,9 +159,13 @@ export function AddDestinationWizard({
         <span style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
           {step === 3 ? "what will be written, before anything is" : "nothing is written by these steps"}
         </span>
-        <span style={{ marginLeft: "auto", fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
-          Step {step} of 3
-        </span>
+        {/* The auto margin moves to the host, which is the flex item
+            now: left on the child it would no longer push anything. */}
+        <InfoTooltip id="wizard.destination.step" alignEnd style={{ marginLeft: "auto" }}>
+          <span style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+            {"Step " + step + " of 3"}
+          </span>
+        </InfoTooltip>
       </div>
 
       {/* There is no failure banner here, and that is not an omission:
@@ -393,12 +398,16 @@ function ChooseBackendPane({
       ) : null}
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn" type="button" onClick={onCancel}>
-          Cancel
-        </button>
-        <button className="btn btn--primary" type="button" disabled={!chosenIsConfigurable} onClick={onNext}>
-          Next: name this instance
-        </button>
+        <InfoTooltip id="wizard.destination.cancel">
+          <button className="btn" type="button" onClick={onCancel}>
+            Cancel
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="wizard.destination.next-name">
+          <button className="btn btn--primary" type="button" disabled={!chosenIsConfigurable} onClick={onNext}>
+            Next: name this instance
+          </button>
+        </InfoTooltip>
       </div>
     </div>
   );
@@ -473,35 +482,41 @@ function NameInstancePane({
             : `Instances of ${backend.label} that already exist:`}
         </span>
         {siblings.length > 0 ? (
-          <ul
-            role="list"
-            aria-label={`Instances of ${backend.label} that already exist`}
-            style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", gap: 8, flexWrap: "wrap" }}
-          >
-            {siblings.map((m) => (
-              <li
-                key={m.id}
-                style={{
-                  fontSize: 12,
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-md)",
-                  padding: "2px 8px"
-                }}
-              >
-                {m.id}
-              </li>
-            ))}
-          </ul>
+          <InfoTooltip id="wizard.destination.existing-names" block>
+            <ul
+              role="list"
+              aria-label={`Instances of ${backend.label} that already exist`}
+              style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", gap: 8, flexWrap: "wrap" }}
+            >
+              {siblings.map((m) => (
+                <li
+                  key={m.id}
+                  style={{
+                    fontSize: 12,
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius-md)",
+                    padding: "2px 8px"
+                  }}
+                >
+                  {m.id}
+                </li>
+              ))}
+            </ul>
+          </InfoTooltip>
         ) : null}
       </div>
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn" type="button" onClick={onBack}>
-          Back
-        </button>
-        <button className="btn btn--primary" type="button" disabled={refusal !== null} onClick={onNext}>
-          Next: confirm
-        </button>
+        <InfoTooltip id="wizard.destination.back">
+          <button className="btn" type="button" onClick={onBack}>
+            Back
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="wizard.destination.next-confirm">
+          <button className="btn btn--primary" type="button" disabled={refusal !== null} onClick={onNext}>
+            Next: confirm
+          </button>
+        </InfoTooltip>
       </div>
     </div>
   );
@@ -531,24 +546,26 @@ function ConfirmPane({
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <dl
-        style={{
-          margin: 0,
-          display: "grid",
-          gridTemplateColumns: "auto 1fr",
-          gap: "4px 12px",
-          fontSize: 13
-        }}
-      >
-        <dt style={{ color: "var(--text-2)" }}>Backend</dt>
-        <dd style={{ margin: 0 }}>
-          {backend.label} <span style={{ color: "var(--text-3)" }}>({backend.id})</span>
-        </dd>
-        <dt style={{ color: "var(--text-2)" }}>Name</dt>
-        <dd style={{ margin: 0 }}>{name}</dd>
-        <dt style={{ color: "var(--text-2)" }}>Values</dt>
-        <dd style={{ margin: 0, color: "var(--text-3)" }}>not asked for yet</dd>
-      </dl>
+      <InfoTooltip id="wizard.destination.summary" block>
+        <dl
+          style={{
+            margin: 0,
+            display: "grid",
+            gridTemplateColumns: "auto 1fr",
+            gap: "4px 12px",
+            fontSize: 13
+          }}
+        >
+          <dt style={{ color: "var(--text-2)" }}>Backend</dt>
+          <dd style={{ margin: 0 }}>
+            {backend.label} <span style={{ color: "var(--text-3)" }}>({backend.id})</span>
+          </dd>
+          <dt style={{ color: "var(--text-2)" }}>Name</dt>
+          <dd style={{ margin: 0 }}>{name}</dd>
+          <dt style={{ color: "var(--text-2)" }}>Values</dt>
+          <dd style={{ margin: 0, color: "var(--text-3)" }}>not asked for yet</dd>
+        </dl>
+      </InfoTooltip>
 
       <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", maxWidth: "74ch" }}>
         Nothing has been written yet. Configuring it comes next, and this destination is written once, after a
@@ -583,12 +600,16 @@ function ConfirmPane({
       </div>
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn" type="button" onClick={onBack}>
-          Back
-        </button>
-        <button className="btn btn--primary" type="button" onClick={onConfirm}>
-          Next: configure it
-        </button>
+        <InfoTooltip id="wizard.destination.back">
+          <button className="btn" type="button" onClick={onBack}>
+            Back
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="wizard.destination.next-configure">
+          <button className="btn btn--primary" type="button" onClick={onConfirm}>
+            Next: configure it
+          </button>
+        </InfoTooltip>
       </div>
     </div>
   );

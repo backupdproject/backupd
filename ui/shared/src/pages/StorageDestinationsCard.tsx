@@ -76,6 +76,7 @@ import {
   testConnectionCommand
 } from "@shared/pages/storageDestinationCommands";
 import { localDriveDescription } from "@shared/pages/retentionChain";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 export function StorageDestinationsCard({
   readOnly,
@@ -130,7 +131,9 @@ export function StorageDestinationsCard({
   return (
     <section className="card" role="region" aria-label="Storage destinations">
       <div className="card__header">
-        <h2 className="eyebrow">Storage destinations</h2>
+        <InfoTooltip id="storage.destinations" block>
+          <h2 className="eyebrow">Storage destinations</h2>
+        </InfoTooltip>
       </div>
       <div className="card__body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {isNotConfigured(mediums.error) ? (
@@ -181,12 +184,16 @@ export function StorageDestinationsCard({
             )}
 
             <div>
-              <button className="btn btn--primary" disabled={readOnly} onClick={() => setAdding(true)}>
-                Add a destination
-              </button>
-              <span style={{ marginLeft: 10, fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
-                writes storage_mediums[] in config.yaml
-              </span>
+              <InfoTooltip id="storage.add-destination">
+                <button className="btn btn--primary" disabled={readOnly} onClick={() => setAdding(true)}>
+                  Add a destination
+                </button>
+              </InfoTooltip>
+              <InfoTooltip id="storage.config-key">
+                <span style={{ marginLeft: 10, fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+                  writes storage_mediums[] in config.yaml
+                </span>
+              </InfoTooltip>
             </div>
           </>
         ) : (
@@ -451,19 +458,25 @@ function DestinationRow({
       }}
     >
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ fontWeight: 600, fontSize: 14 }}>{medium.id}</span>
-        <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
-          {describeDestination(medium)}
-        </span>
+        <InfoTooltip id="storage.destination-id">
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{medium.id}</span>
+        </InfoTooltip>
+        <InfoTooltip id="storage.destination-where">
+          <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+            {describeDestination(medium)}
+          </span>
+        </InfoTooltip>
         {medium.isDefault ? (
           <span className="badge" title={hoverTitle("A retention tier created from here on starts on this destination.")}>
             Default
           </span>
         ) : null}
         {medium.readsRequireRestore ? (
-          <span className="badge" style={{ color: "var(--warn)" }}>
-            reads need a restore
-          </span>
+          <InfoTooltip id="storage.reads-need-restore">
+            <span className="badge" style={{ color: "var(--warn)" }}>
+              reads need a restore
+            </span>
+          </InfoTooltip>
         ) : null}
         {medium.connectionUnverified ? (
           <span
@@ -477,30 +490,38 @@ function DestinationRow({
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button className="btn" disabled={busy} onClick={testConnection}>
-          {busy ? "Working…" : "Test connection"}
-        </button>
-        <button
-          className="btn"
-          disabled={readOnly || busy || transferBlockedBy !== undefined}
-          aria-describedby={transferBlockedBy}
-          onClick={() => setConfirmingTransfer(true)}
-        >
-          Make default
-        </button>
-        {medium.isLocal ? null : (
-          <button className="btn" disabled={readOnly || busy} onClick={onEdit}>
-            Edit
+        <InfoTooltip id="storage.test-connection">
+          <button className="btn" disabled={busy} onClick={testConnection}>
+            {busy ? "Working…" : "Test connection"}
           </button>
+        </InfoTooltip>
+        <InfoTooltip id="storage.make-default">
+          <button
+            className="btn"
+            disabled={readOnly || busy || transferBlockedBy !== undefined}
+            aria-describedby={transferBlockedBy}
+            onClick={() => setConfirmingTransfer(true)}
+          >
+            Make default
+          </button>
+        </InfoTooltip>
+        {medium.isLocal ? null : (
+          <InfoTooltip id="storage.edit-destination">
+            <button className="btn" disabled={readOnly || busy} onClick={onEdit}>
+              Edit
+            </button>
+          </InfoTooltip>
         )}
-        <button
-          className="btn"
-          disabled={readOnly || busy || medium.isDefault}
-          aria-describedby={medium.isDefault ? defaultReasonId : undefined}
-          onClick={remove}
-        >
-          Remove
-        </button>
+        <InfoTooltip id="storage.remove-destination">
+          <button
+            className="btn"
+            disabled={readOnly || busy || medium.isDefault}
+            aria-describedby={medium.isDefault ? defaultReasonId : undefined}
+            onClick={remove}
+          >
+            Remove
+          </button>
+        </InfoTooltip>
       </div>
 
       {medium.isDefault ? (
@@ -624,11 +645,13 @@ function FailedVerificationBanner({
     // would let the one thing standing between them and that reading be
     // put away in a click.
     <Banner tone="warn" dismissible={false} style={{ display: "block", fontSize: 13 }}>
-      <div style={{ fontWeight: 600, marginBottom: 6 }}>
-        {affected > 0
-          ? `I cannot reach ${medium.id}, and ${affected} ${affected === 1 ? "copy is" : "copies are"} recorded there.`
-          : `I cannot reach ${medium.id}. Nothing on record is stored there.`}
-      </div>
+      <InfoTooltip id="storage.unreachable-headline" block>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>
+          {affected > 0
+            ? `I cannot reach ${medium.id}, and ${affected} ${affected === 1 ? "copy is" : "copies are"} recorded there.`
+            : `I cannot reach ${medium.id}. Nothing on record is stored there.`}
+        </div>
+      </InfoTooltip>
       {affected > 0 ? (
         <>
           <p style={{ margin: "0 0 8px", maxWidth: "74ch" }}>
@@ -663,18 +686,22 @@ function AffectedSets({ usage }: { usage: StorageMediumUsage }) {
   if (usage.backupSets.length === 0) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div className="eyebrow" style={{ fontSize: 10.5 }}>
-        What is affected, listed rather than counted
-      </div>
-      {usage.backupSets.map((s) => (
-        <div key={s.set} style={{ display: "flex", gap: 10, fontSize: 12.5, flexWrap: "wrap" }}>
-          <span className="mono">{s.set}</span>
-          <span style={{ color: "var(--text-2)" }}>
-            {s.placements} {s.placements === 1 ? "backup" : "backups"}
-            {s.onlyCopyHere > 0 ? " · only copy is here" : ""}
-          </span>
-          <span className="badge">unreachable</span>
+      <InfoTooltip id="storage.affected-sets" block>
+        <div className="eyebrow" style={{ fontSize: 10.5 }}>
+          What is affected, listed rather than counted
         </div>
+      </InfoTooltip>
+      {usage.backupSets.map((s) => (
+        <InfoTooltip key={s.set} id="storage.affected-set-row" block>
+          <div style={{ display: "flex", gap: 10, fontSize: 12.5, flexWrap: "wrap" }}>
+            <span className="mono">{s.set}</span>
+            <span style={{ color: "var(--text-2)" }}>
+              {s.placements} {s.placements === 1 ? "backup" : "backups"}
+              {s.onlyCopyHere > 0 ? " · only copy is here" : ""}
+            </span>
+            <span className="badge">unreachable</span>
+          </div>
+        </InfoTooltip>
       ))}
       <p style={{ margin: 0, fontSize: 12, color: "var(--text-3)", maxWidth: "74ch" }}>
         Nothing on this list is reported as lost. Unreachable means this deployment currently has no

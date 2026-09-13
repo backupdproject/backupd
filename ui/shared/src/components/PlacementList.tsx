@@ -5,6 +5,7 @@ import { StatusBadge, type StatusTone } from "@shared/components/StatusBadge";
 import { Icon } from "@shared/design-system/icons";
 import type { IconName } from "@shared/design-system/icons";
 import { Banner } from "@shared/components/Banner";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import { bytes, stamp } from "@shared/utilities/format";
 
 /**
@@ -101,12 +102,16 @@ export function PlacementList({
   return (
     <section className="card" aria-label="Copies">
       <div className="card__header">
-        <h2 className="eyebrow">Copies</h2>
-        <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-          {placements.length === 0
-            ? "none confirmed"
-            : placements.length + (placements.length === 1 ? " durable copy" : " durable copies")}
-        </span>
+        <InfoTooltip id="backups.copies.card">
+          <h2 className="eyebrow">Copies</h2>
+        </InfoTooltip>
+        <InfoTooltip id="backups.copies.count" alignEnd>
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+            {placements.length === 0
+              ? "none confirmed"
+              : placements.length + (placements.length === 1 ? " durable copy" : " durable copies")}
+          </span>
+        </InfoTooltip>
       </div>
 
       {placements.length === 0 ? (
@@ -131,17 +136,17 @@ export function PlacementList({
           <table className="table" style={{ minWidth: 860 }}>
             <thead>
               <tr>
-                <th scope="col">Where</th>
-                <th scope="col">Location</th>
+                <th scope="col"><InfoTooltip id="backups.copies.col.where"><span>Where</span></InfoTooltip></th>
+                <th scope="col"><InfoTooltip id="backups.copies.col.location"><span>Location</span></InfoTooltip></th>
                 {/* "Copy size", not "Size": the artifact's own size is what
                     the source reported at discovery, and this is what THIS
                     copy measures. They are allowed to differ, and a screen
                     that called both of them "Size" would make a real
                     disagreement between them read as a typo. */}
-                <th scope="col" style={{ textAlign: "right" }}>Copy size</th>
-                <th scope="col">Class</th>
-                <th scope="col">Access</th>
-                <th scope="col">Verification</th>
+                <th scope="col" style={{ textAlign: "right" }}><InfoTooltip id="backups.copies.col.size"><span>Copy size</span></InfoTooltip></th>
+                <th scope="col"><InfoTooltip id="backups.copies.col.class"><span>Class</span></InfoTooltip></th>
+                <th scope="col"><InfoTooltip id="backups.copies.col.access"><span>Access</span></InfoTooltip></th>
+                <th scope="col"><InfoTooltip id="backups.copies.col.verification"><span>Verification</span></InfoTooltip></th>
               </tr>
             </thead>
             <tbody>
@@ -151,28 +156,32 @@ export function PlacementList({
                 return (
                   <tr key={p.medium + "|" + p.location}>
                     <td>
-                      <div style={{ fontWeight: 500 }}>
-                        {/* "Local backup root" here, and "The hard drive on
-                            this machine" in the tier picker, which is one
-                            name too many and is a hold rather than an
-                            oversight.
+                      <InfoTooltip id="backups.copies.medium" block>
+                        <div style={{ fontWeight: 500 }}>
+                          {/* "Local backup root" here, and "The hard drive on
+                              this machine" in the tier picker, which is one
+                              name too many and is a hold rather than an
+                              oversight.
 
-                            This column says where a copy IS, and the
-                            black-box suite in backupdproject/backupd-tests
-                            pins these words at the sha this repository
-                            pins. #622 is about where a tier SENDS its
-                            backups, so renaming this one costs two specs
-                            over there and buys nothing that issue asked
-                            for. It wants doing in the same commit that
-                            moves the pin. */}
-                        {p.medium === LOCAL_DESTINATION_ID ? "Local backup root" : p.medium}
-                      </div>
-                      <div className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-                        {/* An empty mediumType is the honest answer for a medium the
-                            configuration no longer describes: this deployment does not
-                            know what kind of place that was any more. */}
-                        {p.mediumType || "not described by this configuration"}
-                      </div>
+                              This column says where a copy IS, and the
+                              black-box suite in backupdproject/backupd-tests
+                              pins these words at the sha this repository
+                              pins. #622 is about where a tier SENDS its
+                              backups, so renaming this one costs two specs
+                              over there and buys nothing that issue asked
+                              for. It wants doing in the same commit that
+                              moves the pin. */}
+                          {p.medium === LOCAL_DESTINATION_ID ? "Local backup root" : p.medium}
+                        </div>
+                      </InfoTooltip>
+                      <InfoTooltip id="backups.copies.medium-type" block>
+                        <div className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+                          {/* An empty mediumType is the honest answer for a medium the
+                              configuration no longer describes: this deployment does not
+                              know what kind of place that was any more. */}
+                          {p.mediumType || "not described by this configuration"}
+                        </div>
+                      </InfoTooltip>
                       {note ? (
                         <div style={{ fontSize: "var(--text-xs)", color: "var(--warn)", marginTop: 3 }}>{note}</div>
                       ) : null}
@@ -192,7 +201,9 @@ export function PlacementList({
                       {p.storageClass || <span style={{ color: "var(--text-3)" }}>{"\u2014"}</span>}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
-                      <StatusBadge tone={access.tone} icon={access.icon}>{access.label}</StatusBadge>
+                      <InfoTooltip id="backups.copies.access">
+                        <StatusBadge tone={access.tone} icon={access.icon}>{access.label}</StatusBadge>
+                      </InfoTooltip>
                       {access.detail ? (
                         <div style={{ fontSize: "var(--text-xs)", color: "var(--text-2)", marginTop: 4, maxWidth: "34ch", whiteSpace: "normal" }}>
                           {access.detail}
@@ -243,30 +254,34 @@ function PlacementVerification({
 }) {
   if (placement.verificationClass === null) {
     return (
-      <div>
-        <div style={{ color: "var(--text-2)" }}>Not verified</div>
-        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-3)", marginTop: 3, maxWidth: "36ch" }}>
-          Nothing has checked this copy.
+      <InfoTooltip id="backups.copies.unverified" block>
+        <div>
+          <div style={{ color: "var(--text-2)" }}>Not verified</div>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-3)", marginTop: 3, maxWidth: "36ch" }}>
+            Nothing has checked this copy.
+          </div>
         </div>
-      </div>
+      </InfoTooltip>
     );
   }
 
   const rung = storage?.verificationClasses.find((c) => c.className === placement.verificationClass);
   return (
-    <div>
-      <div>{LADDER_LABEL[placement.verificationClass]}</div>
-      {placement.verifiedAt ? (
-        <div className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-          {stamp(placement.verifiedAt)}
-        </div>
-      ) : null}
-      {rung ? (
-        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-2)", marginTop: 3, maxWidth: "36ch" }}>
-          {"Proves " + rung.proves + "."}
-        </div>
-      ) : null}
-    </div>
+    <InfoTooltip id="backups.copies.verification" block>
+      <div>
+        <div>{LADDER_LABEL[placement.verificationClass]}</div>
+        {placement.verifiedAt ? (
+          <div className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+            {stamp(placement.verifiedAt)}
+          </div>
+        ) : null}
+        {rung ? (
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-2)", marginTop: 3, maxWidth: "36ch" }}>
+            {"Proves " + rung.proves + "."}
+          </div>
+        ) : null}
+      </div>
+    </InfoTooltip>
   );
 }
 
