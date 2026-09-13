@@ -257,8 +257,13 @@ type Provider struct {
 	ScanRoots []string `json:"scanRoots"`
 	// Acceptance is the §68 procedure, relative to the repository root,
 	// or empty when the provider has none.
-	Acceptance string          `json:"acceptance"`
-	Cells      map[string]Cell `json:"cells"`
+	Acceptance string `json:"acceptance"`
+	// WorkflowRunner is this provider's own statement about the Host
+	// Workflow Runner and the container-based local hooks that need it
+	// (issue #877). See workflowruntime.go for why it is a per-provider
+	// declaration rather than one repository-wide answer.
+	WorkflowRunner WorkflowRunner  `json:"workflowRunner"`
+	Cells          map[string]Cell `json:"cells"`
 }
 
 // The two declaration files this package resolves cells from. A cell's

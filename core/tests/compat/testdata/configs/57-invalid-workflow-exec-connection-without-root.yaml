@@ -1,0 +1,40 @@
+# workflows.exec_connections declared while workflows.root is unset: an
+# execution connection with no approved tree of hook scripts to run from
+# is configuration that does nothing, and validateWorkflows refuses it
+# under workflows.root for the same reason it refuses global stage dirs
+# and a workflow environment with no root.
+poll_interval: 15m
+
+state:
+  database: /var/lib/backupd/state.db
+
+workflows:
+  exec_connections:
+    - id: db-host
+      remote:
+        type: sftp
+        host: production.example.internal
+        user: backup
+        key_file: /run/secrets/backup_ssh_key
+        known_hosts: /etc/backupd/known_hosts
+
+sources:
+  - id: production
+    backup_sets:
+      - id: postgres-primary
+        remote:
+          type: local
+        remote_path: /srv/exports/postgres
+        local_path: /backups/production/postgres
+        completion:
+          strategy: stable
+          stable_for: 10m
+        stale_after: 30h
+
+retention:
+  timezone: UTC
+  week_starts_on: monday
+  daily_days: 7
+  weekly_months: 3
+  monthly_months: 12
+  protect_last_known_good: true

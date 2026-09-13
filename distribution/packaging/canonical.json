@@ -204,6 +204,38 @@
     "/data/backups",
     "/etc/backupd/config"
   ],
+  "_workflowRunner_comment": [
+    "The host-side Host Workflow Runner contract (issue #877). Nothing in this",
+    "block is carried by a packaged artifact, and that is exactly why it is",
+    "here: L2's runner is a systemd unit beside the stack, and since #865 every",
+    "LOCAL workflow hook runs in an ephemeral Docker container that unit",
+    "launches. So a hard new prerequisite (a reachable daemon, the socket's",
+    "group, a pinned image) arrived without changing one line of any compose",
+    "file, which means no existing packaging check could see it.",
+    "",
+    "Every field below has one authority elsewhere and a test that reads it:",
+    "hookImage is core/internal/hostrunner's DefaultHookImage, and unit,",
+    "installer, hookImageEnvKey and modeEnvKey are the installer's own",
+    "constants. The installer and the runner were already pinned to each other",
+    "by scripts/install/test_install_docker_host.py; this makes the packaging",
+    "manifests part of that pin rather than a fourth independent copy that goes",
+    "stale the next time the image moves.",
+    "",
+    "engineDockerAccess is false and has to stay false. docs/runtime-contract.md",
+    "says it in words -- 'this container gains nothing' -- and two rules say it",
+    "structurally: the docker-socket entry in ProhibitedHostPaths, which reads",
+    "mounts, and submission.json's no-container-docker-access, which reads the",
+    "two ways of handing over a daemon that need no mount at all (a group_add,",
+    "or a DOCKER_HOST)."
+  ],
+  "workflowRunner": {
+    "unit": "backupd-workflow-runner.service",
+    "installer": "scripts/install/install_docker_host.py",
+    "hookImage": "bash:5.2.37-alpine3.21",
+    "hookImageEnvKey": "WORKFLOW_RUNNER_HOOK_IMAGE",
+    "modeEnvKey": "WORKFLOW_RUNNER",
+    "engineDockerAccess": false
+  },
   "platforms": {
     "truenas": {
       "uiBridge": "apps/truenas/frontend/platform.ts",

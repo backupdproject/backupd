@@ -62,6 +62,50 @@
   because nothing on that read contacts it; liveness, its build and the
   account it executes a hook as come from a set's own hook check, which opens
   the socket. There is no elevation control of any kind.
+- **The scripted-workflow security, adversarial and performance gate is
+  executable** (#812). EPIC L's eleven adversarial-review findings (#807) now
+  each map to at least one test that runs, and the mapping itself is checked:
+  `docs/conformance/epic-l-matrix.md` carries one row per claim with the
+  mutation that turns it red, and `core/tests/workflowgate` fails the build
+  when a finding has no row, when a row cites a test that is not in the tree,
+  or when a row is green under any word other than `PASS`.
+
+  **What is new rather than restated.** A remote account whose own shell
+  startup has already changed what a hook means (`BASH_ENV` or `ENV` set, an
+  inherited `errexit` or `pipefail`) is refused, and an ordinary account with
+  the options every bash has is not. A step whose session never completes
+  records termination as `unconfirmed` and a step that stops while
+  termination waits records `confirmed`. A resolved secret is unreachable at
+  EVERY chunk boundary, through both capture implementations rather than one
+  hand-picked split. A hostile terminal sequence in a hook's output reaches
+  the journal byte for byte, changes no structural field of the record, and
+  cannot forge a truncation marker — a marker is distinguishable by kind and
+  never by its text. Every container the host runner starts, hook, capability
+  probe and syntax check alike, is held to `--cap-drop ALL`,
+  `--security-opt no-new-privileges`, `--read-only`, a non-root `--user`,
+  `--network none` and no Docker socket. Under a real bash, the envelope
+  injects no `set -e`, `-u`, `-x` or `pipefail`, hands hostile values over
+  byte-identically without executing them, and gives a hook a closed stdin.
+
+  **The container contract is asked again with local hooks in use.** The
+  engine keeps a read-only view of the script tree and one writable directory
+  holding the runner's socket, and gains no capability, privilege, device or
+  Docker socket for it; the runner's own workspace is deliberately not
+  reachable from the container.
+
+  **Seven scale benchmarks** are recorded in `docs/perf/epic-l-workflows.md`
+  with the commands and the machine. The performance claims themselves are
+  asserted deterministically rather than by timing: a backup of a set with no
+  workflow configuration makes ZERO calls to the durable store, and a whole
+  run's persisted output is bounded by the per-step limit times the number of
+  steps.
+
+  An existing deployment sees no behaviour change: this issue adds tests,
+  fixtures, a conformance matrix, a performance record and one CI job
+  (`workflow-gate`, in the release gate's `needs` list). The only shipped
+  artefacts that moved are five config fixtures under
+  `core/tests/compat/testdata/configs/` and the `01-config-validation` cell
+  they are captured in.
 
 - **A repository domain can be declared from the UI, the API and a terminal**
   (#862). `POST /repositories` persists a new `repository_domains:` entry —
@@ -409,6 +453,48 @@
   line, which the server writes down (bounded and validated) — so a console
   screenshot of a failed `fetch` can still be matched to the server's record of
   the same request.
+
+- **Every workflow script step has its own read-only terminal, and it refuses
+  to be a terminal** (#815). Selecting a step in a run shows that step's own
+  live or historical output, with the script, the phase, where it ran, the
+  state, the exit code, the duration and the script's short SHA-256 above it,
+  and live follow, pause, scrollback, copy, wrap, timestamps and a download in
+  the toolbar.
+
+  **The bytes are a hook script's stdout on a source host, so the view is
+  hardened rather than configured.** There is no terminal emulator: the
+  renderer is first party and in this repository, which is how "a pinned
+  production release and no runtime-loaded third-party terminal code" is met in
+  its strongest form — nothing is version-resolved, fetched or dynamically
+  imported, and the suite asserts the whole dependency closure. There is no
+  input path, no link activation, no title or window-control integration and no
+  device reporting, and captured bytes reach the DOM as text nodes only.
+  Sequence classes an emulator cannot be trusted with are swallowed BEFORE
+  drawing — OSC 8 hyperlinks, window and icon titles, clipboard writes, window
+  manipulation, device reports, DCS/SOS/PM/APC payloads, cursor movement and
+  erase, and the two classes that are the cheapest spoofs on a web surface:
+  the bidi overrides, and the zero-width and tag characters that draw nothing
+  while changing what a line appears to say (a broken path that reads as the
+  real one, or an invisible second message smuggled inside a visible line) —
+  and what was removed is reported in a line under the log rather than quietly
+  shown as less than the hook wrote. A carriage return is a line break, not a
+  repaint: forty repaints are the forty lines the script actually wrote.
+
+  **A slow, paused or reconnecting browser cannot lose a line or ask for one
+  twice.** The follower holds two numbers — the sequence that reached the
+  screen, and the read position — and one rule: when the bounded queue is
+  full, live delivery is dropped and the next read replays the durable log from
+  the last line drawn. A throttled consumer, a paused follow and a reconnect
+  are therefore the same case, and none of them can extend a script's
+  wall-clock duration, because every buffer is in the browser and bounded. A
+  100-step run keeps exactly one mounted viewer: per-step cursors and
+  scrollbacks are swapped inside it, so switching back to a step is instant and
+  resumes from its cursor. Browser scrollback is bounded and says what it
+  dropped and what still holds it; the truncation marker is drawn in this
+  product's words at the position it happened. A download or a copy is the
+  sanitised content with the header facts, the capture-order caveat and the
+  removal tally — because a saved log is opened in a terminal, which is the one
+  place those sequences still work.
 
 ### Changed
 

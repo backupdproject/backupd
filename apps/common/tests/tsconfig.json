@@ -9,6 +9,11 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "noEmit": true,
+    // The provider-conformance suite reads the cross-provider matrix
+    // (distribution/packaging/conformance.json) rather than restating
+    // which providers support what. A static import gets that checked
+    // by tsc as well as by vitest, and needs no node typings here.
+    "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["../../../ui/shared/src/*"],

@@ -1,0 +1,35 @@
+# A hook directory containing ".." is refused lexically at config time
+# (validateStageDir), rather than left entirely to the run-start
+# containment check: it is the one escape an operator can see sitting in
+# their own file, and the cheapest moment to tell them is the restart
+# that introduced it.
+poll_interval: 15m
+
+state:
+  database: /var/lib/backupd/state.db
+
+workflows:
+  root: /workflows
+  global:
+    before_dir: ../escape
+
+sources:
+  - id: production
+    backup_sets:
+      - id: postgres-primary
+        remote:
+          type: local
+        remote_path: /srv/exports/postgres
+        local_path: /backups/production/postgres
+        completion:
+          strategy: stable
+          stable_for: 10m
+        stale_after: 30h
+
+retention:
+  timezone: UTC
+  week_starts_on: monday
+  daily_days: 7
+  weekly_months: 3
+  monthly_months: 12
+  protect_last_known_good: true

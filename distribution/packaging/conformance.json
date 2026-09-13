@@ -51,7 +51,8 @@
     { "id": "native-notifications", "title": "Native notifications", "spec": "63A conditional", "mode": "repo" },
     { "id": "embedded-window", "title": "Embedded window", "spec": "63A conditional", "mode": "repo" },
     { "id": "app-store-packaging", "title": "App-store packaging", "spec": "63A conditional", "mode": "repo" },
-    { "id": "storage-picker", "title": "Storage picker", "spec": "63A conditional", "mode": "repo" }
+    { "id": "storage-picker", "title": "Storage picker", "spec": "63A conditional", "mode": "repo" },
+    { "id": "local-workflow-hooks", "title": "Local workflow hooks (Host Workflow Runner + container hooks)", "spec": "877, 22, ADR 0020 Decision 9", "mode": "repo" }
   ],
 
   "providers": {
@@ -64,6 +65,7 @@
       "metadata": { "kind": "compose", "root": "container", "compose": "compose.yaml", "env": ".env.example", "files": ["compose.yaml", "Dockerfile", ".env.example", "release-manifest.json"], "storeArtifacts": [] },
       "scanRoots": ["container"],
       "acceptance": "",
+      "workflowRunner": { "localHooks": "available", "platform": "generic", "doc": "docs/install.md" },
       "cells": {
         "provider-identity": { "declared": "supported" },
         "package-metadata": { "declared": "supported" },
@@ -103,7 +105,8 @@
         "native-notifications": { "declared": "unsupported", "reason": "Tier C. Webhook notifications instead." },
         "embedded-window": { "declared": "unsupported", "reason": "Tier C. Opens in a standalone browser." },
         "app-store-packaging": { "declared": "unsupported", "reason": "Tier C. There is no store; this is the raw compose deployment." },
-        "storage-picker": { "declared": "unsupported", "reason": "Tier C. Manual path entry, because no host volume API exists to browse." }
+        "storage-picker": { "declared": "unsupported", "reason": "Tier C. Manual path entry, because no host volume API exists to browse." },
+        "local-workflow-hooks": { "declared": "supported" }
       }
     },
 
@@ -116,6 +119,7 @@
       "metadata": { "kind": "none", "root": "apps/ugos", "storeArtifacts": [] },
       "scanRoots": ["apps/ugos"],
       "acceptance": "docs/acceptance/ugos-local-notification.md",
+      "workflowRunner": { "localHooks": "unavailable", "platform": "ugos", "doc": "docs/acceptance/ugos-local-notification.md" },
       "cells": {
         "provider-identity": { "declared": "supported" },
         "package-metadata": { "declared": "blocked", "blocker": "#83", "expectedDetail": "no packaging metadata declared", "reason": "Work package 4.2's UPK was moved out of this EPIC into EPIC D and is still open as #83. apps/ugos/ contains the frontend bridge and nothing else: no project.yaml, no compose, no icon, no image tar. Until #83 lands, UGOS is the one Phase 4 Exit Gate provider with no package in this repository." },
@@ -139,7 +143,12 @@
         "native-notifications": { "declared": "blocked", "blocker": "#83", "expectedDetail": "ships no deployable artifact at all", "reason": "Same as native-auth: the flag is set in apps/ugos/frontend/platform.ts and no artifact loads that file." },
         "embedded-window": { "declared": "blocked", "blocker": "#83", "expectedDetail": "ships no deployable artifact at all", "reason": "Section 12's embedded provider window is delivered by the UPK, which is exactly what ui-launch above says. Declaring this supported while blocking ui-launch on the same sentence was a contradiction: both rows are the same missing package." },
         "app-store-packaging": { "declared": "blocked", "blocker": "#83", "expectedDetail": "declares no store or catalog artifact", "reason": "The bridge claims it, and section 4A promises it, but no UPK exists in this repository yet. Passing on the bridge flag alone would be exactly the kind of claim the store-artifact half of this check exists to refuse." },
-        "storage-picker": { "declared": "blocked", "blocker": "#83", "expectedDetail": "ships no deployable artifact at all", "reason": "Same as native-auth: declared in a bridge no shipped artifact loads." }
+        "storage-picker": { "declared": "blocked", "blocker": "#83", "expectedDetail": "ships no deployable artifact at all", "reason": "Same as native-auth: declared in a bridge no shipped artifact loads." },
+        "local-workflow-hooks": {
+          "declared": "unsupported",
+          "reason": "UGOS Pro is a closed appliance: it offers no supported way to install a host unit or to add an account to the Docker socket's group. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
+          "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
+        }
       }
     },
 
@@ -174,6 +183,7 @@
       ],
       "scanRoots": ["apps/synology/spk/assets"],
       "acceptance": "docs/acceptance/synology-dsm-package-lifecycle.md",
+      "workflowRunner": { "localHooks": "unavailable", "platform": "synology", "doc": "docs/acceptance/synology-dsm-package-lifecycle.md" },
       "cells": {
         "provider-identity": { "declared": "supported" },
         "package-metadata": { "declared": "supported" },
@@ -216,7 +226,12 @@
         "native-notifications": { "declared": "unsupported", "reason": "Tier B. No DSM notification adapter in v1; webhooks instead." },
         "embedded-window": {"declared": "supported", "reason": "Supported since issue #169, and blocked on #180 before it. apps/synology/frontend/platform.ts always opted in, and the .spk always served the same go:embed'ed generic bundle the canonical image did, which apps/synology/README.md's first known gap and step 3.6 of the acceptance procedure both said outright. The .spk now carries this provider's own bundle in its payload and start-stop-status serves it with --ui-dir, so what DSM launches is the Synology bridge. spk.Build refuses a package built without that bundle, or with one built for another provider."},
         "app-store-packaging": {"declared": "supported", "reason": "Supported since issue #169, and blocked on #180 before it. The store artifacts were always real and the bridge always opted in, but no artifact this repository produced loaded that bridge: ui/shared/vite.config.ts picks the shell at build time and defaults to generic, and serve-ui served one go:embed'ed bundle, so a user who installed from the platform's own store was told this was a Docker Compose deployment. #167 made the bundle a run-time choice and #169 packaged it: the .spk carries its own bundle in the package payload and start-stop-status serves it with --ui-dir, which is what a package that installs native binaries and never pulls the image needs. The check decides this per provider now, from the checked-in artifact rather than from the repository-wide vite default."},
-        "storage-picker": { "declared": "unsupported", "reason": "Tier B. The shared folder is chosen once at install time through DSM, not browsed from inside the app." }
+        "storage-picker": { "declared": "unsupported", "reason": "Tier B. The shared folder is chosen once at install time through DSM, not browsed from inside the app." },
+        "local-workflow-hooks": {
+          "declared": "unsupported",
+          "reason": "A DSM package cannot install a systemd unit or grant a supplementary group, and Container Manager's socket is root-owned; either step would be the host-management-plane modification §4A/§75 forbids. That holds for both ways of installing on DSM, the .spk and the Container Manager project. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
+          "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
+        }
       }
     },
 
@@ -229,6 +244,7 @@
       "metadata": { "kind": "compose", "root": "apps/truenas", "compose": "compose/backupd.yaml", "files": ["README.md", "catalog/app.yaml", "catalog/questions.yaml", "catalog/ix_values.yaml", "catalog/templates/docker-compose.yaml"], "storeArtifacts": ["catalog/app.yaml", "catalog/questions.yaml", "catalog/ix_values.yaml", "catalog/templates/docker-compose.yaml"] },
       "scanRoots": ["apps/truenas"],
       "acceptance": "docs/acceptance/truenas-provider-acceptance.md",
+      "workflowRunner": { "localHooks": "unavailable", "platform": "truenas", "doc": "docs/acceptance/truenas-provider-acceptance.md" },
       "cells": {
         "provider-identity": { "declared": "supported" },
         "package-metadata": { "declared": "supported" },
@@ -252,7 +268,12 @@
         "native-notifications": { "declared": "unsupported", "reason": "Tier B. Webhooks instead of TrueNAS alerts." },
         "embedded-window": { "declared": "unsupported", "reason": "Tier B. The Apps portal link opens the UI in a normal browser tab." },
         "app-store-packaging": {"declared": "supported", "reason": "Supported since issue #169, and blocked on #180 before it. The store artifacts were always real and the bridge always opted in, but no artifact this repository produced loaded that bridge: ui/shared/vite.config.ts picks the shell at build time and defaults to generic, and serve-ui served one go:embed'ed bundle, so a user who installed from the platform's own store was told this was a Docker Compose deployment. #167 made the bundle a run-time choice and #169 packaged it: the canonical image carries a bundle per adapter at /ui/bundles and this platform's own metadata selects it with UI_ROOT plus --profile. The check decides this per provider now, from the checked-in artifact rather than from the repository-wide vite default."},
-        "storage-picker": { "declared": "unsupported", "reason": "Tier B. questions.yaml asks for the dataset paths at install time; the running app does not browse pools." }
+        "storage-picker": { "declared": "unsupported", "reason": "Tier B. questions.yaml asks for the dataset paths at install time; the running app does not browse pools." },
+        "local-workflow-hooks": {
+          "declared": "unsupported",
+          "reason": "TrueNAS's host is vendor-managed: applications run under the middleware's own container runtime, a third-party systemd unit is unsupported and does not survive an upgrade, and there is no supported way to add an account to the Docker socket's group. Provisioning the Host Workflow Runner anyway would be the host-management-plane modification §4A/§75 forbids this product, and host-management-plane-untouched is a capability this same column already claims. So local hooks are refused out loud instead: the capability contract answers unavailable for this platform, and the engine refuses a NAME.local.sh step that has no host workflow runner behind it (core/internal/workflowrun/engine.go) rather than skipping it. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
+          "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
+        }
       }
     },
 
@@ -265,6 +286,7 @@
       "metadata": { "kind": "unraid-template", "root": "apps/unraid", "templates": ["template/backupd.xml", "template/backupd-ui.xml"], "files": ["README.md", "frontend/webui.json"], "storeArtifacts": ["template/backupd.xml", "template/backupd-ui.xml"] },
       "scanRoots": ["apps/unraid"],
       "acceptance": "docs/acceptance/unraid-provider-acceptance.md",
+      "workflowRunner": { "localHooks": "unavailable", "platform": "unraid", "doc": "docs/acceptance/unraid-provider-acceptance.md" },
       "cells": {
         "provider-identity": { "declared": "supported" },
         "package-metadata": { "declared": "supported" },
@@ -288,7 +310,12 @@
         "native-notifications": { "declared": "unsupported", "reason": "Tier B. Webhooks instead of Unraid notifications, which would need a plugin." },
         "embedded-window": { "declared": "unsupported", "reason": "Tier B. The WebUI link opens a normal browser tab." },
         "app-store-packaging": {"declared": "supported", "reason": "Supported since issue #169, and blocked on #180 before it. The store artifacts were always real and the bridge always opted in, but no artifact this repository produced loaded that bridge: ui/shared/vite.config.ts picks the shell at build time and defaults to generic, and serve-ui served one go:embed'ed bundle, so a user who installed from the platform's own store was told this was a Docker Compose deployment. #167 made the bundle a run-time choice and #169 packaged it: the canonical image carries a bundle per adapter at /ui/bundles and this platform's own metadata selects it with UI_ROOT plus --profile. The check decides this per provider now, from the checked-in artifact rather than from the repository-wide vite default."},
-        "storage-picker": { "declared": "unsupported", "reason": "Tier B. Community Applications collects the paths at install time; the app does not browse shares." }
+        "storage-picker": { "declared": "unsupported", "reason": "Tier B. Community Applications collects the paths at install time; the app does not browse shares." },
+        "local-workflow-hooks": {
+          "declared": "unsupported",
+          "reason": "Unraid rebuilds its operating system from the flash device on every boot, so there is no persistent host unit for the runner to be, and its Docker runs everything as root while the runner refuses to run as root at all. Two independent reasons, either one sufficient. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
+          "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
+        }
       }
     },
 
@@ -301,6 +328,7 @@
       "metadata": { "kind": "compose", "root": "apps/openmediavault", "compose": "compose/backupd.yml", "env": "compose/backupd.env", "files": ["README.md"], "storeArtifacts": [] },
       "scanRoots": ["apps/openmediavault"],
       "acceptance": "docs/acceptance/openmediavault-provider-acceptance.md",
+      "workflowRunner": { "localHooks": "available", "platform": "openmediavault", "doc": "docs/acceptance/openmediavault-provider-acceptance.md" },
       "cells": {
         "provider-identity": { "declared": "supported" },
         "package-metadata": { "declared": "supported" },
@@ -324,7 +352,8 @@
         "native-notifications": { "declared": "unsupported", "reason": "Tier C. Webhooks; OMV notifications would need the deferred plugin." },
         "embedded-window": { "declared": "unsupported", "reason": "Tier C. There is no Workbench navigation entry, by design; the UI is reached on its own port." },
         "app-store-packaging": { "declared": "unsupported", "reason": "Tier C. A Compose deployment profile, not an omv-extras package. Section 4A defers the Debian plugin." },
-        "storage-picker": { "declared": "unsupported", "reason": "Tier C. Paths are set once in the env file; the app does not browse OMV filesystems." }
+        "storage-picker": { "declared": "unsupported", "reason": "Tier C. Paths are set once in the env file; the app does not browse OMV filesystems." },
+        "local-workflow-hooks": { "declared": "supported" }
       }
     },
 
@@ -337,6 +366,7 @@
       "metadata": { "kind": "compose", "root": "apps/proxmox", "compose": "compose/backupd.yml", "env": "compose/backupd.env", "files": ["README.md"], "storeArtifacts": [] },
       "scanRoots": ["apps/proxmox"],
       "acceptance": "docs/acceptance/proxmox-ve-deployment.md",
+      "workflowRunner": { "localHooks": "available", "platform": "proxmox", "doc": "docs/acceptance/proxmox-ve-deployment.md" },
       "cells": {
         "provider-identity": { "declared": "supported" },
         "package-metadata": { "declared": "supported" },
@@ -360,7 +390,8 @@
         "native-notifications": { "declared": "unsupported", "reason": "Tier C. Webhooks. PVE notification targets would mean touching the host management plane." },
         "embedded-window": { "declared": "unsupported", "reason": "Tier C. Section 4A defers the PVE Web UI plugin indefinitely, so there is no window to embed in." },
         "app-store-packaging": { "declared": "unsupported", "reason": "Tier C, and structurally so: Proxmox VE has no third-party application store to package into. That is why this provider is a deployment profile at all." },
-        "storage-picker": { "declared": "unsupported", "reason": "Tier C. One host directory is shared into the guest and the paths under it are fixed in the env file." }
+        "storage-picker": { "declared": "unsupported", "reason": "Tier C. One host directory is shared into the guest and the paths under it are fixed in the env file." },
+        "local-workflow-hooks": { "declared": "supported" }
       }
     },
 
@@ -388,6 +419,7 @@
         "apps/portainer"
       ],
       "acceptance": "docs/acceptance/portainer-stack-deployment.md",
+      "workflowRunner": { "localHooks": "available", "platform": "", "doc": "docs/acceptance/portainer-stack-deployment.md" },
       "cells": {
         "provider-identity": {
           "declared": "not-applicable",
@@ -469,6 +501,11 @@
         "storage-picker": {
           "declared": "unsupported",
           "reason": "No host volume API a stack can browse. Paths are typed into the App Template's form."
+        },
+        "local-workflow-hooks": {
+          "declared": "not-applicable",
+          "reason": "This provider ships no frontend bridge and no runtime profile of its own: it selects the generic profile (canonical.json's uiBridge \"none\"), so the running process reports generic's capabilities and cannot tell this host apart from any other Docker host. There is therefore no per-provider runtime answer for the contract to hold it to. The answer an operator needs is still decided and still written down: Portainer runs on an ordinary Docker host, so that host's administrator can run the runner installer beside the stack, and the acceptance procedure says so by name.",
+          "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
         }
       }
     },
@@ -492,6 +529,7 @@
         "apps/dockge"
       ],
       "acceptance": "docs/acceptance/dockge-stack-import.md",
+      "workflowRunner": { "localHooks": "available", "platform": "", "doc": "docs/acceptance/dockge-stack-import.md" },
       "cells": {
         "provider-identity": {
           "declared": "not-applicable",
@@ -574,6 +612,11 @@
         "storage-picker": {
           "declared": "unsupported",
           "reason": "No host volume API. Paths are typed into the stack's .env."
+        },
+        "local-workflow-hooks": {
+          "declared": "not-applicable",
+          "reason": "This provider ships no frontend bridge and no runtime profile of its own: it selects the generic profile (canonical.json's uiBridge \"none\"), so the running process reports generic's capabilities and cannot tell this host apart from any other Docker host. There is therefore no per-provider runtime answer for the contract to hold it to. Dockge imports the canonical stack onto an ordinary Docker host, so that host's administrator can run the runner installer beside it, and the acceptance procedure says so by name.",
+          "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
         }
       }
     },
@@ -606,6 +649,7 @@
         "apps/casaos"
       ],
       "acceptance": "docs/acceptance/casaos-app-store-install.md",
+      "workflowRunner": { "localHooks": "available", "platform": "", "doc": "docs/acceptance/casaos-app-store-install.md" },
       "cells": {
         "provider-identity": {
           "declared": "not-applicable",
@@ -686,6 +730,11 @@
         "storage-picker": {
           "declared": "unsupported",
           "reason": "No host volume API a compose app can browse. The store install dialog shows the five fixed mounts and nothing selects among them."
+        },
+        "local-workflow-hooks": {
+          "declared": "not-applicable",
+          "reason": "This provider ships no frontend bridge and no runtime profile of its own: it selects the generic profile (canonical.json's uiBridge \"none\"), so the running process reports generic's capabilities and cannot tell this host apart from any other Docker host. There is therefore no per-provider runtime answer for the contract to hold it to. CasaOS is an application layer installed onto an ordinary Linux distribution, which keeps its own systemd and its own docker group, so that host's administrator can run the runner installer beside the store install, and the acceptance procedure says so by name.",
+          "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
         }
       }
     },
@@ -718,6 +767,7 @@
         "apps/zimaos"
       ],
       "acceptance": "docs/acceptance/zimaos-app-store-install.md",
+      "workflowRunner": { "localHooks": "unavailable", "platform": "", "doc": "docs/acceptance/zimaos-app-store-install.md" },
       "cells": {
         "provider-identity": {
           "declared": "not-applicable",
@@ -798,6 +848,11 @@
         "storage-picker": {
           "declared": "unsupported",
           "reason": "No host volume API a compose app can browse. The store install dialog shows the five fixed mounts and nothing selects among them."
+        },
+        "local-workflow-hooks": {
+          "declared": "not-applicable",
+          "reason": "This provider ships no frontend bridge and no runtime profile of its own: it selects the generic profile (canonical.json's uiBridge \"none\"), so the running process reports generic's capabilities and cannot tell this host apart from any other Docker host. There is therefore no per-provider runtime answer for the contract to hold it to. ZimaOS is where that matters most: it ships as a complete appliance OS rather than as a layer over a distribution the operator administers, so unlike CasaOS there is no host session in which to install a unit or grant a group, and the running process cannot tell the difference. Its acceptance procedure is the only place that answer can be given, and it gives it: local hooks are unavailable here. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS.",
+          "verifiedBy": "distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead"
         }
       }
     }
