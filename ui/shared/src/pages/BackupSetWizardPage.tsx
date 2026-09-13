@@ -26,6 +26,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePlatform } from "@shared/platform/PlatformContext";
 import { useApi } from "@shared/api/ApiContext";
+import { useAsync } from "@shared/hooks/useAsync";
 import { BackupdError } from "@shared/api/contracts";
 import type { ConnectionTestOutcome, SSHKeyListing, ValidatorCatalogEntry } from "@shared/api/contracts";
 import { describeFailure } from "@shared/api/failure";
@@ -42,15 +43,96 @@ import { fetchResource } from "@shared/state/resource";
 import { resetWizardAnswers, wizardCanSaveNode, wizardHostKeyChangedNode } from "@shared/state/wizardNodes";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import type { TooltipId } from "@shared/tooltips/tooltips";
+// Promoted out of this file by #788 so EPIC K's flows draw the same rail,
+// the same step body and the same radio/checkbox shapes rather than
+// copies of them (docs/design/788-incremental-ui-mockup.md). The rail
+// also stopped hardcoding six columns on the way out, which is what lets
+// this wizard be eight steps and the restore flow four.
+import { StepBody, StepRail } from "@shared/components/WizardStep";
+import { Choice, Toggle } from "@shared/components/Choice";
+import { Rows, Row } from "@shared/components/Definitions";
+import {
+  CONSISTENCY_COPY,
+  ENGINE_COPY,
+  VERIFICATION_COPY
+} from "@shared/components/EngineBadge";
+import type { BackupEngine, SourceConsistency, VerificationLevel } from "@shared/types/snapshot";
 
+/**
+ * Eight steps, and the ORDER is the argument (issue #788's design gate,
+ * docs/design/788-incremental-ui-mockup.md).
+ *
+ *   1. Source            — where the data is, and which directory a run walks.
+ *   2. Connection test   — the credentials, the host key and what those
+ *                          two could actually DO, including the write
+ *                          probe (#852). It comes second because its
+ *                          answer constrains step 7.
+ *   3. Engine            — the one irreversible choice, asked once there
+ *                          is enough context to answer it.
+ *   4. Repository domain — only a real question for the incremental
+ *                          engine, which is why it cannot come earlier.
+ *   5. Consistency       — what the operator arranged on the server.
+ *   6. Verification      — how hard each backup is checked. For an
+ *                          artifact set this is the completion method and
+ *                          the validator, which are the same question
+ *                          answered by the other engine.
+ *   7. Storage/retention — where the copy lives, how long it is kept, and
+ *                          the source-deletion control #852 governs.
+ *   8. Review            — every answer, then one save.
+ *
+ * Steps 4 and 5 do not disappear for an Artifact set: they say why they
+ * do not apply. A rail that changes length under the operator teaches
+ * nothing; a step that explains itself teaches the difference between the
+ * two engines at the moment it matters.
+ */
 const STEPS = [
   "Source",
-  "Authentication",
-  "Verify server",
-  "Discovery",
-  "Storage & validation",
+  "Connection test",
+  "Engine",
+  "Repository",
+  "Consistency",
+  "Verification",
+  "Retention",
   "Review"
 ] as const;
+
+/** The value `domainChoice` holds while the operator is naming a domain
+ *  this deployment does not declare yet. A sentinel rather than a second
+ *  boolean, so "which domain" has exactly one answer at all times. */
+const NEW_DOMAIN = "\u0000new";
+
+/** Both closed vocabularies in the order they are offered, which is
+ *  weakest first: the choice is a ladder, and an operator reading it
+ *  top-to-bottom should be reading it in one direction. */
+const CONSISTENCY_ORDER: readonly SourceConsistency[] = [
+  "live_best_effort",
+  "externally_quiesced",
+  "external_snapshot"
+];
+
+const VERIFICATION_ORDER: readonly VerificationLevel[] = [
+  "structural",
+  "content_sample",
+  "content_full",
+  "restore_drill"
+];
+
+/**
+ * The six things backup sets sharing one repository domain share
+ * (`model.RepositoryBoundaries`).
+ *
+ * Stated where the decision is made rather than in a help page, because
+ * joining a shared domain is the one configuration choice in this product
+ * whose consequences land on OTHER backup sets.
+ */
+const DOMAIN_BOUNDARIES: readonly { title: string; detail: string }[] = [
+  { title: "One encryption key", detail: "whoever can open the store can read every set in it" },
+  { title: "One credential", detail: "a rotated passphrase changes access for all of them at once" },
+  { title: "One maintenance owner", detail: "compaction and reclamation run for the domain, not per set" },
+  { title: "One deduplication pool", detail: "content in common is stored once, which is the benefit" },
+  { title: "One corruption blast radius", detail: "damage to the store is damage to every set in it" },
+  { title: "One storage location", detail: "they fill the same disk or bucket, and its space is shared" }
+];
 
 /** Shown only until the real probe (issue #146) resolves for the first
  *  time — see the "Verify server" step below — so step 3 never renders
@@ -159,6 +241,52 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
   // reasoning "Save disabled" already gets for free by being its own
   // button (see saveDisabled's own comment).
   const [readOnlySource, setReadOnlySource] = useState(false);
+
+  /**
+   * EPIC K's answers (issue #788), local for the same reason every other
+   * wizard answer is: nothing outside this component reads them while the
+   * wizard is open.
+   *
+   * The engine defaults to Artifact, and the reason is not timidity: it
+   * is the choice that cannot be undone. `BackupSetSpec.engine` defaults
+   * to "artifact" server-side, so a wizard that pre-selected the other
+   * one would make the UI's default and the contract's default disagree,
+   * and an operator who pressed through without reading step 3 would get
+   * a set whose engine can never be changed and whose history lives in a
+   * repository they did not choose. The step argues for both engines and
+   * Incremental is one click away.
+   */
+  const [engine, setEngine] = useState<BackupEngine>("artifact");
+  const incremental = engine === "kopia";
+  const [domainChoice, setDomainChoice] = useState("");
+  const [newDomain, setNewDomain] = useState("");
+  const [consistency, setConsistency] = useState<SourceConsistency>("live_best_effort");
+  const [verificationLevel, setVerificationLevel] = useState<VerificationLevel>("content_sample");
+  // The verification budget as TEXT, because these three fields are
+  // numbers an operator types and an empty one means "inherit the
+  // deployment's own setting" — which a number-typed state cannot say
+  // without inventing a sentinel. They are parsed once, at save.
+  const [samplePercent, setSamplePercent] = useState("5");
+  const [fullEveryDays, setFullEveryDays] = useState("7");
+  const [drillEveryDays, setDrillEveryDays] = useState("30");
+
+  // The domains this deployment declares, for step 4's picker. A failure
+  // is reported as a failure rather than turned into an empty list: "you
+  // have no repository domains" is an ordinary first-run state and "I
+  // could not read them" is a fault, and only one of them means the
+  // operator should stop and look.
+  const domains = useAsync(() => api.listRepositories(), [api]);
+  // The deployment's retention chain, which step 7 REPORTS rather than
+  // offers to change: retention is one global policy (#111), configured
+  // on the Settings page, and a second editor for it here is the
+  // decorative per-set chain #299 removed from this wizard.
+  const retention = useAsync(() => api.getSettings().then((s) => s.retention), [api]);
+
+  // The domain this set will actually be created in: whichever existing
+  // one was picked, or the name being typed for a new one. Empty means
+  // "the deployment's default", which is what the service does with an
+  // absent repository_domain.
+  const repositoryDomain = domainChoice === NEW_DOMAIN ? newDomain.trim() : domainChoice;
 
   // Host trust is local too, but it needs to remember WHICH host/port it
   // was granted for, not just whether it was granted: editing the
@@ -452,13 +580,19 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
     }
   }
 
-  // Probes automatically the first time step 3 is opened, and again
-  // whenever source.host/source.port changes while it stays open —
-  // "Re-fetch fingerprint" (below) calls probeHost() directly for an
-  // explicit re-check of the SAME host.
+  // Probes automatically the first time the Connection test step is
+  // opened, and again whenever source.host/source.port changes while it
+  // stays open — "Re-fetch fingerprint" (below) calls probeHost()
+  // directly for an explicit re-check of the SAME host.
+  //
+  // Step 2 since #788 folded the credentials and the host key into one
+  // step. The number is load-bearing: it is the only thing that starts
+  // the probe, so a rail reorder that left it pointing at the old step
+  // would leave "Trust host" trusting a known_hosts line nothing ever
+  // fetched.
   useEffect(() => {
     const key = source.host + ":" + source.port;
-    if (step === 3 && probedFor !== key && !probing) {
+    if (step === 2 && probedFor !== key && !probing) {
       // probeHost's first statement is setProbing(true), a genuine,
       // deliberate "start loading" state update synchronous with this
       // effect running — the canonical fetch-on-mount shape, not the
@@ -502,13 +636,13 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
     if (keySource === "generate" || !importedKeyId) {
       setSaveError(
         keySource === "generate"
-          ? "Generating a key on save isn't available yet — pick a key this deployment already holds, or import one, on the Authentication step."
-          : "Pick a key on the Authentication step before saving."
+          ? "Generating a key on save isn't available yet — pick a key this deployment already holds, or import one, on the Connection test step."
+          : "Pick a key on the Connection test step before saving."
       );
       return;
     }
     if (!trustedKnownHostsLine) {
-      setSaveError("Trust the host's fingerprint on the Verify server step before saving.");
+      setSaveError("Trust the host's fingerprint on the Connection test step before saving.");
       return;
     }
     // Issue #624. The button is already structurally disabled without
@@ -517,7 +651,7 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
     // path, a future caller, a test) must not be able to save a set
     // whose connection nothing proved.
     if (!connectionProven) {
-      setSaveError("Test connection on the Review step before saving.");
+      setSaveError("Test connection on the Connection test step before saving.");
       return;
     }
 
@@ -549,7 +683,31 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
         runImmediately: firstRun ? false : runImmediately,
         // Sent only when the operator actually answered the refusal, so
         // an ordinary save is never a pre-acknowledged one.
-        acknowledgeRepoint: acknowledgeRepoint || undefined
+        acknowledgeRepoint: acknowledgeRepoint || undefined,
+        // EPIC K (issue #788). The engine travels on every create; the
+        // four incremental settings travel only for the incremental
+        // engine, because an artifact set has none of them and sending a
+        // repository domain with one would be asking the service to
+        // either refuse the request or ignore a field.
+        engine,
+        ...(incremental
+          ? {
+              // Omitted when empty, which is the "use this deployment's
+              // default domain" request rather than a domain with no
+              // name.
+              repositoryDomain: repositoryDomain || undefined,
+              sourceConsistency: consistency,
+              verificationLevel,
+              // Each parsed once, here, and omitted when the field was
+              // left empty: an absent key inherits the deployment's own
+              // setting, and a 0 is a real and different answer ("never
+              // raise the level on a cadence") that has to be able to
+              // reach the wire.
+              verificationSamplePercent: optionalCount(samplePercent),
+              verificationFullEverySeconds: optionalDays(fullEveryDays),
+              verificationRestoreDrillEverySeconds: optionalDays(drillEveryDays)
+            }
+          : {})
       };
       if (firstRun) {
         const result = await api.completeFirstRun(request);
@@ -642,51 +800,11 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
         title="Add backup set"
       />
 
-      <ol
-        style={{
-          margin: 0, padding: 0, listStyle: "none",
-          display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8
-        }}
-      >
-        {STEPS.map((label, i) => {
-          const n = i + 1;
-          const active = step === n;
-          const done = step > n;
-          return (
-            <li key={label}>
-              {/* One id for all six rows: what a step is, and that any of
-                  them can be revisited, is one explanation (#834). The
-                  host wraps the button, so the button keeps its own
-                  accessible name. */}
-              <InfoTooltip id="wizard.set.step" block>
-                <button
-                  onClick={() => setStep(n)}
-                  // Without this the accessible name is "01 Authentication",
-                  // because the step-number span is part of the button. A
-                  // screen reader should hear the step, not the numeral glued
-                  // to the label.
-                  aria-label={label}
-                  aria-current={active ? "step" : undefined}
-                  style={{
-                    display: "flex", flexDirection: "column", gap: 5, width: "100%",
-                    padding: "9px 10px", borderRadius: "var(--radius-lg)", textAlign: "left",
-                    border: "1px solid " + (active ? "var(--accent)" : "var(--border)"),
-                    background: active ? "var(--accent-quiet)" : "var(--surface)",
-                    color: active ? "var(--text)" : "var(--text-2)",
-                    font: "inherit", cursor: "pointer"
-                  }}
-                >
-                  <span className="mono" style={{ display: "flex", alignItems: "center", gap: 7, fontSize: "var(--text-xs)" }}>
-                    {"0" + n}
-                    <span aria-hidden="true" style={{ color: "var(--ok)", opacity: done ? 1 : 0 }}>✓</span>
-                  </span>
-                  <span style={{ fontSize: "var(--text-sm)", fontWeight: 500 }}>{label}</span>
-                </button>
-              </InfoTooltip>
-            </li>
-          );
-        })}
-      </ol>
+      {/* The promoted rail (components/WizardStep.tsx), which is where
+          this markup used to live inline with six columns hardcoded into
+          it. One tooltip id for the whole rail: what a step is, and that
+          any of them can be revisited, is one explanation (#834). */}
+      <StepRail steps={STEPS} step={step} onSelect={setStep} tip="wizard.set.step" />
 
       <section className="card">
         <div style={{ padding: "20px 22px 22px" }}>
@@ -712,15 +830,35 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                   label="Username" value={source.username} onChange={(v) => updateSource("username", v)} mono
                   help={FIELD_HELP.wizardUsername}
                 />
+                {/* Moved here from the "Backup discovery" step #788's
+                    rail replaced: what a run walks is part of naming the
+                    source, and asking for it three steps later meant the
+                    connection test — which lists this very folder — ran
+                    before anything had said which folder. */}
+                <Field
+                  label="Directory to back up" value={remoteFolder} onChange={setRemoteFolder} mono span
+                  help={FIELD_HELP.wizardRemoteFolder}
+                />
+                <Field
+                  label="Ignore paths matching" value={includePatterns} onChange={setIncludePatterns} mono
+                  help={FIELD_HELP.wizardIncludePatterns}
+                />
               </div>
             </StepBody>
           ) : null}
 
           {step === 2 ? (
             <StepBody
-              title="Authentication"
-              lede="Install the public key on the remote server. Private keys stay on this NAS and are never shown after creation."
+              title="Connection test"
+              lede="What Backupd could actually do with these credentials, right now. Every line below is a thing it tried, not a thing it assumes."
             >
+              <div className="eyebrow" style={{ fontSize: "var(--text-xs)", marginBottom: 10 }}>
+                Credentials
+              </div>
+              <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--text-2)", maxWidth: "78ch" }}>
+                Install the public key on the remote server. Private keys stay on this NAS and are
+                never shown after creation.
+              </p>
               {/* One tooltip for the whole group, on the radiogroup container
                   itself: aria-describedby is valid there, and there is no
                   single control the way HelpField's .field shape assumes.
@@ -941,14 +1079,13 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                   )}
                 </div>
               ) : null}
-            </StepBody>
-          ) : null}
-
-          {step === 3 ? (
-            <StepBody
-              title="Verify server"
-              lede="Confirm this fingerprint through a channel other than this connection before trusting the host."
-            >
+              <div className="eyebrow" style={{ fontSize: "var(--text-xs)", margin: "22px 0 10px" }}>
+                Host key
+              </div>
+              <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--text-2)", maxWidth: "78ch" }}>
+                Confirm this fingerprint through a channel other than this connection before
+                trusting the host. It settles which machine answers, and nothing else.
+              </p>
               {hostKeyChanged ? (
                 <div style={{ marginBottom: 16 }}>
                   <WarningBanner tone="danger" eyebrow="Host key changed">
@@ -1003,228 +1140,16 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                   fingerprint independently.
                 </WarningBanner>
               </div>
-            </StepBody>
-          ) : null}
+              {/* Issue #624's report, now on a step of its own (#788).
 
-          {step === 4 ? (
-            <StepBody
-              title="Backup discovery"
-              lede="Where artifacts appear, and how Backupd knows one is finished being written."
-            >
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(228px, 1fr))", gap: "15px 18px" }}>
-                <Field
-                  label="Remote folder" value={remoteFolder} onChange={setRemoteFolder} mono span
-                  help={FIELD_HELP.wizardRemoteFolder}
-                />
-                <Field
-                  label="Include patterns" value={includePatterns} onChange={setIncludePatterns} mono
-                  help={FIELD_HELP.wizardIncludePatterns}
-                />
-              </div>
-              {/* Issue #299 (was #98's display-only placeholder before
-                  that): an "Exclude patterns" field used to sit here,
-                  `defaultValue`-only. Removed rather than wired — core's
-                  config.BackupSet still has no exclude field, only
-                  Include (core/internal/config/config.go), so there is
-                  nowhere real for this to be sent. */}
-
-              <FieldHelp label="Completion method" help={FIELD_HELP.wizardCompletionMethod}>
-                {(helpId) => (
-                  <fieldset aria-describedby={helpId} style={{ margin: "18px 0 0", padding: 0, border: "none" }}>
-                    <legend style={{ padding: "0 0 9px", fontSize: "var(--text-sm)", fontWeight: 500, color: "var(--text-2)" }}>
-                      Completion method
-                    </legend>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                      <div className="eyebrow" style={{ fontSize: "var(--text-xs)" }}>Recommended</div>
-                      <Choice
-                        name="cm" title="Atomic rename"
-                        detail="Producer writes to a temporary name, then renames into place."
-                        checked={completion === "atomic-rename"}
-                        onChange={() => setCompletion("atomic-rename")}
-                      />
-                      <Choice
-                        name="cm" title="Completion marker / manifest"
-                        detail="Producer writes a sidecar manifest when the artifact is complete."
-                        checked={completion === "completion-marker"}
-                        onChange={() => setCompletion("completion-marker")}
-                      />
-                      <div className="eyebrow" style={{ fontSize: "var(--text-xs)", marginTop: 4 }}>Advanced</div>
-                      <Choice
-                        name="cm" title="Stable file size / timestamp"
-                        detail="Use only when the producer cannot signal completion."
-                        checked={completion === "stable-size"}
-                        onChange={() => setCompletion("stable-size")}
-                      >
-                        {completion === "stable-size" ? (
-                          <div style={{ marginTop: 9 }}>
-                            <WarningBanner tone="warn">
-                              This method infers completion and provides less assurance than
-                              a producer-provided completion marker.
-                            </WarningBanner>
-                          </div>
-                        ) : null}
-                      </Choice>
-                    </div>
-                  </fieldset>
-                )}
-              </FieldHelp>
-            </StepBody>
-          ) : null}
-
-          {step === 5 ? (
-            <StepBody
-              title="Storage and validation"
-              lede="Where the NAS copy lives, and how it is proven good."
-            >
-              <div className="eyebrow" style={{ fontSize: "var(--text-xs)", marginBottom: 10 }}>Storage</div>
-              <HelpField
-                label="NAS destination" help={FIELD_HELP.wizardNasDestination}
-                labelStyle={{ maxWidth: 560 }}
-              >
-                {(helpId) => (
-                  <>
-                    <span style={{ display: "flex", gap: 8 }}>
-                      <input
-                        className="input input--mono"
-                        aria-describedby={helpId}
-                        style={{ flex: 1 }}
-                        value={localDestination}
-                        onChange={(e) => setLocalDestination(e.target.value)}
-                      />
-                      {/* Do not fake a native picker the platform does not have (§22). */}
-                      <button className="btn" style={{ whiteSpace: "nowrap" }}>
-                        {caps.storagePicker ? "Browse volumes…" : "Validate path"}
-                      </button>
-                    </span>
-                    <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-                      {caps.storagePicker
-                        ? "Uses the native " + bridge.name + " storage picker."
-                        : "This platform integration has no native storage picker — enter the mounted path directly (" + bridge.deployment.storageMount + ")."}
-                    </span>
-                  </>
-                )}
-              </HelpField>
-
-              {/* Issue #299 (per #111 before it): this step used to draw
-                  its own Daily/Weekly/Monthly/Week-starts fields plus an
-                  always-checked "protect newest known-good" toggle, none
-                  of them wired to anything. #111 already decided GFS
-                  retention is one global policy, configured once on the
-                  Settings page (RetentionPolicyCard, #140), and
-                  specifically warned that this wizard's own per-set shape
-                  "must not be mistaken for a capability." Removed here
-                  rather than reopening that decision. */}
-
-              <div className="eyebrow" style={{ fontSize: "var(--text-xs)", margin: "20px 0 10px" }}>Validation</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {/* Transfer verification is unconditional server-side —
-                    there is no field anywhere that could turn it off — so
-                    unlike Checksum verification below this stays, but
-                    disabled: an honest status, not a control. */}
-                <Toggle label="Transfer verification" note="always on" defaultChecked disabled />
-                {/* Issue #299: "Checksum verification" used to sit here as
-                    a live-looking, always-checked toggle. newBackupSetFor
-                    (core/service/backupsets.go) sets Hash: "" on every
-                    created set, unconditionally — there is no field for
-                    this toggle to write to. That "" is deliberate, not a
-                    gap: the recommended deployment is a chrooted,
-                    forced-command internal-sftp account with no shell,
-                    against which hash computation is proven not to work
-                    (see backupsets.go's own comment and
-                    core/tests/sftpintegration.TestSFTPHashCapability), so
-                    wiring this toggle would offer a choice that fails
-                    every artifact in the account shape this product
-                    recommends. Removed rather than wired. */}
-
-                {/* Issue #162: a real picklist over the backend's own
-                    registered catalog (GET /api/v1/validators), replacing
-                    the decorative toggle #98 shipped. The operator picks
-                    an id; there is deliberately no field here, or
-                    anywhere else in this app, for naming a command
-                    (docs/EPIC-B-multi-nas.md §26 Step 5). */}
-                <HelpField label="Application validation" help={FIELD_HELP.wizardValidatorId}>
-                  {(helpId) => (
-                    <>
-                      <select
-                        className="select"
-                        aria-describedby={helpId}
-                        value={validatorId}
-                        disabled={validatorCatalogFailed || validatorCatalog === null}
-                        onChange={(e) => setValidatorId(e.target.value)}
-                      >
-                        <option value="">None (transfer verification only)</option>
-                        {(validatorCatalog ?? []).map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.id}
-                          </option>
-                        ))}
-                      </select>
-                      {/* The option labels are the ids themselves, since an
-                          id is what this actually sends and what an operator
-                          will see again in config.yaml. The chosen entry's
-                          own sentence goes here instead, where there is room
-                          for it. */}
-                      <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-                        {validatorCatalogFailed
-                          ? "Could not load the available validators. Save without one, or retry after reloading."
-                          : validatorCatalog === null
-                            ? "Loading the available validators…"
-                            : (selectedValidator?.summary ??
-                              "No application validator: transfer verification only.")}
-                      </span>
-                      <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-                        A validator runs against every artifact once it is transferred. Rejecting one
-                        quarantines it and leaves the remote copy in place.
-                      </span>
-                    </>
-                  )}
-                </HelpField>
-              </div>
-            </StepBody>
-          ) : null}
-
-          {step === 6 ? (
-            <StepBody title="Review" lede="Confirm the configuration and the remote-source handling policy.">
-              <div
-                style={{
-                  display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(224px, 1fr))",
-                  gap: 1, background: "var(--border)", border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-lg)", overflow: "hidden"
-                }}
-              >
-                <Summary label="Source" tip="wizard.set.review.source" lines={[source.host, remoteFolder]} />
-                <Summary label="Destination" tip="wizard.set.review.destination" lines={[localDestination]} />
-                {/* Issue #299: this card used to show a hardcoded
-                    "7 daily" / "13 weekly" / "12 monthly" that summarized
-                    fields removed above — retention is one global policy
-                    now (see Settings), not something this wizard's Review
-                    step reports per set. "SHA-256" below is gone for the
-                    same reason as the Checksum verification toggle: this
-                    product never actually sets a hash algorithm. */}
-                <Summary
-                  label="Validation"
-                  tip="wizard.set.review.validation"
-                  lines={[
-                    "transfer verify",
-                    validatorId || "no application validator",
-                    completionSummaryLabel(completion)
-                  ]}
-                />
-                <Summary
-                  label="Host trust"
-                  tip="wizard.set.review.host-trust"
-                  lines={[hostKeyChanged ? "Host key changed — blocked" : hostTrusted ? "Trusted" : "Not yet trusted"]}
-                />
-              </div>
-
-              {/* Issue #624: the connection, proven before it is relied
-                  on. It sits here rather than beside "Verify server"
-                  because this is the first point at which everything the
-                  six steps need has been answered: the host and the user
-                  from step 1, the key from step 2, the trusted line from
-                  step 3, and the remote folder from step 4. It is also
-                  where the destination side puts its own check, one step
-                  in front of Save.
+                  It used to sit on Review, because that was the first
+                  point at which everything it needs had been answered.
+                  #788's rail reorders the flow so the test comes SECOND
+                  and its answer is available to every step that depends
+                  on it: the write probe is what decides whether step 7
+                  may offer to delete from the source at all, and asking
+                  after the engine, the domain and the retention chain
+                  had been chosen would be asking too late to matter.
 
                   Six rows, never a single verdict. DNS, the connect, the
                   host key, the key material, the authentication and the
@@ -1323,11 +1248,435 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                             "One of the steps above failed. Saving stays disabled until a test passes."}
                         </WarningBanner>
                       )}
+
+                      {/* Issue #852's verdict, stated where it was
+                          produced rather than only where it takes effect.
+                          The write probe created a scratch file under the
+                          remote path and removed it again, and that
+                          result — nothing softer — is what arms the
+                          source-deletion control on step 7. An operator
+                          who reads this line is never surprised by a
+                          disabled control three steps later. */}
+                      {connectionProven ? (
+                        connectionResult.writable ? (
+                          <WarningBanner
+                            tone="ok"
+                            eyebrow="Write permission"
+                            tip="wizard.incremental.write-probe"
+                            title="Backupd can write to, and delete from, the source"
+                            dismissible={false}
+                          >
+                            {"A scratch file was created under " + remoteFolder + " and removed again." +
+                              " Deleting the original after a verified backup is available to you on the" +
+                              " Retention step."}
+                          </WarningBanner>
+                        ) : (
+                          <WarningBanner
+                            tone="warn"
+                            eyebrow="Write permission"
+                            tip="wizard.incremental.write-probe"
+                            title="These credentials are read-only on the source"
+                            dismissible={false}
+                          >
+                            Backups will run: reading is all a backup needs. Deleting the original
+                            after a verified backup will be unavailable, because Backupd will not
+                            offer to remove a file it has not proved it can remove. Read-only is a
+                            perfectly good posture for a backup account, and the recommended one
+                            unless you want Backupd to free space on the server for you.
+                          </WarningBanner>
+                        )
+                      ) : null}
                     </>
                   )}
                 </div>
               </div>
 
+            </StepBody>
+          ) : null}
+
+                    {step === 3 ? (
+            <StepBody
+              title="Engine"
+              lede="How this set stores what it collects. This is the one answer that cannot be changed later."
+            >
+              <div
+                style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 10 }}
+              >
+                <Choice
+                  name="wizard-engine"
+                  title={ENGINE_COPY.artifact.name}
+                  wire="engine=artifact"
+                  detail={ENGINE_COPY.artifact.summary}
+                  checked={engine === "artifact"}
+                  onChange={() => setEngine("artifact")}
+                >
+                  <span
+                    style={{ display: "block", marginTop: 6, fontSize: "var(--text-xs)", color: "var(--text-3)" }}
+                  >
+                    For a producer that drops finished dumps somewhere: one file in, one backup kept.
+                  </span>
+                </Choice>
+                <Choice
+                  name="wizard-engine"
+                  title={ENGINE_COPY.kopia.name}
+                  wire="engine=kopia"
+                  detail={ENGINE_COPY.kopia.summary}
+                  checked={engine === "kopia"}
+                  onChange={() => setEngine("kopia")}
+                >
+                  <span
+                    style={{ display: "block", marginTop: 6, fontSize: "var(--text-xs)", color: "var(--text-3)" }}
+                  >
+                    For a directory tree that mostly stays the same: every run keeps a full restore
+                    point, and only what changed is stored.
+                  </span>
+                </Choice>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <WarningBanner
+                  tone="info"
+                  eyebrow="Why it is permanent"
+                  tip="wizard.incremental.engine"
+                  title="A set's history belongs to its engine"
+                  dismissible={false}
+                >
+                  Snapshots and whole-file backups are different objects in different places.
+                  Switching a set that has run would leave everything it has collected behind and
+                  start again from nothing, so Backupd asks you to create a new set instead — and
+                  the edit form for a saved set has no field for this at all.
+                </WarningBanner>
+              </div>
+            </StepBody>
+          ) : null}
+
+          {step === 4 ? (
+            <StepBody
+              title="Repository domain"
+              lede="The encrypted store this set's snapshots live in."
+            >
+              {incremental ? (
+                <>
+                  <div
+                    style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10 }}
+                  >
+                    {(domains.data?.repositories ?? []).map((option) => (
+                      <Choice
+                        key={option.domain}
+                        name="wizard-domain"
+                        title={option.domain}
+                        wire={"repository_domain=" + option.domain}
+                        detail={
+                          (option.mayShare
+                            ? option.backupSets.length + " set(s) here, sharing content and a key"
+                            : "isolated: this set only") +
+                          (option.detail ? " \u00b7 " + option.detail : "")
+                        }
+                        checked={domainChoice === option.domain}
+                        onChange={() => setDomainChoice(option.domain)}
+                      />
+                    ))}
+                    <Choice
+                      name="wizard-domain"
+                      title="Define a new domain"
+                      detail="A store of its own, with its own key and its own maintenance."
+                      checked={domainChoice === NEW_DOMAIN}
+                      onChange={() => setDomainChoice(NEW_DOMAIN)}
+                    />
+                  </div>
+
+                  {/* The read is reported as a read: a deployment whose
+                      repositories could not be listed must not look like
+                      a deployment with none, because the second one is a
+                      perfectly ordinary first-run state and the first is
+                      a fault. */}
+                  {domains.error ? (
+                    <div style={{ marginTop: 14 }}>
+                      <WarningBanner tone="warn" eyebrow="The declared domains could not be read">
+                        {describeFailure(domains.error, "The repository domains could not be read.").message}
+                        {" You can still name a domain below; a name nothing declares yet is created" +
+                          " with this deployment's own defaults."}
+                      </WarningBanner>
+                    </div>
+                  ) : null}
+
+                  {domainChoice === NEW_DOMAIN ? (
+                    <div style={{ marginTop: 16 }}>
+                      <Field
+                        label="New domain id"
+                        value={newDomain}
+                        onChange={setNewDomain}
+                        mono
+                      />
+                      <p style={{ margin: "10px 0 0", fontSize: "var(--text-sm)", color: "var(--text-2)", maxWidth: "78ch" }}>
+                        A domain nothing declares yet is created when this set first runs, with this
+                        deployment&rsquo;s own storage location and passphrase reference. Where it
+                        lives, and whether other sets may join it, are declared in the
+                        deployment&rsquo;s configuration rather than here: they are properties of a
+                        security boundary several sets share, not of this one set.
+                      </p>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 16 }}>
+                      <WarningBanner
+                        tone="warn"
+                        eyebrow="What joining a domain shares"
+                        tip="wizard.incremental.domain"
+                        title={"This set will share all of this with everything else in " + domainChoice}
+                        dismissible={false}
+                      >
+                        <ul
+                          style={{
+                            margin: "6px 0 0",
+                            paddingLeft: 18,
+                            fontSize: 13,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 3
+                          }}
+                        >
+                          {DOMAIN_BOUNDARIES.map((boundary) => (
+                            <li key={boundary.title}>
+                              <strong>{boundary.title}</strong>
+                              {" \u2014 " + boundary.detail}
+                            </li>
+                          ))}
+                        </ul>
+                      </WarningBanner>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <NotForThisEngine what="A repository domain is where snapshots live." />
+              )}
+            </StepBody>
+          ) : null}
+
+          {step === 5 ? (
+            <StepBody
+              title="Source consistency"
+              lede="What you have arranged on the server for the duration of a run. Backupd records this rather than detecting it, and reports a run that contradicts it."
+            >
+              {incremental ? (
+                <>
+                  <div
+                    style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}
+                  >
+                    {CONSISTENCY_ORDER.map((mode) => (
+                      <Choice
+                        key={mode}
+                        name="wizard-consistency"
+                        title={CONSISTENCY_COPY[mode].name}
+                        wire={"source_consistency=" + mode}
+                        detail={CONSISTENCY_COPY[mode].summary}
+                        checked={consistency === mode}
+                        onChange={() => setConsistency(mode)}
+                      >
+                        <span
+                          style={{ display: "block", marginTop: 6, fontSize: "var(--text-xs)", color: "var(--text-3)" }}
+                        >
+                          {"Point in time: " + CONSISTENCY_COPY[mode].pointInTime}
+                        </span>
+                      </Choice>
+                    ))}
+                  </div>
+                  {consistency === "live_best_effort" ? null : (
+                    <div style={{ marginTop: 16 }}>
+                      <WarningBanner
+                        tone="info"
+                        eyebrow="What Backupd will do about it"
+                        tip="wizard.incremental.consistency"
+                        title="A change seen during a run will be reported, not ignored"
+                        dismissible={false}
+                      >
+                        You have told Backupd that nothing writes to this source during a run. If
+                        something does, the backup still completes and the run says so, because a
+                        snapshot you believe is a point in time and is not is the failure worth
+                        reporting.
+                      </WarningBanner>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <NotForThisEngine what="Consistency describes a tree being walked." />
+              )}
+            </StepBody>
+          ) : null}
+
+          {step === 6 ? (
+            <StepBody
+              title={incremental ? "Verification" : "Completion and validation"}
+              lede={
+                incremental
+                  ? "How far each backup is checked before it counts as a restore point. A run that proves less than the level you pick fails, so this is a floor and not a target."
+                  : "How Backupd knows an artifact is finished being written, and how it is proven good once it arrives."
+              }
+            >
+              {incremental ? (
+                <>
+                  <div
+                    style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 10 }}
+                  >
+                    {VERIFICATION_ORDER.map((level) => (
+                      <Choice
+                        key={level}
+                        name="wizard-verification"
+                        title={VERIFICATION_COPY[level].name}
+                        wire={"verification_level=" + level}
+                        detail={VERIFICATION_COPY[level].finds}
+                        checked={verificationLevel === level}
+                        onChange={() => setVerificationLevel(level)}
+                      >
+                        <span
+                          style={{ display: "block", marginTop: 6, fontSize: "var(--text-xs)", color: "var(--text-3)" }}
+                        >
+                          {VERIFICATION_COPY[level].cost}
+                        </span>
+                      </Choice>
+                    ))}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 16,
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(228px, 1fr))",
+                      gap: "15px 18px"
+                    }}
+                  >
+                    <Field
+                      label="Sampled share of files (%)"
+                      value={samplePercent}
+                      onChange={setSamplePercent}
+                      mono
+                    />
+                    <Field
+                      label="Read every file every (days)"
+                      value={fullEveryDays}
+                      onChange={setFullEveryDays}
+                      mono
+                    />
+                    <Field
+                      label="Restore drill every (days)"
+                      value={drillEveryDays}
+                      onChange={setDrillEveryDays}
+                      mono
+                    />
+                  </div>
+                  <div style={{ marginTop: 14 }}>
+                    <WarningBanner
+                      tone="info"
+                      eyebrow="The budget, not the bar"
+                      tip="wizard.incremental.verification"
+                      title="The two cadences may raise the level for one run; nothing lowers it"
+                      dismissible={false}
+                    >
+                      {"Leave a field empty to inherit this deployment's own setting. A zero" +
+                        " cadence is a real answer and a different one: it means never raise the" +
+                        " level on a schedule."}
+                    </WarningBanner>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* The artifact engine's answer to the same question,
+                      which is why this step is not simply "skipped" for
+                      it: a whole-file backup is proven on arrival, and
+                      the completion method and the validator are how. */}
+                  <NotForThisEngine what="A verification level describes a snapshot of a tree." />
+                  <div style={{ marginTop: 18 }}>
+                    <ArtifactCompletionFields
+                      completion={completion}
+                      setCompletion={setCompletion}
+                      validatorId={validatorId}
+                      setValidatorId={setValidatorId}
+                      validatorCatalog={validatorCatalog}
+                      validatorCatalogFailed={validatorCatalogFailed}
+                      selectedValidatorSummary={selectedValidator?.summary}
+                    />
+                  </div>
+                </>
+              )}
+            </StepBody>
+          ) : null}
+
+          {step === 7 ? (
+            <StepBody
+              title="Storage, retention and holds"
+              lede="Where the copy on this NAS lives, how long backups are kept, and whether Backupd may free space on the server."
+            >
+              <div className="eyebrow" style={{ fontSize: "var(--text-xs)", marginBottom: 10 }}>
+                Storage
+              </div>
+              <HelpField
+                label="NAS destination" help={FIELD_HELP.wizardNasDestination}
+                labelStyle={{ maxWidth: 560 }}
+              >
+                {(helpId) => (
+                  <>
+                    <span style={{ display: "flex", gap: 8 }}>
+                      <input
+                        className="input input--mono"
+                        aria-describedby={helpId}
+                        style={{ flex: 1 }}
+                        value={localDestination}
+                        onChange={(e) => setLocalDestination(e.target.value)}
+                      />
+                      {/* Do not fake a native picker the platform does not have (§22). */}
+                      <button className="btn" style={{ whiteSpace: "nowrap" }}>
+                        {caps.storagePicker ? "Browse volumes…" : "Validate path"}
+                      </button>
+                    </span>
+                    <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+                      {caps.storagePicker
+                        ? "Uses the native " + bridge.name + " storage picker."
+                        : "This platform integration has no native storage picker — enter the mounted path directly (" + bridge.deployment.storageMount + ")."}
+                    </span>
+                  </>
+                )}
+              </HelpField>
+
+              <div className="eyebrow" style={{ fontSize: "var(--text-xs)", margin: "22px 0 10px" }}>
+                Retention
+              </div>
+              {/* Read, not restated. The chain a new set is retained
+                  under is the deployment's own (#111 decided retention is
+                  one global policy, configured on the Settings page), and
+                  this step shows what that chain currently says rather
+                  than offering a second place to set it — which is the
+                  decorative per-set chain #299 removed from this wizard. */}
+              {retention.data ? (
+                <Rows>
+                  <Row
+                    label="Inherited chain"
+                    value={retention.data.tiers
+                      .map((tier) => tier.name + " " + tier.keep)
+                      .join(" \u00b7 ")}
+                  />
+                  <Row
+                    label="Newest known-good"
+                    value={
+                      retention.data.protectLastKnownGood
+                        ? "protected: never expired by any tier"
+                        : "not protected by the deployment's policy"
+                    }
+                  />
+                  <Row label="Set from" value={"Settings \u2192 Retention, for every set that does not override it"} />
+                </Rows>
+              ) : (
+                <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)" }}>
+                  {retention.error
+                    ? "The deployment's retention chain could not be read. This set will still be retained under whatever it says."
+                    : "Reading the deployment's retention chain\u2026"}
+                </p>
+              )}
+              <p style={{ margin: "12px 0 0", fontSize: "var(--text-sm)", color: "var(--text-2)", maxWidth: "78ch" }}>
+                A hold placed on a backup later overrides all of this: a held snapshot is never
+                expired, by any tier, until the hold is released.
+              </p>
+
+              <div className="eyebrow" style={{ fontSize: "var(--text-xs)", margin: "22px 0 10px" }}>
+                Remote source handling
+              </div>
               <div style={{ border: "1.5px solid var(--warn)", borderRadius: 9, overflow: "hidden", marginTop: 18 }}>
                 <div
                   style={{
@@ -1452,6 +1801,101 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                 </div>
               </div>
 
+            </StepBody>
+          ) : null}
+
+          {step === 8 ? (
+            <StepBody title="Review" lede="Confirm the configuration and the remote-source handling policy.">
+              <div
+                style={{
+                  display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(224px, 1fr))",
+                  gap: 1, background: "var(--border)", border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-lg)", overflow: "hidden"
+                }}
+              >
+                <Summary label="Source" tip="wizard.set.review.source" lines={[source.host, remoteFolder]} />
+                <Summary label="Destination" tip="wizard.set.review.destination" lines={[localDestination]} />
+                {/* Issue #299: this card used to show a hardcoded
+                    "7 daily" / "13 weekly" / "12 monthly" that summarized
+                    fields removed above — retention is one global policy
+                    now (see Settings), not something this wizard's Review
+                    step reports per set. "SHA-256" below is gone for the
+                    same reason as the Checksum verification toggle: this
+                    product never actually sets a hash algorithm. */}
+                {/* EPIC K (issue #788). The engine is stated first among
+                    these because it is the one answer on this page that
+                    cannot be changed after the save, and the three that
+                    follow it read "not applicable" rather than blank for
+                    an artifact set — an absent property said as an
+                    absence, which is the rule the whole engine split
+                    follows. */}
+                <Summary
+                  label="Engine"
+                  tip="wizard.incremental.engine"
+                  lines={[ENGINE_COPY[engine].name, "engine=" + ENGINE_COPY[engine].wire, "fixed after creation"]}
+                />
+                <Summary
+                  label="Repository domain"
+                  tip="wizard.incremental.domain"
+                  lines={
+                    incremental
+                      ? [repositoryDomain || "this deployment's default", "fixed after creation"]
+                      : ["not applicable"]
+                  }
+                />
+                <Summary
+                  label="Consistency"
+                  tip="wizard.incremental.consistency"
+                  lines={
+                    incremental
+                      ? [CONSISTENCY_COPY[consistency].name, CONSISTENCY_COPY[consistency].pointInTime]
+                      : ["not applicable"]
+                  }
+                />
+                <Summary
+                  label="Verification"
+                  tip="wizard.incremental.verification"
+                  lines={
+                    incremental
+                      ? [
+                          VERIFICATION_COPY[verificationLevel].name,
+                          samplePercent.trim() === "" ? "sample inherited" : samplePercent.trim() + "% sampled",
+                          fullEveryDays.trim() === "" ? "cadence inherited" : "every file every " + fullEveryDays.trim() + " days"
+                        ]
+                      : ["checksum on arrival"]
+                  }
+                />
+                <Summary
+                  label="Validation"
+                  tip="wizard.set.review.validation"
+                  lines={
+                    incremental
+                      ? ["transfer verify", "snapshot verification, above"]
+                      : [
+                          "transfer verify",
+                          validatorId || "no application validator",
+                          completionSummaryLabel(completion)
+                        ]
+                  }
+                />
+                <Summary
+                  label="Host trust"
+                  tip="wizard.set.review.host-trust"
+                  lines={[hostKeyChanged ? "Host key changed — blocked" : hostTrusted ? "Trusted" : "Not yet trusted"]}
+                />
+                <Summary
+                  label="Delete from source"
+                  tip={readOnlyEffective ? "sets.source-delete.read-only" : "sets.source-delete"}
+                  lines={[
+                    sourceNotWritable
+                      ? "unavailable — read-only source"
+                      : readOnlySource
+                        ? "no — this source is read-only by choice"
+                        : "yes, after a verified backup"
+                  ]}
+                />
+              </div>
+
               {runNotStarted ? (
                 <div style={{ marginTop: 18 }}>
                   <WarningBanner
@@ -1574,17 +2018,6 @@ function bridgeDefaultPath(mount: string) {
   return mount.replace(/\/$/, "") + "/production/postgres/";
 }
 
-function StepBody({ title, lede, children }: { title: string; lede: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div>
-        <h2>{title}</h2>
-        <p style={{ margin: "5px 0 0", fontSize: 13, color: "var(--text-2)" }}>{lede}</p>
-      </div>
-      <div>{children}</div>
-    </div>
-  );
-}
 
 /**
  * One labelled text input, controlled or (for the wizard's own still-
@@ -1648,68 +2081,7 @@ function Field(
   );
 }
 
-function Choice({
-  name, title, detail, defaultChecked, checked, onChange, children
-}: {
-  name: string; title: string; detail: string;
-  defaultChecked?: boolean; checked?: boolean; onChange?(): void;
-  children?: React.ReactNode;
-}) {
-  const selected = checked ?? defaultChecked ?? false;
-  return (
-    <label
-      style={{
-        display: "flex", gap: 10, padding: "13px 14px",
-        border: (selected ? "1.5px solid var(--accent)" : "1px solid var(--border-strong)"),
-        borderRadius: "var(--radius-lg)",
-        background: selected ? "var(--accent-quiet)" : "var(--surface-2)",
-        cursor: "pointer"
-      }}
-    >
-      <input
-        type="radio" name={name}
-        checked={checked} defaultChecked={checked === undefined ? defaultChecked : undefined}
-        onChange={onChange}
-        style={{ marginTop: 2, accentColor: "var(--accent)" }}
-      />
-      <span style={{ flex: 1 }}>
-        <span style={{ display: "block", fontSize: 13, fontWeight: 600 }}>{title}</span>
-        <span style={{ display: "block", marginTop: 3, fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
-          {detail}
-        </span>
-        {children}
-      </span>
-    </label>
-  );
-}
 
-function Toggle({
-  label, note, defaultChecked, mono, disabled
-}: {
-  label: string; note: string; defaultChecked?: boolean; mono?: boolean; disabled?: boolean;
-}) {
-  return (
-    <label
-      style={{
-        display: "flex", alignItems: "center", gap: 10, padding: "11px 13px",
-        border: "1px solid var(--border)", borderRadius: 7,
-        background: "var(--surface-2)", fontSize: 13, cursor: disabled ? "default" : "pointer"
-      }}
-    >
-      <input
-        type="checkbox" defaultChecked={defaultChecked} disabled={disabled}
-        style={{ accentColor: "var(--accent)" }}
-      />
-      <span style={{ flex: 1 }}>{label}</span>
-      <span
-        className={mono ? "mono" : undefined}
-        style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}
-      >
-        {note}
-      </span>
-    </label>
-  );
-}
 
 function Summary({ label, tip, lines }: { label: string; tip: TooltipId; lines: string[] }) {
   return (
@@ -1726,4 +2098,185 @@ function Summary({ label, tip, lines }: { label: string; tip: TooltipId; lines: 
       </div>
     </div>
   );
+}
+
+/**
+ * What a step that does not apply to the chosen engine says instead of
+ * disappearing (issue #788).
+ *
+ * A step that vanishes leaves an operator counting a rail that changes
+ * length under them; a step that states why it is empty teaches the
+ * difference between the two engines at the moment it matters.
+ */
+function NotForThisEngine({ what }: { what: string }) {
+  return (
+    <div
+      style={{
+        padding: "26px 22px",
+        textAlign: "center",
+        border: "1px dashed var(--border-strong)",
+        borderRadius: "var(--radius-xl)",
+        background: "var(--surface-2)"
+      }}
+    >
+      <div style={{ fontSize: 15, fontWeight: 600 }}>Not asked for an Artifact set</div>
+      <p style={{ margin: "6px auto 0", maxWidth: "52ch", fontSize: 13, color: "var(--text-2)" }}>
+        {what + " An artifact set keeps whole files instead, so there is nothing here to choose."}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The artifact engine's answer to "how is a backup proven good": how
+ * Backupd knows a file is finished being written, and which registered
+ * validator reads it once it arrives.
+ *
+ * It is a component rather than inline JSX because it is the OTHER branch
+ * of one step, and keeping the two branches the same size in the step
+ * body is what stops the artifact path from reading as an afterthought.
+ * Both controls are the ones this wizard has always had; what changed is
+ * that they are now asked only of the engine that has them.
+ */
+function ArtifactCompletionFields({
+  completion,
+  setCompletion,
+  validatorId,
+  setValidatorId,
+  validatorCatalog,
+  validatorCatalogFailed,
+  selectedValidatorSummary
+}: {
+  completion: CompletionMethod;
+  setCompletion(next: CompletionMethod): void;
+  validatorId: string;
+  setValidatorId(next: string): void;
+  validatorCatalog: ValidatorCatalogEntry[] | null;
+  validatorCatalogFailed: boolean;
+  selectedValidatorSummary?: string;
+}) {
+  return (
+    <>
+      <FieldHelp label="Completion method" help={FIELD_HELP.wizardCompletionMethod}>
+        {(helpId) => (
+          <fieldset aria-describedby={helpId} style={{ margin: 0, padding: 0, border: "none" }}>
+            <legend
+              style={{
+                padding: "0 0 9px",
+                fontSize: "var(--text-sm)",
+                fontWeight: 500,
+                color: "var(--text-2)"
+              }}
+            >
+              Completion method
+            </legend>
+            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+              <div className="eyebrow" style={{ fontSize: "var(--text-xs)" }}>Recommended</div>
+              <Choice
+                name="cm"
+                title="Atomic rename"
+                detail="Producer writes to a temporary name, then renames into place."
+                checked={completion === "atomic-rename"}
+                onChange={() => setCompletion("atomic-rename")}
+              />
+              <Choice
+                name="cm"
+                title="Completion marker / manifest"
+                detail="Producer writes a sidecar manifest when the artifact is complete."
+                checked={completion === "completion-marker"}
+                onChange={() => setCompletion("completion-marker")}
+              />
+              <div className="eyebrow" style={{ fontSize: "var(--text-xs)", marginTop: 4 }}>Advanced</div>
+              <Choice
+                name="cm"
+                title="Stable file size / timestamp"
+                detail="Use only when the producer cannot signal completion."
+                checked={completion === "stable-size"}
+                onChange={() => setCompletion("stable-size")}
+              >
+                {completion === "stable-size" ? (
+                  <div style={{ marginTop: 9 }}>
+                    <WarningBanner tone="warn">
+                      This method infers completion and provides less assurance than a
+                      producer-provided completion marker.
+                    </WarningBanner>
+                  </div>
+                ) : null}
+              </Choice>
+            </div>
+          </fieldset>
+        )}
+      </FieldHelp>
+
+      <div className="eyebrow" style={{ fontSize: "var(--text-xs)", margin: "20px 0 10px" }}>
+        Validation
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        {/* Transfer verification is unconditional server-side — there is
+            no field anywhere that could turn it off — so this is a
+            disabled status rather than a control. It reads as one
+            deliberately: an operator scanning this step for "what proves
+            my backup arrived intact" should find it here. */}
+        <Toggle label="Transfer verification" note="always on" checked disabled />
+      </div>
+      {/* Issue #162: a real picklist over the backend's own registered
+          catalog (GET /api/v1/validators). The operator picks an id;
+          there is deliberately no field here, or anywhere else in this
+          app, for naming a command (docs/EPIC-B-multi-nas.md §26). */}
+      <HelpField label="Application validation" help={FIELD_HELP.wizardValidatorId}>
+        {(helpId) => (
+          <>
+            <select
+              className="select"
+              aria-describedby={helpId}
+              value={validatorId}
+              disabled={validatorCatalogFailed || validatorCatalog === null}
+              onChange={(e) => setValidatorId(e.target.value)}
+            >
+              <option value="">None (transfer verification only)</option>
+              {(validatorCatalog ?? []).map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.id}
+                </option>
+              ))}
+            </select>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+              {validatorCatalogFailed
+                ? "Could not load the available validators. Save without one, or retry after reloading."
+                : validatorCatalog === null
+                  ? "Loading the available validators…"
+                  : (selectedValidatorSummary ??
+                    "No application validator: transfer verification only.")}
+            </span>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+              A validator runs against every artifact once it is transferred. Rejecting one
+              quarantines it and leaves the remote copy in place.
+            </span>
+          </>
+        )}
+      </HelpField>
+    </>
+  );
+}
+
+/**
+ * A typed number, or undefined for a field the operator left empty.
+ *
+ * Undefined is what makes an absent key absent, which is how the service
+ * is asked to apply its own default. A zero is NOT the same request and
+ * survives: on both cadences it means "never raise the level on a
+ * schedule", so `Number("")` being 0 is exactly the trap these two
+ * helpers exist to avoid.
+ */
+function optionalCount(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  const n = Number(trimmed);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/** The same, in days, sent as the seconds the contract declares. */
+function optionalDays(value: string): number | undefined {
+  const days = optionalCount(value);
+  return days === undefined ? undefined : days * 24 * 3600;
 }

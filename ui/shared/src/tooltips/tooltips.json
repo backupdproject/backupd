@@ -1602,5 +1602,33 @@
   "wizard.ssh.ledger": {
     "label": "What applying changes",
     "html": "The key and host key this set uses now, beside the ones about to replace them. The rest of the set is left untouched by the patch."
+  },
+  "wizard.incremental.engine": {
+    "label": "Backup engine",
+    "html": "<strong>Artifact</strong> pulls finished files a producer leaves for you and keeps each one whole. <strong>Incremental</strong> snapshots an entire directory tree and stores only content the repository does not already hold. It cannot be changed later: a set that switched would start a second, unrelated history."
+  },
+  "wizard.incremental.domain": {
+    "label": "Repository domain",
+    "html": "The encrypted store this set's snapshots live in. Sets that share one share <strong>everything</strong> about it — its key, its credential, its maintenance, its corruption blast radius — and in exchange store content they have in common only once."
+  },
+  "wizard.incremental.consistency": {
+    "label": "Source consistency",
+    "html": "What you have arranged on the server, which Backupd records rather than detects. It decides whether a file changing mid-run is ordinary or is reported as a <strong>broken arrangement</strong>. Only <em>frozen image</em> may be called a point in time."
+  },
+  "wizard.incremental.verification": {
+    "label": "Verification level",
+    "html": "How far each backup is checked before it counts. A run that proves <strong>less</strong> than this fails, and only a run that proves it can become the newest known-good restore point."
+  },
+  "wizard.incremental.write-probe": {
+    "label": "Write permission",
+    "html": "Backupd wrote a scratch file under the source path and deleted it again. It is the only evidence that these credentials could remove a file there, and it is what arms or refuses <code>Delete from source after a verified backup</code>."
+  },
+  "sets.source-delete": {
+    "label": "Delete from source",
+    "html": "After a backup is stored and verified, Backupd deletes the file on the server, freeing space there. It never runs on a backup that failed verification."
+  },
+  "sets.source-delete.read-only": {
+    "label": "Delete from source unavailable",
+    "html": "The SSH credentials for this source are <strong>read-only</strong>: the write test could not create a file on the server, so Backupd cannot delete there either. Grant this account write permission on the source path and re-run the connection test to enable source deletion."
   }
 }

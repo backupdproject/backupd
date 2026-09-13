@@ -43,21 +43,31 @@ function renderWizard(api: BackupdApi) {
 /** The wizard, walked to the point where the remote-source handling box
  *  is on screen and a connection test has answered. */
 async function walkToRemoteHandling() {
-  await userEvent.click(screen.getByRole("button", { name: "Authentication" }));
+  await userEvent.click(screen.getByRole("button", { name: "Connection test" }));
   await userEvent.click(screen.getByRole("radio", { name: /Import key/ }));
   await userEvent.type(screen.getByLabelText(/private key/i), "FAKE-TEST-KEY-MATERIAL-not-a-real-key-0123456789");
   await userEvent.click(screen.getByRole("button", { name: "Import key" }));
   await screen.findByText(/key imported/i);
 
-  await userEvent.click(screen.getByRole("button", { name: "Verify server" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Trust host" })).toBeEnabled());
   await userEvent.click(screen.getByRole("button", { name: "Trust host" }));
 
-  await userEvent.click(screen.getByRole("button", { name: "Review" }));
+  // The test button is on the Connection test step since #788 reordered
+  // the rail: its verdict is what steps 3 to 7 depend on, so it is asked
+  // before them rather than on Review.
   await userEvent.click(screen.getByRole("button", { name: /^Test connection$/ }));
+  // Wait for the verdict before leaving the step: the write probe's
+  // answer is what arms or refuses the control this suite is about, and
+  // reading the control before the answer landed would test nothing.
+  await screen.findByText(/scratch file was created|credentials are read-only on the source/i);
+
+  await userEvent.click(screen.getByRole("button", { name: "Retention" }));
 }
 
+/** The declaration lives on the Retention step since #788 put it beside
+ *  the retention chain and the source-deletion control it governs. */
 const readOnlyCheckbox = () => screen.getByRole("checkbox", { name: /This source is read-only/i });
+
 
 afterEach(() => {
   cleanup();
@@ -102,6 +112,7 @@ describe("the wizard's delete-from-source control follows what the write probe p
     // The whole point of forcing rather than refusing on this screen: a
     // read-only source is savable, and Save is not gated on a deletion
     // acknowledgement nobody can give.
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Save & enable" })).toBeEnabled());
     await userEvent.click(screen.getByRole("button", { name: "Save & enable" }));
     await waitFor(() => expect(create).toHaveBeenCalled());

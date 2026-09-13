@@ -366,6 +366,39 @@ describe("every request the shared client makes is a declared operation", () => 
       ["retryIngestion", () => httpApi.retryIngestion("src/set-1/a.tar.gz")],
       ["retryFailedIngestion", () => httpApi.retryFailedIngestion("src/set-1/a.tar.gz", "the NAS came back")],
       ["reinstate", () => httpApi.reinstate("src/set-1/a.tar.gz")],
+      // EPIC K's ten calls (issue #788): six reads, the operation read
+      // beside them, and the four snapshot actions. Every one is listed
+      // here for the reason restoreCopy's own comment gives — a client
+      // method nobody drives from this list is invisible to the whole
+      // file — and each of them is also the thing that deletes its own
+      // name from UNREACHED_SERVER_OPERATIONS below.
+      ["listSnapshots", () => httpApi.listSnapshots("src", "set-1")],
+      ["getSnapshot", () => httpApi.getSnapshot("src", "set-1", "run-1")],
+      ["listSnapshotHolds", () => httpApi.listSnapshotHolds("src", "set-1")],
+      ["getSnapshotRetention", () => httpApi.getSnapshotRetention("src", "set-1")],
+      ["listRepositories", () => httpApi.listRepositories()],
+      ["getRepositoryMaintenance", () => httpApi.getRepositoryMaintenance("primary-nas")],
+      ["getOperation", () => httpApi.getOperation("op_1")],
+      // The four actions all post to /operations, and the header
+      // assertion above is what proves each one sends its idempotency
+      // key: they are on the same route as run_cycle, which the contract
+      // marks idempotencyKey: "required".
+      ["restoreSnapshot", () => httpApi.restoreSnapshot({
+        backupSetId: "src/set-1", snapshotId: "snap-1", targetPath: "/data/restores/x",
+        conflict: "refuse", configRevision: "rev-1", idempotencyKey: "idem-restore-snapshot"
+      })],
+      ["verifySnapshot", () => httpApi.verifySnapshot({
+        backupSetId: "src/set-1", runId: "run-1", level: "content_sample",
+        configRevision: "rev-1", idempotencyKey: "idem-verify-snapshot"
+      })],
+      ["holdSnapshot", () => httpApi.holdSnapshot({
+        backupSetId: "src/set-1", runId: "run-1", reason: "audit",
+        configRevision: "rev-1", idempotencyKey: "idem-hold-snapshot"
+      })],
+      ["releaseSnapshotHold", () => httpApi.releaseSnapshotHold({
+        backupSetId: "src/set-1", holdId: "hold-1",
+        configRevision: "rev-1", idempotencyKey: "idem-release-hold"
+      })],
       ["previewRetention", () => httpApi.previewRetention("src", "set-1")],
       ["applyRetention", () => httpApi.applyRetention("src", "set-1", "plan-1")],
       ["getBackupSetRetention", () => httpApi.getBackupSetRetention("src", "set-1")],
@@ -561,22 +594,20 @@ describe("every request the shared client makes is a declared operation", () => 
    * Asserted EXACTLY, like its counterpart, so the list can only shrink.
    */
   const UNREACHED_SERVER_OPERATIONS = [
-    // The six reads #788's API landed ahead of the screens that will
-    // show them: the incremental engine's snapshot list, one snapshot,
-    // its holds, its retention verdicts, repository health and
-    // repository maintenance. They are pinned here rather than
-    // exempted, because that is what makes this list SHRINK as each one
-    // is wired: an operation whose client call arrives has to be
-    // deleted from here or this assertion fails.
-    "getBackupSetSnapshot",
-    "getBackupSetSnapshotRetention",
-    "getOperation",
-    "getRepositoryMaintenance",
+    // Two left, and both are read by something that is not this client:
+    // getSession is the platform bridge's own call
+    // (platform/localSession.ts, which reads the envelope itself rather
+    // than going through httpApi), and getSystemCapabilities is answered
+    // from the bridge's capability model rather than fetched.
+    //
+    // The seven that used to sit here left with #788's UI wave: the
+    // snapshot list, one snapshot, its holds, its retention verdicts,
+    // repository health, repository maintenance and the by-id operation
+    // read. Each was pinned rather than exempted precisely so that
+    // wiring it FORCED an edit here — which is what makes this list a
+    // gate that can only shrink.
     "getSession",
-    "getSystemCapabilities",
-    "listBackupSetSnapshotHolds",
-    "listBackupSetSnapshots",
-    "listRepositories"
+    "getSystemCapabilities"
   ];
 
   it("pins the contract operations no client call reaches", () => {

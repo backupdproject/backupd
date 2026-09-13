@@ -57,6 +57,12 @@ import { RunControlNotice } from "@shared/components/RunControlNotice";
 import { useRunControls } from "@shared/hooks/useRunControls";
 import { useHoverTitle } from "@shared/hooks/useTooltips";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+// Issue #788 promoted this page's own Cell/Row out into components/ so
+// EPIC K's nine new screens could reuse them rather than copy them a
+// third time (docs/design/788-incremental-ui-mockup.md). The shapes are
+// unchanged, including the accessible-name gap this page's decision
+// recorded — see Definitions.tsx.
+import { Cell, Row } from "@shared/components/Definitions";
 import type { TooltipId } from "@shared/tooltips/tooltips";
 import { RetentionPreviewDialog } from "./RetentionPreviewDialog";
 import { BackupSetRetentionCard } from "./BackupSetRetentionCard";
@@ -1702,52 +1708,4 @@ const VALIDATION_TIPS: Record<"transfer" | "checksum" | "application", TooltipId
   application: "sets.detail.validation.application"
 };
 
-/**
- * The two label-and-value patterns this page states its facts in.
- *
- * Cell is a boxed summary tile; Row is a two-column grid whose dt and dd
- * are direct grid children, so it returns a fragment and must not wrap
- * them in anything.
- *
- * Neither gives its dt or its dd an accessible name, and that is a known
- * gap rather than an oversight. `<dt>` is role `term` and `<dd>` is role
- * `definition`, and both take their name from the author rather than from
- * their content, so every row here is unreachable by anything navigating
- * by role and every value is announced with nothing attached to it. The
- * fix is one line in each of these two functions (an id on the dt, an
- * aria-labelledby on the dd) and it was written, measured and taken back
- * out: four of this page's read-only labels are also the labels of its
- * inline EDIT fields (Host, User, Remote folder, Completion method), so
- * naming the values puts two elements with the same accessible name on
- * the page whenever edit mode is open. That is ambiguous for anything
- * looking a control up by its label, and deciding whether a read-only
- * value and an editable field may share a name is a decision about
- * backupSetEditFields.ts rather than about this file. See the pull
- * request that recorded it.
- */
-function Cell({ label, value, mono, tip }: { label: string; value: string; mono?: boolean; tip?: TooltipId }) {
-  return (
-    <div>
-      <dt className="eyebrow" style={{ fontSize: 10.5, letterSpacing: "0.06em" }}>{label}</dt>
-      {/* The host goes round the VALUE, inside the <dd>. A <dl> pairs its
-          terms with its definitions through its own children, so a
-          wrapper between them would be one an assistive technology has
-          to walk past to find the row. */}
-      <dd style={{ margin: "4px 0 0", fontFamily: mono ? "var(--font-mono)" : undefined }}>
-        {tip ? <InfoTooltip id={tip}><span>{value}</span></InfoTooltip> : value}
-      </dd>
-    </div>
-  );
-}
-
-function Row({ label, value, mono, tip }: { label: string; value: ReactNode; mono?: boolean; tip?: TooltipId }) {
-  return (
-    <>
-      <dt style={{ color: "var(--text-2)" }}>{label}</dt>
-      <dd className={mono ? "mono" : undefined} style={{ margin: 0 }}>
-        {tip ? <InfoTooltip id={tip}><span>{value}</span></InfoTooltip> : value}
-      </dd>
-    </>
-  );
-}
 

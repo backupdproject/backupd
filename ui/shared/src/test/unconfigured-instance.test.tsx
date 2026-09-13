@@ -71,20 +71,24 @@ async function go(label: string) {
  *  other create has. The gate itself is exercised in
  *  wizard-connection-test.test.tsx. */
 async function completeSetupForm() {
-  await userEvent.click(screen.getByRole("button", { name: "Authentication" }));
+  await userEvent.click(screen.getByRole("button", { name: "Connection test" }));
   await userEvent.click(screen.getByRole("radio", { name: /Import key/ }));
   await userEvent.type(screen.getByLabelText(/private key/i), "FAKE-TEST-KEY-MATERIAL-not-a-real-key-0123456789");
   await userEvent.click(screen.getByRole("button", { name: "Import key" }));
   await screen.findByText(/key imported/i);
 
-  await userEvent.click(screen.getByRole("button", { name: "Verify server" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Trust host" })).toBeEnabled());
   await userEvent.click(screen.getByRole("button", { name: "Trust host" }));
 
-  await userEvent.click(screen.getByRole("button", { name: "Review" }));
   await userEvent.click(screen.getByRole("button", { name: /^Test connection$/ }));
   await waitFor(() => expect(screen.getByText(/This source has been proven/i)).toBeInTheDocument());
+  await userEvent.click(screen.getByRole("button", { name: "Retention" }));
   await userEvent.click(screen.getByRole("checkbox", { name: /remote backup will be removed only after/i }));
+  // Back to Review, where the save controls are. The
+  // acknowledgement lives on the Retention step since #788 put it
+  // beside the retention chain and the source-deletion control it
+  // belongs with.
+  await userEvent.click(screen.getByRole("button", { name: "Review" }));
 }
 
 afterEach(() => {

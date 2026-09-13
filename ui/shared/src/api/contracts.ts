@@ -37,6 +37,23 @@ import type {
   VersionInfo
 } from "@shared/types/operation";
 import type { LiveActivity } from "@shared/types/activity";
+// EPIC K's incremental vocabulary (issue #788). Declared in
+// types/snapshot.ts beside types/backup.ts rather than here, because a
+// snapshot is a domain object this UI renders and not a property of the
+// transport: the pages import it from there, and this file is only where
+// the CALLS that produce one are declared.
+import type {
+  BackupEngine,
+  RepositoryFleet,
+  RepositoryMaintenance,
+  RestoreConflictPolicy,
+  Snapshot,
+  SnapshotDetail,
+  SnapshotHold,
+  SnapshotRetentionPreview,
+  SourceConsistency,
+  VerificationLevel
+} from "@shared/types/snapshot";
 
 /**
  * Every error code this frontend's backends can actually put on the wire,
@@ -364,6 +381,32 @@ export interface BackupSetPatch {
    *  refusal re-sends the body that was refused rather than re-reading the
    *  form (BackupSetDetailPage's `refusal` state). */
   acknowledgeHostKeyChange?: boolean;
+  /**
+   * EPIC K's editable incremental settings (issue #788).
+   *
+   * Four of the set's incremental fields are editable and two are not,
+   * and the split is not arbitrary: `engine` and `repositoryDomain` are
+   * create-only, because a set's history belongs to its engine and lives
+   * in the domain it was written to, so changing either would leave
+   * everything already collected behind and start a second, unrelated
+   * lineage. UpdateBackupSetRequest carries no field for either, so this
+   * type cannot offer one.
+   *
+   * What IS editable is the verification budget and the arrangement the
+   * operator has made on the source. Both are statements about how hard
+   * future runs are checked, not about where anything is stored, so
+   * changing them costs nothing already taken.
+   */
+  sourceConsistency?: SourceConsistency;
+  verificationLevel?: VerificationLevel;
+  /** The share of files a `content_sample` verification reads, 1..100.
+   *  Meaningless at the other three levels and simply ignored there. */
+  verificationSamplePercent?: number;
+  /** How often a run reads EVERY file regardless of the level above, in
+   *  seconds. 0 is "never raise the level on a cadence". */
+  verificationFullEverySeconds?: number;
+  /** How often a run performs a restore drill, in seconds. 0 is "never". */
+  verificationRestoreDrillEverySeconds?: number;
 }
 
 /** What a run cycle is doing for one backup set right now: the content of
@@ -445,6 +488,34 @@ export interface CreateBackupSetRequest {
    *  nothing. Sent only when the caller actually set it, so an ordinary
    *  create is never a pre-acknowledged one. */
   acknowledgeRepoint?: boolean;
+  /**
+   * EPIC K (issue #788): which engine this set runs, and the four
+   * answers only the incremental one has.
+   *
+   * `engine` is omitted for an artifact set rather than sent as
+   * "artifact", because omitted is what every create before this field
+   * existed meant and the service's own default is the same word. The
+   * four incremental fields are sent only for `engine: "kopia"`: a
+   * repository domain on an artifact set is a field the service would
+   * have to either refuse or ignore, and both are worse than not sending
+   * it.
+   *
+   * This is the ONE moment `engine` and `repositoryDomain` can be
+   * chosen. Neither is on UpdateBackupSetRequest, which is why the
+   * wizard says so out loud rather than letting an operator discover it
+   * when the edit form has no field for it.
+   */
+  engine?: BackupEngine;
+  /** The encrypted store this set's snapshots live in. A domain nothing
+   *  declares yet is created with the deployment's own defaults; joining
+   *  one that exists shares its key, its credential, its maintenance and
+   *  its blast radius with every other set in it. */
+  repositoryDomain?: string;
+  sourceConsistency?: SourceConsistency;
+  verificationLevel?: VerificationLevel;
+  verificationSamplePercent?: number;
+  verificationFullEverySeconds?: number;
+  verificationRestoreDrillEverySeconds?: number;
 }
 
 /** What a submitted run_cycle operation looks like from
@@ -1779,6 +1850,96 @@ export type RecoverySettingsUpdate = Omit<WireRecoverySettingsUpdate, "smtp"> & 
 };
 
 /**
+ * EPIC K's four mutating acts (issue #788), as submissions to POST
+ * /operations rather than routes of their own.
+ *
+ * Every one carries the same two tokens the run actions carry, and for
+ * the same reasons: `idempotencyKey` describes the RETRY (one key per
+ * logical submission, re-sent unchanged when an operator presses the
+ * button again), and `configRevision` is the revision the caller is
+ * displaying, so a screen that has been open while somebody edited the
+ * configuration is refused rather than acting against a setup nobody
+ * looking at it has seen.
+ *
+ * A hold is neither long-running nor expensive and is still an operation,
+ * which is the point: the durability is about the retry, not the
+ * duration.
+ */
+export interface SnapshotRestoreRequest {
+  /** The full "source/set" id, the one every surface in this product
+   *  prints. */
+  backupSetId: string;
+  /** The engine's manifest id. Omitted asks for this set's newest
+   *  known-good restore point, which is the only default that cannot
+   *  hand somebody a snapshot that failed its verification. */
+  snapshotId?: string;
+  /** A path INSIDE the snapshot, or omitted for the whole tree. */
+  sourcePath?: string;
+  /** Where the tree is written. A directory this deployment can reach —
+   *  never the original server, so a restore can never be the thing that
+   *  damages the source. */
+  targetPath: string;
+  /** Defaults to "refuse" server-side. The UI sends it explicitly
+   *  anyway, because the control that chooses it is the one place an
+   *  operator can ask for an overwrite and the request should say what
+   *  was asked for. */
+  conflict?: RestoreConflictPolicy;
+  configRevision: string;
+  idempotencyKey: string;
+}
+
+/** Prove, now, that a restore point is restorable, at a stated depth.
+ *  Records nothing onto the snapshot row: what a RUN proved is what that
+ *  run proved, and an on-demand check months later is a different claim
+ *  about a different moment, reported on the operation that performed
+ *  it. */
+export interface SnapshotVerifyRequest {
+  backupSetId: string;
+  /** Omitted verifies the newest snapshot. */
+  runId?: string;
+  /** Omitted verifies at the set's configured level. */
+  level?: VerificationLevel;
+  samplePercent?: number;
+  configRevision: string;
+  idempotencyKey: string;
+}
+
+/** Stop retention deleting one named snapshot until somebody releases the
+ *  hold. The reason is required by the service and by the product: a hold
+ *  nobody can attribute is one nobody dares release. */
+export interface SnapshotHoldRequest {
+  backupSetId: string;
+  runId: string;
+  reason: string;
+  configRevision: string;
+  idempotencyKey: string;
+}
+
+/** End one hold, by its id. Releasing deletes nothing; it returns the
+ *  snapshot to whatever the retention policy already said about it. */
+export interface SnapshotHoldReleaseRequest {
+  backupSetId: string;
+  holdId: string;
+  configRevision: string;
+  idempotencyKey: string;
+}
+
+/**
+ * What a snapshot action answers with: the durable operation, and the
+ * snapshots it is about.
+ *
+ * Both halves, because both are used. The operation is what the screen
+ * then WATCHES (a restore and a verify run for minutes), and the
+ * snapshots are what a hold or a release changed, so a dialog can close
+ * onto the new truth rather than onto a re-read that may not have landed
+ * yet.
+ */
+export interface SnapshotOperationResult {
+  operation: Operation;
+  snapshots: Snapshot[];
+}
+
+/**
  * Everything this frontend can ask a backend to do.
  *
  * Two implementations satisfy it and both are real: httpApi talks to a
@@ -2133,6 +2294,85 @@ export interface BackupdApi {
     policy: RetentionOverride
   ): Promise<BackupSetRetention>;
   clearBackupSetRetention(source: string, set: string): Promise<BackupSetRetention>;
+
+  /**
+   * EPIC K's five incremental reads (issue #788), all of them read-only
+   * and none of them cached.
+   *
+   * The three per-set reads are sub-resources of the backup set because
+   * that is what they are: a snapshot belongs to exactly one set, its
+   * identity is only meaningful inside that set's lineage, and every one
+   * of these is refused with BACKUP_SET_NOT_INCREMENTAL for a set that
+   * stores artifacts instead. A surface therefore has to know which
+   * engine a set runs BEFORE it asks — which is why BackupSet.engine is
+   * on the list read, not only here.
+   *
+   * `source` and `set` are passed apart rather than as a joined id for
+   * the reason every other route in this interface takes them apart: the
+   * two halves are URL-encoded independently, and a set name containing
+   * a slash cannot survive being rejoined.
+   */
+  listSnapshots(source: string, set: string): Promise<Snapshot[]>;
+  /** One run by its `runId` — never by manifest id, which a failed run
+   *  does not have. Carries the transition log, which the list
+   *  deliberately does not: it is unbounded per run and nothing on a list
+   *  renders it. Refuses with SNAPSHOT_NOT_FOUND for a run this set never
+   *  had. */
+  getSnapshot(source: string, set: string, runId: string): Promise<SnapshotDetail>;
+  /** Every unreleased hold in this set's snapshot lineage. */
+  listSnapshotHolds(source: string, set: string): Promise<SnapshotHold[]>;
+  /** What snapshot retention would decide right now, oldest first. A
+   *  PREVIEW that changes nothing.
+   *
+   *  Not `previewRetention`, and the two must never be confused: that one
+   *  is FR-18's artifact retention plan, which can be APPLIED by plan id.
+   *  This one is the incremental pruner's own per-snapshot verdict and
+   *  has no apply route at all — snapshots are expired by the engine's
+   *  own pass, and the only operator control over one is a hold. */
+  getSnapshotRetention(source: string, set: string): Promise<SnapshotRetentionPreview>;
+  /** Every repository domain this deployment declares, with its health.
+   *  Deliberately uncached: a cached repository verdict keeps reporting
+   *  green after the storage under it has gone away, which is the one
+   *  moment the answer matters. */
+  listRepositories(): Promise<RepositoryFleet>;
+  /** One domain's maintenance state. Opens no storage at all — the
+   *  ownership record is a file this deployment writes beside its own
+   *  state — which is what makes it answerable in the case an operator
+   *  asks in: the repository is usually the thing that is not answering.
+   *  Refuses with REPOSITORY_DOMAIN_NOT_FOUND for a domain nothing
+   *  declares. */
+  getRepositoryMaintenance(domain: string): Promise<RepositoryMaintenance>;
+
+  /**
+   * One durable operation by id, for watching work that outlives the
+   * request.
+   *
+   * The list read beside it (`listOperations`) is what the app-wide poll
+   * owns; this is the narrow one a restore or a verify screen polls while
+   * it is on screen, because a page watching one operation should not
+   * have to re-read every operation in the deployment to find it.
+   */
+  getOperation(id: string): Promise<Operation>;
+
+  /**
+   * EPIC K's four mutating acts (issue #788). Every one is a submission
+   * to POST /operations with its own parameter object, so every one is
+   * durable, idempotency-keyed and revision-checked — and the CLI submits
+   * exactly the same four, which is what keeps CLI/Web parity honest
+   * rather than aspirational.
+   *
+   * Refusals are typed and each sends an operator somewhere different:
+   * SNAPSHOT_NOT_FOUND (the run is gone or was never here),
+   * SNAPSHOT_HOLD_NOT_FOUND (somebody else released it),
+   * BACKUP_SET_NOT_INCREMENTAL (an artifact set has no snapshots at all),
+   * plus the four this route has always answered —
+   * CONFIG_REVISION_STALE, IDEMPOTENCY_KEY_CONFLICT,
+   * DESTRUCTIVE_OPERATIONS_DISABLED and OPERATION_ALREADY_RUNNING.
+   */
+  restoreSnapshot(req: SnapshotRestoreRequest): Promise<SnapshotOperationResult>;
+  verifySnapshot(req: SnapshotVerifyRequest): Promise<SnapshotOperationResult>;
+  holdSnapshot(req: SnapshotHoldRequest): Promise<SnapshotOperationResult>;
+  releaseSnapshotHold(req: SnapshotHoldReleaseRequest): Promise<SnapshotOperationResult>;
 
   /** Issue #140 (B3.7): the settings surface. getSettings reads the
    *  policy in effect plus the schema it is validated against;
