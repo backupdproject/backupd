@@ -451,6 +451,151 @@ func TestASetConfiguredForADrillWithNowhereToRunItNeverStartsARun(t *testing.T) 
 	}
 }
 
+// TestACrashDuringARestoreDrillIsRecoveredRatherThanFailed is the
+// crash-during-restore boundary with a real repository, a real snapshot
+// and a real restore, which is the only place the defect it pins is
+// visible.
+//
+// The story is one power cut. A run configured for restore drills commits
+// its manifest, starts restoring the snapshot into its drill directory
+// and the machine goes away mid-file. On the way back up the
+// reconciliation pass has to prove that snapshot to the level the row was
+// admitted under -- so it drills again, with Overwrite=false, and the
+// first implementation pointed it at the directory the crash had filled
+// with partial files. The restore failed on the first one, and an INTACT
+// committed snapshot was moved to FAILED: a restore point thrown away
+// because of the wreckage of the attempt that crashed.
+//
+// Nothing here is faked. The snapshot is real, the partial restore on the
+// disk is real, and the assertion is the operator's: after the restart
+// the row is SUCCESS and the set has a restore point.
+func TestACrashDuringARestoreDrillIsRecoveredRatherThanFailed(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	f := newFixture(t)
+
+	// The manifest the crashed run committed, written the way the driver
+	// writes it so the row below names a snapshot that really is there.
+	info, err := f.repo.SnapshotTree(ctx, backupengine.TreeSnapshotRequest{
+		Source:      f.source,
+		Root:        localTree(f.srcDir).Root(),
+		Description: "the run that died during its drill",
+		Tags: map[string]string{
+			backupengine.TagKeyBackupSet: f.set.String(),
+			backupengine.TagKeyDomain:    f.loc.Domain.String(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("storing the snapshot the crashed run committed: %v", err)
+	}
+
+	const runID = "run-1"
+
+	seedCrashedDrill(t, f, runID, string(info.ID))
+
+	// What the crash left on the disk: the drill's directory, holding
+	// the beginning of one of the snapshot's own files. The partial
+	// content matters -- a restore with Overwrite=false refuses a file
+	// that exists, whatever is in it.
+	drills := filepath.Join(t.TempDir(), "drills")
+	abandoned := filepath.Join(drills, "restore-drill-"+runID)
+	writeFile(t, filepath.Join(abandoned, "dir-0", "file-0.bin"), []byte("the first few bytes of a restore that never finished"))
+
+	rec := &snapshotlifecycle.Reconciler{
+		Catalog:      f.journal,
+		Verification: snapshotlifecycle.VerificationOptions{DrillDir: drills},
+	}
+
+	report, err := rec.Reconcile(ctx, snapshotlifecycle.ReconcileRequest{
+		Set:            f.set,
+		Domain:         f.loc.Domain,
+		Source:         f.source,
+		SourceIdentity: model.SourceIdentity("ab12cd34"),
+		Repository:     f.repo,
+	})
+	if err != nil {
+		t.Fatalf("reconciling after the crash: %v", err)
+	}
+
+	run, err := f.journal.GetSnapshotRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("reading the recovered row: %v", err)
+	}
+
+	if run.Phase != state.PhaseSuccess {
+		t.Fatalf("the interrupted drill run ended at %s with verdicts %+v; its snapshot is intact and the only thing in the way was a partial restore on the disk",
+			run.Phase, report.Verdicts)
+	}
+
+	// The recovery proved the rung the row was admitted under, by really
+	// restoring the snapshot somewhere else and hashing it.
+	if got := model.VerificationLevel(run.VerificationLevelAchieved); got != model.LevelRestoreDrill {
+		t.Errorf("the recovered row records %q as proved; the row was admitted at %q", got, model.LevelRestoreDrill)
+	}
+
+	lkg, err := f.journal.LastKnownGoodSnapshot(ctx, f.set)
+	if err != nil {
+		t.Fatalf("reading last-known-good after the recovery: %v", err)
+	}
+
+	if lkg.RunID != runID {
+		t.Errorf("the set's restore point is run %q; the recovered run is %q", lkg.RunID, runID)
+	}
+
+	// The proven snapshot needs no scratch trees: the fresh attempt and
+	// the wreckage of the crashed one both go.
+	if entries, err := os.ReadDir(drills); err == nil && len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+
+		t.Errorf("the drill directory still holds %v after a recovery that proved the snapshot; every one of those is a copy of somebody's data", names)
+	}
+}
+
+// seedCrashedDrill puts a row on the catalog exactly where a crash during
+// a restore drill leaves one: configured for a drill, manifest committed,
+// nothing verified.
+//
+// It writes through the journal's own API rather than SQL, walking the
+// same edges a live run walks, so the row it leaves is one the state
+// machine could really have produced.
+func seedCrashedDrill(t *testing.T, f *fixture, runID, snapshotID string) {
+	t.Helper()
+
+	ctx := context.Background()
+	at := time.Date(2026, 9, 12, 9, 0, 0, 0, time.UTC)
+
+	if _, err := f.journal.BeginSnapshotRun(ctx, state.SnapshotRunRequest{
+		RunID:             runID,
+		IdempotencyKey:    runID,
+		Set:               f.set,
+		Engine:            model.EngineKopia.String(),
+		Domain:            f.loc.Domain.String(),
+		SourceIdentity:    "ab12cd34",
+		ConsistencyMode:   string(model.ModeLiveBestEffort),
+		VerificationLevel: string(model.LevelRestoreDrill),
+		StartedAt:         at,
+	}); err != nil {
+		t.Fatalf("seeding the crashed run: %v", err)
+	}
+
+	phases := []state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted}
+
+	for i, phase := range phases {
+		upd := state.SnapshotRunUpdate{At: at.Add(time.Duration(i+1) * time.Second)}
+		if phase == state.PhaseManifestCommitted {
+			upd.SnapshotID = &snapshotID
+		}
+
+		if err := f.journal.AdvanceSnapshotRun(ctx, runID, phase, upd); err != nil {
+			t.Fatalf("seeding %s: %v", phase, err)
+		}
+	}
+}
+
 // --- a source tree on the local disk -------------------------------------
 
 // localTree is the smallest honest SourceTree: a real directory, walked

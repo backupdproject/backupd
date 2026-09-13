@@ -49,27 +49,40 @@ The four rungs, over one walk of the snapshot tree:
 | Level | What it does | What it finds |
 |---|---|---|
 | `structural` | walks the manifest's tree, resolves every content identifier through the index | a manifest or tree that does not resolve |
-| `content_sample` | the above, plus the existence of every backing pack blob, plus a **stride** sample of file content read, decrypted, decompressed and hash-checked | content the repository references and no longer has, without reading the whole tree |
+| `content_sample` | the above, plus the existence of every backing pack blob, plus a deterministic **count** of file content read, decrypted, decompressed and hash-checked | content the repository references and no longer has, without reading the whole tree |
 | `content_full` | the above with every file read | damage inside a blob that is still present |
 | `restore_drill` | restores the snapshot to a real directory through the real restore path, hashes every restored file against the repository's own bytes, and refuses anything under the target the snapshot did not name | a restore path that truncates, stubs, misplaces or invents files |
 
-Three of those decisions are worth their sentences:
+Four of those decisions are worth their sentences:
 
-- **The sample is a stride, not a coin flip.** The vendor's verifier
-  samples with `100*rand.Float64() < percent`, so two runs of one
-  configuration read different amounts and, on a small tree, one of them
-  reads nothing while the catalog still records `content_sample`. A
-  stride reads a stated fraction of the files every time, always
-  including the first, so a row that says a sample happened means a
-  sample happened.
+- **The sample is a count, not a coin flip and not a stride.** The
+  vendor's verifier samples with `100*rand.Float64() < percent`, so two
+  runs of one configuration read different amounts and, on a small tree,
+  one of them reads nothing while the catalog still records
+  `content_sample`. A stride of `ceil(100/percent)` fixes the randomness
+  and introduces a worse problem: it answers 51% and 99% identically —
+  every second file — so a deployment that raises its sampling because an
+  audit asked for it gets the check it already had, and no row says so.
+  The selection is therefore exactly `ceil(files*percent/100)` of the
+  files the walk finds, always including the first, so a row that says a
+  51% sample happened means 51% of the files were read.
 - **Sampling is a percentage of files, not of bytes.** Damage arrives per
   file; a byte-proportional sample spends its whole budget inside the
   largest file and never looks at the others.
 - **The blob-existence check belongs to the sampled rung, not the
   structural one.** It is what finds a pack blob deleted from a bucket
-  without reading a single file — but it costs a listing of the
-  repository's storage, which the rung that runs on every single backup
-  must not pay.
+  without reading a single file, and it costs one existence check per
+  distinct pack the snapshot references — real storage traffic, which the
+  rung that runs on every single backup must not pay. It is deliberately
+  NOT a listing of the repository: heap and request count belong to the
+  snapshot being verified, not to the history of every set sharing the
+  domain.
+- **A rung that read nothing reports `structural`.** A tree of
+  directories with no files in it passes every rung vacuously — the
+  content read has nothing to read, the drill has nothing to restore — and
+  a row claiming `restore_drill` over zero restored files would hand
+  last-known-good to a check that touched no byte. The achieved level is
+  what was performed, so it degrades to the rung that really was.
 
 ### 2. The success policy
 
@@ -94,10 +107,20 @@ Three of those decisions are worth their sentences:
   is an operator's instruction, and a cadence is this product's own idea
   about when to look harder — an idea of ours must never fail somebody's
   backup.
-- **A passing drill's restored tree is deleted; a failing drill's is
+- **A passing drill's restored trees are deleted; a failing drill's are
   kept.** The first is a second copy of somebody's data on a disk they
   pay for; the second is the only available evidence of what a restore of
   this snapshot actually produces.
+- **Every drill attempt gets its own fresh directory.** A drill restores
+  with `Overwrite=false` — a verification that can overwrite is a
+  verification that can destroy data — so a run that died mid-restore left
+  partial files, and a recovery pass restoring into the same
+  `restore-drill-<runID>` failed on the first file that was already
+  there: an intact committed snapshot moved to FAILED over the wreckage
+  of the attempt that crashed. Each attempt therefore allocates
+  `restore-drill-<runID>.attempt-N` beside the old one, the old one is
+  left alone while nothing is proven, and once the snapshot IS proven
+  every attempt directory for that run is removed together.
 - **A recovery pass proves the level the row was admitted under**, with
   no cadence escalation: re-verifying at today's configured level would
   fail a good snapshot whenever somebody raised a set's level between the
@@ -130,10 +153,10 @@ the thing that must keep existing:
 | path traversal and symlink escape, end to end through the real engine and the real restore path, plus a fuzz target over entry names | `internal/backupengine/kopia/adversarial_test.go` |
 | source-mutation determinism at the engine boundary | same |
 | the crash matrix over every state-machine boundary, walked from the phase table and `VerdictKinds()` rather than from a list | `internal/snapshotlifecycle/crashmatrix_test.go` |
-| the success policy: configured floor, cadence, drill evidence, recovery level | `internal/snapshotlifecycle/verification_test.go` |
-| the levels, reuse and damage proved through the real driver on the real catalog against a real repository | `tests/verificationmatrix` |
-| the ladder, reuse and a blob listing over a real S3 API, on an ephemeral MinIO container | `tests/miniointegration/kopiaverification_test.go` |
-| a large flat namespace within a bound | `internal/backupengine/kopia/largenamespace_test.go` |
+| the success policy: configured floor, cadence, drill evidence, per-attempt drill directories, recovery level | `internal/snapshotlifecycle/verification_test.go` |
+| the levels, reuse, damage and a crash DURING a drill's restore, proved through the real driver on the real catalog against a real repository | `tests/verificationmatrix` |
+| the ladder, reuse and a deleted pack object over a real S3 API, on an ephemeral MinIO container the CI job is required to bring up | `tests/miniointegration/kopiaverification_test.go` |
+| a large flat namespace within a bound, and a sampled verification's heap bounded by the snapshot rather than by the repository | `internal/backupengine/kopia/largenamespace_test.go`, `verify_test.go` |
 
 One production refusal came out of writing them: an entry name
 containing a NUL byte was accepted, stored perfectly, and then could not
@@ -151,10 +174,11 @@ is the only point at which refusing it costs nothing.
   where it previously succeeded with an overstated row. That is the
   intended direction, and it is visible: the reason names both levels.
 - `content_sample` is the rung most deployments should run nightly, and
-  its cost is one storage listing plus a stated fraction of the tree.
-  The listing is proportional to the number of blobs, which on a large
-  bucket is a real number of requests; a deployment that cannot afford
-  it can configure `structural` and a full read on a cadence.
+  its cost is one existence check per pack the snapshot references plus a
+  stated fraction of the tree read back. Both are proportional to the
+  SNAPSHOT: a set verifying a small tree in a domain holding years of
+  other sets' history pays for its own tree and nothing else, in requests
+  and in memory.
 - Verification reads no cache by design (ADR 0011's `connectOptions`), so
   every rung above structural pays real storage traffic. That is what
   makes the corruption fixtures meaningful and it is not free.

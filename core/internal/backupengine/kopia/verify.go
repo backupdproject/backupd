@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -46,9 +45,9 @@ import (
 //   - its sampling is a coin flip per file (100*rand.Float64() <
 //     VerifyFilesPercent), so two runs of the same configuration read
 //     different amounts, and on a small tree a sampled run reads nothing
-//     at all while the catalog records content_sample. A stride reads a
-//     stated fraction, deterministically, and its report means what it
-//     says.
+//     at all while the catalog records content_sample. A COUNT -- exactly
+//     ceil(files*percent/100) of the files the walk finds -- reads the
+//     stated fraction, and its report means what it says.
 //   - it offers no way to separate "the structure resolves" from "the
 //     bytes are there", which is exactly the distinction between the
 //     first two rungs.
@@ -98,25 +97,30 @@ func (r *repository) Verify(ctx context.Context, id backupengine.SnapshotID, req
 		return backupengine.VerifyReport{}, fmt.Errorf("resolving snapshot root: %w", err)
 	}
 
-	// The blob map is read ONCE, before the walk, and it is the
-	// repository-integrity half of every rung above structural: a
-	// repository's index can name a pack blob that is no longer in the
-	// bucket, and no amount of reading the files that happen to be
-	// sampled will find the ones that are not. Reading it is one listing
-	// of the storage, which is why the structural rung -- the one that
-	// runs on every single backup -- does not pay for it.
-	var blobs map[blob.ID]blob.Metadata
+	// Every rung above structural proves that the pack blobs the
+	// snapshot's content lives in are really in the storage: an index can
+	// happily reference a pack file that is no longer in the bucket, and
+	// no amount of reading the files that happen to be sampled will find
+	// the ones that are not.
+	//
+	// It is one existence check per DISTINCT pack this snapshot
+	// references, cached, and never a listing of the repository. The
+	// first implementation read blob.ReadBlobMap before the walk, which
+	// is a map of every blob in the WHOLE repository: in a shared domain
+	// holding years of history, a 5% sample of one small snapshot paid
+	// for the entire blob namespace in heap before it resolved a single
+	// object, and the cost grew with everybody else's data. Heap here is
+	// bounded by the snapshot being verified, which is the only thing
+	// this call is about.
+	var packs *packPresence
 
 	if plan.checkBlobs {
-		blobs, err = blob.ReadBlobMap(ctx, r.direct.BlobReader())
-		if err != nil {
-			return backupengine.VerifyReport{}, fmt.Errorf("listing the repository's blobs for verification: %w", err)
-		}
+		packs = newPackPresence(r.direct.BlobReader())
 	}
 
 	tally := &verifyTally{}
 
-	walkErr := r.walkForVerification(ctx, root, plan, blobs, tally)
+	walkErr := r.walkForVerification(ctx, root, plan, packs, tally)
 
 	// The drill runs only if the walk is happy. Restoring a tree whose
 	// structures already failed to resolve would spend a full restore to
@@ -136,7 +140,7 @@ func (r *repository) Verify(ctx context.Context, id backupengine.SnapshotID, req
 		return report, fmt.Errorf("verifying snapshot %s at level %s: %w", id, plan.level, walkErr)
 	}
 
-	report.Level = plan.achieved()
+	report.Level = plan.achieved(report)
 
 	return report, nil
 }
@@ -149,9 +153,11 @@ func (r *repository) Verify(ctx context.Context, id backupengine.SnapshotID, req
 type verifyPlan struct {
 	level model.VerificationLevel
 
-	// readStride is how often a file's stored bytes are read back: 0
-	// never, 1 every file, k every kth file. See sampleStride.
-	readStride int
+	// readPercent is what fraction of the files the walk finds have their
+	// stored bytes read back: 0 none, 100 every one of them. See
+	// samplePercent for how a percentage becomes a selection, and
+	// verifyEntry for the selection itself.
+	readPercent int
 
 	// checkBlobs asks for every backing blob a file's content lives in to
 	// be proven present in the storage.
@@ -162,15 +168,31 @@ type verifyPlan struct {
 	restoreTo string
 }
 
-// achieved is the level this plan proves when it completes.
+// achieved is the level this plan PROVED, read off what the pass actually
+// did rather than off what it set out to do.
 //
-// The one case where it is not the level asked for is a sample of one
-// hundred percent, which is a full content read by any honest description
-// and is recorded as one. Claiming less than was done would make a row
-// understate the evidence behind it, and the ladder is only useful if a
-// row means exactly what happened.
-func (p verifyPlan) achieved() model.VerificationLevel {
-	if p.level == model.LevelContentSample && p.readStride == 1 {
+// Two cases are not the level asked for, and both exist so that a catalog
+// row means exactly what happened:
+//
+//   - a sample of one hundred percent is a full content read by any honest
+//     description and is recorded as one. Claiming less than was done
+//     would make a row understate the evidence behind it.
+//   - a content rung that read NO file, or a drill that restored NO file,
+//     proved only that the structure resolves, and that is what it
+//     reports. A tree of directories with no files in it passes every
+//     rung vacuously, and a row saying restore_drill over zero restored
+//     files would hand last-known-good to a check that touched not one
+//     byte. This is VerifyReport.Level's documented contract -- the level
+//     actually performed -- rather than a safety margin on top of it.
+func (p verifyPlan) achieved(report backupengine.VerifyReport) model.VerificationLevel {
+	switch {
+	case p.restoreTo != "" && report.FilesRestored == 0:
+		return model.LevelStructural
+
+	case p.readPercent > 0 && report.FilesVerified == 0:
+		return model.LevelStructural
+
+	case p.level == model.LevelContentSample && p.readPercent >= 100:
 		return model.LevelContentFull
 	}
 
@@ -183,26 +205,26 @@ func planVerification(req backupengine.VerifyRequest) (verifyPlan, error) {
 	case model.LevelStructural:
 		// The rung that runs on every backup: the manifest loads, the
 		// tree walks, and every content identifier it names resolves
-		// through the index. No blob listing and no bytes, which is what
+		// through the index. No blob checks and no bytes, which is what
 		// makes it affordable -- and what makes it not a content check.
 		return verifyPlan{level: req.Level}, nil
 
 	case model.LevelContentSample:
 		return verifyPlan{
-			level:      req.Level,
-			readStride: sampleStride(req.SamplePercent),
-			checkBlobs: true,
+			level:       req.Level,
+			readPercent: samplePercent(req.SamplePercent),
+			checkBlobs:  true,
 		}, nil
 
 	case model.LevelContentFull:
-		return verifyPlan{level: req.Level, readStride: 1, checkBlobs: true}, nil
+		return verifyPlan{level: req.Level, readPercent: 100, checkBlobs: true}, nil
 
 	case model.LevelRestoreDrill:
 		if req.RestoreTarget == "" {
 			return verifyPlan{}, backupengine.ErrRestoreTargetRequired
 		}
 
-		// Deliberately readStride 0: the drill reads every byte twice
+		// Deliberately readPercent 0: the drill reads every byte twice
 		// already -- once through the restore path onto the disk, once
 		// back out of the repository to compare against it -- and a third
 		// full read by the walk would buy nothing the comparison does not
@@ -215,25 +237,43 @@ func planVerification(req backupengine.VerifyRequest) (verifyPlan, error) {
 	}
 }
 
-// sampleStride turns a percentage of files into "read every kth file".
-//
-// A stride rather than a probability, for the reason the file's own doc
-// gives: a sampled verification is written into a catalog row as a claim,
-// and a claim whose size depends on a random number is a claim that
-// occasionally covers nothing. The stride also guarantees the floor that
-// matters -- the first file is always read -- so a content_sample row is
-// never a structural pass wearing a different name.
-func sampleStride(percent int) int {
+// samplePercent normalises a requested percentage to the 1..100 the rest
+// of the file works in: silence is the documented default, and anything
+// above a hundred is a full read rather than an error, which is
+// VerifyRequest.SamplePercent's own contract.
+func samplePercent(percent int) int {
 	if percent <= 0 {
-		percent = backupengine.DefaultVerifySamplePercent
+		return backupengine.DefaultVerifySamplePercent
 	}
 
-	if percent >= 100 {
-		return 1
-	}
-
-	return int(math.Ceil(100 / float64(percent)))
+	return min(percent, 100)
 }
+
+// sampled reports whether the nth file the walk found (1-based) is one of
+// the ones this plan reads.
+//
+// The rule is a COUNT and not a stride, and the difference is the whole
+// reason this function exists: ceil(100/percent) answers 51% and 99% with
+// "every second file", so a set that raised its sampling to 99% got the
+// check it had at 50% and the row still said content_sample. Selecting n
+// when ceil(n*percent/100) exceeds ceil((n-1)*percent/100) reads exactly
+// ceil(N*percent/100) of N files, at every N, which is the smallest count
+// that cannot understate the percentage. It also keeps the floor that
+// matters -- the first file is always selected, so a content_sample row is
+// never a structural pass wearing a different name -- and it needs no
+// knowledge of N, which the walk does not have until it has finished.
+func (p verifyPlan) sampled(n int64) bool {
+	if p.readPercent >= 100 {
+		return true
+	}
+
+	pct := int64(p.readPercent)
+
+	return ceilDiv(n*pct, 100) > ceilDiv((n-1)*pct, 100)
+}
+
+// ceilDiv is integer division rounded up, for non-negative numerators.
+func ceilDiv(a, b int64) int64 { return (a + b - 1) / b }
 
 // verifyTally is what a verification counted, safe to update from the
 // walker's workers.
@@ -246,20 +286,85 @@ type verifyTally struct {
 	restored atomic.Int64
 	matched  atomic.Int64
 
+	// packs is how many distinct pack blobs were proven present, which is
+	// the number BlobsChecked reports. It is a count rather than a set
+	// because packPresence already holds the set it is counting.
+	packs atomic.Int64
+
 	mu       sync.Mutex
-	blobs    map[blob.ID]struct{}
 	findings []string
 }
 
-func (t *verifyTally) blob(id blob.ID) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+// packPresence proves that pack blobs exist in the storage, one check per
+// distinct pack, and remembers only the packs it was asked about.
+//
+// That bound is the point. The alternative, and what this replaced, is
+// blob.ReadBlobMap: one listing of the WHOLE repository into a map before
+// the walk starts, so verifying one small snapshot in a domain holding
+// years of other sets' history paid for all of it in heap, and the price
+// grew with data this verification never touches. A pack either is or is
+// not there, and asking about the packs the snapshot names answers exactly
+// the question the rung is asking.
+//
+// It is shared across the walker's workers, so both maps are guarded, and
+// the storage call deliberately happens OUTSIDE the lock: holding it
+// across a HEAD request to an object store would serialise a parallel
+// walk behind one round trip at a time. Two workers racing on the same
+// pack may both ask, which costs one duplicate check and cannot produce a
+// different answer.
+type packPresence struct {
+	reader blob.Reader
 
-	if t.blobs == nil {
-		t.blobs = map[blob.ID]struct{}{}
+	mu      sync.Mutex
+	present map[blob.ID]struct{}
+	missing map[blob.ID]struct{}
+}
+
+func newPackPresence(reader blob.Reader) *packPresence {
+	return &packPresence{
+		reader:  reader,
+		present: map[blob.ID]struct{}{},
+		missing: map[blob.ID]struct{}{},
+	}
+}
+
+// prove reports whether this pack is in the storage, asking at most once
+// per pack and reporting whether this call was the first to prove it.
+func (p *packPresence) prove(ctx context.Context, id blob.ID) (first bool, err error) {
+	p.mu.Lock()
+
+	if _, ok := p.present[id]; ok {
+		p.mu.Unlock()
+
+		return false, nil
 	}
 
-	t.blobs[id] = struct{}{}
+	if _, ok := p.missing[id]; ok {
+		p.mu.Unlock()
+
+		return false, blob.ErrBlobNotFound
+	}
+
+	p.mu.Unlock()
+
+	_, statErr := p.reader.GetMetadata(ctx, id)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if statErr != nil {
+		p.missing[id] = struct{}{}
+
+		return false, fmt.Errorf("checking pack blob %q: %w", id, statErr)
+	}
+
+	if _, already := p.present[id]; already {
+		return false, nil
+	}
+
+	p.present[id] = struct{}{}
+
+	return true, nil
 }
 
 // finding records one thing that is wrong, up to the error budget.
@@ -282,7 +387,7 @@ func (t *verifyTally) report() backupengine.VerifyReport {
 		ObjectsVerified: t.objects.Load(),
 		FilesVerified:   t.filesRead.Load(),
 		BytesVerified:   t.bytesRead.Load(),
-		BlobsChecked:    int64(len(t.blobs)),
+		BlobsChecked:    t.packs.Load(),
 		FilesRestored:   t.restored.Load(),
 		HashesMatched:   t.matched.Load(),
 		Errors:          append([]string(nil), t.findings...),
@@ -294,13 +399,13 @@ func (r *repository) walkForVerification(
 	ctx context.Context,
 	root fs.Entry,
 	plan verifyPlan,
-	blobs map[blob.ID]blob.Metadata,
+	packs *packPresence,
 	tally *verifyTally,
 ) error {
 	tw, err := snapshotfs.NewTreeWalker(ctx, snapshotfs.TreeWalkerOptions{
 		MaxErrors: verifyErrorBudget,
 		EntryCallback: func(ctx context.Context, e fs.Entry, oid object.ID, entryPath string) error {
-			return r.verifyEntry(ctx, e, oid, entryPath, plan, blobs, tally)
+			return r.verifyEntry(ctx, e, oid, entryPath, plan, packs, tally)
 		},
 	})
 	if err != nil {
@@ -331,7 +436,7 @@ func (r *repository) verifyEntry(
 	oid object.ID,
 	entryPath string,
 	plan verifyPlan,
-	blobs map[blob.ID]blob.Metadata,
+	packs *packPresence,
 	tally *verifyTally,
 ) error {
 	// Cancellation is observed HERE, per entry, because the walker
@@ -361,30 +466,34 @@ func (r *repository) verifyEntry(
 		return fmt.Errorf("the stored structure of %s does not resolve: %w", entryPath, err)
 	}
 
-	if blobs != nil {
+	if packs != nil {
 		for _, cid := range contentIDs {
 			info, err := r.rep.ContentInfo(ctx, cid)
 			if err != nil {
 				return fmt.Errorf("content %v of %s cannot be looked up: %w", cid, entryPath, err)
 			}
 
-			if _, ok := blobs[info.PackBlobID]; !ok {
-				return fmt.Errorf("%s is stored in blob %q, which this repository's storage does not hold",
-					entryPath, info.PackBlobID)
+			first, err := packs.prove(ctx, info.PackBlobID)
+			if err != nil {
+				return fmt.Errorf("%s is stored in blob %q, which this repository's storage does not hold: %w",
+					entryPath, info.PackBlobID, err)
 			}
 
-			tally.blob(info.PackBlobID)
+			if first {
+				tally.packs.Add(1)
+			}
 		}
 	}
 
-	if plan.readStride == 0 {
+	if plan.readPercent == 0 {
 		return nil
 	}
 
-	// The stride is over files SEEN rather than over a random number, so
-	// a walk that finds n files reads exactly ceil(n/stride) of them
-	// however the walker happens to order them.
-	if n := tally.seen.Add(1) - 1; n%int64(plan.readStride) != 0 {
+	// The selection is over the files SEEN rather than over a random
+	// number, so a walk that finds n files reads exactly
+	// ceil(n*percent/100) of them however the walker happens to order
+	// them. See verifyPlan.sampled.
+	if !plan.sampled(tally.seen.Add(1)) {
 		return nil
 	}
 

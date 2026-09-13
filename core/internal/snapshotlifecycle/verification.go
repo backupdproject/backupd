@@ -2,9 +2,13 @@ package snapshotlifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/backupdproject/backupd/core/internal/backupengine"
@@ -100,9 +104,15 @@ type verification struct {
 
 	sample int
 
-	// target is where a drill restores, empty when this run is not
-	// drilling.
+	// target is where THIS attempt's drill restores, empty when this run
+	// is not drilling. See drillTarget: it is a fresh directory every
+	// time, never one an earlier attempt may have left files in.
 	target string
+
+	// drillDir and runID are what discardDrillOutput needs in order to
+	// find the directories earlier attempts of the same run abandoned.
+	drillDir string
+	runID    string
 }
 
 // planVerification decides what one run proves, from the set's configured
@@ -126,13 +136,16 @@ func planVerification(
 		level = deeper(level, model.LevelRestoreDrill)
 	}
 
-	v := verification{requested: level, required: configured, sample: opts.SamplePercent}
+	v := verification{
+		requested: level,
+		required:  configured,
+		sample:    opts.SamplePercent,
+		drillDir:  opts.DrillDir,
+		runID:     runID,
+	}
 
 	if level == model.LevelRestoreDrill {
-		// One directory per run, named by the run, so a drill that failed
-		// can be found afterwards and two runs can never restore into
-		// each other's output.
-		v.target = filepath.Join(opts.DrillDir, "restore-drill-"+runID)
+		v.target = drillTarget(opts.DrillDir, runID)
 	}
 
 	return v
@@ -197,13 +210,104 @@ func (v verification) run(ctx context.Context, repo Repository, id backupengine.
 	return report.Level, report, nil
 }
 
-// discardDrillOutput removes a successful drill's restored tree.
+// drillDirPrefix and drillAttemptInfix name the directories one run's
+// drill attempts restore into: restore-drill-<runID> for the first, and
+// restore-drill-<runID>.attempt-N for every one after it.
+//
+// The names are structured rather than random because they are read by
+// people: an operator looking at a set that keeps failing its drill needs
+// to be able to tell which directory belongs to which run, and in what
+// order the attempts happened.
+const (
+	drillDirPrefix    = "restore-drill-"
+	drillAttemptInfix = ".attempt-"
+)
+
+// drillTarget is the directory the NEXT attempt of one run's drill
+// restores into: a directory that does not exist yet, beside whatever
+// earlier attempts left behind.
+//
+// A fresh directory per attempt, rather than the run's one directory, is
+// what makes crash recovery survivable. A drill restores with
+// Overwrite=false -- a verification that can overwrite is a verification
+// that can destroy data -- so a run that died with a restore in flight
+// left partial files, and a recovery pass restoring into the same place
+// failed on the first file that was already there. The snapshot was
+// intact; the run went to FAILED over the wreckage of the attempt that
+// crashed, which is a valid restore point thrown away for bookkeeping
+// reasons.
+//
+// The old attempt is left exactly where it is. It is the only description
+// of what a restore of this snapshot actually produced, and this pass has
+// not yet proven anything that would make it worthless. discardDrillOutput
+// is what removes it, and only once the snapshot is proven.
+func drillTarget(dir, runID string) string {
+	base := filepath.Join(dir, drillDirPrefix+runID)
+
+	highest := 0
+
+	for _, existing := range drillAttempts(dir, runID) {
+		if existing == base {
+			highest = max(highest, 1)
+
+			continue
+		}
+
+		n, err := strconv.Atoi(strings.TrimPrefix(filepath.Base(existing), drillDirPrefix+runID+drillAttemptInfix))
+		if err == nil {
+			highest = max(highest, n)
+		}
+	}
+
+	if highest == 0 {
+		return base
+	}
+
+	return fmt.Sprintf("%s%s%d", base, drillAttemptInfix, highest+1)
+}
+
+// drillAttempts is every directory under dir that belongs to this run's
+// drill, sorted so the order a reader sees is the order they were made.
+//
+// A directory that cannot be read yields nothing, which is the right
+// answer for the ordinary first attempt: the drill directory is created
+// by the restore itself, so on the first drill of a deployment there is
+// nothing there to enumerate.
+func drillAttempts(dir, runID string) []string {
+	if dir == "" || runID == "" {
+		return nil
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+
+	base := drillDirPrefix + runID
+
+	var out []string
+
+	for _, e := range entries {
+		if e.Name() == base || strings.HasPrefix(e.Name(), base+drillAttemptInfix) {
+			out = append(out, filepath.Join(dir, e.Name()))
+		}
+	}
+
+	slices.Sort(out)
+
+	return out
+}
+
+// discardDrillOutput removes a successful drill's restored tree, and with
+// it every attempt directory an earlier crash of the same run abandoned.
 //
 // Only on success, and that asymmetry is the point: a drill that FAILED
 // has left the only available evidence of what a restore of this snapshot
 // actually produces, and deleting it would leave an operator with a
-// sentence in a catalog row and nothing to look at. A drill that passed
-// has left a second copy of a backup on a disk somebody is paying for.
+// sentence in a catalog row and nothing to look at. Once the snapshot IS
+// proven, every one of those directories is a partial or complete second
+// copy of a backup on a disk somebody is paying for, including the ones
+// the crashes left, so they all go together.
 //
 // A removal that fails is reported by the caller as nothing at all: the
 // verification is already decided, and a leftover directory is a
@@ -213,9 +317,18 @@ func (v verification) discardDrillOutput() error {
 		return nil
 	}
 
-	if err := os.RemoveAll(v.target); err != nil {
-		return fmt.Errorf("snapshotlifecycle: removing the restore drill's output at %s: %w", v.target, err)
+	dirs := drillAttempts(v.drillDir, v.runID)
+	if !slices.Contains(dirs, v.target) {
+		dirs = append(dirs, v.target)
 	}
 
-	return nil
+	var errs []error
+
+	for _, dir := range dirs {
+		if err := os.RemoveAll(dir); err != nil {
+			errs = append(errs, fmt.Errorf("snapshotlifecycle: removing the restore drill's output at %s: %w", dir, err))
+		}
+	}
+
+	return errors.Join(errs...)
 }

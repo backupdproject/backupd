@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -68,26 +69,68 @@ type verifyFixture struct {
 func newVerifyFixture(t *testing.T) *verifyFixture {
 	t.Helper()
 
+	return newFixtureOfTree(t, func(srcDir string) (int64, int64) {
+		t.Helper()
+
+		var total int64
+
+		for i := range verifyFileCount {
+			payload := make([]byte, verifyFileSize)
+			if _, err := rand.Read(payload); err != nil {
+				t.Fatalf("generating payload %d: %v", i, err)
+			}
+
+			// Two levels, so the walk has directories to resolve as well as
+			// files to read: a structural pass that never descends would
+			// otherwise look identical to one that did.
+			name := filepath.Join(srcDir, fmt.Sprintf("dir-%d", i%3), fmt.Sprintf("file-%02d.bin", i))
+			mustWrite(t, name, payload)
+
+			total += verifyFileSize
+		}
+
+		return verifyFileCount, total
+	})
+}
+
+// newDirectoryOnlyFixture is a snapshot of a tree that holds directories
+// and no files at all, which is the tree every content rung has nothing
+// to do on.
+//
+// It is a real shape rather than a contrived one: a set pointed at a tree
+// whose files have all been moved away, or at a directory skeleton
+// created ahead of the data, is a snapshot with structure and no content.
+// What a verification of it may CLAIM is the point of the fixture.
+func newDirectoryOnlyFixture(t *testing.T) *verifyFixture {
+	t.Helper()
+
+	return newFixtureOfTree(t, func(srcDir string) (int64, int64) {
+		t.Helper()
+
+		for _, dir := range []string{"empty", filepath.Join("nested", "deeper"), "also-empty"} {
+			if err := os.MkdirAll(filepath.Join(srcDir, dir), 0o750); err != nil {
+				t.Fatalf("creating %s: %v", dir, err)
+			}
+		}
+
+		return 0, 0
+	})
+}
+
+// newFixtureOfTree creates a repository, writes whatever tree the caller
+// describes and snapshots it once.
+func newFixtureOfTree(t *testing.T, write func(srcDir string) (files, bytes int64)) *verifyFixture {
+	t.Helper()
+
 	ctx := context.Background()
 	root := t.TempDir()
 	srcDir := filepath.Join(root, "source")
 
-	var total int64
-
-	for i := range verifyFileCount {
-		payload := make([]byte, verifyFileSize)
-		if _, err := rand.Read(payload); err != nil {
-			t.Fatalf("generating payload %d: %v", i, err)
-		}
-
-		// Two levels, so the walk has directories to resolve as well as
-		// files to read: a structural pass that never descends would
-		// otherwise look identical to one that did.
-		name := filepath.Join(srcDir, fmt.Sprintf("dir-%d", i%3), fmt.Sprintf("file-%02d.bin", i))
-		mustWrite(t, name, payload)
-
-		total += verifyFileSize
+	if err := os.MkdirAll(srcDir, 0o750); err != nil {
+		t.Fatalf("creating the source tree: %v", err)
 	}
+
+	files, total := write(srcDir)
 
 	loc := localLocation(t, root, "production")
 	eng := kopia.New()
@@ -120,7 +163,7 @@ func newVerifyFixture(t *testing.T) *verifyFixture {
 		source:   src,
 		snapshot: snap,
 		srcDir:   srcDir,
-		files:    verifyFileCount,
+		files:    files,
 		bytes:    total,
 	}
 }
@@ -484,6 +527,214 @@ func TestASampledVerificationReadsTheSameAmountEveryTime(t *testing.T) {
 	if def.FilesVerified < 1 || def.BytesVerified == 0 {
 		t.Errorf("a sampled verification with no stated percentage read %d file(s) and %d byte(s)",
 			def.FilesVerified, def.BytesVerified)
+	}
+}
+
+// TestASampleReadsTheFractionItWasAskedFor is the difference between a
+// sample that means its number and one that means "about half".
+//
+// The first implementation turned a percentage into a stride of
+// ceil(100/percent), which answers 51% and 99% identically -- every
+// second file, half the tree -- while the catalog row went on saying
+// content_sample. A deployment that raised its sampling to 99% because
+// the last audit asked for it would have got the same check it had at
+// 50%, and no report anywhere would have said so. The selection is a
+// COUNT now: exactly ceil(files*percent/100) of the files the walk finds,
+// which is the smallest number that cannot understate the percentage.
+func TestASampleReadsTheFractionItWasAskedFor(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	f := newVerifyFixture(t)
+
+	for _, c := range []struct {
+		percent int
+		want    int64
+	}{
+		// 50 is the contrast the two boundary rows are measured against:
+		// it is the one percentage the old stride got right, so a
+		// regression that restores the stride keeps this row and loses
+		// the two below it.
+		{percent: 50, want: 6},
+		{percent: 51, want: 7},
+		{percent: 99, want: 12},
+	} {
+		report, err := f.repo.Verify(ctx, f.snapshot.ID, backupengine.VerifyRequest{
+			Level:         model.LevelContentSample,
+			SamplePercent: c.percent,
+		})
+		if err != nil {
+			t.Fatalf("%d%% sampled Verify: %v (%v)", c.percent, err, report.Errors)
+		}
+
+		if report.FilesVerified != c.want {
+			t.Errorf("a %d%% sample of %d files read %d of them, want exactly %d = ceil(%d*%d/100)",
+				c.percent, f.files, report.FilesVerified, c.want, f.files, c.percent)
+		}
+
+		if want := c.want * verifyFileSize; report.BytesVerified != want {
+			t.Errorf("a %d%% sample read %d byte(s), want %d: the files are the same size, so the bytes follow the count",
+				c.percent, report.BytesVerified, want)
+		}
+
+		// The claim in the operator's words: a sample above half reads
+		// more than half. Both boundary rows failed exactly this.
+		if c.percent > 50 && report.FilesVerified*2 <= f.files {
+			t.Errorf("a %d%% sample read %d of %d files, which is not materially more than half of them",
+				c.percent, report.FilesVerified, f.files)
+		}
+	}
+}
+
+// TestAVerificationThatReadNothingIsNotAContentClaim is what stops a
+// vacuous check from earning a restore point.
+//
+// A tree of directories and no files walks clean at every rung: the
+// content read has nothing to read and the drill has nothing to restore,
+// so both "succeed" having proved nothing about any byte. Recording
+// content_full or restore_drill for that makes VerifyReport.Level's own
+// doc false -- it says the level is what was actually performed -- and
+// hands last-known-good to a run whose evidence is empty. The honest
+// answer is the rung that WAS performed: the structure resolved.
+func TestAVerificationThatReadNothingIsNotAContentClaim(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	f := newDirectoryOnlyFixture(t)
+
+	for _, req := range []backupengine.VerifyRequest{
+		{Level: model.LevelContentSample, SamplePercent: 100},
+		{Level: model.LevelContentFull},
+		{Level: model.LevelRestoreDrill, RestoreTarget: filepath.Join(t.TempDir(), "drill")},
+	} {
+		report, err := f.repo.Verify(ctx, f.snapshot.ID, req)
+		if err != nil {
+			t.Fatalf("%s Verify of a tree with no files: %v (%v)", req.Level, err, report.Errors)
+		}
+
+		if report.Level != model.LevelStructural {
+			t.Errorf("a %s verification of a tree with no files reported %q, having read %d file(s) and restored %d; a row like that earns last-known-good on evidence nobody produced",
+				req.Level, report.Level, report.FilesVerified, report.FilesRestored)
+		}
+
+		// The downgrade is not a failure: the structure really was
+		// walked, and a verification that reported nothing at all would
+		// be a different lie.
+		if report.ObjectsVerified == 0 {
+			t.Errorf("a %s verification of a tree with no files resolved no objects; its directories are objects", req.Level)
+		}
+	}
+}
+
+// unrelatedBlobCount is how many blobs belonging to nobody's snapshot are
+// dropped into the repository's storage below.
+//
+// It stands in for the ordinary case this product is built for: one
+// repository domain shared by many sets over years, where the snapshot
+// being verified tonight is a rounding error in the blob namespace. Sixty
+// thousand is enough that a map of the whole namespace is megabytes and
+// small enough that creating them costs a couple of seconds.
+const unrelatedBlobCount = 60000
+
+// TestASampledVerificationCostsTheSnapshotAndNotTheRepository is the heap
+// bound on every rung above structural.
+//
+// The first implementation called blob.ReadBlobMap before the walk, which
+// is a map of EVERY blob in the repository -- so a 5% sample of one small
+// snapshot allocated in proportion to the whole domain's history, and the
+// cost grew every night as other sets wrote data this verification never
+// looks at. On a NAS with 4GB of RAM that is the difference between a
+// nightly check and an OOM.
+//
+// The two halves of the fix are asserted separately: the report is
+// unchanged (the packs this snapshot references are still all proven
+// present, so the rung still finds a missing one), and the peak heap of
+// the same verification does not move when the repository around it grows
+// by 60,000 blobs.
+func TestASampledVerificationCostsTheSnapshotAndNotTheRepository(t *testing.T) {
+	// Deliberately no t.Parallel: peakHeap samples process-wide
+	// HeapAlloc, so a sibling test's allocations would be measured as
+	// this one's.
+	f := newVerifyFixture(t)
+	req := backupengine.VerifyRequest{Level: model.LevelContentSample, SamplePercent: 100}
+
+	clean, cleanPeak := verifyHeapCost(t, f, req)
+
+	writeUnrelatedBlobs(t, repoDir(t, f.loc), unrelatedBlobCount)
+
+	loaded, loadedPeak := verifyHeapCost(t, f, req)
+
+	if loaded.FilesVerified != clean.FilesVerified || loaded.BlobsChecked != clean.BlobsChecked {
+		t.Errorf("the same verification read %d file(s) and checked %d blob(s) beside 60,000 unrelated ones, and %d/%d without them; what a snapshot proves cannot depend on what else is in the repository",
+			loaded.FilesVerified, loaded.BlobsChecked, clean.FilesVerified, clean.BlobsChecked)
+	}
+
+	// The scoping claim in the report itself: what was checked is the
+	// handful of packs this twelve-file snapshot lives in, not the
+	// namespace around it.
+	if loaded.BlobsChecked == 0 || loaded.BlobsChecked > 64 {
+		t.Errorf("a verification of a %d-file snapshot checked %d blob(s); the rung proves the packs the snapshot references and nothing else",
+			f.files, loaded.BlobsChecked)
+	}
+
+	// 4 MiB is the budget for "did not notice", stated in absolute bytes
+	// because the thing it forbids is absolute: a map of 60,000 blob
+	// records is tens of megabytes of live heap, and the fixed cost of
+	// walking a twelve-file snapshot is the same in both passes.
+	const budget = 4 << 20
+
+	if growth := int64(loadedPeak) - int64(cleanPeak); growth > budget {
+		t.Errorf("the same verification peaked at %d bytes of heap in a repository holding 60,000 unrelated blobs and %d bytes without them, %d more: it is paying for the whole blob namespace (blob.ReadBlobMap) rather than for the snapshot",
+			loadedPeak, cleanPeak, growth)
+	}
+}
+
+// verifyHeapCost runs one verification and reports it with the peak heap
+// it held above a freshly collected baseline.
+func verifyHeapCost(t *testing.T, f *verifyFixture, req backupengine.VerifyRequest) (backupengine.VerifyReport, uint64) {
+	t.Helper()
+
+	runtime.GC()
+
+	var base runtime.MemStats
+
+	runtime.ReadMemStats(&base)
+
+	var (
+		report backupengine.VerifyReport
+		err    error
+	)
+
+	peak := peakHeap(func() {
+		report, err = f.repo.Verify(context.Background(), f.snapshot.ID, req)
+	})
+
+	if err != nil {
+		t.Fatalf("%s Verify: %v (%v)", req.Level, err, report.Errors)
+	}
+
+	if peak <= base.HeapAlloc {
+		return report, 0
+	}
+
+	return report, peak - base.HeapAlloc
+}
+
+// writeUnrelatedBlobs puts n blobs into a repository's storage that no
+// snapshot references.
+//
+// They are written as files rather than through the repository, which is
+// the point: they are indistinguishable from other sets' packs to
+// anything that LISTS the storage, and invisible to anything that asks
+// about the blobs one snapshot names.
+func writeUnrelatedBlobs(t *testing.T, dir string, n int) {
+	t.Helper()
+
+	for i := range n {
+		name := filepath.Join(dir, fmt.Sprintf("zzunrelated%036x.f", i))
+		if err := os.WriteFile(name, nil, 0o600); err != nil {
+			t.Fatalf("writing unrelated blob %d: %v", i, err)
+		}
 	}
 }
 

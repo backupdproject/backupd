@@ -395,11 +395,14 @@ type VerifyRequest struct {
 	// entirely, and a byte-proportional sample would spend the whole
 	// budget inside the largest file and never look at the others.
 	//
-	// The sample is a fixed stride over the files the walk finds, not a
-	// coin flip per file, so a run asked for 10% of 30 files reads
-	// exactly 3 of them rather than "about 3": a verification whose
-	// achieved level depends on a random number is a verification that
-	// occasionally proves less than the row says it did.
+	// The sample is a COUNT over the files the walk finds, not a coin
+	// flip per file and not a stride: a run asked for 10% of 30 files
+	// reads exactly 3 of them, and one asked for 51% reads 16 of 31
+	// rather than "every second one". A verification whose achieved
+	// level depends on a random number is a verification that
+	// occasionally proves less than the row says it did, and a stride
+	// answers 51% and 99% identically, which is a configured increase in
+	// assurance that buys nothing and says nothing.
 	SamplePercent int
 
 	// RestoreTarget is the directory LevelRestoreDrill restores into. It

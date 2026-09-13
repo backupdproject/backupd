@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -535,7 +534,7 @@ func (r *Reconciler) resolveUnverified(
 
 // recoveryVerification is what a reconciliation pass proves about one
 // interrupted run: the level on its own row, with this Reconciler's
-// sample size and drill directory, and no cadence escalation.
+// sample size and a FRESH drill directory, and no cadence escalation.
 //
 // A row carrying no configured level at all is the one case that has to
 // be decided rather than crashed on, and it is decided the safe way: the
@@ -543,6 +542,11 @@ func (r *Reconciler) resolveUnverified(
 // level is left empty so that verification.run refuses it. A run whose
 // row does not say what it was supposed to prove is a row nothing can
 // honestly turn into a restore point.
+//
+// The drill directory is a fresh attempt beside the crashed one rather
+// than the crashed one itself, which is drillTarget's whole subject: a
+// run that died mid-restore left partial files, and retrying into them
+// with Overwrite=false failed an intact snapshot.
 func (r *Reconciler) recoveryVerification(run state.SnapshotRun) verification {
 	level := model.VerificationLevel(run.VerificationLevel)
 
@@ -550,10 +554,12 @@ func (r *Reconciler) recoveryVerification(run state.SnapshotRun) verification {
 		requested: level,
 		required:  level,
 		sample:    r.Verification.SamplePercent,
+		drillDir:  r.Verification.DrillDir,
+		runID:     run.RunID,
 	}
 
 	if level == model.LevelRestoreDrill && r.Verification.DrillDir != "" {
-		v.target = filepath.Join(r.Verification.DrillDir, "restore-drill-"+run.RunID)
+		v.target = drillTarget(r.Verification.DrillDir, run.RunID)
 	}
 
 	return v

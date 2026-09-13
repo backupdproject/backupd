@@ -446,6 +446,113 @@ func TestReconcile_RecoveryProvesTheLevelTheRowWasAdmittedUnder(t *testing.T) {
 	}
 }
 
+// TestReconcile_ARecoveryDrillRestoresIntoAFreshDirectory is the
+// crash-during-restore boundary, and the defect it pins failed VALID
+// backups.
+//
+// A drill run that died mid-restore leaves partial files in its target.
+// The recovery pass restores with Overwrite=false -- deliberately, since
+// a verification that can overwrite is a verification that can destroy
+// data -- so a retry into the SAME directory errors on the first file
+// that is already there, and an intact committed snapshot is moved to
+// FAILED over the leftovers of the attempt that crashed. Every recovery
+// therefore gets a fresh attempt directory beside the old one.
+func TestReconcile_ARecoveryDrillRestoresIntoAFreshDirectory(t *testing.T) {
+	t.Parallel()
+
+	// recovery seeds a run that crashed after committing its manifest,
+	// with the wreckage of an interrupted restore already on the disk,
+	// and reconciles it.
+	recovery := func(t *testing.T, repo *fakeRepository) (drills, abandoned string, err error) {
+		t.Helper()
+
+		j := journal(t)
+		set := setID(t, "postgres")
+
+		seedConfigured(t, j, set, "run-1", model.LevelRestoreDrill,
+			[]state.SnapshotPhase{state.PhaseSourceScan, state.PhaseSnapshotWrite, state.PhaseManifestCommitted},
+			map[state.SnapshotPhase]state.SnapshotRunUpdate{
+				state.PhaseManifestCommitted: {SnapshotID: new("snap-1")},
+			})
+
+		repo.snapshots["snap-1"] = backupengine.SnapshotInfo{ID: "snap-1", Source: testSource, Files: 3, Bytes: 4096}
+
+		drills = filepath.Join(t.TempDir(), "drills")
+		abandoned = filepath.Join(drills, "restore-drill-run-1")
+
+		// What a crash in the middle of a restore leaves: a real
+		// directory holding some of the files, truncated.
+		partial := filepath.Join(abandoned, "dir-0", "file-0.bin")
+		if mkErr := os.MkdirAll(filepath.Dir(partial), 0o750); mkErr != nil {
+			t.Fatalf("creating the crashed attempt's directory: %v", mkErr)
+		}
+
+		if wErr := os.WriteFile(partial, []byte("half a file"), 0o600); wErr != nil {
+			t.Fatalf("writing the crashed attempt's partial file: %v", wErr)
+		}
+
+		rec := reconciler(t, j)
+		rec.Verification = snapshotlifecycle.VerificationOptions{DrillDir: drills}
+
+		_, err = rec.Reconcile(context.Background(), reconcileRequest(set, repo))
+
+		return drills, abandoned, err
+	}
+
+	t.Run("the retry never restores into the crashed attempt's directory", func(t *testing.T) {
+		t.Parallel()
+
+		repo := newFakeRepository()
+
+		drills, abandoned, err := recovery(t, repo)
+		if err != nil {
+			t.Fatalf("reconciling an interrupted drill run: %v", err)
+		}
+
+		target := lastRequest(t, repo).RestoreTarget
+		if target == abandoned {
+			t.Errorf("the recovery restored into %s, the directory the crashed attempt left partial files in; with Overwrite=false that fails an intact snapshot on the first file that is already there", target)
+		}
+
+		if !strings.HasPrefix(target, drills+string(os.PathSeparator)) || !strings.Contains(target, "run-1") {
+			t.Errorf("the recovery restored into %q, which is not an attempt directory of run-1 under %s", target, drills)
+		}
+
+		// A proven snapshot needs no evidence, so the successful
+		// recovery takes the abandoned wreckage with it rather than
+		// leaving a partial copy of a backup on the disk for ever.
+		if _, statErr := os.Stat(abandoned); !os.IsNotExist(statErr) {
+			t.Errorf("the crashed attempt's directory %s survived a recovery that PROVED the snapshot (stat err %v)", abandoned, statErr)
+		}
+	})
+
+	t.Run("a failed recovery keeps every attempt as evidence", func(t *testing.T) {
+		t.Parallel()
+
+		repo := newFakeRepository()
+
+		// The drill restores and then proves less than the row was
+		// admitted under, which is the outcome that fails the run with
+		// output on the disk.
+		repo.achieved = model.LevelContentFull
+
+		_, abandoned, err := recovery(t, repo)
+		if err != nil {
+			t.Fatalf("reconciling: %v", err)
+		}
+
+		if _, statErr := os.Stat(abandoned); statErr != nil {
+			t.Errorf("the crashed attempt's directory %s is gone (%v); after a recovery that could not prove the snapshot it is part of the evidence an operator has to look at", abandoned, statErr)
+		}
+
+		if target := lastRequest(t, repo).RestoreTarget; target != "" {
+			if _, statErr := os.Stat(target); statErr != nil && !os.IsNotExist(statErr) {
+				t.Errorf("stat of the failed attempt's directory %s: %v", target, statErr)
+			}
+		}
+	})
+}
+
 // seedAchieved puts a finished, successful run on the catalog that
 // proved the given level, which is what a cadence reads.
 func seedAchieved(t *testing.T, j *state.Journal, set model.BackupSetID, runID string, achieved model.VerificationLevel) {
