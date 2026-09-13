@@ -369,6 +369,43 @@ services:
       - ${SSH_KEY_FILE:?set SSH_KEY_FILE in .env to the SFTP private key}:/etc/backupd/id_ed25519:ro
       - ${KNOWN_HOSTS_FILE:?set KNOWN_HOSTS_FILE in .env to the pinned known_hosts file}:/etc/backupd/known_hosts:ro
 
+      # EPIC L (#808, #809): the hook scripts, and the door to the host
+      # runner. Two mounts, and the difference between them is the whole
+      # security argument.
+      #
+      # The scripts are READ-ONLY. This container plans a workflow — it
+      # reads each script once, hashes it and copies it into its own
+      # private spool under /data/state, and never opens the original
+      # again — so write access here would buy nothing and would let a
+      # compromised engine edit what the host is about to execute.
+      #
+      # The runtime directory is writable because it holds a SOCKET, and
+      # connecting to a Unix socket is a write. It is the ONLY way into
+      # the host runner and it is deliberately not a shell, not the Docker
+      # socket and not the host filesystem: the process on the other end
+      # accepts four operations, takes captured bytes rather than a path,
+      # authenticates every connection, and refuses to run as root. This
+      # container gains no capability, no privilege and no host mount
+      # beyond this one directory; docs/runtime-contract.md states the
+      # same thing in the contract's own words.
+      #
+      # And that directory holds the socket and NOTHING else. This mount
+      # is read-write, so everything under it is writable by whatever
+      # this container runs as -- while the runner's per-step working
+      # directories and its private copies of hook scripts are the paths
+      # it CREATES and later REMOVES RECURSIVELY. Those live in
+      # <prefix>/workspace, which no mount here names: a symbolic link
+      # planted at a run directory would otherwise let a compromised
+      # engine choose which host path the runner writes an executable
+      # file into, and which one it then deletes.
+      #
+      # Both default rather than using `:?`, so a deployment whose .env
+      # predates EPIC L still starts. `./` resolves beside this file,
+      # which is the installation prefix, and is where the installer
+      # creates them.
+      - ${WORKFLOWS_DIR:-./workflows}:/workflows:ro
+      - ${RUNTIME_DIR:-./run}:/data/run
+
     # `unless-stopped`: restart across crashes and NAS reboots, but stay
     # down if an operator deliberately stops it — the right policy now that
     # `command` above (`/backupd-web serve`) is a real long-running
