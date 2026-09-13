@@ -65,6 +65,16 @@ func (t *timeline) overlapped(a, b string) bool {
 	return t.overlaps[a+"|"+b]
 }
 
+// insideNow is how many holders named who are inside a section right
+// now, which is what lets a test assert that something CANNOT get in
+// while a barrier holds the other side.
+func (t *timeline) insideNow(who string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.inside[who]
+}
+
 func testDomain(t *testing.T, id string) model.RepositoryDomainID {
 	t.Helper()
 

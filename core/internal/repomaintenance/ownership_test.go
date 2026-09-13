@@ -251,12 +251,13 @@ func TestAnUnreadableRecordIsNeverTreatedAsUnowned(t *testing.T) {
 	}
 
 	// What a truncated write leaves behind. Valid JSON is not required:
-	// this is the file a crash between create and rename produces.
+	// this is the file a crash mid-write produces, at the revision a
+	// reader would look for it.
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("creating the state directory: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, domain.String()+".maintenance.json"), []byte(`{"domain":"`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, domain.String()+".maintenance.1.json"), []byte(`{"domain":"`), 0o600); err != nil {
 		t.Fatalf("writing the corrupt record: %v", err)
 	}
 

@@ -142,6 +142,15 @@ type Runner struct {
 // and it is safe for the reason the record's absence is unambiguous:
 // nobody has ever maintained this repository, so there is no other owner
 // to displace. Everything else is a refusal.
+//
+// The create is atomic, and that is not a detail. "Load said nobody owns
+// it, so save myself as owner" is two operations, and two instances
+// running them at the same time both read no record and both write
+// themselves in -- which is precisely the two-owners state this package
+// exists to prevent, reached through the code that exists to prevent it.
+// backupengine.ErrMaintenanceOwnershipExists is how the loser finds out,
+// and a loser is not a special case: it re-reads and treats the winner's
+// claim exactly like any other instance's.
 func (r Runner) Claim(ctx context.Context, domain model.RepositoryDomainID) (backupengine.MaintenanceOwnership, error) {
 	if r.Owner.IsZero() {
 		return backupengine.MaintenanceOwnership{}, errors.New("repomaintenance: this instance has no owner name, so it cannot claim maintenance for anything")
@@ -155,26 +164,45 @@ func (r Runner) Claim(ctx context.Context, domain model.RepositoryDomainID) (bac
 
 	switch {
 	case err == nil:
-		if record.Owner != r.Owner {
-			return backupengine.MaintenanceOwnership{}, fmt.Errorf("%w: %s owns %s, this instance is %s",
-				ErrNotOwner, record.Owner, domain, r.Owner)
-		}
-
-		return record, nil
+		return r.mine(record, domain)
 
 	case errors.Is(err, backupengine.ErrNoMaintenanceOwnership):
-		record = backupengine.MaintenanceOwnership{Domain: domain, Owner: r.Owner}
-		if err := r.Store.Save(ctx, record); err != nil {
+		created, err := r.Store.Create(ctx, backupengine.MaintenanceOwnership{Domain: domain, Owner: r.Owner})
+
+		switch {
+		case err == nil:
+			return created, nil
+
+		case errors.Is(err, backupengine.ErrMaintenanceOwnershipExists):
+			// Somebody claimed it between the read and the create. Whose
+			// claim it is now is a question only the record can answer.
+			record, err := r.Store.Load(ctx, domain)
+			if err != nil {
+				return backupengine.MaintenanceOwnership{}, err
+			}
+
+			return r.mine(record, domain)
+
+		default:
 			return backupengine.MaintenanceOwnership{}, fmt.Errorf("repomaintenance: claiming maintenance for %s: %w", domain, err)
 		}
-
-		return record, nil
 
 	default:
 		// An unreadable record is never an unclaimed one. See the store's
 		// own Load.
 		return backupengine.MaintenanceOwnership{}, err
 	}
+}
+
+// mine returns the record if this instance owns it, and refuses it
+// otherwise.
+func (r Runner) mine(record backupengine.MaintenanceOwnership, domain model.RepositoryDomainID) (backupengine.MaintenanceOwnership, error) {
+	if record.Owner != r.Owner {
+		return backupengine.MaintenanceOwnership{}, fmt.Errorf("%w: %s owns %s, this instance is %s",
+			ErrNotOwner, record.Owner, domain, r.Owner)
+	}
+
+	return record, nil
 }
 
 // Transfer moves maintenance ownership of one repository from one
@@ -228,22 +256,62 @@ func Transfer(
 	// would be this package deciding the administrator was wrong.
 	record.NextEligible = time.Time{}
 
-	if err := store.Save(ctx, record); err != nil {
+	// CompareAndSwap and not a write, because the owner check above is
+	// only worth anything if nothing can change between it and the
+	// write. Two administrators handing the same repository to two
+	// different instances at the same moment both pass the check; the
+	// revision is what makes exactly one of them the handover and the
+	// other a refusal.
+	moved, err := store.CompareAndSwap(ctx, record)
+
+	switch {
+	case err == nil:
+		return moved, nil
+
+	case errors.Is(err, backupengine.ErrMaintenanceOwnershipStale):
+		return backupengine.MaintenanceOwnership{}, fmt.Errorf(
+			"%w: the record for %s changed while this transfer from %s to %s was being written: %w",
+			ErrOwnershipMoved, domain, from, to, err)
+
+	default:
 		return backupengine.MaintenanceOwnership{}, fmt.Errorf("repomaintenance: recording the transfer of %s to %s: %w", domain, to, err)
 	}
-
-	return record, nil
 }
 
 // RunDue runs whatever maintenance this repository is due for, or nothing.
 //
-// It is the entry point a scheduled pass calls: it reads the record it
-// already had to read to claim ownership, decides from it, and returns a
-// Result that says what it decided either way.
+// It is the entry point a scheduled pass calls: it decides from the
+// record it already had to read to claim ownership, and returns a Result
+// that says what it decided either way.
+//
+// Deciding and running are one critical section, held by
+// Fence.SerialiseMaintenance for the whole of it. Two passes that both
+// read "a full maintenance is due" would otherwise both queue for the
+// exclusive fence, run full maintenance one after the other -- the second
+// one against a repository that was fully maintained a second ago -- and
+// write their outcomes over each other's history and counters. The
+// recheck after the lease is granted is what makes the second one decide
+// again rather than act on a decision that has since been carried out.
 func (r Runner) RunDue(ctx context.Context, domain model.RepositoryDomainID, repo Repository, now time.Time) (Result, error) {
+	result := Result{Domain: domain}
+
+	if repo == nil {
+		return result, errors.New("repomaintenance: no repository to maintain")
+	}
+
+	if r.Fence == nil {
+		return result, errors.New("repomaintenance: no fence, and maintenance must never run unfenced")
+	}
+
+	done, err := r.Fence.SerialiseMaintenance(ctx, domain)
+	if err != nil {
+		return result, fmt.Errorf("repomaintenance: waiting to maintain %s: %w", domain, err)
+	}
+	defer done()
+
 	record, err := r.Claim(ctx, domain)
 	if err != nil {
-		return Result{Domain: domain}, err
+		return result, err
 	}
 
 	decision := Due(record, r.Intervals, now)
@@ -251,22 +319,24 @@ func (r Runner) RunDue(ctx context.Context, domain model.RepositoryDomainID, rep
 		return Result{Domain: domain, Reason: decision.Reason, Record: record}, nil
 	}
 
-	result, err := r.Run(ctx, domain, repo, decision.Mode, now)
-	if result.Reason == "" {
-		result.Reason = decision.Reason
+	held, err := r.window(ctx, domain, repo, decision.Mode, now, record)
+	if held.Reason == "" {
+		held.Reason = decision.Reason
 	}
 
-	return result, err
+	return held, err
 }
 
 // Run performs one maintenance window against an open repository.
 //
 // The order is not negotiable and is the whole of this function:
 //
-//  1. The mode, then ownership, before anything else. A mode this
-//     boundary does not define never reaches a repository and never
-//     writes a claim; a repository this instance does not own is not
-//     touched at all, not even to read its size.
+//  1. The mode, then the maintenance lease, then ownership, before
+//     anything else. A mode this boundary does not define never reaches a
+//     repository and never writes a claim; a repository this instance
+//     does not own is not touched at all, not even to read its size; and
+//     the ownership record is read inside the lease, so what this window
+//     writes back is what it read.
 //  2. The fence. Full maintenance takes the exclusive side, so no
 //     snapshot delete can be in flight while content is being reclaimed;
 //     quick maintenance takes the shared side, so it cannot run during a
@@ -278,7 +348,8 @@ func (r Runner) RunDue(ctx context.Context, domain model.RepositoryDomainID, rep
 //     reader.
 //  4. The engine's own maintenance, at the engine's own safety margins.
 //     Nothing here can weaken them; see the package doc.
-//  5. The record, whatever happened. A failure is recorded exactly like a
+//  5. The record, whatever happened, and written back only if nothing
+//     else has written it since. A failure is recorded exactly like a
 //     success, because the next pass has to be able to tell "it failed"
 //     from "it never ran", and internal/snapshotlifecycle's reconciler
 //     reads that distinction (maintenanceVerdict).
@@ -299,12 +370,41 @@ func (r Runner) Run(
 		return result, errors.New("repomaintenance: no fence, and maintenance must never run unfenced")
 	}
 
-	exclusive, err := exclusiveFor(mode)
+	if _, err := exclusiveFor(mode); err != nil {
+		return result, err
+	}
+
+	done, err := r.Fence.SerialiseMaintenance(ctx, domain)
+	if err != nil {
+		return result, fmt.Errorf("repomaintenance: waiting to maintain %s: %w", domain, err)
+	}
+	defer done()
+
+	record, err := r.Claim(ctx, domain)
 	if err != nil {
 		return result, err
 	}
 
-	record, err := r.Claim(ctx, domain)
+	return r.window(ctx, domain, repo, mode, now, record)
+}
+
+// window is one maintenance window, with the domain's maintenance lease
+// already held and its ownership record already read under that lease.
+//
+// It is split out so that RunDue's decision and the window it decided on
+// are one critical section rather than two, and so that the record this
+// window writes back is the one it was decided from.
+func (r Runner) window(
+	ctx context.Context,
+	domain model.RepositoryDomainID,
+	repo Repository,
+	mode backupengine.MaintenanceMode,
+	now time.Time,
+	record backupengine.MaintenanceOwnership,
+) (Result, error) {
+	result := Result{Domain: domain, Mode: mode, StartedAt: now}
+
+	exclusive, err := exclusiveFor(mode)
 	if err != nil {
 		return result, err
 	}
@@ -356,16 +456,35 @@ func (r Runner) Run(
 		outcome.Err = maintainErr.Error()
 	}
 
-	record = r.record(record, outcome, mode, now, maintainErr == nil)
-	result.Record = record
+	folded := r.record(record, outcome, mode, now, maintainErr == nil)
 
-	if err := r.Store.Save(ctx, record); err != nil {
+	// CompareAndSwap, because a maintenance window is long and the record
+	// it started from can have been replaced while it ran -- by an
+	// administrative Transfer, most consequentially. An unconditional
+	// write here would put this window's owner and counters back over a
+	// completed handover, which is a two-owner repository created by the
+	// bookkeeping rather than by the work.
+	saved, err := r.Store.CompareAndSwap(ctx, folded)
+	if err != nil {
+		// result.Record stays the record this window was decided from:
+		// nothing was stored, and reporting the folded record would have
+		// a caller believe otherwise.
+		result.Record = record
+
+		if errors.Is(err, backupengine.ErrMaintenanceOwnershipStale) {
+			err = fmt.Errorf("repomaintenance: the maintenance record for %s changed while this window ran, so its outcome was not recorded and nothing it would have overwritten was lost: %w", domain, err)
+		} else {
+			err = fmt.Errorf("repomaintenance: recording the maintenance of %s: %w", domain, err)
+		}
+
 		if maintainErr != nil {
 			return result, fmt.Errorf("%w; recording that failure also failed: %w", maintainErr, err)
 		}
 
-		return result, fmt.Errorf("repomaintenance: recording the maintenance of %s: %w", domain, err)
+		return result, err
 	}
+
+	result.Record = saved
 
 	return result, maintainErr
 }

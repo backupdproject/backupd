@@ -35,12 +35,15 @@ import (
 //
 // # Why the fence is in-process, and what that does and does not claim
 //
-// It is a coordination primitive between this daemon's own passes. It is
-// not a distributed lock and does not pretend to be one: two backupd
-// instances pointed at one repository are prevented from maintaining it
-// concurrently by the ownership record (run.go), which is a durable claim
-// they can both read, and by the engine's own safety parameters, which
-// are what make even an unfenced concurrent GC non-destructive.
+// It is a coordination primitive between this daemon's own passes, and it
+// is not a distributed lock. Two backupd instances sharing a state
+// directory are kept to one owner per repository by the ownership
+// record's atomic create and compare-and-set (run.go, and the store in
+// internal/backupengine); two instances that do NOT share a state
+// directory are not coordinated at all, and what makes that
+// non-destructive rather than dangerous is the engine's own safety
+// parameters. Both are spelled out in the package doc and ADR 0017; this
+// file promises nothing about either.
 //
 // # Why acquisition is FIFO
 //
@@ -51,6 +54,7 @@ import (
 // empty. So a waiter that arrives after a queued exclusive request waits
 // behind it, which bounds the wait of the operation that reclaims space
 // at the cost of a bounded wait on a delete that is not urgent.
+// fence_internal_test.go is where that ordering is pinned.
 
 // Fence serialises the operations on one repository that must not
 // interleave, and only those on ONE repository: two domains never contend
@@ -62,11 +66,113 @@ import (
 type Fence struct {
 	mu    sync.Mutex
 	gates map[model.RepositoryDomainID]*gate
+
+	// runs is the maintenance lease, and it is a SEPARATE map from gates
+	// on purpose. The gates answer "may a destructive operation and a
+	// full maintenance be inside this repository together" and the answer
+	// for two deletes is yes; runs answers "may two maintenance WINDOWS
+	// be under way for this repository", where the answer is never yes
+	// and where a quick window has to exclude another quick one -- which
+	// the shared side of a gate, correctly, does not.
+	runs map[model.RepositoryDomainID]*lease
 }
 
 // NewFence returns a fence with nothing held.
 func NewFence() *Fence {
-	return &Fence{gates: map[model.RepositoryDomainID]*gate{}}
+	return &Fence{
+		gates: map[model.RepositoryDomainID]*gate{},
+		runs:  map[model.RepositoryDomainID]*lease{},
+	}
+}
+
+// lease is one repository's maintenance lease: a single token, held by
+// whoever is running a maintenance window against that repository.
+//
+// waiting is guarded by the Fence's mutex and is what lets an idle lease
+// be forgotten without losing a waiter that has not yet taken the token.
+type lease struct {
+	token   chan struct{}
+	waiting int
+}
+
+// SerialiseMaintenance reserves the right to run a maintenance window
+// against one repository, and returns the release.
+//
+// It is what makes "decide whether maintenance is due, then do it, then
+// record it" one operation rather than three. Two scheduled passes that
+// both decide a full maintenance is due would otherwise both be right,
+// both queue for the exclusive side of the fence, and run full
+// maintenance twice in a row -- the second time against a repository that
+// had just had one -- with each writing its own outcome over the other's
+// history and counters. The exclusive gate cannot prevent that: it
+// serialises them, which is exactly what makes them both run.
+//
+// It is in-process, and unlike the ownership record it does not pretend
+// otherwise: what stops a SECOND INSTANCE writing over this window's
+// outcome is the record's revision (see run.go), not this lease.
+func (f *Fence) SerialiseMaintenance(ctx context.Context, domain model.RepositoryDomainID) (func(), error) {
+	f.mu.Lock()
+
+	l := f.runs[domain]
+	if l == nil {
+		l = &lease{token: make(chan struct{}, 1)}
+		f.runs[domain] = l
+	}
+
+	l.waiting++
+	f.mu.Unlock()
+
+	// An uncontended lease is granted without consulting ctx, for
+	// acquire's reason: a caller that would not have waited is better
+	// served by being let through to fail on its own terms than by an
+	// error about a queue it was never in. It also keeps a cancelled
+	// window's outcome recordable, which is what makes a failure
+	// distinguishable from a window that never ran.
+	select {
+	case l.token <- struct{}{}:
+		return f.releaseLease(domain, l), nil
+	default:
+	}
+
+	select {
+	case l.token <- struct{}{}:
+		return f.releaseLease(domain, l), nil
+
+	case <-ctx.Done():
+		f.mu.Lock()
+		l.waiting--
+		f.forgetLeaseIfIdle(domain, l)
+		f.mu.Unlock()
+
+		return nil, ctx.Err()
+	}
+}
+
+// releaseLease hands the token back, once however many times it is
+// called: a window that both defers its release and returns it early is
+// the ordinary shape, and a second release that freed somebody else's
+// lease would let two windows run.
+func (f *Fence) releaseLease(domain model.RepositoryDomainID, l *lease) func() {
+	var once sync.Once
+
+	return func() {
+		once.Do(func() {
+			<-l.token
+
+			f.mu.Lock()
+			l.waiting--
+			f.forgetLeaseIfIdle(domain, l)
+			f.mu.Unlock()
+		})
+	}
+}
+
+// forgetLeaseIfIdle drops a lease nobody holds or wants, for the reason
+// forgetIfIdle gives. Must be called with the lock held.
+func (f *Fence) forgetLeaseIfIdle(domain model.RepositoryDomainID, l *lease) {
+	if l.waiting == 0 && len(l.token) == 0 {
+		delete(f.runs, domain)
+	}
 }
 
 // gate is one repository's exclusion state. Every field is guarded by the

@@ -50,8 +50,8 @@ never allowed to be traded away for speed.
 
 `core/internal/repomaintenance` runs maintenance against a domain, never
 against a backup set. Ownership lives in the durable record #781 added
-(`backupengine.MaintenanceOwnership`, one JSON file per domain beside the
-repository's other local state), and the rules are three:
+(`backupengine.MaintenanceOwnership`, one file per domain and revision
+beside the repository's other local state), and the rules are three:
 
 - an unclaimed repository is claimed by the instance that first maintains
   it, because "no record" is the one unambiguous state — nobody has ever
@@ -68,6 +68,78 @@ repository's other local state), and the rules are three:
 An unreadable record is never read as an unclaimed one. The answer to
 unclaimed is "claim it", and claiming a repository another instance is
 maintaining right now is the exact failure the record prevents.
+
+### 1a. Every one of those rules is a read followed by a write, so the store is atomic
+
+Each rule above is stated as a check against the record and then a write
+of it, and a check followed by a write is not one operation. Two
+instances that both read "unclaimed" both pass the first rule. Two
+administrators who both read "instance-a owns it" both pass the third.
+An instance that read the record, spent twenty minutes maintaining a
+repository, and then wrote its outcome back would overwrite whatever
+happened while it worked — including a completed `Transfer`, putting
+itself back in as owner of a repository somebody else has been given.
+
+So `MaintenanceOwnershipStore` has no unconditional write. It offers
+`Load`, an atomic `Create` that fails with
+`ErrMaintenanceOwnershipExists` if the repository already has a record,
+and `CompareAndSwap`, which writes only if the stored record is still at
+the revision the caller read and fails with
+`ErrMaintenanceOwnershipStale` if it is not. `Revision` is assigned by
+the store, not carried in the record's own JSON: a revision written
+inside the thing it describes is a fact that can disagree with where the
+record actually is.
+
+`FileMaintenanceOwnershipStore` implements both with the filesystem's own
+atomic operations and no lock at all. A record lives at
+`<domain>.maintenance.<revision>.json` and the record IS the highest
+revision present; publishing a revision is `os.Link(2)` of a
+fully-written temporary file onto that name, which the kernel either
+performs or fails with `EEXIST`. Exactly one of any number of concurrent
+writers can therefore take a revision, and because the bytes are complete
+before the link, a crash can leave a stray temporary file but never a
+half-written record. A lock file would have needed an answer for the
+holder dying; a revision nobody can take twice needs none.
+
+Separately, `Fence.SerialiseMaintenance` holds one domain's whole window
+— final ownership load, the due recheck, the maintenance, the record
+write — as a single critical section. This is a different lock from the
+exclusive gate in decision 2 and is needed because that gate cannot help
+here: two passes that both decide a full maintenance is due would queue
+for it and run full maintenance twice in a row, correctly serialised and
+entirely pointless, each writing its own outcome over the other's
+history.
+
+### 1b. What single-owner does NOT cover: two instances, two state directories
+
+The ownership record is LOCAL — a file under the instance's own state
+directory. Two instances that share a repository but not a state
+directory therefore each claim it, and no amount of local atomicity
+changes that. The atomic store fixes the races that happen where
+coordination is possible (concurrent claims and transfers through one
+state directory, a stale window reverting a handover, two passes
+clobbering one history); it does not make ownership visible across
+instances.
+
+Closing that gap needs an ownership lease in storage both instances can
+read, acquired atomically, and the embedded engine cannot express one.
+kopia v0.23.1 refuses `blob.PutOptions.DoNotRecreate` with
+`ErrUnsupportedPutBlobOption` on every backend this product supports
+(filesystem, sftp, s3; also b2, azure, webdav — only gcs and gdrive
+implement it), and `PutManifest` is last-write-wins with no
+compare-and-set. kopia's own maintenance exclusivity is a local
+`flock(2)` on the config file plus an advisory owner string in the
+maintenance parameters, so the vendor does not coordinate across
+instances either.
+
+What keeps the uncoordinated case non-destructive is therefore decision 3:
+`maintenance.SafetyFull` keeps recently-written content out of garbage
+collection, which is what makes even two concurrent maintenance passes a
+waste of requests rather than a loss of data. A shared coordinator, if
+this product ever needs one, belongs where maintenance is wired up and
+hardened (#788, #789) and not in this package;
+`TestTwoInstancesWithSeparateStateDirectoriesAreNotCoordinated` pins the
+current boundary so that moving it has to be deliberate.
 
 ### 2. Fencing is per-domain, and full maintenance is the exclusive side
 
@@ -94,10 +166,19 @@ somebody forgets.
 half of a destructive race, and fencing it would put a retention pass's
 whole planning phase behind a maintenance window for no safety.
 
+The queue is FIFO rather than "grant everything compatible", and that is
+a correctness choice and not a fairness one: a later delete admitted
+alongside the deletes already inside would keep the shared side
+permanently non-empty on any repository whose retention pass runs often,
+and full maintenance — the only thing that reclaims space — would never
+be granted. The symptom is a bucket that grows forever while the logs
+say maintenance is scheduled.
+
 This is an in-process coordination primitive and does not pretend to be a
-distributed lock. What makes even an unfenced concurrent pass
-non-destructive is the vendor's safety parameters, which is the next
-decision.
+distributed lock. Across instances, what coordination is possible lives in
+the ownership record (decision 1a) and what is not is stated in decision
+1b; what makes even an unfenced concurrent pass non-destructive is the
+vendor's safety parameters, which is the next decision.
 
 ### 3. The vendor's safety parameters are not a parameter of this product
 

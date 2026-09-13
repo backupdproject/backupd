@@ -18,9 +18,10 @@ package repomaintenance_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -37,8 +38,9 @@ const (
 )
 
 // localRepository creates and opens a real repository on a local
-// filesystem and returns it with its domain.
-func localRepository(t *testing.T, name string) (backupengine.Repository, model.RepositoryDomainID) {
+// filesystem and returns it with its domain and the directory its blobs
+// live in, which is what lets a test fail the storage under it.
+func localRepository(t *testing.T, name string) (backupengine.Repository, model.RepositoryDomainID, string) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -53,10 +55,12 @@ func localRepository(t *testing.T, name string) (backupengine.Repository, model.
 		t.Fatalf("writing the passphrase file: %v", err)
 	}
 
+	root := t.TempDir()
+
 	loc := backupengine.RepositoryLocation{
 		Kind:       backupengine.LocationLocal,
 		Domain:     domain,
-		Root:       t.TempDir(),
+		Root:       root,
 		StateDir:   filepath.Join(t.TempDir(), "state"),
 		Passphrase: secretref.Ref{File: secret},
 	}
@@ -73,7 +77,7 @@ func localRepository(t *testing.T, name string) (backupengine.Repository, model.
 
 	t.Cleanup(func() { _ = rep.Close(context.Background()) })
 
-	return rep, domain
+	return rep, domain, root
 }
 
 // snapshotOnce writes one file into a fresh source directory and stores a
@@ -130,7 +134,7 @@ func TestARepositoryIsStillReadableAndRestorableAfterMaintenance(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	rep, domain := localRepository(t, "post-maintenance-restore")
+	rep, domain, _ := localRepository(t, "post-maintenance-restore")
 
 	kept := snapshotOnce(t, rep, keptFileBody)
 	doomed := snapshotOnce(t, rep, "content only this snapshot references\n")
@@ -173,17 +177,24 @@ func TestARepositoryIsStillReadableAndRestorableAfterMaintenance(t *testing.T) {
 // TestMaintenanceAndSnapshotDeletesCannotInterleaveOnOneRepository is the
 // fencing criterion asked of real operations against a real repository:
 // a full maintenance window and this product's destructive snapshot
-// deletes, running at the same time, through the fence.
+// deletes, contending for the same repository through the fence.
 //
-// The assertion is twofold and both halves matter. Nothing may observe
-// the other side inside its own section -- that is the fence -- and the
-// repository has to survive it, which is what proves the fence did not
-// merely make the test serial by breaking one of the two operations.
+// The contention is a barrier and not a race. The maintenance window is
+// held open INSIDE the exclusive section, and while it is held the test
+// asserts that a delete which has already been asked for cannot get in.
+// Launching both and checking that no overlap was observed proves much
+// less than it looks like: a fence that excluded nothing would pass it
+// whenever the two operations happened not to collide.
+//
+// Then the barrier is released and the assertions turn positive: the
+// delete completes, the repository is still restorable, and the snapshot
+// nothing deleted is still there. That half is what proves the fence did
+// not merely make the test serial by breaking one of the two operations.
 func TestMaintenanceAndSnapshotDeletesCannotInterleaveOnOneRepository(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	rep, domain := localRepository(t, "fenced-domain")
+	rep, domain, _ := localRepository(t, "fenced-domain")
 	fence := repomaintenance.NewFence()
 
 	kept := snapshotOnce(t, rep, keptFileBody)
@@ -200,37 +211,28 @@ func TestMaintenanceAndSnapshotDeletesCannotInterleaveOnOneRepository(t *testing
 	deletes := fence.GuardSnapshots(domain, observedDeletes{repo: rep, watch: tl})
 	runner := testRunner("instance-a", testStore(t), fence)
 
-	var wg sync.WaitGroup
-
-	wg.Add(2)
+	inside := make(chan struct{})
+	resume := make(chan struct{})
 
 	maintenanceErr := make(chan error, 1)
 
 	go func() {
-		defer wg.Done()
-
-		now := time.Now()
-
-		for range 3 {
-			// Run's own fencing is what is under test here: nothing in
-			// this goroutine takes the fence by hand.
-			_, err := runner.Run(ctx, domain, observedMaintenance{repo: rep, watch: tl}, backupengine.MaintenanceFull, now)
-			if err != nil {
-				maintenanceErr <- err
-
-				return
-			}
-
-			now = now.Add(time.Minute)
-		}
-
-		maintenanceErr <- nil
+		// Run's own fencing is what is under test here: nothing in this
+		// goroutine takes the fence by hand.
+		_, err := runner.Run(ctx, domain,
+			observedMaintenance{repo: rep, watch: tl, inside: inside, resume: resume},
+			backupengine.MaintenanceFull, time.Now())
+		maintenanceErr <- err
 	}()
 
+	// Maintenance is now inside the exclusive section and staying there.
+	<-inside
+
+	asked := make(chan struct{})
 	deleteErr := make(chan error, 1)
 
 	go func() {
-		defer wg.Done()
+		close(asked)
 
 		for _, id := range doomed {
 			if err := deletes.DeleteSnapshot(ctx, id); err != nil {
@@ -243,12 +245,30 @@ func TestMaintenanceAndSnapshotDeletesCannotInterleaveOnOneRepository(t *testing
 		deleteErr <- nil
 	}()
 
-	wg.Wait()
+	<-asked
+
+	// The delete has been asked for and cannot have started: the
+	// repository is inside a full maintenance window. This is the
+	// assertion an unfenced delete fails.
+	if n := tl.insideNow("delete"); n != 0 {
+		t.Fatalf("%d snapshot deletes were inside the repository during a full maintenance window", n)
+	}
+
+	select {
+	case err := <-deleteErr:
+		t.Fatalf("a snapshot delete completed (%v) while a full maintenance window held the repository", err)
+	default:
+	}
+
+	close(resume)
 
 	if err := <-maintenanceErr; err != nil {
 		t.Fatalf("maintenance under contention: %v", err)
 	}
 
+	// And now that the exclusive section is over, the delete that was
+	// waiting really does get through: a fence that never released would
+	// be just as broken as one that never held.
 	if err := <-deleteErr; err != nil {
 		t.Fatalf("snapshot deletes under contention: %v", err)
 	}
@@ -274,11 +294,23 @@ func TestMaintenanceAndSnapshotDeletesCannotInterleaveOnOneRepository(t *testing
 type observedMaintenance struct {
 	repo  backupengine.Repository
 	watch *timeline
+
+	// inside is closed once maintenance is inside the repository, and
+	// resume is waited on before it leaves. Together they hold the
+	// exclusive section open for as long as a test needs to ask what
+	// else can get in. A zero inside/resume pair is not a barrier.
+	inside chan struct{}
+	resume chan struct{}
 }
 
 func (o observedMaintenance) Maintain(ctx context.Context, mode backupengine.MaintenanceMode) (backupengine.MaintenanceReport, error) {
 	o.watch.enter("maintenance")
 	defer o.watch.leave("maintenance")
+
+	if o.inside != nil {
+		close(o.inside)
+		<-o.resume
+	}
 
 	return o.repo.Maintain(ctx, mode)
 }
@@ -311,28 +343,42 @@ func (o observedDeletes) DeleteSnapshot(ctx context.Context, id backupengine.Sna
 // leave every restore point exactly where it was, and say so in the
 // record.
 //
-// The failure is produced by cancelling the window's context, which is
-// the realistic one -- a daemon shutting down, an operator interrupting,
-// a deadline -- and the one that stops maintenance at an arbitrary point
-// rather than before it started.
+// The failure has to land while maintenance is under way, and that is the
+// whole difficulty. A window refused before it starts -- a context
+// cancelled before Run, say -- proves only that a no-op is harmless,
+// which nobody doubted. So this test makes maintenance really maintain
+// the repository first, confirms from the storage that it wrote
+// something, and only then takes the storage away underneath it.
+//
+// What that leaves behind is the state an operator actually meets: a
+// repository whose indexes have been partly rewritten by a maintenance
+// pass that then died. The assertion is that the snapshot taken before
+// it still restores, byte for byte, and that the failure is recorded and
+// alerted rather than silently skipped.
 func TestAFailedMaintenanceLeavesTheLastKnownGoodBackupIntact(t *testing.T) {
 	t.Parallel()
 
-	rep, domain := localRepository(t, "failed-maintenance")
+	rep, domain, root := localRepository(t, "failed-maintenance")
 	kept := snapshotOnce(t, rep, keptFileBody)
 
 	runner := testRunner("instance-a", testStore(t), repomaintenance.NewFence())
 
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
+	window, abandon := context.WithCancel(context.Background())
+	defer abandon()
 
-	_, err := runner.Run(cancelled, domain, rep, backupengine.MaintenanceFull, time.Now())
+	failing := &failsMidMaintenance{t: t, repo: rep, root: root, abandon: abandon}
+
+	_, err := runner.Run(window, domain, failing, backupengine.MaintenanceFull, time.Now())
 	if err == nil {
-		t.Fatal("a maintenance window with a cancelled context reported success")
+		t.Fatal("a maintenance window whose storage stopped accepting writes reported success")
+	}
+
+	if !failing.wrote {
+		t.Fatal("the failure was injected before maintenance had written anything, so this test is about a no-op")
 	}
 
 	// The restore point is still a restore point, read through a context
-	// that is not the cancelled one.
+	// that is not the abandoned one.
 	assertRestores(t, rep, kept, keptFileBody)
 
 	record, err := runner.Store.Load(context.Background(), domain)
@@ -348,7 +394,143 @@ func TestAFailedMaintenanceLeavesTheLastKnownGoodBackupIntact(t *testing.T) {
 		t.Errorf("the record claims a full maintenance at %v; the window failed", record.LastFull)
 	}
 
+	if record.Failures != 1 {
+		t.Errorf("the record counts %d failures after one failed window", record.Failures)
+	}
+
 	if got := repomaintenance.AlertConditions(record); len(got) != 1 {
 		t.Fatalf("a failed window produced %d alert conditions, want 1", len(got))
 	}
+}
+
+// failsMidMaintenance runs a real maintenance pass against a real
+// repository and then fails the window, so that what the window under
+// test meets is a repository maintenance has already modified.
+//
+// It is a wrapper rather than a fault-injecting storage layer because the
+// engine's port does not expose one: the adapter opens its own storage
+// from a location. What it can do is make that storage refuse writes,
+// which is the failure an operator sees as a full disk, a revoked
+// credential or an unmounted volume.
+type failsMidMaintenance struct {
+	t    *testing.T
+	repo backupengine.Repository
+	root string
+
+	// abandon cancels the window, and is the fallback for a test process
+	// that permissions cannot stop (a container running as root). Both
+	// are failures arriving mid-maintenance; only one of them can be
+	// relied on everywhere.
+	abandon func()
+
+	// wrote records that the first pass really did change the storage.
+	// The test fails if it did not, because then there was no
+	// maintenance in progress to interrupt.
+	wrote bool
+}
+
+func (f *failsMidMaintenance) Maintain(ctx context.Context, mode backupengine.MaintenanceMode) (backupengine.MaintenanceReport, error) {
+	before := storageContents(f.t, f.root)
+
+	if _, err := f.repo.Maintain(ctx, backupengine.MaintenanceQuick); err != nil {
+		return backupengine.MaintenanceReport{}, fmt.Errorf("the maintenance pass that was meant to succeed first: %w", err)
+	}
+
+	f.wrote = !maps.Equal(before, storageContents(f.t, f.root))
+
+	restore, effective := refuseWrites(f.t, f.root)
+	defer restore()
+
+	if !effective {
+		f.abandon()
+	}
+
+	report, err := f.repo.Maintain(ctx, mode)
+	if err == nil {
+		return report, errors.New("maintenance reported success against storage that was refusing writes")
+	}
+
+	return report, err
+}
+
+func (f *failsMidMaintenance) Stats(ctx context.Context) (backupengine.RepositoryStats, error) {
+	return f.repo.Stats(ctx)
+}
+
+// storageContents is every blob in a repository with its size, which is
+// how this file tells "maintenance wrote something" from "maintenance
+// declined to do anything".
+func storageContents(t *testing.T, root string) map[string]int64 {
+	t.Helper()
+
+	contents := map[string]int64{}
+
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if entry.IsDir() {
+			return nil
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+
+		contents[path] = info.Size()
+
+		return nil
+	}); err != nil {
+		t.Fatalf("reading the repository's storage: %v", err)
+	}
+
+	return contents
+}
+
+// refuseWrites makes a repository's storage reject new blobs, and reports
+// whether it really does: a process running as root is not stopped by a
+// permission bit, and a failure this test only pretended to inject would
+// prove nothing at all.
+func refuseWrites(t *testing.T, root string) (restore func(), effective bool) {
+	t.Helper()
+
+	var dirs []string
+
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if entry.IsDir() {
+			dirs = append(dirs, path)
+		}
+
+		return nil
+	}); err != nil {
+		t.Fatalf("walking the repository's storage: %v", err)
+	}
+
+	for _, dir := range dirs {
+		if err := os.Chmod(dir, 0o500); err != nil {
+			t.Fatalf("making %s read-only: %v", dir, err)
+		}
+	}
+
+	restore = func() {
+		for _, dir := range dirs {
+			_ = os.Chmod(dir, 0o700)
+		}
+	}
+
+	probe := filepath.Join(root, ".write-probe")
+
+	if err := os.WriteFile(probe, []byte("probe"), 0o600); err != nil {
+		return restore, true
+	}
+
+	_ = os.Remove(probe)
+
+	return restore, false
 }
