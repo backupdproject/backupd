@@ -42,6 +42,12 @@
       "mode": "repo"
     },
     {
+      "id": "no-container-docker-access",
+      "title": "No container access to the Docker daemon requested by the package",
+      "spec": "73 WP5.4, 19, 877",
+      "mode": "repo"
+    },
+    {
       "id": "no-mandatory-telemetry",
       "title": "No mandatory telemetry endpoint",
       "spec": "73 WP5.4, 45.5, 75",
@@ -198,6 +204,9 @@
         "no-privileged-mode": {
           "declared": "supported"
         },
+        "no-container-docker-access": {
+          "declared": "supported"
+        },
         "no-mandatory-telemetry": {
           "declared": "supported"
         },
@@ -291,6 +300,9 @@
         "no-privileged-mode": {
           "declared": "supported"
         },
+        "no-container-docker-access": {
+          "declared": "supported"
+        },
         "no-mandatory-telemetry": {
           "declared": "supported"
         },
@@ -376,6 +388,9 @@
         "no-privileged-mode": {
           "declared": "supported"
         },
+        "no-container-docker-access": {
+          "declared": "supported"
+        },
         "no-mandatory-telemetry": {
           "declared": "supported"
         },
@@ -459,6 +474,9 @@
           "declared": "supported"
         },
         "no-privileged-mode": {
+          "declared": "supported"
+        },
+        "no-container-docker-access": {
           "declared": "supported"
         },
         "no-mandatory-telemetry": {
@@ -551,6 +569,9 @@
         "no-privileged-mode": {
           "declared": "supported"
         },
+        "no-container-docker-access": {
+          "declared": "supported"
+        },
         "no-mandatory-telemetry": {
           "declared": "supported"
         },
@@ -640,6 +661,9 @@
           "declared": "supported"
         },
         "no-privileged-mode": {
+          "declared": "supported"
+        },
+        "no-container-docker-access": {
           "declared": "supported"
         },
         "no-mandatory-telemetry": {
@@ -734,6 +758,9 @@
         "no-privileged-mode": {
           "declared": "supported"
         },
+        "no-container-docker-access": {
+          "declared": "supported"
+        },
         "no-mandatory-telemetry": {
           "declared": "supported"
         },
@@ -824,6 +851,9 @@
           "declared": "supported"
         },
         "no-privileged-mode": {
+          "declared": "supported"
+        },
+        "no-container-docker-access": {
           "declared": "supported"
         },
         "no-mandatory-telemetry": {
@@ -918,6 +948,9 @@
         "no-privileged-mode": {
           "declared": "supported"
         },
+        "no-container-docker-access": {
+          "declared": "supported"
+        },
         "no-mandatory-telemetry": {
           "declared": "supported"
         },
@@ -1002,6 +1035,9 @@
         "no-privileged-mode": {
           "declared": "supported"
         },
+        "no-container-docker-access": {
+          "declared": "supported"
+        },
         "no-mandatory-telemetry": {
           "declared": "supported"
         },
@@ -1084,6 +1120,10 @@
           "reason": "EPIC D's #83 has not produced the .UPK, so there is no UGREEN artifact to preflight. Recorded as not yet applicable rather than as a failing check, per this work package's own rule that a UGREEN row can never block Phase 5; the same mechanism decides this row the day #83 lands, with no edit here."
         },
         "no-privileged-mode": {
+          "declared": "not-applicable",
+          "reason": "EPIC D's #83 has not produced the .UPK, so there is no UGREEN artifact to preflight. Recorded as not yet applicable rather than as a failing check, per this work package's own rule that a UGREEN row can never block Phase 5; the same mechanism decides this row the day #83 lands, with no edit here."
+        },
+        "no-container-docker-access": {
           "declared": "not-applicable",
           "reason": "EPIC D's #83 has not produced the .UPK, so there is no UGREEN artifact to preflight. Recorded as not yet applicable rather than as a failing check, per this work package's own rule that a UGREEN row can never block Phase 5; the same mechanism decides this row the day #83 lands, with no edit here."
         },

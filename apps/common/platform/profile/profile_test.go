@@ -270,6 +270,66 @@ func TestUndeliverableCapabilityCheckWouldNoticeAnEmulatedClaim(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------
+// Local workflow hooks resolve per platform (#877)
+// ---------------------------------------------------------------------
+
+// Every profile row answers the local-hook question, and answers it
+// through the same wired adapter a running deployment holds rather than
+// through the table directly. That is the difference worth testing: the
+// contract resolves from PlatformAdapter.ID(), and Profile.PlatformID is
+// deliberately a separate field from Profile.ID, so a row whose two
+// identifiers drifted would answer for the wrong platform — silently,
+// because both answers are legal ones.
+func TestEveryProfileResolvesItsLocalHookAnswer(t *testing.T) {
+	t.Parallel()
+
+	// The reviewed set, restated here in the profile package's own terms.
+	// It is not a copy of the capabilities table for its own sake: this
+	// is the list of RUNTIME PROFILES that may run local hooks, and a
+	// profile acquiring the capability because its PlatformID changed is
+	// exactly what it catches.
+	allowed := map[profile.ID]bool{
+		profile.Generic:        true,
+		profile.OpenMediaVault: true,
+		profile.Proxmox:        true,
+	}
+
+	for _, id := range profile.IDs() {
+		t.Run(string(id), func(t *testing.T) {
+			t.Parallel()
+			p := mustLookup(t, string(id))
+			if p.Gateway != nil {
+				p.Gateway.TrustedPeers = []string{"127.0.0.1/32"}
+			}
+			adapter, err := p.Adapter(profile.AdapterConfig{LocalAuth: stubAuthenticator{}})
+			if err != nil {
+				t.Fatalf("Adapter: %v", err)
+			}
+
+			support, err := capabilities.LocalHooks(adapter)
+			if allowed[id] {
+				if err != nil {
+					t.Fatalf("profile %q refuses local hooks (%v), but this profile runs on a host the runner installer owns", id, err)
+				}
+				if !support.Available {
+					t.Error("no error, and still not available")
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("profile %q allows local hooks; this platform cannot host the workflow runner, and an unavailable capability has to be refused rather than left to fail at backup time", id)
+			}
+			if !capabilities.LocalHooksRefused(err) {
+				t.Errorf("profile %q refused local hooks with an error nothing can recognise: %v", id, err)
+			}
+			if support.Instead == "" {
+				t.Errorf("profile %q refuses local hooks and names nothing instead", id)
+			}
+		})
+	}
+}
+
 type overclaimingAdapter struct {
 	capabilities.BasePlatformAdapter
 }

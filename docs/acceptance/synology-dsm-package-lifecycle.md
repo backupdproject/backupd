@@ -369,6 +369,56 @@ This is the destructive-safety step. Read it fully before starting.
    about the enrollment path, not a Synology one.
 4. Uninstall again and confirm the canary from step 5 is still intact.
 
+## Local workflow hooks are unavailable on Synology DSM
+
+A workflow step whose target is `local` does not run in the engine container, and since
+issue #865 it does not run on a host shell either: it runs in an **ephemeral Docker
+container** launched by the **Host Workflow Runner**, a small version-pinned process
+systemd supervises as `backupd-workflow-runner.service`
+(`docs/adr/0020-host-workflow-runner.md`, `docs/runtime-contract.md`).
+
+A DSM package cannot install a systemd unit or grant a supplementary group, and
+Container Manager's socket is root-owned. That holds for both ways of installing this
+release on DSM — the `.spk` this procedure exercises and the Container Manager project
+beside it — so neither route can carry the runner, and neither tries.
+
+**Local workflow hooks are unavailable on this platform.** That is a refusal with a
+named mechanism rather than a gap, and it is worth being precise about which
+mechanism, because two plausible ones are not it:
+
+- the **capability contract** answers `unavailable` for this platform, with this
+  reason and the alternative below
+  (`apps/common/platform/capabilities`, `LocalHooks`);
+- the **engine** refuses a `NAME.local.sh` step outright when a deployment has no
+  host workflow runner behind it — *"this deployment has no host workflow runner,
+  and a NAME.local.sh has nowhere to run"*
+  (`core/internal/workflowrun/engine.go`). A hook is refused, never skipped, so a
+  run cannot report success with the hook quietly missing;
+- and **this procedure installs no `backupd-workflow-runner.service`**, grants no
+  group and fetches no hook image.
+
+What does **not** happen, so that nobody goes looking for it:
+`scripts/install/install_docker_host.py` has no platform gate. It refuses (exit 12)
+when a deployment has hook scripts and the runner's account cannot reach a Docker
+daemon, and on a host with no systemd it merely stages the unit file for an operator
+to install by hand. Neither of those is a refusal on this platform's grounds. The
+answer here is the contract's, and the enforcement is the engine's.
+
+**What works instead:** a remote workflow step. A step with a remote target runs over
+SSH (`docs/adr/0021-remote-ssh-exec.md`) against a machine you do
+administer, and needs no Docker and no host unit on this NAS. The engine's own side
+of this is unchanged either way: the shipped package asks for no Docker socket, no
+`group_add` and no `DOCKER_HOST`.
+
+- [ ] No `backupd-workflow-runner.service` exists on this host, and nothing in this
+      procedure created one
+- [ ] No account was added to a Docker socket group for this product, and the shipped
+      containers mount no socket and declare no `group_add`
+- [ ] A workflow configured with a `local` hook is refused with a message naming the
+      missing container runtime, and the refusal text is recorded — not a run that
+      reported success with the hook skipped
+
+
 ## Evidence to record
 
 - Package Center screenshots for install, upgrade, uninstall and the

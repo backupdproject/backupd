@@ -527,6 +527,51 @@ non-default port using the line `ssh` showed you, without the port, and rclone r
 not a man in the middle, it is an entry keyed wrong, and it arrives after the stack is
 up and the first backup has run.
 
+## Local workflow hooks, and the Docker prerequisite
+
+A workflow step whose target is `local` does not run in the engine container, and since
+issue #865 it does not run on a host shell either: it runs in an **ephemeral Docker
+container** launched by the **Host Workflow Runner**, a small version-pinned process
+systemd supervises as `backupd-workflow-runner.service`
+(`docs/adr/0020-host-workflow-runner.md`, `docs/runtime-contract.md`).
+
+A generic Docker host is this runner's own target, so local hooks are **available**
+here: `install` provisions the unit, the credential and the workflows directory beside
+the stack, stages the unit file for `systemctl enable --now`, and encodes the daemon
+this install actually used into the unit (`DOCKER_HOST`/`DOCKER_CONTEXT` as
+`Environment=` lines and `--docker <absolute path>` on `ExecStart`), because systemd
+inherits none of the installer's environment.
+
+Three prerequisites, all three re-proved by the runner's own startup probe, and any one
+of them missing is a refusal rather than a hook that quietly does not run:
+
+- **a daemon the runner's account can reach.** That is one supplementary group:
+  `sudo usermod -aG docker <the runner's account>`, or whatever group owns the socket
+  here — the installer reads the group off the socket rather than assuming `docker`. The
+  unit gets `SupplementaryGroups=` and that socket in `ReadWritePaths`; nothing else
+  does. The membership is root-equivalent on this host, which is exactly why it belongs
+  to the runner and to nothing else: **the engine container gains nothing** — no socket,
+  no `group_add`, no `DOCKER_HOST`, and `distribution/packaging`'s preflight fails the
+  build if any shipped package asks for one;
+- **the hook image, already on the host.** `--hook-image` defaults to the pinned
+  `bash:5.2.37-alpine3.21`, `install` fetches it, and `WORKFLOW_RUNNER_HOOK_IMAGE` in the
+  deployment's `.env` names a different one. The runner never pulls: an image that is not
+  there is a refusal, not a download;
+- **a non-root account.** The runner refuses to run as root, so a root deployment gets no
+  runner and is told so.
+
+`python3 scripts/install/install_docker_host.py preflight` refuses with exit 12, and the
+refusal carries the `usermod -aG` line, when this deployment has hook scripts and the
+runner's account cannot reach the daemon. A deployment with an empty workflows
+directory is held to none of it, and `WORKFLOW_RUNNER=off` in the `.env` says so
+explicitly.
+
+- [ ] `systemctl is-active backupd-workflow-runner.service` reports `active`
+- [ ] The `--puid` account is in the Docker socket's group, and the engine container is
+      not: it mounts no socket and declares no `group_add`
+- [ ] The hook image named in the unit and in the `.env` is present on the host
+
+
 ## Known-good, and known-bad
 
 **Proven on**: UGREEN NAS, `x86_64`, `Linux 6.12.30+`, Docker 29.4.3, Compose v5.1.3,

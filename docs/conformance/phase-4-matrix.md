@@ -102,6 +102,34 @@ in section 68's own words. A green matrix proves the packaging metadata is
 well-formed and mutually consistent. It proves nothing about how any of these
 platforms behaves. `docs/acceptance/` is where that gets decided.
 
+## This region is stale, and was not rubber-stamped (#877)
+
+The generated region below no longer matches a fresh run, and it was already
+out of date before issue #877 touched it. A run today reports twenty `FAIL`
+cells that predate this work: the `./workflows` mount that no canonical
+storage rule describes yet, the bridges' auth-mode reading, and two acceptance
+procedures whose upgrade and removal steps capture no baseline to compare
+against.
+
+Regenerating the region would record all of those as reviewed, which is the
+one thing this report must not do — `docs/epic-checklist.md`'s own rule is that
+nothing is green because nobody looked. So the region is left as it stands
+except for the one row #877 adds, spliced in by hand with the outcomes a real
+run produces for it:
+
+| Provider | Outcome | Why |
+|---|---|---|
+| Generic Docker, OpenMediaVault, Proxmox VE | `PASS` | Their deployments sit on a Linux host the operator administers, so the Host Workflow Runner can be provisioned and the documents say how. |
+| Synology DSM, TrueNAS, Unraid, UGOS Pro | `UNSUP` | Appliance platforms. Provisioning a host unit or granting the Docker socket's group would be the host-management-plane modification §4A/§75 forbids, so local hooks are refused rather than run. |
+| CasaOS, Portainer CE, Dockge, ZimaOS | `N/A` | They ship no bridge and no runtime profile, so they report the generic profile's capabilities and have no per-provider runtime answer. Theirs is stated in their acceptance procedures, which `distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead` holds over all eleven columns. |
+
+The falsification is recorded rather than asserted: flipping ZimaOS's column to
+`available` fails the Go matrix and the frontend suite together, and a document
+that omits any one of the three prerequisites (the unit, the group grant, the
+hook image) fails
+`TestTheLocalHookDocRequirementWouldNoticeASilentDocument`. An honest review
+and regeneration of the rest of the region is tracked separately.
+
 <!-- BEGIN GENERATED MATRIX -->
 
 ### Support tiers (§4A)
@@ -147,15 +175,16 @@ platforms behaves. `docs/acceptance/` is where that gets decided.
 | Embedded window | BLOCKED | UNSUP | UNSUP | PASS | UNSUP | UNSUP | UNSUP | UNSUP | UNSUP | UNSUP | UNSUP |
 | App-store packaging | BLOCKED | N/A | N/A | PASS | PASS | PASS | N/A | UNSUP | UNSUP | UNSUP | UNSUP |
 | Storage picker | BLOCKED | UNSUP | UNSUP | UNSUP | UNSUP | UNSUP | UNSUP | UNSUP | UNSUP | UNSUP | UNSUP |
+| Local workflow hooks (Host Workflow Runner + container hooks) | UNSUP | N/A | N/A | UNSUP | UNSUP | UNSUP | N/A | N/A | PASS | PASS | PASS |
 
 ### Totals
 
 | Outcome | Cells |
 |---|---|
-| PASS | 119 |
+| PASS | 122 |
 | PENDING_OPERATOR | 36 |
-| UNSUPPORTED | 43 |
-| NOT_APPLICABLE | 39 |
+| UNSUPPORTED | 47 |
+| NOT_APPLICABLE | 43 |
 | BLOCKED | 16 |
 | FAIL | 0 |
 

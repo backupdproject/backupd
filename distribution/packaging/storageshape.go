@@ -94,7 +94,39 @@ func CheckStorageShapes(svcs []Service, c Canonical) []Violation {
 				continue
 			}
 			if m.Role == "" {
-				continue // TestEveryPlatformMapsEveryStorageRoleTheSameWay owns this.
+				// No role, so this is not one of the five mounts every
+				// adapter has to carry, and whether it is PRESENT is
+				// TestEveryPlatformMapsEveryStorageRoleTheSameWay's
+				// question, not this one.
+				//
+				// Its write mode still is this one's, though, whenever
+				// canonical.json names the container path. EPIC L is why:
+				// #877's runner token mounts at
+				// /etc/backupd/workflow-runner.token, and it is a
+				// CREDENTIAL — read-only for the same reason the SSH key
+				// and known_hosts are, and a writable credential file is
+				// one compromised process away from being replaced. Adding
+				// it to Roles would have been the wrong fix: Roles is what
+				// CheckRequiredMounts demands of every adapter, and no
+				// provider package carries the runner's token. So a
+				// declared path gets its write mode enforced without
+				// becoming a required role, and an undeclared one is still
+				// nobody's business here.
+				switch c.WriteModeFor(m.ContainerPath) {
+				case WriteModeReadOnly:
+					if !m.ReadOnly {
+						out = append(out, Violation{svc.Source, RuleWrongWriteMode,
+							fmt.Sprintf("service %q mounts %s writable; canonical.json lists it in readOnlyContainerPaths, and nothing in the container writes it. It carries no storage role, which is why the role-based check above does not see it, and a credential file is exactly the kind of mount that gets added without one",
+								svc.Name, m.ContainerPath)})
+					}
+				case WriteModeWritable:
+					if m.ReadOnly {
+						out = append(out, Violation{svc.Source, RuleWrongWriteMode,
+							fmt.Sprintf("service %q mounts %s read-only; canonical.json lists it in writableContainerPaths, so the application expects to write under it",
+								svc.Name, m.ContainerPath)})
+					}
+				}
+				continue
 			}
 			want := c.WriteModeFor(m.ContainerPath)
 			switch want {
