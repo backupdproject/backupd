@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/backupdproject/backupd/core/internal/config"
 	"github.com/backupdproject/backupd/core/internal/model"
 	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/backupdproject/backupd/core/internal/remoteexec"
 	"github.com/backupdproject/backupd/core/internal/state"
 	"github.com/backupdproject/backupd/core/internal/transport/rclone"
 	"github.com/backupdproject/backupd/core/internal/transport/retry"
@@ -117,32 +119,118 @@ func unreachableBackupSet(t *testing.T, remote config.Remote) config.BackupSet {
 
 // TestSensitiveEndpoints_OnlyCollectsOptedInRemotes is a focused unit test
 // for the small translation app.New relies on: across every configured
-// Source and BackupSet, only a Remote with Sensitive true contributes an
+// Source and BackupSet, and across every declared workflow execution
+// connection, only a Remote with Sensitive true contributes an
 // obs.Endpoint, and a config with none at all yields no endpoints (nil,
 // not an empty non-nil slice, though callers should not care which).
 func TestSensitiveEndpoints_OnlyCollectsOptedInRemotes(t *testing.T) {
 	quiet := config.BackupSet{Name: "quiet", Remote: config.Remote{Host: "public.example.com", Port: 22, User: "svc"}}
 	loud := config.BackupSet{Name: "loud", Remote: config.Remote{Host: "internal.example.com", Port: 2222, User: "backup", Sensitive: true}}
+	quietExec := config.WorkflowExecConnection{Name: "public-hooks", Remote: config.Remote{Host: "hooks.example.com", Port: 22, User: "hookuser"}}
+	loudExec := config.WorkflowExecConnection{Name: "private-hooks", Remote: config.Remote{Host: "quiesce.internal", Port: 2022, User: "hookuser", Sensitive: true}}
 
-	cfg := &config.Config{Sources: []config.Source{
-		{Name: "one", BackupSets: []config.BackupSet{quiet, loud}},
-	}}
+	cfg := &config.Config{
+		Sources:   []config.Source{{Name: "one", BackupSets: []config.BackupSet{quiet, loud}}},
+		Workflows: config.Workflows{ExecConnections: []config.WorkflowExecConnection{quietExec, loudExec}},
+	}
 
 	got := sensitiveEndpoints(cfg)
-	if len(got) != 1 {
-		t.Fatalf("sensitiveEndpoints returned %d endpoints, want exactly 1: %+v", len(got), got)
+	want := []obs.Endpoint{
+		{Host: "internal.example.com", Port: 2222, User: "backup"},
+		{Host: "quiesce.internal", Port: 2022, User: "hookuser"},
 	}
-	want := obs.Endpoint{Host: "internal.example.com", Port: 2222, User: "backup"}
-	if got[0] != want {
-		t.Fatalf("sensitiveEndpoints()[0] = %+v, want %+v", got[0], want)
+	if len(got) != len(want) {
+		t.Fatalf("sensitiveEndpoints returned %d endpoints, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sensitiveEndpoints()[%d] = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 
-	if got := sensitiveEndpoints(&config.Config{Sources: []config.Source{{Name: "one", BackupSets: []config.BackupSet{quiet}}}}); len(got) != 0 {
+	if got := sensitiveEndpoints(&config.Config{
+		Sources:   []config.Source{{Name: "one", BackupSets: []config.BackupSet{quiet}}},
+		Workflows: config.Workflows{ExecConnections: []config.WorkflowExecConnection{quietExec}},
+	}); len(got) != 0 {
 		t.Fatalf("sensitiveEndpoints with no opted-in remote returned %+v, want none", got)
 	}
 
 	if got := sensitiveEndpoints(nil); got != nil {
 		t.Fatalf("sensitiveEndpoints(nil) = %+v, want nil", got)
+	}
+}
+
+// TestSensitiveExecConnectionRedactsARealRemoteExecFailure is #810's half
+// of the same contract, and it is here rather than in internal/remoteexec
+// because this is where the two vocabularies meet: an execution connection
+// carries a whole Remote, sensitive_endpoint and all, and the failures it
+// produces name the endpoint in prose this project writes itself -- the
+// dial error and the per-step audit line.
+//
+// The failure is real: a genuine dial against a real, closed TCP port,
+// through the same remoteexec.Dial a hook would use, resolved through the
+// same remoteexec.Resolve. A fabricated error string would prove that this
+// test can spell a host name.
+func TestSensitiveExecConnectionRedactsARealRemoteExecFailure(t *testing.T) {
+	remote, port := unreachableRemote(t, true)
+	cfg := &config.Config{Workflows: config.Workflows{
+		ExecConnections: []config.WorkflowExecConnection{{Name: "quiesce-host", Remote: remote}},
+	}}
+
+	var buf bytes.Buffer
+	logger := obs.New(&buf, obs.LevelInfo).WithRedaction(obs.NewRedactor(sensitiveEndpoints(cfg)...))
+
+	conn, err := remoteexec.Resolve(cfg, "quiesce-host")
+	if err != nil {
+		t.Fatalf("resolving the execution connection: %v", err)
+	}
+	_, dialErr := remoteexec.Dial(context.Background(), conn)
+	if dialErr == nil {
+		t.Fatal("a dial against a closed port succeeded, so this test has no failure to redact")
+	}
+
+	req := remoteexec.Request{
+		BackupSet:  "cicd-pipeline/gitea-forge-dump",
+		StepID:     "0001~set~before~10-quiesce.remote.sh",
+		ScriptName: "10-quiesce.remote.sh",
+	}
+	audit := remoteexec.NewAudit(conn, req, remoteexec.Result{}, dialErr)
+
+	logger.Event(context.Background(), obs.LevelError, "workflow.remote_step", "the remote hook could not open its execution connection",
+		slog.String("error", dialErr.Error()), slog.String("audit", audit.String()))
+
+	out := buf.String()
+	if strings.Contains(out, strconv.Itoa(port)) {
+		t.Fatalf("the log line carries the sensitive execution endpoint's port %d:\n%s", port, out)
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Fatalf("nothing was redacted at all, so the endpoint was never in the redactor:\n%s", out)
+	}
+	if !strings.Contains(out, "10-quiesce.remote.sh") {
+		t.Fatalf("the line no longer says which hook failed, which is the half an operator needs:\n%s", out)
+	}
+
+	// The control: the same failure over a connection that did NOT opt
+	// in still names its endpoint, so the test above cannot be passed by
+	// a redactor that hides everything.
+	plain, plainPort := unreachableRemote(t, false)
+	plainCfg := &config.Config{Workflows: config.Workflows{
+		ExecConnections: []config.WorkflowExecConnection{{Name: "quiesce-host", Remote: plain}},
+	}}
+	var plainBuf bytes.Buffer
+	plainLogger := obs.New(&plainBuf, obs.LevelInfo).WithRedaction(obs.NewRedactor(sensitiveEndpoints(plainCfg)...))
+	plainConn, err := remoteexec.Resolve(plainCfg, "quiesce-host")
+	if err != nil {
+		t.Fatalf("resolving the plain execution connection: %v", err)
+	}
+	_, plainErr := remoteexec.Dial(context.Background(), plainConn)
+	if plainErr == nil {
+		t.Fatal("a dial against a closed port succeeded")
+	}
+	plainLogger.Event(context.Background(), obs.LevelError, "workflow.remote_step", "the remote hook could not open its execution connection",
+		slog.String("error", plainErr.Error()))
+	if !strings.Contains(plainBuf.String(), strconv.Itoa(plainPort)) {
+		t.Fatalf("an endpoint that never opted in was redacted anyway, so redaction is no longer opt-in:\n%s", plainBuf.String())
 	}
 }
 

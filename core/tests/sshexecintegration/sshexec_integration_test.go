@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,11 @@ import (
 	"github.com/backupdproject/backupd/core/internal/workflowexec"
 	"github.com/backupdproject/backupd/core/tests/machines"
 )
+
+// seededArtifact is the byte content of the artifact the SFTP-only account
+// keeps, seeded and then transferred back so the "still backs up" half of
+// the capability boundary is a transfer rather than a directory listing.
+const seededArtifact = "artifact-bytes"
 
 // connectionFor builds the execution connection for one of the fixture's
 // accounts. It goes through the exported Connection rather than through
@@ -65,25 +71,78 @@ func dial(t *testing.T, h *machines.ExecHost, conn remoteexec.Connection) *remot
 	return client
 }
 
+// sink collects the capture. It is mutex-guarded because the two streams
+// are copied by two goroutines and because the tests below READ it while
+// the hook is still running -- waiting for a hook's own "started" line is
+// how they synchronise on the remote process existing, instead of sleeping
+// for a duration that is either flaky or slow.
 type sink struct {
+	mu     sync.Mutex
 	chunks []workflowexec.Chunk
 }
 
 func (s *sink) Chunk(c workflowexec.Chunk) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.chunks = append(s.chunks, workflowexec.Chunk{Stream: c.Stream, Seq: c.Seq, Data: append([]byte(nil), c.Data...)})
 
 	return nil
 }
 
+func (s *sink) all() []workflowexec.Chunk {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return append([]workflowexec.Chunk(nil), s.chunks...)
+}
+
 func (s *sink) text(stream workflowexec.StreamID) string {
 	var b strings.Builder
-	for _, c := range s.chunks {
+	for _, c := range s.all() {
 		if c.Stream == stream {
 			b.Write(c.Data)
 		}
 	}
 
 	return b.String()
+}
+
+// awaitOutput blocks until the hook has printed marker on stdout, which is
+// the hook itself saying it is running. Every test that has to act on a
+// LIVE remote process synchronises on this rather than on a sleep: a sleep
+// long enough to be reliable on a loaded machine is a sleep that makes the
+// suite slow, and a shorter one tests whatever happened to have started.
+// It reports rather than fails fatally, because two of its callers wait on
+// behalf of a goroutine and t.Fatalf from one of those stops nothing.
+func awaitOutput(t *testing.T, s *sink, marker string, within time.Duration) bool {
+	t.Helper()
+
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		if strings.Contains(s.text(workflowexec.StreamStdout), marker) {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("the hook never printed %q within %s, so it was never observed running and this test proves nothing:\n%s",
+		marker, within, s.text(workflowexec.StreamStdout))
+
+	return false
+}
+
+// awaitGone waits for a process matching marker to disappear from the
+// remote host's process table, and says what is still there if it does not.
+func awaitGone(t *testing.T, h *machines.ExecHost, marker string, within time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		if !strings.Contains(h.Inside(t, "ps", "-A", "-o", "args="), marker) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Errorf("%q is still running on the remote host after %s:\n%s", marker, within, h.Inside(t, "ps", "-A", "-o", "args="))
 }
 
 // --- the capability boundary ---------------------------------------------
@@ -99,14 +158,14 @@ func TestAnSFTPOnlyAccountIsRefusedExecAndStillBacksUp(t *testing.T) {
 	// the exec refusal having broken backups.
 	seeded := h.Inside(t, "sh", "-c",
 		"mkdir -p /home/"+machines.SFTPOnlyUser+"/artifacts && "+
-			"printf 'artifact-bytes' > /home/"+machines.SFTPOnlyUser+"/artifacts/dump.tar && "+
+			"printf '"+seededArtifact+"' > /home/"+machines.SFTPOnlyUser+"/artifacts/dump.tar && "+
 			"chown -R "+machines.SFTPOnlyUser+" /home/"+machines.SFTPOnlyUser+"/artifacts && echo seeded")
 	if !strings.Contains(seeded, "seeded") {
 		t.Fatalf("could not seed an artifact for the transport half: %q", seeded)
 	}
 
 	adapter := rclone.New()
-	artifacts, err := adapter.List(h.Context(), transport.Source{
+	source := transport.Source{
 		ID:         "sftp-only-source",
 		Type:       "sftp",
 		Host:       h.Host,
@@ -115,12 +174,29 @@ func TestAnSFTPOnlyAccountIsRefusedExecAndStillBacksUp(t *testing.T) {
 		KeyFile:    h.KeyFile,
 		KnownHosts: h.KnownHostsFile,
 		Root:       "artifacts",
-	})
+	}
+	artifacts, err := adapter.List(h.Context(), source)
 	if err != nil {
 		t.Fatalf("the SFTP-only account could not list its artifacts, so this test cannot say anything about exec: %v", err)
 	}
 	if len(artifacts) != 1 || !strings.HasSuffix(artifacts[0].Path, "dump.tar") {
 		t.Fatalf("the transport half listed %+v, want one dump.tar", artifacts)
+	}
+
+	// Listing is not backing up. The claim is that this credential still
+	// TRANSFERS, so the artifact is pulled down and compared byte for
+	// byte with what was seeded: a source that could be listed and not
+	// read would pass a listing assertion and fail every backup.
+	local := filepath.Join(t.TempDir(), "dump.tar.partial")
+	if _, err := adapter.CopyToLocal(h.Context(), source, artifacts[0].Path, local); err != nil {
+		t.Fatalf("the SFTP-only account could not transfer its artifact, which is the half of this test that says backups keep working: %v", err)
+	}
+	got, err := os.ReadFile(local)
+	if err != nil {
+		t.Fatalf("reading the transferred artifact: %v", err)
+	}
+	if string(got) != seededArtifact {
+		t.Fatalf("the transferred artifact is %q, want %q", got, seededArtifact)
 	}
 
 	// The exec half: the same host, the same key, the same account.
@@ -147,6 +223,13 @@ func TestAnSFTPOnlyAccountIsRefusedExecAndStillBacksUp(t *testing.T) {
 // TestAForcedCommandAccountIsRefusedExec is the harder half of the same
 // boundary: this account accepts the exec request and exits 0. Only the
 // probe's own marker tells "my script ran" from "something ran".
+//
+// The refusal is asserted against what the FIXTURE's forced command
+// actually printed, and against the status it actually exited with. A
+// refusal that only said "forced command" would be produced for any
+// marker-less answer -- a nologin shell, a broken account, an sshd that
+// said nothing at all -- so deleting this fixture's ForceCommand would
+// leave the test passing while it stopped testing forced commands.
 func TestAForcedCommandAccountIsRefusedExec(t *testing.T) {
 	h := machines.Start(t).ExecHost(t)
 	client := dial(t, h, connectionFor(t, h, machines.ForcedCommandUser))
@@ -161,16 +244,63 @@ func TestAForcedCommandAccountIsRefusedExec(t *testing.T) {
 	if !strings.Contains(err.Error(), "forced command") {
 		t.Errorf("the refusal does not name the forced command: %v", err)
 	}
+	// The evidence: somebody else's program produced output of its own,
+	// and the session it ran in SUCCEEDED. Both halves are what makes
+	// this failure silent without a capability probe.
+	if !strings.Contains(err.Error(), machines.ForcedCommandOutput) {
+		t.Errorf("the refusal does not carry what the account actually ran and printed (%q), so it is the generic marker-less refusal rather than evidence about this account: %v",
+			machines.ForcedCommandOutput, err)
+	}
+	if !strings.Contains(err.Error(), "exited 0") {
+		t.Errorf("the refusal does not record that the session SUCCEEDED, which is the whole reason a forced command is dangerous: %v", err)
+	}
+}
+
+// TestAForcedCommandAccountCannotRunAHookAtAll is the same fact stated
+// where it matters most: not on the preflight, which a caller could
+// forget, but on the one exported way to run anything.
+//
+// A step here must never come back as exit 0. The account accepts the exec
+// request, runs its own program and succeeds, so an execution path that
+// trusted "the request was accepted" would report every remote hook on
+// this account as having run perfectly while none of them ever ran.
+func TestAForcedCommandAccountCannotRunAHookAtAll(t *testing.T) {
+	h := machines.Start(t).ExecHost(t)
+	client := dial(t, h, connectionFor(t, h, machines.ForcedCommandUser))
+
+	marker := "/tmp/forced-command-hook-should-not-have-run"
+	res, s, err := runHook(t, h, client, remoteexec.Request{
+		Token:   "backupd-exec-forced-run",
+		Script:  []byte("touch " + marker + "\nprintf 'the hook ran\\n'\n"),
+		Timeout: 60 * time.Second,
+	})
+
+	if err == nil {
+		t.Fatal("a step on a forced-command account was reported as having run")
+	}
+	if !errors.Is(err, remoteexec.ErrExecCapability) {
+		t.Errorf("the refusal is not an ErrExecCapability: %v", err)
+	}
+	if res.ExitCode != nil {
+		t.Errorf("the step reported exit code %d, which is the forced command's status and not a hook's", *res.ExitCode)
+	}
+	if out := s.text(workflowexec.StreamStdout); strings.Contains(out, "the hook ran") {
+		t.Errorf("the hook's own output was captured on an account that cannot run one: %q", out)
+	}
+	if listing := h.Inside(t, "ls", marker); !strings.Contains(listing, "No such file") {
+		t.Errorf("the hook's first line ran on a forced-command account: %q", listing)
+	}
 }
 
 func TestAnExecCapableAccountPassesPreflight(t *testing.T) {
 	h := machines.Start(t).ExecHost(t)
 	client := dial(t, h, connectionFor(t, h, machines.ExecUser))
 
-	report, err := client.Preflight(h.Context(), []byte("printf 'ok\\n'\nfor i in 1 2; do printf '%s\\n' \"$i\"; done\n"))
+	capability, err := client.Preflight(h.Context(), []byte("printf 'ok\\n'\nfor i in 1 2; do printf '%s\\n' \"$i\"; done\n"))
 	if err != nil {
 		t.Fatalf("an ordinary shell account was refused: %v", err)
 	}
+	report := capability.Report()
 
 	if report.User != machines.ExecUser {
 		t.Errorf("the far side says the session is %q, want %q", report.User, machines.ExecUser)
@@ -626,16 +756,22 @@ func TestCancellingAForegroundHookIsAlsoConfirmed(t *testing.T) {
 	client := dial(t, h, connectionFor(t, h, machines.ExecUser))
 
 	ctx, cancel := context.WithCancel(h.Context())
-	go func() {
-		time.Sleep(2 * time.Second)
-		cancel()
-	}()
 	defer cancel()
 
+	// The cancellation is fired once the hook has SAID it is running,
+	// not after a sleep chosen to be probably long enough: a step
+	// cancelled before its remote process exists proves nothing about
+	// termination, and it is the outcome a loaded machine produces.
+	const marker = "sleep 612"
 	s := &sink{}
+	go func() {
+		awaitOutput(t, s, "started", 60*time.Second)
+		cancel()
+	}()
+
 	res, err := client.Run(ctx, remoteexec.Request{
 		Token:   "backupd-exec-cancelled",
-		Script:  []byte("printf 'started\\n'\nsleep 612\n"),
+		Script:  []byte("printf 'started\\n'\n" + marker + "\n"),
 		Sink:    s,
 		Timeout: 5 * time.Minute,
 	})
@@ -649,6 +785,10 @@ func TestCancellingAForegroundHookIsAlsoConfirmed(t *testing.T) {
 	if res.ExitCode != nil {
 		t.Errorf("a cancelled step reported exit code %d", *res.ExitCode)
 	}
+
+	// Confirmed has to mean what it says here too. The certainty is
+	// about the remote host, so the remote host is what is asked.
+	awaitGone(t, h, marker, 10*time.Second)
 }
 
 // TestADeliberatelyDetachedChildIsUnconfirmed is the honest half of the
@@ -693,12 +833,15 @@ func TestTransportLossIsNotReportedAsAnExitCode(t *testing.T) {
 		t.Fatalf("Dial: %v", err)
 	}
 
+	// The connection is dropped once the hook is demonstrably running,
+	// so what this measures is a step losing its transport mid-run
+	// rather than a race between Close and the session ever starting.
+	s := &sink{}
 	go func() {
-		time.Sleep(2 * time.Second)
+		awaitOutput(t, s, "started", 60*time.Second)
 		_ = client.Close()
 	}()
 
-	s := &sink{}
 	res, runErr := client.Run(h.Context(), remoteexec.Request{
 		Token:   "backupd-exec-transport-loss",
 		Script:  []byte("printf 'started\\n'\nsleep 8\n"),
@@ -789,4 +932,172 @@ func TestAKeyFileTheDeploymentNoLongerOwnsIsRefused(t *testing.T) {
 	if _, err := remoteexec.Dial(h.Context(), conn); err == nil {
 		t.Fatal("a world-readable key file was used to open an exec channel")
 	}
+}
+
+// TestAHookSeesTheResolvedEnvironmentAndNothingTheAccountExported is the
+// environment-parity criterion, measured where it can actually be wrong.
+//
+// An SSH exec channel inherits what the server and the account put there:
+// HOME, USER, LOGNAME, LANG, MAIL, and SSH_CONNECTION, which sshd sets for
+// every session. A NAME.local.sh gets none of them -- the host runner hands
+// execve a block built from workflow.SanitizedBaseline, one variable -- so
+// a remote hook that inherited them would mean something different on the
+// two executors, which is the one thing a shared envelope exists to stop.
+func TestAHookSeesTheResolvedEnvironmentAndNothingTheAccountExported(t *testing.T) {
+	h := machines.Start(t).ExecHost(t)
+	client := dial(t, h, connectionFor(t, h, machines.ExecUser))
+
+	// env -0 rather than `env`, so a value containing a newline cannot
+	// look like two variables and an absent variable cannot be spelled by
+	// one that merely contains a line break.
+	script := []byte("env -0 | tr '\\0' '\\n' | sed -n 's/=.*//p' | sort | sed 's/^/name=/'\n" +
+		"printf 'pgdatabase=[%s]\\n' \"${PGDATABASE-unset}\"\n" +
+		"printf 'path=[%s]\\n' \"${PATH-unset}\"\n")
+
+	res, s, err := runHook(t, h, client, remoteexec.Request{
+		Token:   "backupd-exec-environment",
+		Script:  script,
+		Environ: []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "PGDATABASE=orders"},
+		Timeout: 60 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ExitCode == nil || *res.ExitCode != 0 {
+		t.Fatalf("the hook failed: %v %q", res.ExitCode, s.text(workflowexec.StreamStderr))
+	}
+
+	stdout := s.text(workflowexec.StreamStdout)
+	names := map[string]bool{}
+	for _, line := range strings.Split(stdout, "\n") {
+		if name, found := strings.CutPrefix(strings.TrimSpace(line), "name="); found {
+			names[name] = true
+		}
+	}
+	if len(names) == 0 {
+		t.Fatalf("the hook reported no environment at all, so this test proved nothing:\n%s", stdout)
+	}
+
+	// SSH_CONNECTION is the account-and-server variable this cannot be
+	// wrong about: nothing in this product ever sets it, sshd always
+	// does, and its presence is proof the hook is running in the
+	// account's environment rather than the resolved one.
+	for _, forbidden := range []string{"SSH_CONNECTION", "SSH_CLIENT", "HOME", "USER", "LOGNAME", "MAIL"} {
+		if names[forbidden] {
+			t.Errorf("the hook inherited %s from the remote account, so its environment is the account's with this product's layered on top:\n%s",
+				forbidden, stdout)
+		}
+	}
+	if !strings.Contains(stdout, "pgdatabase=[orders]") {
+		t.Errorf("a declared variable did not reach the hook: %q", stdout)
+	}
+	if !strings.Contains(stdout, "path=[/usr/local/sbin:") {
+		t.Errorf("the resolved PATH did not reach the hook: %q", stdout)
+	}
+}
+
+// TestTwoStepsWhoseTokensSharePrefixDoNotKillEachOther is the reaper's
+// blast radius, measured with two hooks running at the same moment.
+//
+// Step tokens are generated from a run and a step, so they are related
+// strings by construction: "…-before-10" is a prefix of "…-before-10-b". A
+// reaper that looked for its token anywhere in a command line would find
+// the OTHER step's process group and kill a hook that was running
+// perfectly, on a different backup set, while reporting a successful
+// termination of this one.
+func TestTwoStepsWhoseTokensSharePrefixDoNotKillEachOther(t *testing.T) {
+	h := machines.Start(t).ExecHost(t)
+
+	const shortToken = "backupd-exec-prefix"
+	const longToken = "backupd-exec-prefix-and-more"
+
+	// Two connections, because one client holds one connection and these
+	// two steps genuinely run at the same time.
+	victimClient := dial(t, h, connectionFor(t, h, machines.ExecUser))
+	doomedClient := dial(t, h, connectionFor(t, h, machines.ExecUser))
+
+	victimSink := &sink{}
+	victimDone := make(chan struct{})
+	var victimRes remoteexec.Result
+	var victimErr error
+	go func() {
+		defer close(victimDone)
+		victimRes, victimErr = victimClient.Run(h.Context(), remoteexec.Request{
+			Token:   longToken,
+			Script:  []byte("printf 'started\\n'\nsleep 6\nprintf 'survived\\n'\n"),
+			Sink:    victimSink,
+			Timeout: 120 * time.Second,
+		})
+	}()
+	if !awaitOutput(t, victimSink, "started", 60*time.Second) {
+		t.Fatal("the step that is supposed to survive never started")
+	}
+
+	// The step that gets stopped carries the SHORTER token, so its
+	// reaper is the one whose match could reach the other.
+	doomedSink := &sink{}
+	_, doomedErr := doomedClient.Run(h.Context(), remoteexec.Request{
+		Token:   shortToken,
+		Script:  []byte("printf 'started\\n'\nsleep 617\n"),
+		Sink:    doomedSink,
+		Timeout: 3 * time.Second,
+	})
+	if !errors.Is(doomedErr, remoteexec.ErrStepTimeout) {
+		t.Fatalf("the step that was supposed to be stopped did not time out: %v", doomedErr)
+	}
+
+	<-victimDone
+	if victimErr != nil {
+		t.Fatalf("a hook running normally on another connection was stopped by the other step's reaper: %v", victimErr)
+	}
+	if victimRes.ExitCode == nil || *victimRes.ExitCode != 0 {
+		t.Fatalf("the surviving step's exit status is %v, want 0 -- its process group was signalled by the other step's reaper", victimRes.ExitCode)
+	}
+	if got := victimSink.text(workflowexec.StreamStdout); !strings.Contains(got, "survived") {
+		t.Errorf("the surviving step did not finish its script: %q", got)
+	}
+}
+
+// TestAGroupIsReapedAfterItsLeaderHasGone is the case the exec-channel
+// signal request cannot be the mechanism for.
+//
+// The hook's leader exits immediately, leaving a child that ignores TERM
+// and holds the channel's stdout open -- so the session never completes and
+// the step has to be terminated. The token lives on the LEADER's command
+// line, which is no longer there, so a reaper that could only match the
+// command line would find nothing and report a clean "nothing was running"
+// about a process that is still running. What reaches it is the process
+// group id, captured while the step was alive, and the KILL that follows
+// the TERM the child ignores.
+func TestAGroupIsReapedAfterItsLeaderHasGone(t *testing.T) {
+	h := machines.Start(t).ExecHost(t)
+	client := dial(t, h, connectionFor(t, h, machines.ExecUser))
+
+	const marker = "sleep 618"
+	s := &sink{}
+	res, err := client.Run(h.Context(), remoteexec.Request{
+		Token:   "backupd-exec-orphaned-group",
+		Script:  []byte("sh -c 'trap \"\" TERM; printf \"started\\n\"; " + marker + "' &\nsleep 3\nexit 0\n"),
+		Sink:    s,
+		Timeout: 8 * time.Second,
+	})
+
+	if !errors.Is(err, remoteexec.ErrStepTimeout) {
+		t.Fatalf("the step did not outrun its bound, so the leader-has-gone case was never reached: %v (exit %v)", err, res.ExitCode)
+	}
+	if res.Certainty != workflowexec.TerminationConfirmed {
+		t.Errorf("certainty = %q, want %q: the step's process group was still reachable by the id captured while it ran (reaper: %s)",
+			res.Certainty, workflowexec.TerminationConfirmed, res.Reaper)
+	}
+	// The reaper has to say it killed a GROUP. "nothing was running" is
+	// what a reaper that could only match the vanished leader's command
+	// line reports, about a process that is still there.
+	if !strings.Contains(res.Reaper, "killed process group") {
+		t.Errorf("the reaper found nothing to kill once the leader had gone: %s", res.Reaper)
+	}
+
+	// The assertion that cannot be satisfied by bookkeeping: the
+	// TERM-ignoring child is gone from the remote host.
+	awaitGone(t, h, marker, 15*time.Second)
+	t.Cleanup(func() { h.Inside(t, "pkill", "-f", marker) })
 }

@@ -117,6 +117,53 @@ func ProcessEnv(baseline, environ []string) ([]string, error) {
 	return out, nil
 }
 
+// baselinePairs is the environment the remote encoding starts from, in the
+// one form this file works in.
+//
+// It is workflow.SanitizedBaseline read here rather than restated, because
+// the two executors must start a hook from the same place: the host runner
+// passes that baseline to ProcessEnv, and the remote payload has no caller
+// holding it -- the resolved environment it is handed is already layered.
+// Emitting it as the first exports is what makes "PATH is always there"
+// true on a connection whose account exported nothing at all.
+func baselinePairs() []envPair {
+	base := workflow.SanitizedBaseline()
+	out := make([]envPair, 0, len(base))
+	for _, v := range base {
+		out = append(out, envPair{name: v.Name, value: v.Value})
+	}
+
+	return out
+}
+
+// layer applies over on top of baseline, replacing rather than appending a
+// name that is already there.
+//
+// Duplicate-free for replaceOrAppend's reason, and in the same order: the
+// shell would honour the last assignment, but a payload that exported one
+// name twice would be a payload whose text does not say what the hook gets.
+func layer(baseline, over []envPair) []envPair {
+	out := make([]envPair, len(baseline), len(baseline)+len(over))
+	copy(out, baseline)
+
+	for _, p := range over {
+		replaced := false
+		for i := range out {
+			if out[i].name == p.name {
+				out[i] = p
+				replaced = true
+
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, p)
+		}
+	}
+
+	return out
+}
+
 // replaceOrAppend keeps the block duplicate-free. execve does not promise
 // which of two entries with the same name wins, and a variable whose value
 // depends on the libc is not a variable a hook can be written against.
@@ -138,6 +185,22 @@ type envPair struct {
 	value string
 }
 
+// parseEnviron validates the entries and drops the four startup variables,
+// wherever in the layering they came from.
+//
+// The drop is here rather than in either encoding because both encodings
+// go through this function, and the entries reaching it are the merged,
+// RESOLVED environment: a BASH_ENV that an operator configured in
+// workflows.environment, or in one backup set's own environment, arrives
+// as an ordinary entry with nothing left to say where it came from. The
+// baseline is sanitized (SanitizeBaseline) for the same reason at the
+// other end, so neither layer can carry one through.
+//
+// It is a silent drop rather than a refusal: the remote payload's first
+// act is to unset these names on the far side, so honouring one here would
+// mean emitting an export the envelope immediately contradicts -- and a
+// refusal would take a whole deployment's hooks out of service for a
+// variable that has never had an effect this product would keep.
 func parseEnviron(environ []string) ([]envPair, error) {
 	pairs := make([]envPair, 0, len(environ))
 	for _, entry := range environ {
@@ -150,6 +213,9 @@ func parseEnviron(environ []string) ([]envPair, error) {
 		}
 		if err := validateValue(name, value); err != nil {
 			return nil, err
+		}
+		if isStartupVariable(name) {
+			continue
 		}
 		pairs = append(pairs, envPair{name: name, value: value})
 	}

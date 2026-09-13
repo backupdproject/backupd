@@ -57,6 +57,17 @@ const (
 	ContaminatedUser = "contaminated"
 )
 
+// ForcedCommandOutput is what ForcedCommandUser's wrapper prints instead of
+// whatever the client asked for, verbatim from
+// scripts/e2e/exec-host.Dockerfile.
+//
+// It is here so a test can assert the refusal carries THIS account's own
+// evidence rather than the generic "no marker came back" wording, which
+// any broken account produces. Reading it from the fixture is what makes
+// deleting the fixture's ForceCommand a test failure instead of a quieter
+// test.
+const ForcedCommandOutput = "forced-command-only: this account runs "
+
 // RemoteBashPath is where bash is on this machine. Tests that prove the
 // "bash is not there" refusal point at a path that is not this one.
 const RemoteBashPath = "/bin/bash"

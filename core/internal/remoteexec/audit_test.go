@@ -193,16 +193,20 @@ func TestReaperScriptCannotBeSteeredByItsToken(t *testing.T) {
 	// escaped Request.validate could not become syntax. Both defences are
 	// asserted because the reaper sends signals: a single quoting mistake
 	// here is a remote kill with an attacker-chosen argument.
-	script := reaperScript("tok'; kill -9 -1 #")
+	script := reaperScript("tok'; kill -9 -1 #", "4321'; kill -9 -1 #")
 	if strings.Contains(script, "kill -9 -1 #") && !strings.Contains(script, `'\''`) {
 		t.Error("the token reached the reaper script unquoted")
 	}
 	if !strings.Contains(script, `tok=`) {
 		t.Error("the reaper does not assign the token at all")
 	}
-	// The guard that makes a malformed ps line harmless. "kill -TERM -1"
-	// would signal every process the account owns.
-	for _, guard := range []string{`case "$pgid" in ''|*[!0-9]*) continue ;; 0|1) continue ;; esac`} {
+	// The guards that make a malformed ps line, or a group id read back
+	// from the far side, harmless. "kill -TERM -1" would signal every
+	// process the account owns.
+	for _, guard := range []string{
+		`case "$pgid" in ''|*[!0-9]*) continue ;; 0|1) continue ;; esac`,
+		`  ''|*[!0-9]*|0|1) ;;`,
+	} {
 		if !strings.Contains(script, guard) {
 			t.Errorf("the reaper is missing the process-group guard %q", guard)
 		}

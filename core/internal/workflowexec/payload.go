@@ -37,6 +37,11 @@ const payloadScriptVar = "__backupd_script"
 // input: the environment bootstrap, then the captured script bytes, then
 // the one line that runs them.
 //
+// The bootstrap CLEARS before it sets (clearInheritedEnvironment), so the
+// environment a remote hook sees is the sanitized baseline plus the
+// resolved plan and nothing the remote account exported -- the same
+// environment the host runner builds for a NAME.local.sh.
+//
 // # Why the environment is shell text here and a block everywhere else
 //
 // An SSH exec channel has no environment. The protocol has a way to ask
@@ -89,15 +94,13 @@ func StdinPayload(environ []string, script []byte) ([]byte, error) {
 
 	var b strings.Builder
 
-	// First line, before anything else can be reached: the four variables
-	// that make bash run code at startup are cleared, so a hook's CHILD
-	// shells cannot be redirected by whatever the remote account exports.
-	// stderr is discarded on this line alone because SHELLOPTS and
-	// BASHOPTS are readonly in bash and unset says so, and that complaint
-	// would otherwise be the first thing in the step's captured stderr.
-	b.WriteString("unset BASH_ENV ENV SHELLOPTS BASHOPTS 2>/dev/null\n")
+	// First, before any export can be reached: everything the remote
+	// account, its login shell and sshd exported is removed, so what
+	// follows is the whole of the hook's environment rather than a layer
+	// on top of somebody else's.
+	b.WriteString(clearInheritedEnvironment)
 
-	for _, p := range pairs {
+	for _, p := range layer(baselinePairs(), pairs) {
 		b.WriteString("export ")
 		b.WriteString(p.name)
 		b.WriteString("=")
@@ -115,6 +118,61 @@ func StdinPayload(environ []string, script []byte) ([]byte, error) {
 
 	return []byte(b.String()), nil
 }
+
+// clearInheritedEnvironment is the payload's first act, and the whole of
+// what gives the remote executor the SAME environment contract as the host
+// runner: a hook sees the resolved plan on top of
+// workflow.SanitizedBaseline, and nothing else.
+//
+// # Why unsetting the four startup variables is not enough
+//
+// An SSH exec channel inherits whatever the server and the account put
+// there: HOME, USER, LANG, LOGNAME, MAIL, SSH_CONNECTION, SSH_CLIENT,
+// anything an sshd SetEnv or an account's own arrangement adds. A payload
+// that only exported the plan would leave every one of those visible to
+// the hook, so the same NAME.remote.sh would mean one thing here and
+// another thing on the machine it runs on -- which is the failure the
+// shared envelope exists to prevent. The host runner hands execve a block
+// built from SanitizedBaseline (one variable, PATH), so the remote side
+// has to REMOVE what it could not choose.
+//
+// # Why an unset loop and not "env -i"
+//
+// Re-execing under env -i would mean a second bash reading this same
+// non-seekable stdin, competing with the first one's parser for the
+// remaining bytes. The loop runs in the shell that is already reading the
+// payload and needs no second process.
+//
+// # Why the four names are unset first as well
+//
+// SHELLOPTS and BASHOPTS are readonly, so the loop's unset cannot remove
+// them and only the export attribute could be dropped; the explicit line
+// keeps the intent legible and its stderr quiet. Neither line can un-apply
+// a BASH_ENV bash already sourced at startup -- that is the preflight's
+// question, against the server, and it is refused there.
+//
+// # What is deliberately kept
+//
+// PWD, OLDPWD, SHLVL and _ are bash's own bookkeeping, set by the shell
+// rather than inherited: bash exports them at startup whichever way it was
+// invoked, so a hook run by the host runner under execve sees them too.
+// Removing them here would make the two executors differ, in the direction
+// of a $PWD that is empty until the hook happens to cd.
+//
+// Exported FUNCTIONS are removed as well. An exported function is the one
+// environment entry that can redefine a command a hook calls by name, and
+// nothing this product sends has defined one at this point, so every
+// function present is inherited.
+const clearInheritedEnvironment = `unset BASH_ENV ENV SHELLOPTS BASHOPTS 2>/dev/null
+for __backupd_name in $(compgen -e 2>/dev/null); do
+case "$__backupd_name" in PWD|OLDPWD|SHLVL|_) continue ;; esac
+unset -v "$__backupd_name" 2>/dev/null || :
+done
+for __backupd_name in $(compgen -A function 2>/dev/null); do
+unset -f "$__backupd_name" 2>/dev/null || :
+done
+unset -v __backupd_name 2>/dev/null || :
+`
 
 // ValidateScript refuses script bytes this envelope cannot carry.
 //

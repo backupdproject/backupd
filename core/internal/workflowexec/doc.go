@@ -19,9 +19,14 @@
 //     exactly as they were captured, because a shell option this product
 //     added silently changes what somebody else's script means.
 //   - the environment: a sanitized baseline with BASH_ENV, ENV, SHELLOPTS
-//     and BASHOPTS removed before anything is layered on, values that may
-//     contain newlines and ordinary UTF-8 but never a NUL, and values that
-//     are never, under any encoding, interpreted as shell syntax.
+//     and BASHOPTS removed from every layer before anything is applied,
+//     values that may contain newlines and ordinary UTF-8 but never a NUL,
+//     and values that are never, under any encoding, interpreted as shell
+//     syntax. A hook sees the resolved plan on top of that baseline and
+//     NOTHING ELSE: the process executor builds the block it hands execve,
+//     and the remote payload clears every variable the account and the
+//     server exported before it exports a line of its own, because "what
+//     the hook can see" is otherwise a fact about somebody else's sshd.
 //   - the output: stdout and stderr as two separate logical streams whose
 //     chunks carry sequence numbers from ONE counter, so a reader can
 //     recover the interleaving the hook actually produced.

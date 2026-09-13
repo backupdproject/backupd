@@ -95,7 +95,28 @@ sent, and establishes five things against the server:
 A refusal fails **the remote hook**, not the backup. An SFTP-only source
 goes on backing up exactly as it did before this package existed, and
 `core/tests/sshexecintegration` asserts both halves in one test against
-one account.
+one account: the artifact is transferred back and compared byte for byte
+over the very credential whose exec request is refused.
+
+### The proof is a capability, and running REQUIRES one
+
+`Preflight` returns an opaque `Capability` bound to two things: the
+connection it measured (the SSH session identifier, which a reconnect
+changes) and the sha256 of the exact script bytes it measured them with.
+`Run` takes one or takes the preflight itself, and refuses a capability
+that matches neither — so there is no exported path that starts a hook on
+a connection whose capability is merely assumed, and no way to reach one
+by forgetting a call.
+
+The alternative — a preflight a caller is trusted to have run — fails in
+exactly the direction this decision exists to prevent. On a
+forced-command account the exec request is ACCEPTED, somebody else's
+program runs and the session exits 0, so a `Run` that began with "the
+request was accepted" would record every remote hook on that account as
+having completed successfully while none of them ever ran. The binding to
+the script bytes is the same argument one level down: the syntax check is
+part of the proof, so honouring a proof taken for other bytes would run a
+script nothing has parsed on that host.
 
 ### The limit, stated
 
@@ -126,18 +147,42 @@ The consequence is measured rather than assumed: without a PTY, closing
 an SSH channel does not reliably kill what was running behind it. So
 termination is a sequence, each step covering what the last cannot:
 
-1. an exec-channel signal request (`SSH_MSG_CHANNEL_REQUEST "signal"`).
+1. a **reaper** session: it finds the step's process GROUP and signals it
+   `TERM` and then `KILL`. Measured on the fixture, sshd puts the exec'd
+   command in its own process group, distinct from sshd's own, so this
+   reaches the hook and everything it started and nothing of the
+   server's. A `pgid` is only used if it parses as a number greater than
+   1: `kill -TERM -1` would signal every process the account owns.
+2. an exec-channel signal request (`SSH_MSG_CHANNEL_REQUEST "signal"`).
    Measured against OpenSSH 10 it is honoured and the session ends in
    milliseconds. Older and other servers do not implement it, so this is
    an optimisation, not the mechanism.
-2. a **reaper** session: it finds every process whose command line
-   carries this step's token, and signals that process GROUP `TERM` and
-   then `KILL`. Measured on the fixture, sshd puts the exec'd command in
-   its own process group, distinct from sshd's own, so this reaches the
-   hook and everything it started and nothing of the server's. A `pgid`
-   is only used if it parses as a number greater than 1: `kill -TERM -1`
-   would signal every process the account owns.
 3. closing the channel, which is all that is left.
+
+### Why the reaper goes first, and how the group is found twice
+
+The signal request looks like the cheap step to try first, and it is the
+one that destroys the mechanism behind it. OpenSSH signals the process
+GROUP: bash, which does not ignore `TERM`, dies at once, while a child
+that DOES ignore it carries on holding the channel's stdout. The step's
+token lives on the leader's command line and nowhere else, so a reaper
+running after that finds nothing, kills nothing, and reports a group that
+is still running as "no process was there". Reaping first costs one short
+session in the case where the signal alone would have sufficed.
+
+The group is therefore identified two ways, because each fails where the
+other works:
+
+- the token, matched as the `-s <token>` OPERAND of the remote command
+  rather than as a substring of it. Step tokens are related strings by
+  construction, so a substring match lets one step's reaper kill a
+  different step's process group — a hook running normally on another
+  backup set — while reporting a successful termination of its own.
+- the `pgid`, captured by a short scan a quarter of a second into the
+  step (and once more at a second and a half if the first found nothing),
+  so that a hook whose leader has EXITED — leaving a child holding the
+  channel — is still reachable. The scan is skipped entirely for a step
+  that ends before it, which is most of them.
 
 ## Decision 4: certainty is a fact, with one rule
 
@@ -183,6 +228,9 @@ shell text (`internal/workflowexec.StdinPayload`):
 
 ```
 unset BASH_ENV ENV SHELLOPTS BASHOPTS 2>/dev/null
+for __backupd_name in $(compgen -e 2>/dev/null); do ... unset -v ... done
+for __backupd_name in $(compgen -A function 2>/dev/null); do unset -f ... done
+export PATH='...'        # workflow.SanitizedBaseline, then the resolved plan
 export NAME='...'
 __backupd_script='...'
 eval "$__backupd_script" 0</dev/null
@@ -196,6 +244,27 @@ eval "$__backupd_script" 0</dev/null
   value containing `$(...)`, backticks, quotes, backslashes or newlines
   arrives byte for byte. The suite proves it with a SHA-256 round trip
   per value.
+- The prologue CLEARS before it sets. An exec channel inherits whatever
+  the server and the account exported — `HOME`, `USER`, `LANG`, `MAIL`,
+  `SSH_CONNECTION`, any `SetEnv`, any exported function — and a hook run
+  by #809 on this backup server sees none of them, because that executor
+  hands execve a block built from `workflow.SanitizedBaseline`: one
+  variable, `PATH`. An envelope that only layered the plan on top of the
+  account's environment would make the same script mean two different
+  things on the two executors, which is the one thing a shared envelope
+  exists to prevent. `PWD`, `OLDPWD`, `SHLVL` and `_` are kept: bash sets
+  those itself at startup whichever way it was invoked, so the hook run
+  under execve has them too. The preflight refuses a bash that cannot
+  enumerate its own exported variables, because a clearing loop that
+  silently cleared nothing would be the environment version of the forced
+  command above. The suite asserts `SSH_CONNECTION` is ABSENT from a
+  hook's environment while the declared variables are present.
+- The four startup variables are removed from EVERY layer, not only from
+  the baseline: an operator can write `BASH_ENV` in
+  `workflows.environment`, and by the time either encoding sees the
+  merged environment there is nothing left to say where an entry came
+  from. Stripping in the one function both encodings parse with is what
+  stops the remote payload exporting one AFTER its own unset line.
 - `SendEnv`/`AcceptEnv` is not used at all. A hardened sshd refuses env
   requests unless configured for those exact names, so an envelope
   depending on it would work on a laptop and not on the host that matters.
@@ -286,9 +355,17 @@ material that WAS in play for the step rather than of an invented string.
   execution connection to use remote hooks. That is more configuration,
   and it is the configuration that makes the privilege explicit.
 - Every remote step costs three short sessions before the hook: the
-  capability probe, the syntax check, and then the run (plus a reaper
-  session only if a step has to be stopped). Measured against the
-  fixture, the two preflight sessions are ~150 ms together.
+  capability probe, the syntax check, and then the run. A step that
+  outlives a quarter of a second costs one more, the process-group scan,
+  and a step that has to be STOPPED costs a reaper session as well.
+  Measured against the fixture, the two preflight sessions are ~150 ms
+  together. A caller that has already run `Preflight` for the same bytes
+  hands the resulting capability to `Run` and pays for them once.
+- An execution connection marked `sensitive_endpoint` is redacted in logs
+  and journal details exactly as a transfer remote is (#295):
+  `internal/app`'s translation walks the declared exec connections as
+  well as the backup sets, because the exec path names the endpoint in
+  its dial errors and in every per-step audit line.
 - `max_connections` is honoured by construction: one client holds exactly
   one TCP connection and opens sessions on it.
 - #811 sequences these steps and owns cleanup; #812 consumes the capture

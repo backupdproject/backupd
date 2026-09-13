@@ -63,6 +63,16 @@ const (
 	// would otherwise turn a legitimately slow quiesce into a transport
 	// loss with nothing to point at.
 	keepAliveInterval = 30 * time.Second
+
+	// keepAliveTimeout is how long one of those requests may go
+	// unanswered before the connection is treated as gone.
+	//
+	// It has to exist separately because SendRequest waits for its reply
+	// with no deadline of its own: a peer that has stopped answering but
+	// whose TCP connection has not yet failed would otherwise block the
+	// keepalive goroutine forever, which is precisely the state this
+	// mechanism exists to detect.
+	keepAliveTimeout = 15 * time.Second
 )
 
 // tokenRule is what a step token must look like before it may become part
@@ -82,6 +92,11 @@ type Client struct {
 	signer ssh.Signer
 	verify ssh.HostKeyCallback
 	addr   string
+
+	// closed is shut once, by Close, so the keepalive goroutine stops
+	// with the connection rather than at its next tick.
+	closed    chan struct{}
+	closeOnce sync.Once
 
 	mu     sync.Mutex
 	client *ssh.Client
@@ -130,6 +145,7 @@ func Dial(ctx context.Context, conn Connection) (*Client, error) {
 		signer: signer,
 		verify: verify,
 		addr:   net.JoinHostPort(conn.Source.Host, strconv.Itoa(port)),
+		closed: make(chan struct{}),
 	}
 	if err := c.connect(ctx); err != nil {
 		return nil, err
@@ -195,17 +211,54 @@ func (c *Client) connect(ctx context.Context) error {
 }
 
 // keepAlive asks the server for a reply periodically for as long as this
-// connection lives. The request name is the one OpenSSH ignores politely
-// (any unknown global request gets a failure reply, which is all this
-// needs: a reply proves the path is still there).
+// connection lives, and CLOSES the connection when one does not come.
+//
+// The request name is the one OpenSSH ignores politely (any unknown global
+// request gets a failure reply, which is all this needs: a reply proves the
+// path is still there).
+//
+// Closing is the half that matters to a step. A goroutine that merely
+// returned on failure would leave every session on this connection blocked
+// on reads and writes that only the operating system's own TCP timeout
+// will ever fail -- minutes of a step sitting on a connection this product
+// has already established is gone. Closing the client fails all of them at
+// once, with an error, which is what lets a hook's own timeout mean
+// something on a half-dead link.
 func (c *Client) keepAlive(client *ssh.Client) {
 	ticker := time.NewTicker(keepAliveInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		if _, _, err := client.SendRequest("keepalive@backupd", true, nil); err != nil {
+	for {
+		select {
+		case <-c.closed:
+			return
+		case <-ticker.C:
+		}
+
+		replied := make(chan error, 1)
+		go func() {
+			_, _, err := client.SendRequest("keepalive@backupd", true, nil)
+			replied <- err
+		}()
+
+		timer := time.NewTimer(keepAliveTimeout)
+		select {
+		case err := <-replied:
+			timer.Stop()
+			if err == nil {
+				continue
+			}
+		case <-timer.C:
+			timer.Stop()
+		case <-c.closed:
+			timer.Stop()
+
 			return
 		}
+
+		_ = client.Close()
+
+		return
 	}
 }
 
@@ -218,8 +271,29 @@ func (c *Client) HostKeyFingerprint() string {
 	return c.hostKey
 }
 
+// identity is what a Capability is bound to: the SSH session identifier of
+// this connection, which is the exchange hash of its first key exchange.
+//
+// It answers "is this the same connection the preflight measured" in the
+// only way that cannot be faked by reconnecting: a new connection, to the
+// same host, with the same credential, has a different one. An empty
+// string means there is no live connection, which is never a match.
+func (c *Client) identity() string {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+
+	if client == nil {
+		return ""
+	}
+
+	return string(client.SessionID())
+}
+
 // Close releases the connection.
 func (c *Client) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+
 	c.mu.Lock()
 	client := c.client
 	c.client = nil
@@ -232,8 +306,16 @@ func (c *Client) Close() error {
 	return client.Close()
 }
 
-// session opens one exec session on the live connection.
-func (c *Client) session() (*ssh.Session, error) {
+// session opens one exec session on the live connection, bounded by ctx.
+//
+// Opening a channel is a round trip: the request goes out and the server
+// answers, or it does not. x/crypto/ssh's NewSession takes no context and
+// has no deadline, so a server that has stopped answering holds this call
+// for as long as the operating system keeps the TCP connection alive --
+// which is how a step with a thirty-second bound spends a quarter of an
+// hour opening a channel. The budget the caller brought is applied here
+// instead.
+func (c *Client) session(ctx context.Context) (*ssh.Session, error) {
 	c.mu.Lock()
 	client := c.client
 	c.mu.Unlock()
@@ -241,13 +323,40 @@ func (c *Client) session() (*ssh.Session, error) {
 	if client == nil {
 		return nil, fmt.Errorf("%w: the connection to %s is closed", ErrTransportLoss, c.addr)
 	}
-
-	session, err := client.NewSession()
-	if err != nil {
-		return nil, fmt.Errorf("%w: opening an exec channel on %s: %v", ErrTransportLoss, c.addr, err)
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%w: no exec channel was opened on %s: %v", ErrTransportLoss, c.addr, err)
 	}
 
-	return session, nil
+	type opened struct {
+		session *ssh.Session
+		err     error
+	}
+	result := make(chan opened, 1)
+	go func() {
+		session, err := client.NewSession()
+		result <- opened{session: session, err: err}
+	}()
+
+	select {
+	case r := <-result:
+		if r.err != nil {
+			return nil, fmt.Errorf("%w: opening an exec channel on %s: %v", ErrTransportLoss, c.addr, r.err)
+		}
+
+		return r.session, nil
+
+	case <-ctx.Done():
+		// The request is still in flight, so the answer is collected and
+		// released rather than abandoned: a session left open would hold
+		// a channel on a connection this product goes on using.
+		go func() {
+			if r := <-result; r.session != nil {
+				_ = r.session.Close()
+			}
+		}()
+
+		return nil, fmt.Errorf("%w: opening an exec channel on %s did not complete: %v", ErrTransportLoss, c.addr, ctx.Err())
+	}
 }
 
 // remoteCommand is the fixed command every exec session on this connection

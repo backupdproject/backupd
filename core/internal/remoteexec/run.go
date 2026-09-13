@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -21,10 +23,9 @@ const (
 	// Whether that request does anything at all is the server's decision:
 	// the protocol has it, and an sshd is free to ignore it. Measured
 	// against OpenSSH 10 it is honoured and the session ends in
-	// milliseconds; older and other servers do not implement it. So this
-	// window is short, and the reaper behind it is what makes termination
-	// work on a server that ignores signals rather than a fallback nobody
-	// reaches.
+	// milliseconds; older and other servers do not implement it. It runs
+	// AFTER the reaper (see terminate) because on a server that honours
+	// it, it destroys the reaper's only handle.
 	signalGrace = 3 * time.Second
 
 	// reapGrace is how long termination waits after the reaper has killed
@@ -35,7 +36,27 @@ const (
 
 	// reaperTimeout bounds the reaper session itself.
 	reaperTimeout = 30 * time.Second
+
+	// pgidCaptureTimeout bounds one of the process-group scan's sessions.
+	pgidCaptureTimeout = 20 * time.Second
+
+	// writeSettle is how long the payload write is given to report itself
+	// after the session has ended and the channel has been closed under
+	// it. A closed channel fails a pending write immediately, so this is
+	// a bound on a wedged transport rather than a wait anything reaches.
+	writeSettle = 5 * time.Second
 )
+
+// pgidCaptureAttempts are how long a step has to have been running before
+// each attempt to learn its remote process group.
+//
+// Nothing is captured for a step that finishes inside the first, which is
+// most of them: the capture exists only for a step that has to be STOPPED,
+// and one that has already ended has nothing to stop. The second is for
+// the other end of the same race -- a busy host where the leader is not in
+// the process table yet, or one where it has only just appeared -- and it
+// is only reached when the first attempt found nothing.
+var pgidCaptureAttempts = [2]time.Duration{250 * time.Millisecond, 1500 * time.Millisecond}
 
 // Request is one script to run on one connection.
 type Request struct {
@@ -62,6 +83,18 @@ type Request struct {
 	// against its hash (internal/workflow's Plan.OpenScript). This package
 	// never opens a path itself.
 	Script []byte
+
+	// Capability is the proof, from Preflight, that this connection will
+	// run THESE bytes. It is optional and it is not a way round the
+	// proof: a nil one makes Run take the preflight itself, and a
+	// non-nil one that does not match this connection and this script is
+	// refused rather than ignored.
+	//
+	// It exists because a caller that validates a whole stage before
+	// running it (#811) has already paid for the probe and the syntax
+	// check, and paying twice for the same two facts would be the kind of
+	// cost that gets a gate removed later.
+	Capability *Capability
 
 	// Sink receives the output as it arrives.
 	Sink workflowexec.Sink
@@ -126,11 +159,26 @@ type Result struct {
 
 // Run executes one script on this connection and captures its output.
 //
-// The whole envelope is decided elsewhere and applied here: the fixed
+// It is the ONLY exported way to run anything on this package's channel,
+// and it does not start a hook on a connection whose capability has not
+// just been proven against the server. A forced-command account accepts
+// the exec request, runs somebody else's program and exits 0, so an
+// execution path that started with "the request was accepted" would report
+// a hook as having succeeded when nothing of it ever ran -- the silent
+// success ADR 0021 exists to refuse. Either the caller brings a Capability
+// from Preflight for these exact bytes, or Run takes the preflight itself.
+//
+// The rest of the envelope is decided elsewhere and applied here: the fixed
 // remote command (Client.remoteCommand), the stdin payload
 // (workflowexec.StdinPayload), and the two separate capture streams sharing
 // one sequence counter (workflowexec.Capture). What this function owns is
 // the waiting and the stopping.
+//
+// The step's bound (Request.Timeout) covers everything from opening the
+// channel onward, INCLUDING the payload write. A payload can be sixteen
+// mebibytes and a half-dead TCP connection accepts none of it, so a bound
+// that started once the write had finished would be a bound that a dead
+// peer never reaches.
 //
 // It returns a Result for every outcome it observed, INCLUDING the failures:
 // a refused capability, a lost connection and a killed step all have facts
@@ -150,7 +198,24 @@ func (c *Client) Run(ctx context.Context, req Request) (Result, error) {
 		return result, err
 	}
 
-	session, err := c.session()
+	capability := req.Capability
+	if capability == nil {
+		if capability, err = c.Preflight(ctx, req.Script); err != nil {
+			return result, err
+		}
+	}
+	if err := c.honours(capability, req.Script); err != nil {
+		return result, err
+	}
+
+	runCtx := ctx
+	if req.Timeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, req.Timeout)
+		defer cancel()
+	}
+
+	session, err := c.session(runCtx)
 	if err != nil {
 		return result, err
 	}
@@ -174,24 +239,28 @@ func (c *Client) Run(ctx context.Context, req Request) (Result, error) {
 		return result, fmt.Errorf("%w: starting the exec channel: %v", ErrTransportLoss, err)
 	}
 
-	writeErr := writePayload(stdin, payload)
+	// The write runs beside the wait rather than before it. bash reads the
+	// payload as it parses, so a remote side that has stopped reading
+	// blocks this write on the channel window with no deadline of its own;
+	// with the wait already running, the step's own bound reaches it.
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- writePayload(stdin, payload) }()
 
 	done := make(chan error, 1)
-	go func() { done <- session.Wait() }()
+	finished := make(chan struct{})
+	go func() {
+		done <- session.Wait()
+		close(finished)
+	}()
 
-	runCtx := ctx
-	if req.Timeout > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, req.Timeout)
-		defer cancel()
-	}
+	group := c.capturePGID(ctx, req.Token, finished)
 
 	select {
 	case waitErr := <-done:
 		result.FinishedAt = time.Now()
 		result.Chunks = capture.Sequence()
 		result.Certainty = workflowexec.TerminationNotRequested
-		if writeErr != nil {
+		if writeErr := settleWrite(session, writeDone); writeErr != nil {
 			return result, writeErr
 		}
 
@@ -199,7 +268,7 @@ func (c *Client) Run(ctx context.Context, req Request) (Result, error) {
 
 	case <-runCtx.Done():
 		reason := runCtx.Err()
-		c.terminate(ctx, req.Token, session, done, &result)
+		c.terminate(ctx, req.Token, group.get(), session, done, &result)
 		result.FinishedAt = time.Now()
 		result.Chunks = capture.Sequence()
 
@@ -210,6 +279,30 @@ func (c *Client) Run(ctx context.Context, req Request) (Result, error) {
 
 		return result, fmt.Errorf("%w: the step was cancelled on %s and termination is recorded as %s",
 			ErrStepCanceled, c.describeEndpoint(), result.Certainty)
+	}
+}
+
+// settleWrite collects the payload write's verdict once the session has
+// ended.
+//
+// The channel is closed first, deliberately: a write still blocked on a
+// remote side that stopped reading fails the moment the channel goes, so
+// this returns promptly with the truth rather than waiting out a window
+// that will never open. The timer is the bound on a transport that will
+// not even do that, and it reports transport loss rather than success,
+// because a payload whose delivery nobody can account for is a script
+// nobody can say ran whole.
+func settleWrite(session *ssh.Session, writeDone <-chan error) error {
+	_ = session.Close()
+
+	timer := time.NewTimer(writeSettle)
+	defer timer.Stop()
+
+	select {
+	case err := <-writeDone:
+		return err
+	case <-timer.C:
+		return fmt.Errorf("%w: the execution envelope's delivery never completed or failed, so there is no saying how much of the script the far side received", ErrTransportLoss)
 	}
 }
 
@@ -294,14 +387,28 @@ func writePayload(stdin io.WriteCloser, payload []byte) error {
 // The sequence is three steps because each one covers what the previous
 // cannot:
 //
-//  1. an exec-channel signal request. The protocol has one; a server may
-//     ignore it. On a server that honours it this is the whole story and it
-//     takes milliseconds.
-//  2. a reaper session, which finds the step's process GROUP by the token
-//     on its command line and sends it TERM and then KILL. This is what
-//     works on a server that ignores signal requests, and it is also the
-//     only thing that reaches a hook's own children.
+//  1. a reaper session, which finds the step's process GROUP -- by the
+//     token on the leader's command line, and by the group id captured
+//     while that leader was demonstrably alive -- and sends it TERM and
+//     then KILL. This is what reaches a hook's own children, and it is
+//     what works on a server that ignores signal requests.
+//  2. an exec-channel signal request. The protocol has one; a server may
+//     ignore it. On a server that honours it this ends the session in
+//     milliseconds.
 //  3. closing the channel, which is all that is left.
+//
+// # Why the reaper goes first
+//
+// Because on a server that honours the signal request, sending it first
+// destroys the reaper's only handle. OpenSSH signals the process GROUP, so
+// bash -- which does not ignore TERM -- dies immediately while a child that
+// ignores TERM carries on holding the channel's stdout. The token lives on
+// the LEADER's command line, so once the leader is gone the reaper matches
+// nothing, reports no groups, and kills nothing: the step is left running
+// on the far side with termination recorded as unconfirmed. Reaping first
+// costs one short session in the case where the signal would have been
+// enough, and it is the difference between a mechanism and an optimisation
+// that eats it.
 //
 // Certainty is decided by ONE rule, and not by which of the three steps ran:
 // confirmed if the session COMPLETED -- exit reported, both streams at end
@@ -309,22 +416,22 @@ func writePayload(stdin io.WriteCloser, payload []byte) error {
 // descendant reports unconfirmed: it keeps the channel's stdout open, so the
 // session never completes, and this product will not claim a clean stop it
 // cannot see.
-func (c *Client) terminate(ctx context.Context, token string, session *ssh.Session, done <-chan error, result *Result) {
+func (c *Client) terminate(ctx context.Context, token, pgid string, session *ssh.Session, done <-chan error, result *Result) {
 	result.Certainty = workflowexec.TerminationUnconfirmed
 
 	// The context that brought us here is already cancelled, so every
 	// step below gets its own budget from a context that is not.
 	base := context.WithoutCancel(ctx)
 
-	_ = session.Signal(ssh.SIGTERM)
-	if waitFor(done, signalGrace) {
+	result.Reaper = c.reap(base, token, pgid)
+	if waitFor(done, reapGrace) {
 		result.Certainty = workflowexec.TerminationConfirmed
 
 		return
 	}
 
-	result.Reaper = c.reap(base, token)
-	if waitFor(done, reapGrace) {
+	_ = session.Signal(ssh.SIGTERM)
+	if waitFor(done, signalGrace) {
 		result.Certainty = workflowexec.TerminationConfirmed
 
 		return
@@ -352,7 +459,7 @@ func waitFor(done <-chan error, d time.Duration) bool {
 // It is best effort by nature -- the connection may be the thing that
 // broke -- so it never fails the step: whatever it could not do is
 // reflected in the certainty, which is the field that matters.
-func (c *Client) reap(ctx context.Context, token string) string {
+func (c *Client) reap(ctx context.Context, token, pgid string) string {
 	ctx, cancel := context.WithTimeout(ctx, reaperTimeout)
 	defer cancel()
 
@@ -360,7 +467,7 @@ func (c *Client) reap(ctx context.Context, token string) string {
 	// No token on the reaper's own command line: it is looking for
 	// processes carrying that token, and a reaper that matched itself
 	// would kill its own process group.
-	if _, err := c.runOnce(ctx, reaperTimeout, "", []byte(reaperScript(token)), &stdout, &stderr); err != nil {
+	if _, err := c.runOnce(ctx, reaperTimeout, c.remoteCommand(""), []byte(reaperScript(token, pgid)), &stdout, &stderr); err != nil {
 		return "the reaper could not run: " + err.Error()
 	}
 
@@ -385,16 +492,135 @@ func (c *Client) reap(ctx context.Context, token string) string {
 	}
 }
 
+// processGroup is the step's remote process group id, learned while the
+// step was running and read when it has to be stopped.
+type processGroup struct {
+	mu sync.Mutex
+	id string
+}
+
+func (g *processGroup) get() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return g.id
+}
+
+func (g *processGroup) set(id string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.id = id
+}
+
+// capturePGID learns the step's remote process GROUP while its leader is
+// still there to be found, and hands the answer to termination later.
+//
+// It exists because the token is on the LEADER's command line and nowhere
+// else. A hook whose bash has exited -- killed by a signal the server sent,
+// or finished while a child it started holds the channel open -- leaves a
+// process group with this product's work in it and nothing left carrying
+// the token, so a reaper that could only match the command line would
+// report "nothing was running" about a group that is still running.
+//
+// It costs one short session, and only for a step that lasts longer than
+// the first attempt's delay: a step that ends first is a step with nothing
+// to terminate. A failure is silent on purpose -- the reaper's
+// command-line match is the primary mechanism and this is the second
+// handle on the same thing, so a host with no usable ps loses the backstop
+// and keeps the step.
+func (c *Client) capturePGID(ctx context.Context, token string, finished <-chan struct{}) *processGroup {
+	group := &processGroup{}
+	base := context.WithoutCancel(ctx)
+
+	go func() {
+		elapsed := time.Duration(0)
+		for _, at := range pgidCaptureAttempts {
+			timer := time.NewTimer(at - elapsed)
+			select {
+			case <-finished:
+				timer.Stop()
+
+				return
+			case <-timer.C:
+			}
+			elapsed = at
+
+			if id := c.scanForGroup(base, token); id != "" {
+				group.set(id)
+
+				return
+			}
+		}
+	}()
+
+	return group
+}
+
+// scanForGroup asks the far side for the process group of whatever carries
+// this step's token, and returns "" for every way that can fail to answer.
+//
+// It is groupScript plus the one line that reports the answer: the reaper
+// prints the same "groups=" line before it kills anything, so the capture
+// and the reaper read each other's output in one format.
+func (c *Client) scanForGroup(ctx context.Context, token string) string {
+	scanCtx, cancel := context.WithTimeout(ctx, pgidCaptureTimeout)
+	defer cancel()
+
+	scan := groupScript(token) + reportGroups
+
+	var stdout, stderr bytes.Buffer
+	if _, err := c.runOnce(scanCtx, pgidCaptureTimeout, c.remoteCommand(""), []byte(scan), &stdout, &stderr); err != nil {
+		return ""
+	}
+
+	return firstGroup(stdout.String())
+}
+
+// reportGroups is the line that puts $groups on stdout.
+const reportGroups = "printf 'groups=%s\\n' \"$groups\"\n"
+
+// firstGroup reads the first usable group id out of the scan's own
+// "groups=" line. The guard is pgidRule's, applied here as well as on the
+// far side: a number is the only thing that may be handed back to a kill.
+func firstGroup(stdout string) string {
+	for _, line := range strings.Split(stdout, "\n") {
+		value, found := strings.CutPrefix(strings.TrimSpace(line), "groups=")
+		if !found {
+			continue
+		}
+		for _, field := range strings.Fields(value) {
+			if pgidRule.MatchString(field) && field != "0" && field != "1" {
+				return field
+			}
+		}
+	}
+
+	return ""
+}
+
+// pgidRule is what a process group id read back from the far side must
+// look like before it may become part of a kill. See reaperScript's own
+// argument about "kill -TERM -1".
+var pgidRule = regexp.MustCompile(`^[0-9]+$`)
+
 // runOnce runs one fixed-command session to completion with bytes on stdin,
 // capturing both streams into buffers, and returns the exit status.
 //
-// It is the shape every internal session shares: the probe, the reaper and
-// the syntax check all send a script this package wrote and want the whole
-// answer. A hook is the one thing that does NOT go through it, because a
-// hook's output has to be streamed to the log layer as it arrives rather
-// than buffered.
-func (c *Client) runOnce(ctx context.Context, timeout time.Duration, token string, payload []byte, stdout, stderr *bytes.Buffer) (int, error) {
-	session, err := c.session()
+// It is the shape every internal session shares: the probe, the reaper, the
+// process-group scan and the syntax check all send a script this package
+// wrote and want the whole answer. A hook is the one thing that does NOT go
+// through it, because a hook's output has to be streamed to the log layer
+// as it arrives rather than buffered.
+//
+// Every step of it is bounded by ctx, including opening the channel and
+// writing the payload. A session that could not be opened within the budget
+// is transport loss, not a slow answer: the two are told apart by the
+// caller's sentinel, and neither may hang.
+func (c *Client) runOnce(ctx context.Context, timeout time.Duration, command string, payload []byte, stdout, stderr *bytes.Buffer) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	session, err := c.session(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -407,21 +633,21 @@ func (c *Client) runOnce(ctx context.Context, timeout time.Duration, token strin
 	if err != nil {
 		return 0, fmt.Errorf("%w: opening stdin on an internal exec channel: %v", ErrTransportLoss, err)
 	}
-	if err := session.Start(c.remoteCommand(token)); err != nil {
+	if err := session.Start(command); err != nil {
 		return 0, fmt.Errorf("%w: starting an internal exec channel: %v", ErrTransportLoss, err)
 	}
-	if err := writePayload(stdin, payload); err != nil {
-		return 0, err
-	}
+
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- writePayload(stdin, payload) }()
 
 	done := make(chan error, 1)
 	go func() { done <- session.Wait() }()
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
 	select {
 	case waitErr := <-done:
+		if writeErr := settleWrite(session, writeDone); writeErr != nil {
+			return 0, writeErr
+		}
 		if waitErr == nil {
 			return 0, nil
 		}
@@ -439,9 +665,8 @@ func (c *Client) runOnce(ctx context.Context, timeout time.Duration, token strin
 	}
 }
 
-// reaperScript finds every process whose command line carries this step's
-// token, sends its process GROUP a TERM and then a KILL, and reports what
-// is left.
+// reaperScript finds every process in this step's process GROUP, sends the
+// group a TERM and then a KILL, and reports what is left.
 //
 // # Why the process group and not the process
 //
@@ -450,6 +675,15 @@ func (c *Client) runOnce(ctx context.Context, timeout time.Duration, token strin
 // command in its own process group (the session leader's group, distinct
 // from sshd's own), so signalling the group reaches the hook and everything
 // it started while reaching nothing of the server's.
+//
+// # The two ways the group is found
+//
+// The token on the leader's command line is the first, and the group id
+// captured while the step was running (capturePGID) is the second. They are
+// both used because they fail in different circumstances: the command-line
+// match needs the leader to still exist, and the captured id needs the step
+// to have lasted long enough to be seen. Either one alone leaves a case
+// where a hook's children keep running with nothing to kill them by.
 //
 // # The guard on the group id
 //
@@ -467,21 +701,14 @@ func (c *Client) runOnce(ctx context.Context, timeout time.Duration, token strin
 // package leaves nothing on the remote host), no arrays, and no bashism
 // beyond what /bin/sh provides, so it behaves the same if a future
 // connection ever runs it under a different shell.
-func reaperScript(token string) string {
-	quoted := workflowexec.ShellQuote(token)
-
-	return `tok=` + quoted + `
-groups=$(ps -A -o pid=,pgid=,args= 2>/dev/null | while IFS= read -r line; do
-  set -- $line
-  [ $# -ge 3 ] || continue
-  pgid=$2
-  shift 2
-  case "$pgid" in ''|*[!0-9]*) continue ;; 0|1) continue ;; esac
-  case "$*" in *"$tok"*) printf '%s ' "$pgid" ;; esac
-done)
+func reaperScript(token, pgid string) string {
+	return groupScript(token) + `captured=` + workflowexec.ShellQuote(pgid) + `
+case "$captured" in
+  ''|*[!0-9]*|0|1) ;;
+  *) case " $groups " in *" $captured "*) ;; *) groups="$groups$captured " ;; esac ;;
+esac
 if ! ps -A -o pid= >/dev/null 2>&1; then printf 'ps=missing\n'; fi
-printf 'groups=%s\n' "$groups"
-for g in $groups; do kill -TERM -"$g" 2>/dev/null; done
+` + reportGroups + `for g in $groups; do kill -TERM -"$g" 2>/dev/null; done
 sleep 1
 for g in $groups; do kill -KILL -"$g" 2>/dev/null; done
 survivors=$(ps -A -o pgid= 2>/dev/null | while IFS= read -r p; do
@@ -490,5 +717,35 @@ survivors=$(ps -A -o pgid= 2>/dev/null | while IFS= read -r p; do
   done
 done)
 printf 'survivors=%s\n' "$survivors"
+`
+}
+
+// groupScript sets $groups to the process groups whose leader carries this
+// step's token, and is shared by the reaper and the capture so the two
+// cannot come to recognise a step differently.
+//
+// # Why the token is matched as an OPERAND and not as a substring
+//
+// Because tokens of concurrent steps are related strings. The remote
+// command ends in "-s <token>", so a substring match on the whole command
+// line makes a step whose token is a PREFIX of another step's token match
+// that other step -- and the reaper then kills a process group belonging to
+// a hook that is running normally, on a different backup set, reporting it
+// as a successful termination of this one. The match is therefore on the
+// argument that follows "-s", compared whole.
+func groupScript(token string) string {
+	return `tok=` + workflowexec.ShellQuote(token) + `
+groups=$(ps -A -o pid=,pgid=,args= 2>/dev/null | while IFS= read -r line; do
+  set -- $line
+  [ $# -ge 3 ] || continue
+  pgid=$2
+  shift 2
+  case "$pgid" in ''|*[!0-9]*) continue ;; 0|1) continue ;; esac
+  prev=''
+  for arg in "$@"; do
+    if [ "$prev" = "-s" ] && [ "$arg" = "$tok" ]; then printf '%s ' "$pgid"; break; fi
+    prev=$arg
+  done
+done)
 `
 }

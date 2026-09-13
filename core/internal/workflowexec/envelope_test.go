@@ -213,6 +213,51 @@ func TestProcessEnvAppliesLayersInOrderAndKeepsTheLastWord(t *testing.T) {
 	}
 }
 
+// TestNeitherEncodingCarriesAStartupVariableFromTheOperatorLayer is the
+// half SanitizeBaseline cannot cover. The baseline is this product's own,
+// and by the time an environment reaches either encoding the layers have
+// already been merged, so a BASH_ENV an operator wrote in
+// workflows.environment arrives as an ordinary resolved entry -- and on the
+// remote path it would be exported AFTER the payload's unset line, which
+// is the one position where it still redirects every child shell the hook
+// starts.
+func TestNeitherEncodingCarriesAStartupVariableFromTheOperatorLayer(t *testing.T) {
+	t.Parallel()
+
+	environ := []string{
+		"PGDATABASE=orders",
+		"BASH_ENV=/tmp/evil.sh",
+		"ENV=/tmp/evil.sh",
+		"SHELLOPTS=xtrace",
+		"BASHOPTS=expand_aliases",
+	}
+
+	block, err := ProcessEnv([]string{"PATH=/bin"}, environ)
+	if err != nil {
+		t.Fatalf("ProcessEnv: %v", err)
+	}
+	for _, entry := range block {
+		name, _, _ := strings.Cut(entry, "=")
+		if isStartupVariable(name) {
+			t.Errorf("the process environment carries %s from the operator layer: %q", name, block)
+		}
+	}
+
+	payload, err := StdinPayload(environ, []byte("printf hi\n"))
+	if err != nil {
+		t.Fatalf("StdinPayload: %v", err)
+	}
+	assignments, _ := parsePayload(t, string(payload))
+	for name := range assignments {
+		if isStartupVariable(name) {
+			t.Errorf("the payload exports %s, and it does so after the line that unsets it", name)
+		}
+	}
+	if assignments["PGDATABASE"] != "orders" {
+		t.Errorf("the ordinary variable beside them was lost: %v", assignments)
+	}
+}
+
 func TestEnvRefusals(t *testing.T) {
 	t.Parallel()
 
@@ -310,8 +355,13 @@ func TestStdinPayloadNeverLetsAValueBecomeSyntax(t *testing.T) {
 
 	assignments, gotScript := parsePayload(t, string(payload))
 
-	if len(assignments) != len(hostile) {
-		t.Errorf("the payload decodes to %d assignments, want %d: %v", len(assignments), len(hostile), assignments)
+	// The baseline's own PATH is exported alongside them, and it is the
+	// only entry the caller did not supply.
+	if len(assignments) != len(hostile)+1 {
+		t.Errorf("the payload decodes to %d assignments, want %d: %v", len(assignments), len(hostile)+1, assignments)
+	}
+	if assignments["PATH"] == "" {
+		t.Error("the payload exports no PATH, so a hook on a host that exported nothing has no way to find a command")
 	}
 	for name, want := range hostile {
 		got, ok := assignments[name]
@@ -331,18 +381,20 @@ func TestStdinPayloadNeverLetsAValueBecomeSyntax(t *testing.T) {
 
 // parsePayload reads a payload the way a POSIX shell reads single-quoted
 // text, and refuses anything that is not exactly the envelope's own
-// grammar: the unset line, then `export NAME='...'` lines, then the script
-// assignment, then the eval line, then end of input.
+// grammar: the clearing prologue, then `export NAME='...'` lines, then the
+// script assignment, then the eval line, then end of input.
 //
-// It is strict on purpose. A value that broke out of its literal would
-// produce a command this grammar has no rule for, and the failure names
-// the line rather than the symptom.
+// It is strict on purpose, and the prologue is matched as a WHOLE prefix
+// rather than searched for: an export that appeared before it, or between
+// its lines, would be an export the loop then removes again, and the only
+// way to state "nothing is exported until everything inherited is gone" is
+// to insist the clearing is the first thing in the payload.
 func parsePayload(t *testing.T, text string) (map[string]string, string) {
 	t.Helper()
 
-	rest, ok := strings.CutPrefix(text, "unset BASH_ENV ENV SHELLOPTS BASHOPTS 2>/dev/null\n")
+	rest, ok := strings.CutPrefix(text, clearInheritedEnvironment)
 	if !ok {
-		t.Fatalf("the payload does not begin by clearing the startup variables: %q", firstLine(text))
+		t.Fatalf("the payload does not begin by clearing every inherited variable: %q", firstLine(text))
 	}
 
 	assignments := map[string]string{}
@@ -422,7 +474,17 @@ func firstLine(s string) string {
 	return s
 }
 
-func TestStdinPayloadClearsTheStartupVariablesAndInjectsNoShellOptions(t *testing.T) {
+// TestStdinPayloadClearsEveryInheritedVariableBeforeItExportsAnything is
+// the environment-parity contract: whatever the remote account, its login
+// shell and sshd exported is gone before the first export, so a hook sees
+// the baseline plus the plan and nothing else.
+//
+// The order is the assertion, not the presence of the clearing text. A
+// payload that exported the plan and THEN cleared would pass a
+// "does it unset" check while handing the hook an empty environment, and a
+// payload that cleared only the four startup names would pass one while
+// leaving SSH_CONNECTION, HOME and LANG in place.
+func TestStdinPayloadClearsEveryInheritedVariableBeforeItExportsAnything(t *testing.T) {
 	t.Parallel()
 
 	payload, err := StdinPayload([]string{"FOO=bar"}, []byte("printf hi\n"))
@@ -431,8 +493,18 @@ func TestStdinPayloadClearsTheStartupVariablesAndInjectsNoShellOptions(t *testin
 	}
 	text := string(payload)
 
-	if !strings.Contains(text, "unset BASH_ENV ENV SHELLOPTS BASHOPTS") {
+	clearEnd := strings.Index(text, "unset -v __backupd_name")
+	if clearEnd < 0 {
+		t.Fatalf("the payload has no clearing prologue at all:\n%s", text)
+	}
+	if i := strings.Index(text, "export "); i >= 0 && i < clearEnd {
+		t.Errorf("the payload exports %q before it has finished clearing what it inherited, so that export is removed again by the loop", firstLine(text[i:]))
+	}
+	if !strings.Contains(text[:clearEnd], "unset BASH_ENV ENV SHELLOPTS BASHOPTS") {
 		t.Error("the payload does not clear the variables that make bash run code before the hook does")
+	}
+	if !strings.Contains(text[:clearEnd], "compgen -e") {
+		t.Error("the payload never enumerates the inherited exported variables, so it can only be clearing the names it already knew about")
 	}
 	for _, injected := range []string{"set -e", "set -u", "set -o pipefail", "set -x", "set -o nounset", "set -o errexit"} {
 		if strings.Contains(text, injected) {

@@ -22,6 +22,14 @@
 //     before a hook is sent, and a connection that cannot execute a
 //     command is refused there, with a reason naming the missing
 //     capability;
+//   - and that proof is what Run REQUIRES. Preflight returns a Capability
+//     bound to the connection it measured and to the exact script bytes it
+//     measured them with; Run either takes one or performs the preflight
+//     itself, so there is no exported way to start a hook on a connection
+//     whose capability is merely assumed. That matters most on the account
+//     that fails silently: a forced-command account accepts the request,
+//     runs its own program and exits 0, which without this gate is a hook
+//     reported as having succeeded while nothing of it ever ran;
 //   - a refusal fails the REMOTE HOOK, not the backup. An SFTP-only source
 //     goes on backing up exactly as it did before this package existed.
 //
@@ -44,7 +52,10 @@
 //     SendEnv/AcceptEnv dependency (a hardened sshd refuses env requests)
 //     and no file is written on the remote host at any point, so there is
 //     no residue to clean up and nothing to leak if the connection dies
-//     mid-step.
+//     mid-step. The payload's first act is to CLEAR every variable the
+//     account and the server exported, before it exports anything, so a
+//     hook sees the environment this product resolved rather than that one
+//     layered over somebody else's.
 //
 // # What "confirmed" means, and why it is not a guess
 //

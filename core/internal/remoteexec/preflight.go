@@ -3,6 +3,7 @@ package remoteexec
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"time"
@@ -70,6 +71,32 @@ type Report struct {
 	ScriptSyntaxChecked bool
 }
 
+// Capability is the proof a successful Preflight leaves behind: this
+// connection, at this moment, will run THESE script bytes.
+//
+// It is opaque, and both halves of the binding are the point. A proof that
+// named no script would let a hook be run on the strength of a probe taken
+// for a different one -- including a script that does not parse on the
+// target, which is one of the five things the preflight establishes. A
+// proof that named no connection would survive the connection dropping and
+// being remade, which is the moment an account's capability can have
+// changed. Neither field is exported, so the only way to hold one is to
+// have been given it by Preflight.
+type Capability struct {
+	report Report
+
+	// connection is Client.identity: the SSH session identifier of the
+	// connection that was measured.
+	connection string
+
+	// script is the sha256 of the bytes that were measured.
+	script [sha256.Size]byte
+}
+
+// Report is what the preflight established, for the audit line and for an
+// operator reading one.
+func (c *Capability) Report() Report { return c.report }
+
 // Preflight proves, against the server, that this connection can run this
 // script -- before a byte of the hook is sent.
 //
@@ -94,22 +121,31 @@ type Report struct {
 //     A script written for bash 5 can fail to parse on bash 3.2, and the
 //     honest place to discover that is before the hook has half run.
 //
-// A refusal is ErrExecCapability, which the caller turns into a failed
-// remote-hook validation. Artifact backup over the same credential is
-// untouched: nothing here changes the transfer path.
-func (c *Client) Preflight(ctx context.Context, script []byte) (Report, error) {
+// What comes back is the Capability Run requires. A refusal is
+// ErrExecCapability, which the caller turns into a failed remote-hook
+// validation. Artifact backup over the same credential is untouched:
+// nothing here changes the transfer path.
+func (c *Client) Preflight(ctx context.Context, script []byte) (*Capability, error) {
 	report := Report{
 		HostKeyFingerprint: c.HostKeyFingerprint(),
 		BashPath:           c.conn.Bash(),
 	}
 
 	if err := workflowexec.ValidateScript(script); err != nil {
-		return report, err
+		return nil, err
+	}
+
+	// Read before the probe runs, so the capability is bound to the
+	// connection that was actually measured rather than to whatever
+	// connection exists when the probe comes back.
+	identity := c.identity()
+	if identity == "" {
+		return nil, fmt.Errorf("%w: the connection to %s is closed, so nothing could be proved about it", ErrTransportLoss, c.addr)
 	}
 
 	probe, err := c.runProbe(ctx)
 	if err != nil {
-		return report, err
+		return nil, err
 	}
 
 	report.User = probe["user"]
@@ -119,22 +155,63 @@ func (c *Client) Preflight(ctx context.Context, script []byte) (Report, error) {
 
 	switch {
 	case report.BashVersion == "":
-		return report, fmt.Errorf("%w: %s ran a shell at %s that reports no BASH_VERSION, so it is not bash. This product never substitutes another shell for a hook: configure the connection's bash path, or install bash on that host",
+		return nil, fmt.Errorf("%w: %s ran a shell at %s that reports no BASH_VERSION, so it is not bash. This product never substitutes another shell for a hook: configure the connection's bash path, or install bash on that host",
 			ErrExecCapability, c.describeEndpoint(), report.BashPath)
 	case report.PTY:
-		return report, fmt.Errorf("%w: %s allocated a terminal for a session that never asked for one, which merges a hook's stdout and stderr into one stream that cannot be separated again",
+		return nil, fmt.Errorf("%w: %s allocated a terminal for a session that never asked for one, which merges a hook's stdout and stderr into one stream that cannot be separated again",
 			ErrExecCapability, c.describeEndpoint())
+	case probe["enumerates_environment"] != "yes":
+		// The envelope's first act is to clear every variable the remote
+		// account exported, and it does that by asking bash which ones
+		// there are. A bash that cannot answer would leave the hook
+		// running in the account's own environment while the payload
+		// looked like it had cleared it -- the environment equivalent of
+		// the forced command this whole preflight exists to catch.
+		return nil, fmt.Errorf("%w: the bash at %s on %s cannot enumerate its own exported variables (compgen -e), so the envelope cannot guarantee a hook the environment this product resolved rather than the account's",
+			ErrExecCapability, report.BashPath, c.describeEndpoint())
 	case len(report.Contamination) != 0:
-		return report, fmt.Errorf("%w: the account's own shell startup left %s set on %s, and those change what a hook script means before its first line runs. Clear them for this account, or use a separate execution connection",
+		return nil, fmt.Errorf("%w: the account's own shell startup left %s set on %s, and those change what a hook script means before its first line runs. Clear them for this account, or use a separate execution connection",
 			ErrExecCapability, strings.Join(report.Contamination, ", "), c.describeEndpoint())
 	}
 
 	if err := c.checkSyntax(ctx, script); err != nil {
-		return report, err
+		return nil, err
 	}
 	report.ScriptSyntaxChecked = true
 
-	return report, nil
+	return &Capability{report: report, connection: identity, script: sha256.Sum256(script)}, nil
+}
+
+// honours reports whether this capability was issued for this connection
+// and these exact bytes.
+//
+// Both mismatches are refusals rather than reasons to re-measure. A caller
+// holding a proof for other bytes has lost track of which script it is
+// running, and a caller holding one for a connection that has since been
+// remade is a caller whose evidence predates whatever changed -- and
+// quietly running a new preflight for them would hide both.
+func (c *Client) honours(capability *Capability, script []byte) error {
+	if capability == nil {
+		return fmt.Errorf("%w: nothing has proved that %s can run this script, and an exec request that is merely ACCEPTED proves nothing: a forced-command account accepts it, runs its own program and exits 0",
+			ErrExecCapability, c.describeEndpoint())
+	}
+	identity := c.identity()
+	if identity == "" {
+		// A connection that has gone is transport loss, not a capability
+		// refusal: the two have different fixes and #810's whole point
+		// is that they are never confused.
+		return fmt.Errorf("%w: the connection to %s is closed, so the step never started", ErrTransportLoss, c.addr)
+	}
+	if identity != capability.connection {
+		return fmt.Errorf("%w: the capability offered for %s was established on a different connection to it, so what it proves is a fact about a connection that is no longer there",
+			ErrExecCapability, c.describeEndpoint())
+	}
+	if sha256.Sum256(script) != capability.script {
+		return fmt.Errorf("%w: the capability offered for %s was established against different script bytes, and the thing it proves -- that THIS script parses and runs on that host -- has not been established for these",
+			ErrExecCapability, c.describeEndpoint())
+	}
+
+	return nil
 }
 
 // runProbe runs the fixed probe script and parses its key=value lines.
@@ -153,7 +230,7 @@ func (c *Client) runProbe(ctx context.Context) (map[string]string, error) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	exit, err := c.runOnce(ctx, preflightTimeout, "", []byte(probeScript), &stdout, &stderr)
+	exit, err := c.runOnce(ctx, preflightTimeout, c.remoteCommand(""), []byte(probeScript), &stdout, &stderr)
 	if err != nil {
 		return nil, err
 	}
@@ -206,47 +283,32 @@ func (c *Client) capabilityRefusal(exit int, stdout, stderr string) error {
 // is the whole value of doing this before the run. The envelope's runtime
 // path carries a constant offset (see workflowexec.StdinPayload), and this
 // is why that offset costs nothing in practice.
+//
+// Only bash ANSWERING non-zero is a syntax refusal. A connection that died
+// mid-check, a channel that closed without a status and a write that never
+// landed are all transport loss, and reporting one of them as "the captured
+// script does not parse" would tell an operator to go and fix a script that
+// is fine -- while the thing that is actually broken goes unmentioned, and
+// unretried. That is the same distinction ErrTransportLoss exists for on
+// the run path, held to here as well because this is the other place a
+// remote answer is interpreted.
 func (c *Client) checkSyntax(ctx context.Context, script []byte) error {
-	session, err := c.session()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = session.Close() }()
-
-	var stderr bytes.Buffer
-	session.Stderr = &stderr
-	session.Stdout = &bytes.Buffer{}
-
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("%w: opening stdin on the syntax-check channel: %v", ErrTransportLoss, err)
-	}
 	// -n before -s: parse, never execute. The remote command is otherwise
 	// the same fixed string, so a server that refuses exec refuses this
 	// too and the capability refusal has already been reported.
 	command := "exec " + c.conn.Bash() + " --noprofile --norc -n -s"
-	if err := session.Start(command); err != nil {
-		return fmt.Errorf("%w: starting the syntax check: %v", ErrTransportLoss, err)
+
+	var stdout, stderr bytes.Buffer
+	exit, err := c.runOnce(ctx, preflightTimeout, command, script, &stdout, &stderr)
+	if err != nil {
+		return err
 	}
-	_, _ = stdin.Write(script)
-	_ = stdin.Close()
-
-	done := make(chan error, 1)
-	go func() { done <- session.Wait() }()
-
-	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
-	defer cancel()
-
-	select {
-	case waitErr := <-done:
-		if waitErr == nil {
-			return nil
-		}
-		return fmt.Errorf("%w: the captured script does not parse on %s -- that host's own bash said: %s. It is refused before it runs rather than half-executed",
-			ErrExecCapability, c.describeEndpoint(), strings.TrimSpace(stderr.String()))
-	case <-ctx.Done():
-		return fmt.Errorf("%w: the syntax check on %s did not finish within %s", ErrTransportLoss, c.describeEndpoint(), preflightTimeout)
+	if exit == 0 {
+		return nil
 	}
+
+	return fmt.Errorf("%w: the captured script does not parse on %s -- that host's own bash said: %s. It is refused before it runs rather than half-executed",
+		ErrExecCapability, c.describeEndpoint(), strings.TrimSpace(stderr.String()))
 }
 
 // describeEndpoint names the far side the way an audit line may: the user
@@ -335,4 +397,5 @@ printf 'bash_env=%s\n' "${BASH_ENV-}"
 printf 'env=%s\n' "${ENV-}"
 printf 'shellopts=%s\n' "${SHELLOPTS-}"
 printf 'bashopts=%s\n' "${BASHOPTS-}"
+if compgen -e >/dev/null 2>&1; then printf 'enumerates_environment=yes\n'; else printf 'enumerates_environment=no\n'; fi
 `
