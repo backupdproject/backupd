@@ -34,6 +34,12 @@ submission ready; a reviewer decides the rest.
 - `alerts.enabled: true` in the configuration, and the engine restarted since.
 - A second machine on the same network with a browser, so the interface is exercised the
   way an administrator reaches it rather than from the NAS's own console.
+- A mail account you control, with working SMTP submission details for it. Every
+  "sign in through the enrollment link" step below goes through enrollment, and
+  enrollment asks for a recovery email address and the server to reach it through,
+  then proves both by sending a confirmation message before it will create the
+  account. Without one there is no way past the first screen on any target. Keep the
+  SMTP password out of the evidence, the same as every other credential here.
 - Somewhere to record evidence that is not the NAS being tested.
 
 ## The four conditions, on every target

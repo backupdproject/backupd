@@ -250,20 +250,36 @@ package ships no credential of its own.
    ```
 
 2. Open it. It should present the enrollment screen, not a login screen.
-3. Enrol an administrator with a password you generate now. Do not reuse a
-   TrueNAS account password, and do not write it into this repository.
-4. Log out. Log back in.
-5. Open the enrollment link a second time.
+3. Fill the form: a password you generate now — do not reuse a TrueNAS account
+   password, and do not write it into this repository — plus the recovery email
+   address and the SMTP details the same form asks for. Use a mail account you
+   control, and keep that password out of this repository too.
+4. Submit it once with a deliberately wrong SMTP port. It should fail with
+   `SMTP_SEND_FAILED`, create no account, and leave the same link usable.
+5. Correct the port and submit again. A confirmation message should arrive at the
+   recovery address, and the account should exist only now.
+6. Log out. Log back in.
+7. Open the enrollment link a second time.
+8. Sign out and use **Forgot password**: first with a username that does not
+   exist, then with the administrator's. Both should answer the same way; only the
+   second should produce mail. Follow the link and set a new password.
 
 - No account exists before enrollment (the UI offers enrollment, not login)
 - The enrollment token appears only in the container log, never in any file
       under `apps/truenas/`
+- A confirmation message reaches the recovery address, and the failed attempt
+      created no account and did not consume the link
 - Enrollment succeeds
 - Logout then login succeeds
 - The enrollment link is refused the second time (single-use)
+- Forgot password is indistinguishable between a real and an invented username,
+      and the reset link works once, expires, and signs every session out when
+      spent
 - `GET /api/v1/system/capabilities` reports `nativeAuth: false`
 - `/mnt/POOL/backupd/state/local-auth.json` exists and contains an
-      Argon2id hash, never a plaintext password
+      Argon2id hash, never a plaintext password, and holds the recovery address
+      and SMTP settings with the SMTP password as a secret reference rather than
+      a value: `grep` it for the password you typed and find nothing
 
 ---
 
@@ -334,7 +350,8 @@ already has real state from step 4.
 - Update completes and both containers return to healthy
 - `diff` of the retained-artifact listing is empty: the update moved no
       backup data
-- The administrator account still exists (no re-enrollment prompt)
+- The administrator account still exists (no re-enrollment prompt), with its
+      recovery address and SMTP settings intact
 - The session cookie may be invalidated by the restart; logging back in with
       the same password works
 - Every backup set from step 4 is still configured
@@ -358,7 +375,7 @@ Then let TrueNAS restart the app (or **Stop** then **Start** it in the UI).
 - Both containers come back healthy
 - Retained backup data survives untouched
 - The catalog survives (same artifact list, same backup sets)
-- The administrator account survives
+- The administrator account survives, recovery address and SMTP settings included
 
 ---
 

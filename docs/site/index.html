@@ -138,7 +138,7 @@
 
     <p>That is the whole of it. The installer picks every path for you (<code>~/backupd</code>, with <code>backups</code>, <code>state</code>, <code>config</code> and <code>secrets</code> under it), generates the SSH key the engine will use, pins the exact image it was built against, and refuses before it changes anything if the machine cannot run it. Nothing needs deciding up front, and everything it chose can be changed afterwards.</p>
     <p>The last lines are the ones that matter, and they are output rather than something to run. The engine mints the enrolment token during startup and writes the notice to its own log, so the installer waits for that line and hands it over itself (<a href="https://github.com/backupdproject/backupd/issues/803">#803</a>): a fresh install ends with the link, and opening it is the next step. Nothing has to be fetched by hand, and if the notice had not been written by the time the installer stopped waiting &mdash; on a deployment already behaving oddly &mdash; the install prints the one command that reads it back out of the engine's log instead, with every path in it the one it just chose.</p>
-    <p>The address in the link is this machine's own rather than <code>localhost</code>, because the link is read from another machine on the same network: <code>localhost</code> over SSH on a laptop is the laptop, which is <a href="https://github.com/backupdproject/backupd/issues/688">what the installer used to print</a>. Open it, set an administrator password, and <a href="first-run.html">the first-run tutorial</a> picks up from there.</p>
+    <p>The address in the link is this machine's own rather than <code>localhost</code>, because the link is read from another machine on the same network: <code>localhost</code> over SSH on a laptop is the laptop, which is <a href="https://github.com/backupdproject/backupd/issues/688">what the installer used to print</a>. Open it, create the administrator &mdash; a username, a password, a recovery email address and the mail server to reach it through, which enrolment proves by sending a confirmation message before it creates anything &mdash; and <a href="first-run.html">the first-run tutorial</a> picks up from there. Have the SMTP details to hand before you open the link: <a href="first-run.html#enrol">the form will not finish without a working one</a>.</p>
 
     <div class="note ok">
       <span class="note-label">If the link has expired</span>
@@ -152,7 +152,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
 
     Valid 30 minutes, and it works once. Every link printed before this one is now dead,
     including any still in your scrollback.<!-- END ENROLL-LINK-OUTPUT --></code></pre>
-      <p>It reads back the <strong>newest</strong> notice rather than the first, because the container keeps its log across the restart and the earlier link is the one that restart just killed. On a deployment that already has an administrator it refuses instead, with its own exit code: enrolment is a one-time door and it closed when that account was created, so <a href="first-run.html#again">sign in</a>.</p>
+      <p>It reads back the <strong>newest</strong> notice rather than the first, because the container keeps its log across the restart and the earlier link is the one that restart just killed. On a deployment that already has an administrator it refuses instead, with its own exit code: enrolment is a one-time door and it closed when that account was created, so <a href="first-run.html#again">sign in</a>. Forgotten the password rather than lapsed a link? That is <a href="first-run.html#forgot">Forgot password</a> on the sign-in page, not this command: it mails a single-use reset link to the account's recovery address.</p>
     </div>
 
     <h3 id="install-cli-only" style="margin-top:2rem">Command line only, no web interface</h3>
@@ -193,7 +193,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
 
   <a href="first-run.html" class="clipping">
     <span class="clipping-tag">Tutorial</span>
-    <p>Setting one up for the first time means a one-time enrolment link the install hands you, an administrator account that is not your NAS login, and a six-step wizard whose answers become a <code>config.yaml</code> you will live with. The first-run walkthrough shows every screen, with an example for every field and a sentence on what that entry actually causes the product to do.</p>
+    <p>Setting one up for the first time means a one-time enrolment link the install hands you, an administrator account that is not your NAS login &mdash; with a recovery email address and the SMTP details to reach it, both proved by a confirmation message before the account exists &mdash; and a six-step wizard whose answers become a <code>config.yaml</code> you will live with. The first-run walkthrough shows every screen, with an example for every field and a sentence on what that entry actually causes the product to do.</p>
     <span class="clipping-read">Walk the first run &rarr;</span>
   </a>
 
