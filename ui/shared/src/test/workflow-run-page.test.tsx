@@ -408,6 +408,21 @@ describe("the stage ladder", () => {
   });
 });
 
+// The run page's job here is the slot: which step is selected, that one
+// terminal is open at a time, that it is handed the right run/step/step
+// object, and that a stale selection is dropped. The terminal's own
+// rendering + streaming is covered by StepLogTerminal.test.tsx, so it is
+// stubbed to a prop-recorder keyed by the same accessible region name.
+vi.mock("@shared/components/StepLogTerminal", () => ({
+  StepLogTerminal: ({ runId, stepId, step }: { runId: string; stepId: string; step: { scriptName: string; state: string; target: string } }) => (
+    <section role="region" aria-label={"Output of " + step.scriptName}>
+      <div>{"run " + runId + " \u00b7 step " + stepId}</div>
+      <div>{step.state}</div>
+      <div>{step.target}</div>
+    </section>
+  )
+}));
+
 describe("the step rows and the terminal slot", () => {
   afterEach(() => {
     cleanup();
@@ -492,8 +507,8 @@ describe("the step rows and the terminal slot", () => {
     const slot = within(await screen.findByRole("region", { name: "Output of 40-quiesce-remote.remote.sh" }));
     expect(slot.getByText(new RegExp("run " + FAILED_RUN + " . step step_quiesce"))).toBeTruthy();
     // The step's own facts, from the prop rather than a second fetch.
-    expect(slot.getByText("Timed out")).toBeTruthy();
-    expect(slot.getByText("Remote")).toBeTruthy();
+    expect(slot.getByText("timed_out")).toBeTruthy();
+    expect(slot.getByText("remote")).toBeTruthy();
   });
 
   it("drops a selection whose step no longer exists rather than following a stale id", async () => {
