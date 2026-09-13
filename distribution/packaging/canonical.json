@@ -170,7 +170,10 @@
     "backups": "/data/backups",
     "config": "/etc/backupd/config",
     "sshKey": "/etc/backupd/id_ed25519",
-    "knownHosts": "/etc/backupd/known_hosts"
+    "knownHosts": "/etc/backupd/known_hosts",
+    "runtime": "/data/run",
+    "workflows": "/workflows",
+    "runnerToken": "/etc/backupd/workflow-runner.token"
   },
   "configFileName": "config.yaml",
   "_config_role_comment": [
@@ -197,12 +200,14 @@
   "readOnlyContainerPaths": [
     "/etc/backupd/id_ed25519",
     "/etc/backupd/known_hosts",
-    "/etc/backupd/workflow-runner.token"
+    "/etc/backupd/workflow-runner.token",
+    "/workflows"
   ],
   "writableContainerPaths": [
     "/data/state",
     "/data/backups",
-    "/etc/backupd/config"
+    "/etc/backupd/config",
+    "/data/run"
   ],
   "_workflowRunner_comment": [
     "The host-side Host Workflow Runner contract (issue #877). Nothing in this",

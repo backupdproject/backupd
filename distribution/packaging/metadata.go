@@ -421,7 +421,7 @@ func splitVolumeSpec(spec string) []string {
 // directory a NAS happens to hand out, and an empty answer here is a
 // finding in its own right rather than a lookup miss to skip over.
 func roleForContainerPath(canonical Canonical, containerPath string) string {
-	for _, role := range Roles {
+	for _, role := range KnownRoles() {
 		p, _ := canonical.ContainerPaths.ByRole(role)
 		if p == containerPath {
 			return role

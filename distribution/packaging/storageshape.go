@@ -162,7 +162,12 @@ func CheckStorageShapes(svcs []Service, c Canonical) []Violation {
 // unanswerable question rather than a failure.
 func CheckCanonicalWriteModes(c Canonical) []Violation {
 	var out []Violation
-	for _, role := range Roles {
+	// KnownRoles rather than Roles: a host-plane path is optional to mount
+	// and not optional to declare a write mode for. Reading Roles here
+	// would let one be added to the contract with no answer to "may the
+	// engine write this", which is the question that matters most for the
+	// workflows directory.
+	for _, role := range KnownRoles() {
 		p, ok := c.ContainerPaths.ByRole(role)
 		if !ok {
 			continue
