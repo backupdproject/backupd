@@ -1522,6 +1522,7 @@ Structured logs SHALL cover:
 - retries;
 - stale backups;
 - disk pressure;
+- workflow runs, workflow steps and workflow script bypasses;
 - errors.
 
 Secrets MUST never be logged.

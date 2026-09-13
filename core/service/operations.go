@@ -381,6 +381,14 @@ func (b *BackupService) SubmitRunCycle(ctx context.Context, req RunCycleRequest)
 	if req.ConfigRevision == "" {
 		return Operation{}, fmt.Errorf("%w: run_cycle request requires a configuration revision", ErrInvalidRequest)
 	}
+	// Fail closed on EPIC L's reconciliation (#813). A process that could
+	// not work out which backup sets are blocked by an interrupted run
+	// must not start one, and the refusal is here rather than deeper in
+	// so that no durable operation row is created for a run that is not
+	// going to happen.
+	if err := b.WorkflowReconcileGate(); err != nil {
+		return Operation{}, err
+	}
 	// One atomic read up front: st.revision is what this whole call
 	// checks against and records, so it must be the exact same value
 	// throughout, not re-read (and possibly changed by a concurrent

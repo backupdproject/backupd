@@ -871,3 +871,166 @@ func wireInstant(s string) time.Time {
 	}
 	return t
 }
+
+// --- EPIC L's recovery and log reads over the wire (#813) -------------
+//
+// The four operations below are why apiclient carries workflow calls at
+// all. `workflow recovery show`, `resume-cleanup`, `acknowledge` and
+// `run log` used to open the LOCAL journal unconditionally, and for the
+// two mutations that is not a slower path, it is a different one: a
+// resume or an acknowledgement performed in a second process writes the
+// journal and leaves the SERVING engine's in-memory refusal set
+// untouched (workflowrun/recovery.go says in as many words that the
+// refusal is in memory and the truth is on disk), so the backup set
+// stayed blocked until somebody restarted the engine -- and two
+// processes could resume the same run at once. `run log --follow` had
+// the same shape one layer down: the broker that wakes a follower
+// belongs to the process executing the run, so a local follow polled a
+// journal nobody was writing.
+
+// WorkflowRecovery is GET /workflow-recovery: the SERVING engine's own
+// refusal set, which is what the next run will really be refused
+// against.
+func (r *engineRoute) WorkflowRecovery(ctx context.Context) ([]service.WorkflowRecoveryHold, error) {
+	resp, err := r.client.WorkflowRecovery(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	holds := make([]service.WorkflowRecoveryHold, 0, len(resp.Holds))
+	for _, h := range resp.Holds {
+		holds = append(holds, service.WorkflowRecoveryHold{
+			RunID:       h.RunID,
+			BackupSetID: h.BackupSetID,
+			Scope:       h.Scope,
+			EnteredAt:   wireTime(h.EnteredAt),
+			SpoolRef:    h.SpoolRef,
+		})
+	}
+
+	return holds, nil
+}
+
+// ResumeWorkflowCleanup is POST /workflow-recovery/{run}/resume-cleanup.
+func (r *engineRoute) ResumeWorkflowCleanup(ctx context.Context, runID string) (service.WorkflowRunDetail, error) {
+	resp, err := r.client.ResumeWorkflowCleanup(ctx, runID)
+	if err != nil {
+		return service.WorkflowRunDetail{}, err
+	}
+
+	return workflowRunFromWire(resp), nil
+}
+
+// AcknowledgeWorkflowRecovery is POST
+// /workflow-recovery/{run}/acknowledge.
+//
+// The ACTOR is dropped rather than sent, which is the routing working
+// rather than something lost in it: the engine records whoever is signed
+// in, and an acknowledgement's whole value six months later is that the
+// name on it was established by the process that accepted it.
+func (r *engineRoute) AcknowledgeWorkflowRecovery(ctx context.Context, runID string, ack service.WorkflowAcknowledgement) error {
+	return r.client.AcknowledgeWorkflowRecovery(ctx, runID, apicontract.WorkflowAcknowledgementRequest{Reason: ack.Reason})
+}
+
+// WorkflowStepLogs is GET /workflow-runs/{run}/steps/{step}/logs.
+//
+// The wait is sent in whole SECONDS because that is what the route
+// publishes, and a sub-second wait is rounded UP rather than truncated
+// to zero: a zero never waits, which would silently turn a follow into a
+// poll loop.
+func (r *engineRoute) WorkflowStepLogs(ctx context.Context, req service.WorkflowStepLogRequest) (service.WorkflowStepLogPage, error) {
+	wait := 0
+	if req.Wait > 0 {
+		wait = int((req.Wait + time.Second - 1) / time.Second)
+	}
+
+	page, err := r.client.WorkflowStepLogs(ctx, req.RunID, req.StepID, req.After, req.Limit, wait)
+	if err != nil {
+		return service.WorkflowStepLogPage{}, err
+	}
+
+	out := service.WorkflowStepLogPage{
+		RunID:     page.RunID,
+		StepID:    page.StepID,
+		Cursor:    page.Cursor,
+		Truncated: page.Truncated,
+		Complete:  page.Complete,
+		StepState: page.StepState,
+	}
+	for _, rec := range page.Records {
+		out.Records = append(out.Records, service.WorkflowStepLogRecord{
+			Seq:    rec.Seq,
+			StepID: rec.StepID,
+			Stream: rec.Stream,
+			Kind:   rec.Kind,
+			At:     wireTime(rec.At),
+			Text:   rec.Text,
+		})
+	}
+
+	return out, nil
+}
+
+// workflowRunFromWire translates one run row.
+//
+// Only the fields a CLI verb prints are carried, and the steps with it,
+// because `resume-cleanup` prints the run in full afterwards: a resume
+// that ran every hook and still could not account for a scope has to be
+// readable from the row the next backup will be refused against.
+func workflowRunFromWire(run apicontract.WorkflowRun) service.WorkflowRunDetail {
+	out := service.WorkflowRunDetail{
+		RunID:          run.RunID,
+		BackupSetID:    run.BackupSetID,
+		State:          run.State,
+		BackupStatus:   run.BackupStatus,
+		CleanupStatus:  run.CleanupStatus,
+		WorkflowStatus: run.WorkflowStatus,
+		RecoveryState:  run.RecoveryState,
+		Bypassed:       run.Bypassed,
+		FailedStep:     run.FailedStep,
+		FailedScript:   run.FailedScript,
+		StartedAt:      wireTime(run.StartedAt),
+		DurationMillis: run.DurationMs,
+		ScriptCount:    run.ScriptCount,
+	}
+	if finished := wireTime(run.FinishedAt); !finished.IsZero() {
+		out.FinishedAt = &finished
+	}
+	for _, s := range run.Steps {
+		out.Steps = append(out.Steps, service.WorkflowStepDetail{
+			StepID:                 s.StepID,
+			Order:                  s.Order,
+			ScriptName:             s.ScriptName,
+			Scope:                  s.Scope,
+			Phase:                  s.Phase,
+			Target:                 s.Target,
+			State:                  s.State,
+			ExecutionConnectionRef: s.ExecutionConnectionRef,
+			ExitCode:               s.ExitCode,
+			TerminationConfirmed:   s.TerminationConfirmed,
+			DurationMillis:         s.DurationMs,
+			TimeoutMillis:          s.TimeoutMs,
+		})
+	}
+
+	return out
+}
+
+// wireTime parses an RFC 3339 instant the API published, and reports an
+// unparseable or absent one as the zero time.
+//
+// Zero rather than an error, because every caller here is printing: a
+// "finished: not yet" is exactly what a run with no finish time means,
+// and a verb that refused to print a recovery hold because one timestamp
+// was odd would be withholding the list an operator is trying to act on.
+func wireTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	at, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+
+	return at
+}

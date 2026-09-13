@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -302,6 +303,18 @@ func (e *fakeEngine) api(w http.ResponseWriter, r *http.Request, path, token str
 		e.listActivity(w, r)
 	case r.Method == http.MethodGet && path == "/activity/live":
 		e.liveActivity(w, r)
+	// EPIC L's recovery and log routes (#813), served off the real
+	// service for the reason everything else here is: a fake that
+	// answered from a fixture would let a verb that never reached the
+	// engine look correct.
+	case r.Method == http.MethodGet && path == "/workflow-recovery":
+		e.workflowRecovery(w, r)
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/resume-cleanup"):
+		e.resumeWorkflowCleanup(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/workflow-recovery/"), "/resume-cleanup"))
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/acknowledge"):
+		e.acknowledgeWorkflowRecovery(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/workflow-recovery/"), "/acknowledge"))
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/logs"):
+		e.workflowStepLogs(w, r, strings.TrimPrefix(path, "/workflow-runs/"))
 	case r.Method == http.MethodGet && path == "/settings":
 		e.getSettings(w, r)
 	case r.Method == http.MethodPatch && path == "/settings":
@@ -986,4 +999,100 @@ func (e *fakeEngine) setReadOnly(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	writeJSON(w, http.StatusOK, toContractBackupSet(set))
+}
+
+// --- EPIC L: the four recovery and log operations (#813) --------------
+
+// workflowRecovery is GET /workflow-recovery, answered out of the real
+// engine's own refusal set.
+func (e *fakeEngine) workflowRecovery(w http.ResponseWriter, _ *http.Request) {
+	holds, err := e.svc.WorkflowRecovery(context.Background())
+	if err != nil {
+		refuse(w, http.StatusInternalServerError, apicontract.ErrorCodeInternal, err.Error())
+		return
+	}
+	out := apicontract.WorkflowRecoveryResponse{Holds: []apicontract.WorkflowRecoveryHold{}}
+	for _, h := range holds {
+		out.Holds = append(out.Holds, apicontract.WorkflowRecoveryHold{
+			RunID:       h.RunID,
+			BackupSetID: h.BackupSetID,
+			Scope:       h.Scope,
+			EnteredAt:   h.EnteredAt.UTC().Format(time.RFC3339),
+			SpoolRef:    h.SpoolRef,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// resumeWorkflowCleanup is POST /workflow-recovery/{run}/resume-cleanup.
+func (e *fakeEngine) resumeWorkflowCleanup(w http.ResponseWriter, _ *http.Request, runID string) {
+	run, err := e.svc.ResumeWorkflowCleanup(context.Background(), runID)
+	if err != nil {
+		refuse(w, http.StatusNotFound, apicontract.ErrorCodeWorkflowRunNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, apicontract.WorkflowRun{
+		RunID:          run.RunID,
+		BackupSetID:    run.BackupSetID,
+		State:          run.State,
+		BackupStatus:   run.BackupStatus,
+		CleanupStatus:  run.CleanupStatus,
+		WorkflowStatus: run.WorkflowStatus,
+		RecoveryState:  run.RecoveryState,
+		StartedAt:      run.StartedAt.UTC().Format(time.RFC3339),
+		Steps:          []apicontract.WorkflowStep{},
+	})
+}
+
+// acknowledgeWorkflowRecovery is POST
+// /workflow-recovery/{run}/acknowledge. The actor is the ENGINE's answer,
+// which is the whole point of routing it: the request carries a reason
+// and nothing else.
+func (e *fakeEngine) acknowledgeWorkflowRecovery(w http.ResponseWriter, r *http.Request, runID string) {
+	var req apicontract.WorkflowAcknowledgementRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		refuse(w, http.StatusBadRequest, apicontract.ErrorCodeInvalidRequest, err.Error())
+		return
+	}
+	err := e.svc.AcknowledgeWorkflowRecovery(context.Background(), runID, service.WorkflowAcknowledgement{
+		Actor:  "the-engines-session",
+		Reason: req.Reason,
+	})
+	if err != nil {
+		refuse(w, http.StatusNotFound, apicontract.ErrorCodeWorkflowRunNotFound, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// workflowStepLogs is GET /workflow-runs/{run}/steps/{step}/logs.
+func (e *fakeEngine) workflowStepLogs(w http.ResponseWriter, r *http.Request, rest string) {
+	parts := strings.Split(rest, "/steps/")
+	if len(parts) != 2 {
+		refuse(w, http.StatusNotFound, apicontract.ErrorCodeWorkflowRunNotFound, "not a step log path")
+		return
+	}
+	runID := parts[0]
+	stepID := strings.TrimSuffix(parts[1], "/logs")
+	after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
+
+	page, err := e.svc.WorkflowStepLogs(context.Background(), service.WorkflowStepLogRequest{
+		RunID: runID, StepID: stepID, After: after,
+	})
+	if err != nil {
+		refuse(w, http.StatusNotFound, apicontract.ErrorCodeWorkflowRunNotFound, err.Error())
+		return
+	}
+	out := apicontract.WorkflowStepLogPage{
+		RunID: page.RunID, StepID: page.StepID, Cursor: page.Cursor,
+		Truncated: page.Truncated, Complete: page.Complete, StepState: page.StepState,
+		Records: []apicontract.WorkflowStepLogRecord{},
+	}
+	for _, rec := range page.Records {
+		out.Records = append(out.Records, apicontract.WorkflowStepLogRecord{
+			Seq: rec.Seq, StepID: rec.StepID, Stream: rec.Stream, Kind: rec.Kind,
+			At: rec.At.UTC().Format(time.RFC3339), Text: rec.Text,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }

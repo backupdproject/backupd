@@ -149,6 +149,13 @@ func (b *BackupService) SubmitRunBackupSet(ctx context.Context, req RunBackupSet
 	if req.BackupSetID == "" {
 		return Operation{}, fmt.Errorf("%w: %s request requires a backup set id", ErrInvalidRequest, ActionRunBackupSet)
 	}
+	// Fail closed on EPIC L's reconciliation (#813), for SubmitRunCycle's
+	// reason and before this call's own id checks for the same one: no
+	// durable row for a run this process has already decided it must not
+	// start.
+	if err := b.WorkflowReconcileGate(); err != nil {
+		return Operation{}, err
+	}
 	sourceName, setName, ok := splitBackupSetID(req.BackupSetID)
 	if !ok {
 		// A syntactically impossible id cannot name anything, and gets

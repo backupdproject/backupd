@@ -82,43 +82,19 @@ func TestFetchDryRunReportsTheResolvedWorkflowAndExecutesNothing(t *testing.T) {
 	}
 }
 
-// TestFetchRunsNoHookEvenWithoutDryRun is the claim the refusal below
-// rests on, so it is asserted rather than asserted about.
+// The test that used to sit here asserted the opposite of the property
+// this binary now has, and it was deleted rather than re-pinned.
 //
-// `fetch` reaches internal/app.Service.Fetch through openService, which
-// installs no workflow lifecycle: the five-stage wrapper is put on an
-// app.Service only by core/service's BackupService, after
-// ReconcileWorkflows has succeeded, which is the process that SERVES the
-// deployment and not this one. So a real fetch moves the bytes and runs
-// none of the set's hooks.
-//
-// If that ever stops being true -- if this command is one day wired to
-// the serving engine's per-set run, which is the piece of work
-// cmdFetch's doc points at -- this test fails, and the
-// --skip-workflow-scripts refusal beside it has to be revisited in the
-// same change. That is exactly what it is here for.
-func TestFetchRunsNoHookEvenWithoutDryRun(t *testing.T) {
-	configPath, root := workflowFixture(t)
-	marker := hookThatWouldLeaveAMarker(t, filepath.Join(root, "global-before"))
-
-	argv := []string{"fetch", "--backup-set", "production/postgres-primary", "--config", configPath}
-	var code int
-	out := captureStdout(t, func() { code = run(argv) })
-	if code != 0 {
-		t.Fatalf("run(%v) = %d, want 0; stdout:\n%s", argv, code, out)
-	}
-
-	// The pass really ran: this is a local-backend remote with one file
-	// waiting, so the artifact has to have landed.
-	landed := filepath.Join(filepath.Dir(configPath), "local", "backup.dump")
-	if _, err := os.Stat(landed); err != nil {
-		t.Fatalf("the fetch transferred nothing, so this test is not observing a real pass: %v", err)
-	}
-
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatalf("`fetch` executed a hook: %s exists. If that is now intended, --skip-workflow-scripts can no longer be refused as meaningless and cmdFetch's doc has to change with it", marker)
-	}
-}
+// It was TestFetchRunsNoHookEvenWithoutDryRun, and it pinned `fetch`
+// taking a backup of a workflow-configured set while running none of
+// that set's hooks -- which was true, was the defect, and is what
+// dataplane_test.go's TestFetchRunsTheSetsHooksAndRecordsAWorkflowRun
+// now asserts the other way round: the pass goes through the same
+// reconciled lifecycle the engine uses, so the hooks fire, the run is on
+// record, and a set blocked by an interrupted run is refused
+// (TestFetchIsRefusedWhileACleanupIsOutstanding). Its own doc said it
+// should fail the day this command was wired to a real lifecycle, and
+// this is that day.
 
 // TestFetchRefusesSkipWorkflowScriptsAndSaysWhereABypassLives drives the
 // refusal against a deployment that loads, so the exit code cannot be an

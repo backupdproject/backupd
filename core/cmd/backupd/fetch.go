@@ -19,57 +19,45 @@ import (
 // without the flag, Fetch runs the same reconcile/discover/transfer/
 // verify/commit/delete sequence RunCycle would for this one backup set).
 //
-// # --skip-workflow-scripts is REFUSED here, and that is the honest answer
+// # This pass RUNS the set's hooks, and --skip-workflow-scripts is still refused
 //
-// EPIC L (#813) gives a per-set run the ability to take the backup and
-// run none of that set's hook scripts, for one situation: a hook is
-// broken at three in the morning and somebody needs tonight's backup. It
-// is an administrator action, it is refused on a scheduled run, it is
-// refused outright for a set with an unresolved interruption, and every
-// bypass is recorded twice -- bypassed=1 on the durable workflow run row
-// and a warn-level event naming the actor
-// (service.RunBackupSetRequest.SkipWorkflowScripts).
+// EPIC L (#813) wraps one backup set's pass in that set's five-stage
+// workflow, and this command performs exactly one backup set's pass. It
+// used to perform it with no lifecycle at all, because it built its
+// service through openService: the hooks did not fire, no workflow run
+// was recorded, and -- the part that made it a safety defect rather than
+// a missing feature -- the set's recovery holds were never consulted, so
+// a fetch proceeded over a source an interrupted hook had left quiesced.
+// It now comes through openBackupDataPlane (dataplane.go), which is the
+// same reconciled BackupService the engine builds, so a configured set's
+// hooks really run here and a blocked set is really refused.
 //
-// None of that can happen here, and the reason is structural rather than
-// a missing wire-up. This command reaches internal/app.Service.Fetch
-// through openService, which builds that service directly from a loaded
-// configuration and a journal; the five-stage lifecycle is installed on
-// an app.Service only by core/service's own BackupService, in
-// installWorkflowLifecycle, and only after ReconcileWorkflows has
-// succeeded. So the pass this command performs runs NO hooks at all --
-// app.Service.Workflow is nil, which app/workflow.go documents as "every
-// deployment that configures no hook scripts, and every use of this
-// package written before EPIC L" -- and there is nothing here for a skip
-// to skip.
-//
-// Three things follow, and the flag exists to say the first two out loud:
-//
-//   - Accepting it silently would be the worst available outcome. The
-//     command would exit 0, no hook would have run, and the operator
-//     would have learned that `fetch` normally runs hooks and that this
-//     flag is how you stop it. Both halves of that are false, and the
-//     belief is exactly what #813's audit trail exists to prevent: a flag
-//     somebody added to a cron line months ago while everybody went on
-//     believing the hooks ran.
-//
-//   - Implementing it here would mean bypassing something. The route
-//     that really runs a set's hooks is the serving engine's per-set run
-//     (core/service.SubmitRunBackupSet), which is a durable,
-//     idempotency-keyed operation on that process's own single-flight
-//     lock. Turning this command into a submission against that would
-//     change what `fetch` IS -- its output, its exit status, its
-//     --dry-run, and which process moves the bytes -- and every one of
-//     those is pinned by FR-35. That is a piece of work with its own
-//     issue, not a flag.
-//
-//   - So the flag is declared, refused with a sentence that says where a
-//     bypass really lives, and exits 2. A refusal an operator can read is
-//     worth having where a silent no-op is not.
+// A bypass is a different thing and is still refused. #813 gives a
+// per-set run the ability to take the backup and run none of the set's
+// hooks, for one situation: a hook is broken at three in the morning and
+// somebody needs tonight's backup. It is an administrator action, it is
+// refused on a scheduled run, it is refused outright for a set with an
+// unresolved interruption, and every bypass is recorded twice --
+// bypassed=1 on the durable workflow run row and a warn-level event
+// naming the actor (service.RunBackupSetRequest.SkipWorkflowScripts).
+// The authority it is recorded against is a session the engine minted,
+// which this command has no way to establish, and a bypass recorded
+// against nobody is exactly the audit trail #813 exists to prevent. So
+// the flag is declared, refused with a sentence that says where a bypass
+// really lives, and exits 2: a refusal an operator can read is worth
+// having where a silent no-op is not.
 //
 // What --dry-run does instead is report the workflow a real run of this
-// set WOULD execute, which is the question somebody reaching for the flag
-// is usually actually asking. It resolves it from the configuration and
-// executes nothing at all: see reportResolvedWorkflow below.
+// set WOULD execute, which is the question somebody reaching for the
+// flag is usually actually asking. It resolves it from the configuration
+// and executes nothing at all: see reportResolvedWorkflow below.
+//
+// # Why a dry run comes through the other door
+//
+// Because it is a read. It transfers nothing, records nothing and runs no
+// hook, so it neither needs the lifecycle nor may reconcile the journal
+// -- and it therefore still answers on a host where something is
+// serving, which is where somebody previewing a set usually is.
 func cmdFetch(args []string) int {
 	fs, cfgPath := newFlagSet("fetch")
 	sourceFlag := fs.String("source", "", "the source to fetch (required unless --backup-set names it)")
@@ -134,18 +122,35 @@ func cmdFetch(args []string) int {
 
 	// Refused before anything is opened, because the command line is what
 	// is wrong and it is wrong on every deployment: no configuration has
-	// to be read to know that this process runs no hooks. That is the
-	// line usage()'s exit-code table draws between 2 and 1, and it is why
-	// this is a usage refusal rather than a service one. It is settled
-	// after the id above so the sentence can name the set the operator
-	// meant rather than echoing two half-filled flags back at them.
+	// to be read to know that this process cannot establish the authority
+	// a bypass is recorded against. That is the line usage()'s exit-code
+	// table draws between 2 and 1, and it is why this is a usage refusal
+	// rather than a service one. It is settled after the id above so the
+	// sentence can name the set the operator meant rather than echoing
+	// two half-filled flags back at them.
 	if *skipWorkflow {
-		return usageError("fetch: --skip-workflow-scripts cannot be honoured by this command, and is refused rather than ignored. A fetch pass runs in your own shell and installs no workflow lifecycle, so it runs none of %s/%s's hook scripts and there is nothing here to skip. A bypass is an administrator action performed BY the process serving this deployment, which records it durably on the run row and in a warn-level event naming who asked, and %s workflow run list is where a bypassed run shows up. To see what a real run of this set would execute without running any of it, pass --dry-run, or run %s validate workflow %s/%s",
+		return usageError("fetch: --skip-workflow-scripts cannot be honoured by this command, and is refused rather than ignored. This pass DOES run %s/%s's hook scripts -- it goes through the same five-stage lifecycle the serving engine uses -- and skipping them is an administrator action performed by the process that serves this deployment, which records it durably on the run row and in a warn-level event naming who asked; %s workflow run list is where a bypassed run shows up. To see what a run of this set would execute without running any of it, pass --dry-run, or run %s validate workflow %s/%s",
 			source, set, cliecho.Binary, cliecho.Binary, source, set)
 	}
 
 	ctx := context.Background()
-	svc, cfg, cleanup, err := openService(ctx, *cfgPath, true)
+
+	// A dry run is a READ: it transfers nothing, records nothing and runs
+	// no hook at all, so it comes through the read door and still answers
+	// beside a serving engine. A real fetch executes one backup set's
+	// pass, so it comes through the reconciled data plane, where the
+	// lifecycle is installed and the recovery holds are consulted
+	// (dataplane.go).
+	var (
+		svc     *app.Service
+		cfg     *config.Config
+		cleanup func()
+	)
+	if *dryRun {
+		svc, cfg, cleanup, err = openService(ctx, *cfgPath, true)
+	} else {
+		svc, cfg, cleanup, err = openBackupDataPlane(ctx, *cfgPath)
+	}
 	if err != nil {
 		return fail(err)
 	}

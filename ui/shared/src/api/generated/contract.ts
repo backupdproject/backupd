@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "5a5cdac4c415b37925fb325079c2549f26f14057829b0bc74b5566e8e26bf291";
+export const CONTRACT_SHA256 = "9e6886ce7138cc17275fd2d92a9ada0cc5c793b5faa3241f3dc05da018b13770";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -4151,7 +4151,7 @@ export interface WireWorkflowStep {
   scope?: "global" | "set";
   script_name?: string;
   started_at?: string;
-  state?: "pending" | "running" | "success" | "failed" | "timed_out" | "canceled" | "skipped" | "interrupted" | "recovery_required" | "cleanup_running" | "cleanup_failed" | "recovered";
+  state?: "pending" | "running" | "success" | "failed" | "timed_out" | "canceled" | "skipped" | "interrupted";
   step_id?: string;
   target?: "local" | "remote";
   termination_confirmed?: boolean;
@@ -4175,7 +4175,7 @@ export interface WireWorkflowStepLogPage {
   records?: WireWorkflowStepLogRecord[];
   run_id?: string;
   step_id?: string;
-  step_state?: "pending" | "running" | "success" | "failed" | "timed_out" | "canceled" | "skipped" | "interrupted" | "recovery_required" | "cleanup_running" | "cleanup_failed" | "recovered";
+  step_state?: "pending" | "running" | "success" | "failed" | "timed_out" | "canceled" | "skipped" | "interrupted";
   truncated?: boolean;
 }
 

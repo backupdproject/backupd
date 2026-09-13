@@ -26,7 +26,11 @@ func cmdRun(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	svc, _, cleanup, err := openService(ctx, *cfgPath, true)
+	// openBackupDataPlane, not openService: a cycle run by this process
+	// has to go through the same reconciled workflow lifecycle the engine
+	// uses, or a workflow-configured set is backed up with no hooks and
+	// no recovery check at all (dataplane.go).
+	svc, _, cleanup, err := openBackupDataPlane(ctx, *cfgPath)
 	if err != nil {
 		return fail(err)
 	}

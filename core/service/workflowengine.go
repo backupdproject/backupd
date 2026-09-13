@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/backupdproject/backupd/core/internal/app"
@@ -115,6 +116,17 @@ type workflowRuntime struct {
 	// variable in whichever main built this process, and core/ has no
 	// way to read one.
 	version string
+
+	// runsBlocked is the fail-closed gate a FAILED reconciliation
+	// leaves behind (WorkflowReconcileGate).
+	//
+	// Atomic rather than guarded by a mutex because it is read on the
+	// path of every run submission and every scheduler tick, and written
+	// only by a reconciliation pass. It lives here, on the per-process
+	// workflow state, for the reason the engine does: a hot reload
+	// replaces the configuration and must not clear a refusal about this
+	// process's knowledge of the journal.
+	runsBlocked atomic.Bool
 }
 
 // SetBuildVersion tells this service which release it is.
@@ -186,6 +198,26 @@ type WorkflowReconcileReport struct {
 	Holds []WorkflowRecoveryHold
 }
 
+// ErrWorkflowReconcileIncomplete is the refusal every run action gets
+// from a process whose workflow reconciliation did not succeed.
+//
+// It is what "fail closed" means here, and the reasoning is the same
+// sentence read the other way round. The reconciliation is what decides
+// which backup sets have an interrupted run whose cleanup nobody has
+// accounted for; a run started before that answer exists is a backup
+// taken over a machine that may still be quiesced. So the moment the
+// answer is UNKNOWN is exactly the moment a run must not start, and a
+// process that carried on serving with the lifecycle uninstalled would
+// have disabled the guard precisely when it was needed.
+//
+// What it deliberately does NOT gate is reading. A deployment whose
+// journal cannot be reconciled is a deployment an operator has to look
+// at, and refusing to serve at all would take away the surface they
+// would look at it from: the runs, the recovery holds, the health report
+// and the resume/acknowledge actions all stay available, because they
+// are how the gate gets lifted.
+var ErrWorkflowReconcileIncomplete = errors.New("service: this process could not reconcile its workflow runs, so it refuses to start a backup: which backup sets are blocked by an interrupted run is unknown, and a run started now could be taken over a machine a previous run left quiesced")
+
 // ReconcileWorkflows brings the journal into line with the fact that this
 // process has just started, and must be called before this service serves
 // anything.
@@ -193,6 +225,12 @@ type WorkflowReconcileReport struct {
 // It is idempotent (workflowrun.Reconcile's own property), so a caller
 // that is not sure whether it has run may call it again; what it must not
 // do is skip it, because the engine refuses every run until it has.
+//
+// A FAILURE closes the run gate (ErrWorkflowReconcileIncomplete) for this
+// process, and a later success opens it. That is why a caller may retry:
+// the refusal is a state of this service, not of the call, so a process
+// that reconciles successfully on a second attempt starts backing up
+// again without a restart.
 func (b *BackupService) ReconcileWorkflows(ctx context.Context) (WorkflowReconcileReport, error) {
 	rt := b.runtime()
 	if rt == nil || rt.engine == nil {
@@ -201,6 +239,11 @@ func (b *BackupService) ReconcileWorkflows(ctx context.Context) (WorkflowReconci
 
 	report, err := rt.engine.Reconcile(ctx, now())
 	if err != nil {
+		// Closed before the error is returned, so there is no window in
+		// which a caller has been told the reconciliation failed and a
+		// scheduler tick could still start a backup.
+		rt.runsBlocked.Store(true)
+
 		return WorkflowReconcileReport{}, fmt.Errorf("service: reconciling workflow runs: %w", err)
 	}
 
@@ -208,17 +251,93 @@ func (b *BackupService) ReconcileWorkflows(ctx context.Context) (WorkflowReconci
 	// reconciliation has succeeded, and that ordering is the whole point
 	// of doing it here. An engine that refuses every Run with
 	// ErrNotReconciled, wired into the cycle, would turn a reconciliation
-	// failure into every backup in the deployment failing -- so a
-	// deployment with one bad journal row would stop backing anything up.
-	// Left uninstalled, the cycle runs exactly as it did before EPIC L,
-	// which is the honest degradation: no hooks, and a startup error
-	// saying why.
+	// failure into every backup in the deployment failing for a reason no
+	// surface could explain.
+	//
+	// What used to follow from that was the opposite of safe: the
+	// lifecycle stayed uninstalled and the cycle ran exactly as it did
+	// before EPIC L -- no hooks AND no recovery check -- which is a
+	// workflow-configured deployment quietly downgraded to unwrapped
+	// backups at the one moment its recovery state was unknown. So the
+	// gate above is what a failure produces now, and this line is what a
+	// success produces.
 	b.installWorkflowLifecycle()
+	rt.runsBlocked.Store(false)
 
 	return WorkflowReconcileReport{
 		Interrupted: append([]string(nil), report.Interrupted...),
 		Holds:       toRecoveryHolds(report.Holds),
 	}, nil
+}
+
+// WorkflowReconcileGate is the refusal a run action must make, or nil.
+//
+// Every surface that can START a backup asks it: the two durable
+// submissions (SubmitRunCycle, SubmitRunBackupSet), the scheduler's own
+// tick, and the CLI execution verbs through their data-plane door. One
+// question in one place, because a gate half of the callers consult is
+// not a gate.
+//
+// A process that never reconciled at all is NOT gated, and that is
+// deliberate rather than an oversight: every core/ test builds a service
+// with New and never reconciles, as does every CLI verb that only reads,
+// and gating those would turn "this process has no workflow engine
+// running" into "this deployment cannot back up". The gate is about a
+// reconciliation that was ATTEMPTED AND FAILED, which is the one case
+// where this process knows it does not know.
+func (b *BackupService) WorkflowReconcileGate() error {
+	rt := b.runtime()
+	if rt == nil {
+		return nil
+	}
+
+	if rt.runsBlocked.Load() {
+		return ErrWorkflowReconcileIncomplete
+	}
+
+	return nil
+}
+
+// BackupDataPlane is the internal/app.Service this BackupService wraps,
+// for the commands that execute a cycle IN THEIR OWN PROCESS: cmd/backupd's
+// `run`, `daemon` and `fetch`.
+//
+// # Why this seam exists at all
+//
+// Because those three used to build an app.Service directly, from a
+// loaded configuration and a journal, and an app.Service built that way
+// has no workflow lifecycle: the five-stage wrapper is installed by this
+// package, on reconciliation, and nothing else can install it. So a
+// CLI-triggered backup of a workflow-configured set created no run row,
+// ran no hook, and -- the part that makes it a safety defect rather than
+// a missing feature -- never consulted the recovery holds, so an
+// ordinary `backupd run` proceeded over a source an interrupted hook had
+// left quiesced.
+//
+// The alternative was for the CLI to submit its work to a serving engine,
+// and that is not available: `run` and `fetch` are what an operator uses
+// on a host with nothing serving at all, their output and exit status are
+// pinned by FR-35, and a `backupd daemon` serves no HTTP to submit to.
+// What they need is the identical service the engine builds, with the
+// lifecycle really installed, which is what this returns.
+//
+// It returns internal/app's type, which apps/ cannot import
+// (docs/EPIC-B-multi-nas.md §7.2) and cmd/backupd already does. That
+// asymmetry is deliberate: a provider binary composes this package's own
+// surfaces, and only the CLI drives a cycle in-process.
+//
+// It is emphatically NOT a way around this service's own guards. A caller
+// that executes a cycle through the returned value must have reconciled
+// first (ReconcileWorkflows) and must consult WorkflowReconcileGate, for
+// the same reason the two durable submissions and the scheduler do; the
+// CLI does both in one place, openBackupDataPlane.
+func (b *BackupService) BackupDataPlane() *app.Service {
+	st := b.state.Load()
+	if st == nil {
+		return nil
+	}
+
+	return st.inner
 }
 
 // installWorkflowLifecycle puts the lifecycle on the inner app.Service,
@@ -329,6 +448,23 @@ func (l *workflowLifecycle) AroundBackupSet(ctx context.Context, set config.Back
 		// transferred.
 		return err
 	}
+	// #809's "an invalid required hook fails before the first before
+	// script", on the EXACT plan this run captured (workflowpreflight.go
+	// holds the whole argument). Without it the six checks Snapshot
+	// answers refused in time and the five executor checks did not: a
+	// run whose second hook was a syntax error, or whose runner socket
+	// was gone, or whose remote credential is an internal-sftp account,
+	// ran the first hook and quiesced a database before finding out.
+	//
+	// A bypass skips it, and only a bypass. authorizeBypass above has
+	// already established the authority for that, and a bypassed run
+	// executes no hook at all, so there is nothing to be invalid: it
+	// would be probing a runner for scripts nobody is going to send it.
+	if !opts.SkipScripts {
+		if err := l.svc.refuseUnrunnablePlan(ctx, plan); err != nil {
+			return err
+		}
+	}
 
 	res, runErr := rt.engine.Run(ctx, workflowrun.RunRequest{
 		Plan:        plan,
@@ -352,6 +488,27 @@ func (l *workflowLifecycle) AroundBackupSet(ctx context.Context, set config.Back
 	// success.
 	if res.BackupErr != nil {
 		return res.BackupErr
+	}
+
+	// A backup the workflow PREVENTED. res.BackupErr is nil here because
+	// the backup was never called -- a "before" hook failed, timed out or
+	// was cancelled, and the engine recorded the backup as skipped -- so
+	// without this the pass returns success to a cycle that took no
+	// backup at all. That is the one outcome this seam must never
+	// produce: internal/app would record the set with no error and no
+	// artifacts, `backupd run` would exit 0, and the deployment would
+	// report a healthy night on which nothing was backed up.
+	//
+	// The run's own state says which of the three it was, and the failed
+	// step says where to look, so both are named rather than summarised.
+	if res.BackupStatus == workflow.StatusSkipped {
+		if res.FailedStep != "" {
+			return fmt.Errorf("service: workflow run %s did not take a backup of %s: it stopped at %s and the backup was never started (run state %s)",
+				res.RunID, set.ID, res.FailedStep, res.State)
+		}
+
+		return fmt.Errorf("service: workflow run %s did not take a backup of %s: the workflow ended before the backup could start (run state %s)",
+			res.RunID, set.ID, res.State)
 	}
 
 	if res.RecoveryOutstanding {

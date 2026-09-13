@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/remoteexec"
+	"github.com/backupdproject/backupd/core/internal/hostrunner"
 	"github.com/backupdproject/backupd/core/internal/workflow"
 	"github.com/google/uuid"
 )
@@ -298,8 +298,7 @@ func (v *workflowValidator) run(ctx context.Context) {
 
 	v.checkPlan(stages)
 	v.checkTimeouts()
-	v.checkRunner(ctx)
-	v.checkRemote(ctx)
+	v.checkExecutors(ctx)
 	v.settle()
 }
 
@@ -664,213 +663,67 @@ func secretRefProblem(s config.SecretSource) string {
 	}
 }
 
-// checkRunner asks the Host Workflow Runner what it is, and asks it to
-// PARSE every local script.
+// checkExecutors asks the Host Workflow Runner and the execution
+// connection whether they can run this plan, and renders their answers
+// as findings.
 //
-// Both questions go to the runner rather than to bash in this process,
-// and that is the point of the runner existing: a `.local.sh` hook means
-// "run this on the machine backupd is installed on", the engine's
-// canonical runtime is a distroless container with no shell at all, and a
-// syntax check performed by a bash this container does not have would be
-// a check against an interpreter the hook will never meet.
-func (v *workflowValidator) checkRunner(ctx context.Context) {
-	local := stepsWithTarget(v.plan, workflow.TargetLocal)
-
-	if len(local) == 0 {
-		v.skip(WorkflowCheckRunnerHealth, "this backup set runs no local (NAME.local.sh) hooks, so it needs no host workflow runner")
-		v.skip(WorkflowCheckLocalBashSyntax, "this backup set runs no local (NAME.local.sh) hooks")
-
-		return
-	}
-
-	client, err := v.svc.hostRunnerClient()
-	if err != nil {
-		v.fail(WorkflowCheckRunnerHealth, err.Error())
-		v.skip(WorkflowCheckLocalBashSyntax, "not examined: there is no runner to ask")
-
-		return
-	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, workflowProbeTimeout)
-	defer cancel()
-
-	status, err := client.Status(probeCtx)
-	if err != nil {
-		v.fail(WorkflowCheckRunnerHealth, err.Error())
-		v.skip(WorkflowCheckLocalBashSyntax, "not examined: the runner did not answer")
-
-		return
-	}
-
-	v.ok(WorkflowCheckRunnerHealth, fmt.Sprintf(
-		"the host workflow runner answered: version %s, bash %s, running as %s", status.Version, status.BashVersion, status.User))
-
-	v.checkLocalSyntax(ctx, client, local)
-}
-
-// checkLocalSyntax asks the runner to parse each local script's captured
-// bytes.
+// The probes themselves are NOT here, and that is #813's own
+// requirement rather than tidiness: a run has to refuse an invalid
+// required hook before the first "before" script executes, so the same
+// five answers are needed on the way into a run
+// (refuseUnrunnablePlan). They live in workflowpreflight.go and both
+// callers reach them through probePlanExecutors, so a validation that
+// passes and a run that refuses cannot disagree about one plan.
 //
-// hostrunner.SyntaxCheck runs `bash -n` over the bytes and executes
-// nothing, which is the runner's own documented guarantee and the only
-// reason this is safe to do from a validation command.
-func (v *workflowValidator) checkLocalSyntax(ctx context.Context, client hostRunnerStatus, steps []workflow.Step) {
-	failures := 0
-
-	for _, s := range steps {
-		script, err := v.plan.OpenScript(s.ID)
-		if err != nil {
-			v.add(WorkflowFinding{
-				Check: WorkflowCheckLocalBashSyntax, Severity: WorkflowSeverityError,
-				Detail: err.Error(),
-				Scope:  string(s.Scope), Phase: string(s.Phase), Target: string(s.Target), Script: s.ScriptName,
-			})
-			failures++
-
-			continue
-		}
-
-		probeCtx, cancel := context.WithTimeout(ctx, workflowProbeTimeout)
-		err = client.SyntaxCheck(probeCtx, v.plan.RunID(), s.ID, script.Body)
-		cancel()
-
-		if err != nil {
-			v.add(WorkflowFinding{
-				Check: WorkflowCheckLocalBashSyntax, Severity: WorkflowSeverityError,
-				Detail: err.Error(),
-				Scope:  string(s.Scope), Phase: string(s.Phase), Target: string(s.Target), Script: s.ScriptName,
-			})
-			failures++
-		}
-	}
-
-	if failures == 0 {
-		v.ok(WorkflowCheckLocalBashSyntax, fmt.Sprintf("%d local hook(s) parse. Nothing was executed: the runner was asked to parse the bytes and run nothing", len(steps)))
-	}
-}
-
-// hostRunnerStatus is the slice of hostrunner.Client this validation
-// uses, named as an interface so a test can answer both questions without
-// a real socket.
+// Both questions about a local hook go to the RUNNER rather than to bash
+// in this process, and that is the point of the runner existing: a
+// `.local.sh` hook means "run this on the machine backupd is installed
+// on", the engine's canonical runtime is a distroless container with no
+// shell at all, and a syntax check performed by a bash this container
+// does not have would be a check against an interpreter the hook will
+// never meet.
 //
-// Narrow on purpose: a validation may ask what the runner IS and ask it
-// to PARSE, and there is deliberately no Execute on this interface, so
-// the rule that validation never runs a script body is a property of the
-// type rather than of a reviewer noticing.
-type hostRunnerStatus interface {
-	SyntaxCheck(ctx context.Context, runID, stepID string, script []byte) error
-}
-
-// checkRemote covers the three remote items: which connection was
-// selected, whether it can actually run a command, and whether the remote
-// bash parses each script.
-func (v *workflowValidator) checkRemote(ctx context.Context) {
-	remote := stepsWithTarget(v.plan, workflow.TargetRemote)
-
-	if len(remote) == 0 {
-		for _, check := range []string{WorkflowCheckExecConnection, WorkflowCheckExecCapability, WorkflowCheckRemoteBashSyntax} {
-			v.skip(check, "this backup set runs no remote (NAME.remote.sh) hooks")
-		}
-
-		return
-	}
-
-	ref := remote[0].ExecutionConnectionRef
-
-	conn, err := remoteexec.Resolve(v.cfg, ref)
-	if err != nil {
-		v.fail(WorkflowCheckExecConnection, err.Error())
-		v.skip(WorkflowCheckExecCapability, "not examined: no execution connection resolved")
-		v.skip(WorkflowCheckRemoteBashSyntax, "not examined: no execution connection resolved")
-
-		return
-	}
-
-	v.ok(WorkflowCheckExecConnection, fmt.Sprintf(
-		"remote hooks run over execution connection %q as %s@%s", conn.Ref, conn.Source.User, conn.Source.Host))
-
-	probeCtx, cancel := context.WithTimeout(ctx, workflowProbeTimeout)
-	defer cancel()
-
-	client, err := remoteexec.Dial(probeCtx, conn)
-	if err != nil {
-		v.fail(WorkflowCheckExecCapability, err.Error())
-		v.skip(WorkflowCheckRemoteBashSyntax, "not examined: the execution connection did not open")
-
-		return
-	}
-	defer client.Close() //nolint:errcheck // a probe connection
-
-	v.checkRemoteCapability(probeCtx, client, conn, remote)
-}
-
-// checkRemoteCapability proves the far side can run a command at all, and
-// that it can parse each script.
-//
-// Both come out of one call per script: remoteexec.Preflight runs this
-// product's own fixed probe -- not the operator's hook -- and then a
-// `bash -n` of the script's bytes, and it refuses a forced-command
-// account that merely ACCEPTS an exec request and runs its own program.
-// That refusal is the reason the capability check exists at all: the
-// recommended posture for a backup source is an account confined to
-// internal-sftp, which authenticates perfectly and cannot run a hook, and
-// a deployment that only discovered this at 2am is exactly what #810
-// exists to prevent.
-func (v *workflowValidator) checkRemoteCapability(ctx context.Context, client *remoteexec.Client, conn remoteexec.Connection, steps []workflow.Step) {
-	capable := false
-	syntaxFailures := 0
-
-	for _, s := range steps {
-		script, err := v.plan.OpenScript(s.ID)
-		if err != nil {
-			v.add(WorkflowFinding{
-				Check: WorkflowCheckRemoteBashSyntax, Severity: WorkflowSeverityError,
-				Detail: err.Error(),
-				Scope:  string(s.Scope), Phase: string(s.Phase), Target: string(s.Target), Script: s.ScriptName,
-			})
-			syntaxFailures++
-
-			continue
-		}
-
-		if _, err := client.Preflight(ctx, script.Body); err != nil {
-			// A capability refusal is about the CONNECTION and a syntax
-			// refusal is about the SCRIPT, and #813 lists them as two
-			// items because the remedies are unrelated: one is an
-			// account or an sshd configuration, the other is a typo in
-			// somebody's hook. remoteexec exports a sentinel for the
-			// first, which is what tells them apart here rather than a
-			// reading of the sentence.
-			if errors.Is(err, remoteexec.ErrExecCapability) {
-				v.fail(WorkflowCheckExecCapability, err.Error())
-				v.skip(WorkflowCheckRemoteBashSyntax, "not examined: this connection cannot run a command, so nothing on it could parse a script")
-
-				return
+// The translation is a mapping and never a second classification: the
+// probe already answers in the report's own three shapes (passed,
+// skipped, refused), because a green tick on a check that never ran is
+// the one output that would actively mislead.
+func (v *workflowValidator) checkExecutors(ctx context.Context) {
+	v.svc.probePlanExecutors(ctx, v.plan, func(f workflowPlanFinding) bool {
+		switch {
+		case f.Skipped:
+			v.skip(f.Check, f.Detail)
+		case f.Err != nil:
+			finding := WorkflowFinding{Check: f.Check, Severity: WorkflowSeverityError, Detail: f.Err.Error()}
+			if f.Step != nil {
+				finding.Scope = string(f.Step.Scope)
+				finding.Phase = string(f.Step.Phase)
+				finding.Target = string(f.Step.Target)
+				finding.Script = f.Step.ScriptName
 			}
-
-			capable = true
-			syntaxFailures++
-			v.add(WorkflowFinding{
-				Check: WorkflowCheckRemoteBashSyntax, Severity: WorkflowSeverityError,
-				Detail: err.Error(),
-				Scope:  string(s.Scope), Phase: string(s.Phase), Target: string(s.Target), Script: s.ScriptName,
-			})
-
-			continue
+			v.add(finding)
+		default:
+			v.ok(f.Check, f.Detail)
 		}
 
-		capable = true
-	}
+		// Every answer, always: this is the verb an operator typed to
+		// find out which of fifteen things is wrong, so stopping at the
+		// first failure would answer a narrower question than the
+		// command asks.
+		return true
+	})
+}
 
-	if capable {
-		v.ok(WorkflowCheckExecCapability, fmt.Sprintf(
-			"%s@%s accepted an exec channel and proved it runs the bytes it is sent rather than a program of its own", conn.Source.User, conn.Source.Host))
-	}
-
-	if syntaxFailures == 0 {
-		v.ok(WorkflowCheckRemoteBashSyntax, fmt.Sprintf(
-			"%d remote hook(s) parse with %s on the far side. Nothing was executed: each script was sent to bash -n", len(steps), conn.Bash()))
-	}
+// hostRunnerStatus is the slice of hostrunner.Client a validation and a
+// run's preflight use, named as an interface so a test can answer both
+// questions without a real socket.
+//
+// Narrow on purpose: a probe may ask what the runner IS and ask it to
+// PARSE, and there is deliberately no Execute on this interface, so the
+// rule that neither a validation nor a preflight runs a script body is a
+// property of the type rather than of a reviewer noticing.
+type hostRunnerStatus interface {
+	Status(ctx context.Context) (hostrunner.Status, error)
+	SyntaxCheck(ctx context.Context, runID, stepID string, script []byte) error
 }
 
 // stepsWithTarget filters a plan, tolerating the zero plan a failed

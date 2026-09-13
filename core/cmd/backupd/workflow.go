@@ -208,6 +208,104 @@ func openWorkflowService(ctx context.Context, configPath string, intent configIn
 	return svc, cleanup, nil
 }
 
+// workflowRecoveryRoute is what the four verbs that must reach the
+// SERVING engine perform, in core/service's own vocabulary (#813).
+//
+// Three reads and one mutation, and the mutations are why this exists.
+// A resume or an acknowledgement carried out in THIS process writes the
+// journal and leaves the serving engine's in-memory refusal set
+// untouched, so the backup set stays blocked until somebody restarts that
+// process -- and two processes can resume one run at once, because the
+// lock that would prevent it is a table in the other one's memory. A
+// `run log --follow` has the same shape: the broker that wakes a follower
+// belongs to the process executing the run, so a local follow polls a
+// journal nobody is writing.
+//
+// *service.BackupService satisfies it as it stands, which is the property
+// route.go asks every addition of this kind to preserve: the direct path
+// is the identity implementation, and engineRoute is the only translator.
+type workflowRecoveryRoute interface {
+	WorkflowRecovery(ctx context.Context) ([]service.WorkflowRecoveryHold, error)
+	ResumeWorkflowCleanup(ctx context.Context, runID string) (service.WorkflowRunDetail, error)
+	AcknowledgeWorkflowRecovery(ctx context.Context, runID string, ack service.WorkflowAcknowledgement) error
+	WorkflowStepLogs(ctx context.Context, req service.WorkflowStepLogRequest) (service.WorkflowStepLogPage, error)
+}
+
+// workflowRouteIntent says whether the verb asking for a route CHANGES
+// recovery state, which decides what happens when something is serving
+// this deployment and this command has not been told how to reach it.
+type workflowRouteIntent int
+
+const (
+	// workflowRouteReads is `recovery show` and `run log`: beside an
+	// unreachable engine they fall back to the durable journal, which is
+	// a partial answer rather than a wrong one (the holds are the
+	// engine's, the rows are everybody's).
+	workflowRouteReads workflowRouteIntent = iota
+
+	// workflowRouteMutates is `resume-cleanup` and `acknowledge`: beside
+	// an unreachable engine they are REFUSED, because a resume performed
+	// here would run cleanup hooks the serving engine does not know
+	// about and unblock a set that process will go on refusing.
+	workflowRouteMutates
+)
+
+// openWorkflowRoute answers where a recovery verb's work goes.
+//
+// Three outcomes, and they are the three #543 established for a
+// configuration write, applied to recovery state for the same reason:
+// with nothing serving, this process is the deployment and acts directly;
+// with something serving and an address, the work goes over HTTP to the
+// process whose memory holds the answer; with something serving and no
+// address, a mutation is refused rather than performed in the wrong
+// process.
+//
+// The returned cleanup func closes whatever was opened; callers should
+// always `defer cleanup()` immediately.
+func openWorkflowRoute(ctx context.Context, configPath string, intent workflowRouteIntent) (workflowRecoveryRoute, func(), error) {
+	engine, err := detectRunningEngine(configPath)
+	if err != nil {
+		return nil, func() {}, cannotTellError(err)
+	}
+
+	if engine != nil {
+		route, _, attachErr := attachToEngine(ctx, engine)
+		if attachErr != nil {
+			return nil, func() {}, attachErr
+		}
+		if route != nil {
+			// An engine that was named, reached, and confirmed to be this
+			// deployment. engineRoute carries all four operations; the
+			// assertion is what keeps that a compile-time-checked fact
+			// rather than a hope.
+			wf, ok := route.(workflowRecoveryRoute)
+			if !ok {
+				return nil, func() {}, fmt.Errorf("%s: this build's engine route cannot carry a workflow recovery request", cliecho.Binary)
+			}
+
+			return wf, func() {}, nil
+		}
+		if intent == workflowRouteMutates {
+			return nil, func() {}, engineRefusal(engine,
+				"recovery state lives in that process's memory as well as in the journal: a resume or an acknowledgement made here would unblock a backup set that process would go on refusing, and two processes could resume one run at once",
+				workflowRecoveryRemedy)
+		}
+	}
+
+	svc, cleanup, err := openWorkflowService(ctx, configPath, readsConfig)
+	if err != nil {
+		return nil, cleanup, err
+	}
+
+	return svc, cleanup, nil
+}
+
+// workflowRecoveryRemedy is what an operator can do about a recovery
+// action beside a serving engine.
+var workflowRecoveryRemedy = fmt.Sprintf(
+	"Stop that process and run this command again; if it serves this deployment's Web UI or HTTP API, resume or acknowledge the run there instead, or hand this command to it directly by setting $%s (with $%s and $%s) to the address it serves",
+	apiURLEnv, apiUsernameEnv, apiPasswordEnv)
+
 // oneRunOperand reads the single run id a verb takes, refusing a command
 // line that named none or named two before anything is opened.
 //
@@ -413,7 +511,11 @@ func workflowRunLog(args []string) int {
 	}
 
 	ctx := context.Background()
-	svc, cleanup, err := openWorkflowService(ctx, *cfgPath, readsConfig)
+	// Routed when something is serving this deployment and an address
+	// says where: the broker that wakes a --follow belongs to the process
+	// executing the run, so a local follow polls a journal nobody is
+	// writing (openWorkflowRoute).
+	route, cleanup, err := openWorkflowRoute(ctx, *cfgPath, workflowRouteReads)
 	defer cleanup()
 	if err != nil {
 		return fail(err)
@@ -427,7 +529,7 @@ func workflowRunLog(args []string) int {
 	}
 
 	if !*followFlag {
-		page, err := svc.WorkflowStepLogs(ctx, req)
+		page, err := route.WorkflowStepLogs(ctx, req)
 		if err != nil {
 			return fail(err)
 		}
@@ -444,7 +546,7 @@ func workflowRunLog(args []string) int {
 	followCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if _, err := followStepLogs(followCtx, svc, req, *asJSON, os.Stdout, os.Stderr); err != nil {
+	if _, err := followStepLogs(followCtx, route, req, *asJSON, os.Stdout, os.Stderr); err != nil {
 		return fail(err)
 	}
 
@@ -577,11 +679,11 @@ func printStepLogPage(out io.Writer, page service.WorkflowStepLogPage, asJSON bo
 		}
 
 		if rec.Kind != string(workflow.LogOutput) {
-			_, _ = fmt.Fprintf(out, "%s  [%s] %s: %s\n", workflowClock(rec.At), rec.Kind, cliecho.Binary, rec.Text)
+			_, _ = fmt.Fprintf(out, "%s  [%s] %s: %s\n", workflowClock(rec.At), rec.Kind, cliecho.Binary, neutralizeTerminalControls(rec.Text))
 
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "%s  %-6s %s\n", workflowClock(rec.At), rec.Stream, rec.Text)
+		_, _ = fmt.Fprintf(out, "%s  %-6s %s\n", workflowClock(rec.At), rec.Stream, neutralizeTerminalControls(rec.Text))
 	}
 }
 
@@ -694,10 +796,35 @@ func workflowRecoveryShow(args []string) int {
 	}
 
 	ctx := context.Background()
-	svc, cleanup, err := openWorkflowService(ctx, *cfgPath, readsConfig)
+	route, cleanup, err := openWorkflowRoute(ctx, *cfgPath, workflowRouteReads)
 	defer cleanup()
 	if err != nil {
 		return fail(err)
+	}
+
+	// Beside a serving engine that this command can reach, the answer is
+	// that engine's own refusal set, which is what the next run will
+	// really be refused against -- and it carries the per-scope
+	// breakdown and the spool path this command could not report from
+	// the journal alone. With nothing serving, the durable rows are the
+	// answer, which is what the rest of this function reads.
+	if holds, ok, err := routedRecoveryHolds(ctx, route); ok {
+		if err != nil {
+			return fail(err)
+		}
+		if *asJSON {
+			return printWorkflowJSON(struct {
+				Holds []service.WorkflowRecoveryHold `json:"holds"`
+			}{nonNilHolds(holds)})
+		}
+		printRecoveryHolds(holds)
+
+		return 0
+	}
+
+	svc, ok := route.(*service.BackupService)
+	if !ok {
+		return fail(fmt.Errorf("%s: this deployment's recovery state cannot be read from here", cliecho.Binary))
 	}
 
 	outstanding, inFlight, err := outstandingWorkflowRuns(ctx, svc)
@@ -809,13 +936,16 @@ func workflowResumeCleanup(args []string) int {
 	}
 
 	ctx := context.Background()
-	svc, cleanup, err := openWorkflowService(ctx, *cfgPath, readsConfig)
+	// Routed, or refused: a resume carried out beside a serving engine
+	// would run cleanup hooks that process does not know about and
+	// unblock a set it would go on refusing (openWorkflowRoute).
+	route, cleanup, err := openWorkflowRoute(ctx, *cfgPath, workflowRouteMutates)
 	defer cleanup()
 	if err != nil {
 		return fail(err)
 	}
 
-	run, err := svc.ResumeWorkflowCleanup(ctx, runID)
+	run, err := route.ResumeWorkflowCleanup(ctx, runID)
 	if err != nil {
 		return fail(err)
 	}
@@ -876,13 +1006,16 @@ func workflowAcknowledge(args []string) int {
 	}
 
 	ctx := context.Background()
-	svc, cleanup, err := openWorkflowService(ctx, *cfgPath, readsConfig)
+	// Routed, or refused, for resume-cleanup's reason: an
+	// acknowledgement recorded here would leave the serving engine still
+	// refusing the set it just unblocked (openWorkflowRoute).
+	route, cleanup, err := openWorkflowRoute(ctx, *cfgPath, workflowRouteMutates)
 	defer cleanup()
 	if err != nil {
 		return fail(err)
 	}
 
-	if err := svc.AcknowledgeWorkflowRecovery(ctx, runID, service.WorkflowAcknowledgement{
+	if err := route.AcknowledgeWorkflowRecovery(ctx, runID, service.WorkflowAcknowledgement{
 		Actor:  cliActor,
 		Reason: *reason,
 	}); err != nil {
@@ -1074,4 +1207,119 @@ func nonNilSteps(steps []service.WorkflowStepDetail) []service.WorkflowStepDetai
 	}
 
 	return steps
+}
+
+// routedRecoveryHolds asks the engine for its refusal set, and reports
+// whether this route is one that can answer.
+//
+// The second return value is what keeps the two answers apart. A route
+// over HTTP answers with the holds; the direct route is this process's
+// own BackupService, whose WorkflowRecovery would be the EMPTY set --
+// that engine has reconciled nothing -- and printing "nothing
+// outstanding" at an operator whose source machine is sitting quiesced is
+// the single worst output this command could produce. So the direct route
+// declines here and the durable rows are read instead.
+func routedRecoveryHolds(ctx context.Context, route workflowRecoveryRoute) ([]service.WorkflowRecoveryHold, bool, error) {
+	if _, direct := route.(*service.BackupService); direct {
+		return nil, false, nil
+	}
+
+	holds, err := route.WorkflowRecovery(ctx)
+
+	return holds, true, err
+}
+
+// printRecoveryHolds is the routed form of the report: one hold per
+// scope, with the two actions named in the words that would perform
+// them.
+func printRecoveryHolds(holds []service.WorkflowRecoveryHold) {
+	if len(holds) == 0 {
+		fmt.Println("no backup set is being held: the process serving this deployment has no outstanding workflow cleanup")
+
+		return
+	}
+
+	for _, hold := range holds {
+		fmt.Printf("outstanding: run %s  set %s  scope %s\n", hold.RunID, hold.BackupSetID, hold.Scope)
+		fmt.Printf("  entered: %s (%s ago by this host's clock)\n", workflowClock(hold.EnteredAt), workflowSince(hold.EnteredAt))
+		if hold.SpoolRef != "" {
+			fmt.Printf("  the scripts a resume would execute: %s\n", hold.SpoolRef)
+		}
+		fmt.Printf("  run the cleanup it owes:   %s workflow recovery resume-cleanup %s\n", cliecho.Binary, hold.RunID)
+		fmt.Printf("  or take it on by hand:     %s workflow recovery acknowledge %s --reason \"...\"\n", cliecho.Binary, hold.RunID)
+	}
+}
+
+// nonNilHolds keeps an empty list an empty ARRAY, for nonNilRuns' reason.
+func nonNilHolds(holds []service.WorkflowRecoveryHold) []service.WorkflowRecoveryHold {
+	if holds == nil {
+		return []service.WorkflowRecoveryHold{}
+	}
+
+	return holds
+}
+
+// neutralizeTerminalControls makes one captured line safe to print to a
+// terminal.
+//
+// The bytes being printed here are a HOOK's standard output, which means
+// they are whatever a script on a source host wrote -- and a source host
+// is the least trusted machine in this deployment. An escape sequence in
+// that stream is not cosmetic: it can clear the screen, move the cursor
+// up over lines this product printed, rewrite them, or hide what
+// follows. An operator reading `workflow run log` after an interrupted
+// cleanup is exactly the reader a spoofed "cleanup completed" would
+// fool, which is why this is not left to whatever the terminal does with
+// it.
+//
+// Every C0 control except tab is replaced, DEL and the C1 range with it,
+// which takes ESC and therefore takes every ANSI sequence at its
+// introducer: nothing downstream has to parse CSI, OSC or their
+// terminators. A tab survives because a hook printing a table is
+// printing information and a tab cannot move the cursor anywhere
+// dangerous.
+//
+// Newlines are in that set on purpose. One record is one LINE here (this
+// function's caller adds the newline), so an embedded newline is a
+// record claiming to be two, which is how a fake "backupd: cleanup
+// completed" line gets printed with this product's own prefix.
+//
+// The replacement is a visible placeholder rather than deletion, because
+// a line quietly missing bytes is a line an operator cannot debug: a
+// hook that really did print an escape sequence should look odd, not
+// clean. --json is deliberately NOT routed through this: JSON encoding
+// already escapes every byte below 0x20, and a script consuming that
+// stream wants the hook's bytes as the hook wrote them.
+func neutralizeTerminalControls(text string) string {
+	if !strings.ContainsFunc(text, isTerminalControl) {
+		return text
+	}
+
+	var b strings.Builder
+	b.Grow(len(text))
+	for _, r := range text {
+		if isTerminalControl(r) {
+			b.WriteByte('?')
+
+			continue
+		}
+		b.WriteRune(r)
+	}
+
+	return b.String()
+}
+
+// isTerminalControl reports whether a rune must not reach a terminal
+// verbatim: the C0 range apart from tab, DEL, and the C1 range.
+func isTerminalControl(r rune) bool {
+	switch {
+	case r == '\t':
+		return false
+	case r < 0x20, r == 0x7f:
+		return true
+	case r >= 0x80 && r <= 0x9f:
+		return true
+	default:
+		return false
+	}
 }

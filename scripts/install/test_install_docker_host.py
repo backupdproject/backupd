@@ -6242,6 +6242,52 @@ class TestTheHostWorkflowRunner(unittest.TestCase):
         self.assertNotIn("${RUNTIME_DIR:-./run}:/data/run:ro", canonical,
                          "a read-only runtime mount cannot be connected to")
 
+    def test_the_env_and_the_compose_file_agree_about_the_runner_credential(self):
+        """The mount that was missing, and the reason nothing worked
+        without it.
+
+        The runner authenticates every connection against an
+        installation-scoped token. The installer writes it into
+        <prefix>/secrets and the compose file mounted the socket
+        directory and the scripts and nothing else, so every in-container
+        workflows.runner.token_file named a file that was not there and
+        every `.local.sh` hook failed authentication.
+        """
+        args = self.staged()
+        rendered = (args.prefix / ".env").read_text()
+        token = args.prefix / "secrets" / installer.WORKFLOW_RUNNER_TOKEN
+        self.assertIn(f"{installer.WORKFLOW_RUNNER_TOKEN_ENV_KEY}={token}", rendered,
+                      "the .env does not point the compose mount at this installation's runner credential")
+
+        canonical = CANONICAL_COMPOSE.read_text()
+        self.assertIn(f"${{{installer.WORKFLOW_RUNNER_TOKEN_ENV_KEY}:-./secrets/workflow-runner.token}}:"
+                      f"{installer.CONTAINER_RUNNER_TOKEN}:ro", canonical,
+                      "the canonical runtime does not bind the runner credential read-only at the container path")
+        self.assertNotIn(f"{args.prefix / 'secrets'}:", canonical,
+                         "the whole secrets directory is mounted; only the runner credential may be")
+        self.assertIn(installer.CONTAINER_RUNNER_TOKEN, (args.prefix / "compose.yaml").read_text(),
+                      "the staged compose file does not carry the credential mount")
+
+    def test_the_documented_token_file_is_the_path_the_engine_can_see(self):
+        """A token_file an operator copies out of the documentation has to
+        resolve INSIDE the container, because that is the process that
+        reads it."""
+        canonical = CANONICAL_COMPOSE.read_text()
+        self.assertIn(f"token_file: {installer.CONTAINER_RUNNER_TOKEN}", canonical,
+                      "the canonical runtime does not document the in-container token_file")
+        contract = (REPO_ROOT / "docs" / "runtime-contract.md").read_text()
+        self.assertIn(installer.CONTAINER_RUNNER_TOKEN, contract,
+                      "docs/runtime-contract.md does not name the credential mount")
+
+    def test_the_credential_mount_changes_no_privilege(self):
+        """The acceptance criterion for adding a mount at all: the engine's
+        posture is unchanged."""
+        canonical = CANONICAL_COMPOSE.read_text()
+        for forbidden in ("group_add", "DOCKER_HOST", "privileged: true", "docker.sock", "cap_add"):
+            self.assertNotIn(forbidden, canonical,
+                             f"the canonical runtime now declares {forbidden!r}")
+        self.assertIn("read_only: true", canonical)
+
     def test_neither_mount_is_required_so_an_older_env_still_starts(self):
         """`:?` means the stack refuses to start without the variable. An
         upgrade must not do that to a deployment whose .env predates EPIC

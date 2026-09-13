@@ -115,6 +115,22 @@ func passOutcome(r BackupSetCycleResult) error {
 // understand. If the backup did NOT run, there is no pass to report and
 // the refusal is the whole story: a set blocked by an unresolved
 // interruption, or a "before" hook that said no.
+//
+// # Why the pass sentinel is dropped rather than stored
+//
+// errBackupSetPassFailed is this package's own word to the lifecycle for
+// "the pass ran and did not come out clean", and the engine hands it
+// straight back as the run's BackupErr. A pass whose only fault is a
+// counted artifact -- FailedArtifacts > 0, Err nil, which is a
+// quarantine -- would otherwise come out of here carrying it as Err, and
+// Err is what SystemicFailure reads: a cycle that completed and reported
+// its counts would be classified as a cycle that could not be performed
+// (core/service's cyclesummary_test.go pins the other half of that
+// distinction). So a lifecycle error that is only this package's own
+// restatement of the pass's verdict is discarded here, and Err is left
+// for what it means -- the lifecycle could not run this pass, or could
+// not finish what it wrapped it in. fetchInWorkflow excludes the same
+// sentinel for the same reason, one entry point over.
 func foldWorkflowRefusal(bs config.BackupSet, result BackupSetCycleResult, ran bool, err error) BackupSetCycleResult {
 	if err == nil {
 		return result
@@ -122,6 +138,10 @@ func foldWorkflowRefusal(bs config.BackupSet, result BackupSetCycleResult, ran b
 
 	if !ran {
 		return BackupSetCycleResult{Set: bs.ID, Err: err}
+	}
+
+	if errors.Is(err, errBackupSetPassFailed) {
+		return result
 	}
 
 	if result.Err == nil {

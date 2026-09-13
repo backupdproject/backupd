@@ -734,7 +734,7 @@
           },
           "skip_workflow_scripts": {
             "type": "boolean",
-            "description": "Take the backup and run NONE of this backup set's workflow hook scripts. run_backup_set's parameter, and refused when any other action carries it, exactly as backup_set_id is. It exists for one situation and is shaped for it: a hook is broken at three in the morning and somebody needs tonight's backup. Three things keep it from being taken by habit. It is an ADMINISTRATOR action, and on this API the administrator boundary is the destructive gate this route already sits behind -- a deployment that has not turned destructive operations on cannot submit one at all, and the refusal it gets is DESTRUCTIVE_OPERATIONS_DISABLED. A scheduled run can never carry it, which is not a rule this route enforces because no schedule submits through it. And a backup set with an unresolved workflow interruption refuses the run outright, before the flag is even looked at, because that set may have a machine sitting quiesced and skipping the cleanup is the last thing anybody should do to it. Every bypassed run is recorded twice: on the durable operation row, so a bypass that was asked for and refused is still visible, and as a warn-level event naming the actor.",
+            "description": "Take the backup and run NONE of this backup set's workflow hook scripts. run_backup_set's parameter, and refused when any other action carries it, exactly as backup_set_id is. It exists for one situation and is shaped for it: a hook is broken at three in the morning and somebody needs tonight's backup. Three things keep it from being taken by habit. It is an ADMINISTRATOR action, and on this API the administrator boundary is the destructive gate this route already sits behind -- a deployment that has not turned destructive operations on cannot submit one at all, and the refusal it gets is DESTRUCTIVE_OPERATIONS_DISABLED. A scheduled run can never carry it, which is not a rule this route enforces because no schedule submits through it. And a backup set with an unresolved workflow interruption refuses the run outright, before the flag is even looked at, because that set may have a machine sitting quiesced and skipping the cleanup is the last thing anybody should do to it. Every bypassed run is recorded twice: on the durable operation row, so a bypass that was asked for and refused is still visible, and as a warn-level event naming the actor. This field is a plain boolean, so `false` is indistinguishable from absent and is accepted by any action: what refuseForeignParameters refuses is an action other than run_backup_set that CARRIES IT AS TRUE, which is the only spelling that asks for anything.",
             "x-go-omitempty": true
           }
         },
@@ -825,7 +825,7 @@
       },
       "OperationProgress": {
         "type": "object",
-        "description": "Live progress for an operation that is running in THIS process right now (docs/EPIC-B-multi-nas.md \u00a752). It is sampled from the transfer engine while a run cycle executes and is never written to the operations table: an operation record is durable and crash-safe, and progress is neither, so persisting it would put a tick-rate write path on the one record whose durability guarantees exist to avoid exactly that, and would resurrect a dead cycle's last reading after a restart as though it were live. So this field is present only while the cycle producing it is executing here. A finished operation, and one that was running before a restart, both carry no progress object at all, which is not the same answer as zero and must not be rendered as one. Nothing here is a percentage of the whole operation: a run cycle is a pass over every enabled backup set, and the artifacts it will find are not known when it starts, so no honest denominator for the whole exists. The byte counters describe the ONE artifact being copied at observed_at; the counters beside them say where in the cycle that artifact sits.",
+        "description": "Live progress for an operation that is running in THIS process right now (docs/EPIC-B-multi-nas.md §52). It is sampled from the transfer engine while a run cycle executes and is never written to the operations table: an operation record is durable and crash-safe, and progress is neither, so persisting it would put a tick-rate write path on the one record whose durability guarantees exist to avoid exactly that, and would resurrect a dead cycle's last reading after a restart as though it were live. So this field is present only while the cycle producing it is executing here. A finished operation, and one that was running before a restart, both carry no progress object at all, which is not the same answer as zero and must not be rendered as one. Nothing here is a percentage of the whole operation: a run cycle is a pass over every enabled backup set, and the artifacts it will find are not known when it starts, so no honest denominator for the whole exists. The byte counters describe the ONE artifact being copied at observed_at; the counters beside them say where in the cycle that artifact sits.",
         "additionalProperties": false,
         "properties": {
           "observed_at": {
@@ -5923,13 +5923,9 @@
               "timed_out",
               "canceled",
               "skipped",
-              "interrupted",
-              "recovery_required",
-              "cleanup_running",
-              "cleanup_failed",
-              "recovered"
+              "interrupted"
             ],
-            "description": "What became of this step."
+            "description": "What became of this step. A step holds one of the EIGHT step states and never one of the four a RUN adds (recovery_required, cleanup_running, cleanup_failed, recovered): those describe what became of a run as a whole, and internal/workflow's StepStates() is the vocabulary this field is validated against."
           },
           "exit_code": {
             "type": [
@@ -6194,13 +6190,9 @@
               "timed_out",
               "canceled",
               "skipped",
-              "interrupted",
-              "recovery_required",
-              "cleanup_running",
-              "cleanup_failed",
-              "recovered"
+              "interrupted"
             ],
-            "description": "The step's state at the moment the page was read, which is what a client renders beside the tail."
+            "description": "The step's state at the moment the page was read, which is what a client renders beside the tail. The eight STEP states, for WorkflowStep.state's reason: this is the state of the step whose output this page carries, so a run-only state could never appear here."
           }
         }
       },
