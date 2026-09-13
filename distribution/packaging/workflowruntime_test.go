@@ -433,3 +433,65 @@ func TestTheEngineGainsNothingAndTwoRulesSaySo(t *testing.T) {
 		t.Errorf("a hardened service with no Docker access was refused: %s", oneLine(v))
 	}
 }
+
+// ---------------------------------------------------------------------
+// A credential mount with no storage role (#877 / #813's token)
+// ---------------------------------------------------------------------
+
+// EPIC L adds mounts that are not one of the five storage roles, and the
+// runner's token is a CREDENTIAL among them: read-only for the same
+// reason the SSH key and known_hosts are, because a writable credential
+// file is one compromised process away from being replaced.
+//
+// CheckStorageShapes skipped every role-less mount outright, so adding
+// the path to canonical.json's readOnlyContainerPaths declared a write
+// mode that nothing enforced — the declaration read as a checked fact and
+// was not one. Putting it in Roles would have been the wrong fix:
+// CheckRequiredMounts demands every role of every adapter, and no
+// provider package carries the runner's token, so all eleven columns
+// would have started failing for a mount only the canonical stack has.
+func TestADeclaredCredentialMountIsHeldToItsWriteModeWithoutAStorageRole(t *testing.T) {
+	c := MustLoad()
+	const token = "/etc/backupd/workflow-runner.token"
+
+	mount := func(containerPath string, readOnly bool) []Service {
+		return []Service{{
+			Name:   "backupd",
+			Source: "fixture.yaml",
+			Mounts: []Mount{{HostPath: "./secrets/tok", ContainerPath: containerPath, ReadOnly: readOnly}},
+		}}
+	}
+
+	// The SSH key stands in for the token until #813's canonical.json
+	// entry lands: both are role-less credential files, and picking one
+	// canonical.json already declares read-only keeps this test honest
+	// rather than pending. Once the token is declared, the same assertion
+	// covers it with no edit here.
+	credential := c.ReadOnlyContainerPaths
+	if len(credential) == 0 {
+		t.Fatal("canonical.json declares no read-only container paths, so there is nothing to enforce a write mode against")
+	}
+	declared := credential[0]
+	if contains(c.ReadOnlyContainerPaths, token) {
+		declared = token
+	}
+
+	if v := CheckStorageShapes(mount(declared, false), c); len(v) == 0 {
+		t.Errorf("%s is declared read-only and a writable role-less mount of it was accepted; a credential arriving without a storage role is exactly the mount that gets added and never checked", declared)
+	}
+	if v := CheckStorageShapes(mount(declared, true), c); len(v) != 0 {
+		t.Errorf("a correct read-only mount of %s was refused: %s", declared, oneLine(v))
+	}
+
+	// And the other half: a role-less path canonical.json says nothing
+	// about stays nobody's business here. /workflows is the live example
+	// — it is mounted by the canonical stack, carries no role and has no
+	// declared write mode, and turning that into a finding would be this
+	// check answering a question TestEveryPlatformMapsEveryStorageRoleTheSameWay
+	// owns.
+	for _, readOnly := range []bool{true, false} {
+		if v := CheckStorageShapes(mount("/a/path/canonical/json/never/names", readOnly), c); len(v) != 0 {
+			t.Errorf("an undeclared role-less mount (readOnly=%v) was refused: %s", readOnly, oneLine(v))
+		}
+	}
+}
