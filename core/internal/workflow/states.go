@@ -198,6 +198,132 @@ func (s State) Terminal() bool {
 	}
 }
 
+// The two transition graphs: what a STEP may do next, and what a RUN may
+// do next (#811).
+//
+// # Why they are tables here rather than checks at the call site
+//
+// internal/lifecycle's machine.go makes the argument for the artifact
+// pipeline and it is the same one: the graph is the safety property, so
+// it has to be one object a test can walk exhaustively. The specific
+// thing being protected is what a RESTART reads. A journal row can only
+// be trusted to describe something that happened if there was no write
+// that could have put it where it is by mistake, so the journal's write
+// path asks these two functions and refuses anything else -- which makes
+// "a crash between any two durable transitions reconciles
+// deterministically" a statement about a finite graph rather than about
+// every code path that ever writes a state.
+//
+// # The two properties worth reading before changing either table
+//
+// Nothing leaves a terminal state. A step that was recorded as skipped,
+// failed or interrupted is over, and an edge out of it would let a later
+// pass re-run a hook whose outcome is already in the audit.
+//
+// Every non-terminal state can reach the state that means "this needs a
+// person": StateInterrupted for a step, StateRecoveryRequired for a run.
+// That is what makes erring toward recovery possible from wherever a
+// process happened to die.
+
+// stepTransitions is the complete legal edge set for a step.
+//
+// StatePending -> StateSkipped is the abandoned-stage edge: an earlier
+// step failed, so this one is deliberately not run, and recording that
+// is what makes a plan read back after the fact account for every step it
+// declared. StatePending -> StateFailed is the could-not-be-started edge
+// -- a runner that refused the bytes, a connection that would not open --
+// which is a failure of the step rather than an absence of one.
+var stepTransitions = map[State][]State{
+	StatePending: {StateRunning, StateSkipped, StateFailed, StateCanceled},
+	StateRunning: {
+		StateSuccess,
+		StateFailed,
+		StateTimedOut,
+		StateCanceled,
+		StateInterrupted,
+	},
+}
+
+// runTransitions is the complete legal edge set for a run.
+//
+// StateCleanupRunning is reachable from StateRunning (the ordinary
+// unwinding) and from StateRecoveryRequired (a resume-cleanup), and those
+// two are the only ways cleanup ever starts. StateRecovered is reachable
+// only from StateRecoveryRequired, because "somebody cleaned up after an
+// interruption" is not something a run that was never interrupted can
+// claim.
+var runTransitions = map[State][]State{
+	StatePending: {StateRunning, StateCanceled, StateFailed, StateRecoveryRequired},
+	StateRunning: {
+		StateCleanupRunning,
+		StateSuccess,
+		StateFailed,
+		StateTimedOut,
+		StateCanceled,
+		StateRecoveryRequired,
+	},
+	StateCleanupRunning: {
+		StateSuccess,
+		StateFailed,
+		StateTimedOut,
+		StateCanceled,
+		StateCleanupFailed,
+		StateRecovered,
+		StateRecoveryRequired,
+	},
+	StateRecoveryRequired: {StateCleanupRunning, StateRecovered, StateCleanupFailed},
+}
+
+// CanFollowForStep reports whether a step in state s may move to next,
+// returning the refusal rather than a bool so the journal's write path
+// can hand an operator the sentence.
+//
+// A no-op (s to s) is refused: an idempotent-looking write would hide a
+// double advance, and both places that matter -- a resumed cleanup and a
+// reconciliation pass -- need to know whether they were the one that
+// moved it.
+func (s State) CanFollowForStep(next State) error {
+	if !s.ValidForStep() {
+		return vocabularyError("step state", s, StepStates())
+	}
+	if !next.ValidForStep() {
+		return vocabularyError("step state", next, StepStates())
+	}
+
+	return follows("step", s, next, stepTransitions[s])
+}
+
+// CanFollowForRun reports whether a run in state s may move to next. See
+// CanFollowForStep.
+func (s State) CanFollowForRun(next State) error {
+	if !s.ValidForRun() {
+		return vocabularyError("run state", s, RunStates())
+	}
+	if !next.ValidForRun() {
+		return vocabularyError("run state", next, RunStates())
+	}
+
+	return follows("run", s, next, runTransitions[s])
+}
+
+// follows is the shared answer, including the two refusals that are worth
+// telling apart: a terminal state has no exits at all, which is a
+// different mistake from an edge that was simply never declared.
+func follows(what string, from, to State, allowed []State) error {
+	for _, a := range allowed {
+		if a == to {
+			return nil
+		}
+	}
+
+	if from.Terminal() {
+		return fmt.Errorf("workflow: this %s is %q, which is terminal, and cannot move to %q; re-opening a %s whose outcome is already recorded would re-run work an audit says is over",
+			what, from, to, what)
+	}
+
+	return fmt.Errorf("workflow: a %s cannot move from %q to %q", what, from, to)
+}
+
 // Status is what a hook is told about a phase of the run it is part of:
 // the value behind BACKUPD_BACKUP_STATUS, BACKUPD_WORKFLOW_STATUS and
 // BACKUPD_CLEANUP_STATUS.

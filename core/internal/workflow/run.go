@@ -86,6 +86,18 @@ type Run struct {
 	// captured script bytes. It is the only place execution reads a
 	// script from.
 	ScriptSpoolRef string
+
+	// Bypassed records that this run's hook scripts were deliberately
+	// skipped (#811's history field, set by L6's
+	// --skip-workflow-scripts).
+	//
+	// It is decided when the run is created and never afterwards, which
+	// is what keeps it a history field rather than a control: a flag
+	// that could be turned on mid-run would be a way to declare a run's
+	// hooks irrelevant after they had already quiesced something, and
+	// #811's requirement is that skipping hooks is structurally unable
+	// to clear an outstanding recovery.
+	Bypassed bool
 }
 
 // Validate reports every way this record is not one the journal may store.

@@ -98,6 +98,27 @@ func testWorkflowPlan(runID string) WorkflowPlan {
 			},
 		},
 		Env: env,
+
+		// Every run carries one obligation per scope, in the state a run
+		// begins in: the global scope entered (the run has begun), the
+		// backup-set scope not yet. CommitWorkflowPlan refuses a run
+		// without both, so this is part of the fixture rather than of
+		// the tests that happen to be about obligations.
+		Obligations: []workflow.CleanupObligation{
+			{
+				RunID:       runID,
+				Scope:       workflow.ScopeGlobal,
+				BackupSetID: setID,
+				State:       workflow.ObligationEligible,
+				EnteredAt:   &started,
+			},
+			{
+				RunID:       runID,
+				Scope:       workflow.ScopeSet,
+				BackupSetID: setID,
+				State:       workflow.ObligationNeverEligible,
+			},
+		},
 	}
 }
 
@@ -370,6 +391,7 @@ func TestWorkflowSchemaHasNoColumnASecretCouldLiveIn(t *testing.T) {
 	want := map[string][]string{
 		"workflow_runs": {
 			"backup_set_id",
+			"bypassed",
 			"backup_status",
 			"cleanup_status",
 			"finished_at",
@@ -413,6 +435,43 @@ func TestWorkflowSchemaHasNoColumnASecretCouldLiveIn(t *testing.T) {
 			"secret_command",
 			"secret_env",
 			"secret_file",
+		},
+
+		// #811's two tables. The obligation carries no value an
+		// operator configured at all: it is a promise about a scope,
+		// and what that scope runs is the run's plan.
+		"workflow_cleanup_obligations": {
+			"acknowledge_reason",
+			"acknowledged_at",
+			"acknowledged_by",
+			"backup_set_id",
+			"entered_at",
+			"finished_at",
+			"id",
+			"run_id",
+			"scope",
+			"started_at",
+			"state",
+		},
+
+		// The log's payload is the one column in this whole schema that
+		// holds bytes this product did not choose, and the rule it lives
+		// under is different in kind from the others here: it is what a
+		// HOOK printed, after obs.StreamFilter has removed every needle
+		// this run knows -- the sensitive endpoints and every resolved
+		// secret value in the step's own environment -- streaming, before
+		// any of it reaches this table. A column added here holding
+		// anything this product resolved itself would be the breach the
+		// rest of this guard is about.
+		"workflow_step_logs": {
+			"captured_at",
+			"id",
+			"kind",
+			"payload",
+			"run_id",
+			"seq",
+			"step_id",
+			"stream",
 		},
 	}
 
