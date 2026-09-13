@@ -184,6 +184,14 @@ export function Rows({ children, columns = 2 }: { children: ReactNode; columns?:
  * compares with `backupd snapshot list` output and with a support
  * engineer's questions, and "source_bytes_read" is the word both of those
  * conversations use.
+ *
+ * That it SHIPS, rather than going with the mock-up, is a decision taken
+ * on #788's review and recorded in the design doc's Vocabulary section
+ * (docs/design/788-incremental-ui-mockup.md), which used to say the
+ * opposite. The rule that comes with it: an annotation carries the
+ * contract's spelling and never a label. `kopia` may appear inside one
+ * of these; no operator is ever asked to read it as the name of an
+ * engine, which is "Incremental".
  */
 export function WireField({ name }: { name: string }) {
   return (

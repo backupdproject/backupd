@@ -92,6 +92,9 @@ export function SnapshotsPage({ readOnly }: { readOnly: boolean }) {
             disabled={readOnly || verify.busy || !verify.ready || rows.length === 0}
             onClick={() =>
               verify.submit(
+                // One target on this page: the set, since the act names
+                // no run.
+                setId,
                 ({ configRevision, idempotencyKey }) =>
                   api.verifySnapshot({ backupSetId: setId, configRevision, idempotencyKey }),
                 () => snapshots.reload()

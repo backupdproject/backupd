@@ -1,5 +1,6 @@
 import type { BackupSet } from "@shared/types/backup";
 import { HealthBadge, HEALTH_PRESENTATION, StatusBadge } from "./StatusBadge";
+import { EngineBadge } from "@shared/components/EngineBadge";
 import { backupSetIdentity } from "@shared/utilities/backupSetIdentity";
 import { bytes, relativeAge } from "@shared/utilities/format";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
@@ -116,6 +117,16 @@ export function BackupSetCard({
           <InfoTooltip id="sets.card.health" alignEnd>
             <HealthBadge state={set.state} />
           </InfoTooltip>
+          {/* Which engine this set runs, on the row (EPIC K, #788). A
+              deployment running both has to be able to tell them apart
+              where they sit side by side: the two behave differently
+              enough — one keeps whole artifacts, the other snapshots a
+              tree into a shared repository — that "which of these is
+              which" is the first question, and it used to be answerable
+              only by opening the set. No tooltip: the badge is one word
+              and the set's own page explains the choice where it can be
+              changed, which is nowhere. */}
+          <EngineBadge engine={set.engine} />
           {/* State, not just an action. An operator scanning this page can
               see which sets are paused without pressing anything, which
               the enable/disable button's own label cannot do on its own:

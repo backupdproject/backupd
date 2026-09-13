@@ -120,6 +120,38 @@ describe("the wizard's delete-from-source control follows what the write probe p
   });
 });
 
+/** The one phrase only the write-probe explanation carries. Matched on
+ *  the registry's own copy rather than on a tooltip id, because the id is
+ *  an implementation detail and the sentence is what an operator reads. */
+const WRITE_TEST_FAILED_COPY = /the write test could not create a file on the server/i;
+
+describe("the review step explains the source-deletion answer it actually has", () => {
+  it("does not claim the write test failed when the operator chose read-only on a writable source", async () => {
+    renderWizard(createMockApi());
+    await walkToRemoteHandling();
+
+    // A writable source, declared read-only by choice. That is a policy
+    // this operator set, not a permission the server refused, and the
+    // tile used to explain it with the refusal's copy because it keyed
+    // on the combined "effective" flag.
+    await waitFor(() => expect(readOnlyCheckbox()).toBeEnabled());
+    await userEvent.click(readOnlyCheckbox());
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+
+    expect(screen.getByText(/read-only by choice/i)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(WRITE_TEST_FAILED_COPY);
+  });
+
+  it("does say the write test refused when that is what happened", async () => {
+    renderWizard(createMockApi("read-only-source"));
+    await walkToRemoteHandling();
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+
+    expect(screen.getByText(/unavailable — read-only source/i)).toBeInTheDocument();
+    expect(document.body.textContent).toMatch(WRITE_TEST_FAILED_COPY);
+  });
+});
+
 function renderDetail(api: BackupdApi, source: string, set: string) {
   return render(
     <MemoryRouter initialEntries={["/sets/" + source + "/" + set]}>

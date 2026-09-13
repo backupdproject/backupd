@@ -17,6 +17,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { ApiProvider } from "@shared/api/ApiContext";
+import { BackupdError } from "@shared/api/contracts";
 import type { BackupdApi } from "@shared/api/contracts";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import { SnapshotRetentionPage } from "@shared/pages/SnapshotRetentionPage";
@@ -166,6 +167,58 @@ describe("snapshot retention", () => {
     expect(sent.runId).toBe("run-2026-09-12-0400");
     expect(sent.reason).toBe("Legal hold, matter 2026-114");
     expect(sent.idempotencyKey).toBeTruthy();
+  });
+
+  // The defect a shared hook instance makes possible: one
+  // `useSnapshotOperation` serves every row of this table, so the key it
+  // keeps for a retry is a key it keeps for the WHOLE page. A hold that
+  // failed on one row left it bound to that failure, and the next row's
+  // hold re-sent it — which the service reads as "the same submission
+  // again" and answers by replaying the first one, on the wrong
+  // snapshot.
+  it("mints a new idempotency key for a different row after one row's hold failed", async () => {
+    const api = createMockApi();
+    const refusal = () =>
+      new BackupdError({ code: "unknown", message: "the hold could not be recorded" });
+    // Both attempts on the first row fail, so the retry stays a retry and
+    // the page is still showing that failure when the operator turns to
+    // another row — which is the state the defect needed.
+    const hold = vi
+      .spyOn(api, "holdSnapshot")
+      .mockRejectedValueOnce(refusal())
+      .mockRejectedValueOnce(refusal());
+    await seed(api);
+
+    renderRetention(api);
+    await screen.findByRole("button", { name: "Place a hold on run-2026-09-12-0400" });
+
+    const placeHoldOn = async (runId: string, reason: string) => {
+      act(() => {
+        screen.getByRole("button", { name: "Place a hold on " + runId }).click();
+      });
+      fireEvent.change(screen.getByLabelText("Reason"), { target: { value: reason } });
+      act(() => {
+        screen.getByRole("button", { name: "Place hold" }).click();
+      });
+    };
+
+    await placeHoldOn("run-2026-09-12-0400", "Legal hold, matter 2026-114");
+    await waitFor(() => expect(hold).toHaveBeenCalledTimes(1));
+    // The failure is on screen, and the dialog is still open on the row
+    // that failed: pressing Place hold again there is a RETRY and must
+    // reuse the key.
+    await screen.findByText(/the hold could not be recorded/i);
+
+    await placeHoldOn("run-2026-09-12-0400", "Legal hold, matter 2026-114");
+    await waitFor(() => expect(hold).toHaveBeenCalledTimes(2));
+    expect(hold.mock.calls[1][0].idempotencyKey).toBe(hold.mock.calls[0][0].idempotencyKey);
+
+    // A DIFFERENT row is a different intent, whatever happened to the
+    // last one.
+    await placeHoldOn("run-2026-09-12-1600", "Second look");
+    await waitFor(() => expect(hold).toHaveBeenCalledTimes(3));
+    expect(hold.mock.calls[2][0].runId).toBe("run-2026-09-12-1600");
+    expect(hold.mock.calls[2][0].idempotencyKey).not.toBe(hold.mock.calls[0][0].idempotencyKey);
   });
 
   it("offers no apply control, because a snapshot-retention pass is not applied from here", async () => {

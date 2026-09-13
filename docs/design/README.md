@@ -23,6 +23,13 @@ build does.
 
 `tier-destinations.md` is the same thing in prose for the storage-tier work.
 
+`788-incremental-ui-mockup.md` is the design gate for incremental backup in
+the web UI (issue #788): thirteen screens plus the eight-step add-backup-set
+wizard, the decisions each of them was asking for a verdict on, and what the
+answers were. The renderable mock-up it describes is gone — the production
+wave replaced it — so read the document for the reasoning, not as a
+description of the current build.
+
 ## What used to be here
 
 `PR_BODY.md` was the pull request description for, committed to the tree by

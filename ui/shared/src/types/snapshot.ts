@@ -242,9 +242,14 @@ export interface RepositoryFleet {
  */
 export interface RepositoryMaintenance {
   domain: string;
-  /** The instance that owns maintenance. "" is "nobody has claimed it". */
+  /** The instance that owns maintenance. "" is "nobody has claimed it".
+   *
+   *  There is no expiry beside it, and that absence is deliberate:
+   *  ownership moves by an explicit transfer and never by a clock, so a
+   *  "claim expires" field could only ever be some other timestamp
+   *  wearing that label. The wire dropped `owned_until` for exactly that
+   *  reason. */
   owner: string;
-  ownedUntil: string | null;
   lastQuickAt: string | null;
   lastFullAt: string | null;
   nextEligibleAt: string | null;

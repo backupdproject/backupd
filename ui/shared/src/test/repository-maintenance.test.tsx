@@ -62,7 +62,7 @@ describe("repository maintenance", () => {
     const real = await createMockApi().getRepositoryMaintenance("offsite-b2");
     vi.spyOn(api, "getRepositoryMaintenance").mockImplementation((domain) =>
       Promise.resolve(
-        domain === "offsite-b2" ? { ...real, owner: "", ownedUntil: null } : { ...real, domain }
+        domain === "offsite-b2" ? { ...real, owner: "" } : { ...real, domain }
       )
     );
 

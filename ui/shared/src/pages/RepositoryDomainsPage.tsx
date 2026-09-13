@@ -315,7 +315,7 @@ function DomainRow({ record }: { record: DomainRecord }) {
       <td className="mono">{relativeAge(health.lastSnapshotAt)}</td>
       <td style={{ fontSize: "var(--text-sm)" }}>
         {maintenanceError ? (
-          <span style={{ color: "var(--warn)" }}>{maintenanceError}</span>
+          <span style={{ color: "var(--warn)" }}>{maintenanceError.message}</span>
         ) : maintenance === null ? (
           <span style={{ color: "var(--text-3)" }}>—</span>
         ) : (

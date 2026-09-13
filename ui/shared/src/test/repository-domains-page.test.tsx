@@ -79,8 +79,11 @@ describe("the domains table", () => {
     await renderDomains();
 
     expect(within(domainRow("primary-nas")).getByText("Healthy")).toBeTruthy();
-    expect(within(domainRow("offsite-b2")).getByText("Degraded")).toBeTruthy();
-    expect(within(domainRow("vault-isolated")).getByText("Healthy")).toBeTruthy();
+    // Unwritable: a store that cannot take a backup at all is Failing,
+    // which is the verdict the service reaches for these probes.
+    expect(within(domainRow("offsite-b2")).getByText("Failing")).toBeTruthy();
+    // Every probe passing, out of its maintenance window: Degraded.
+    expect(within(domainRow("vault-isolated")).getByText("Degraded")).toBeTruthy();
   });
 
   it("names the probes a degraded domain is actually failing", async () => {
@@ -236,6 +239,21 @@ describe("defining a domain", () => {
     for (const label of ["Domain id", "Storage location", "Encryption passphrase"]) {
       expect(screen.getByLabelText(label)).toBeDisabled();
     }
+  });
+
+  it("says which controls are dead, rather than calling live ones disabled", () => {
+    renderDefine();
+
+    // The sharing and ownership radios ARE live: choosing between them is
+    // the whole of what this screen is for until a create route exists,
+    // and each answer changes what the page says. A banner claiming
+    // every control below is disabled tells an operator not to touch the
+    // one thing that works.
+    for (const name of [/Shared/, /Isolated/, /This instance maintains it/, /Another instance maintains it/]) {
+      expect(screen.getByRole("radio", { name })).toBeEnabled();
+    }
+    expect(screen.getByText(/no route that creates a repository domain/i)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("every control below is disabled");
   });
 
   it("states what each sharing answer commits every set in the domain to", async () => {

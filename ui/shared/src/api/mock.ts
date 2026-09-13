@@ -1365,9 +1365,17 @@ const MOCK_TRANSITIONS: SnapshotTransition[] = [
 
 /**
  * Three repository domains, each a different verdict: a healthy shared
- * store, a shared off-site store that is out of its maintenance window
- * and refused a write probe, and an isolated store another instance
- * maintains.
+ * store, a shared off-site store that refused a write probe, and an
+ * isolated store another instance owns and has stopped maintaining.
+ *
+ * The verdicts are the ones the SERVICE would reach for these probes and
+ * not a shade chosen here (core/internal/app/repositoryhealth.go's
+ * decideRepositoryState): a store that cannot be written to cannot take
+ * a backup at all, so off-site is FAILING however readable it is, and
+ * the isolated one is DEGRADED because everything works and nothing is
+ * reclaiming. The fixture used to call the unwritable one DEGRADED,
+ * which is a state no deployment could ever be in and a screen nobody
+ * could ever see.
  *
  * The off-site one carries a NEGATIVE clock skew, which is the dangerous
  * direction — it would date a new snapshot before one already stored —
@@ -1397,7 +1405,7 @@ const MOCK_REPOSITORIES: RepositoryHealth[] = [
   {
     domain: "offsite-b2",
     mayShare: true,
-    state: "DEGRADED",
+    state: "FAILING",
     reachable: true,
     readable: true,
     // Readable and NOT writable, which is exactly why the health panel
@@ -1421,7 +1429,7 @@ const MOCK_REPOSITORIES: RepositoryHealth[] = [
   {
     domain: "vault-isolated",
     mayShare: false,
-    state: "HEALTHY",
+    state: "DEGRADED",
     reachable: true,
     readable: true,
     writable: true,
@@ -1430,15 +1438,22 @@ const MOCK_REPOSITORIES: RepositoryHealth[] = [
     // Not measured, which is not the same as a perfectly synchronised
     // clock and must not render as one.
     clockSkewSeconds: null,
-    maintenanceOverdue: false,
-    lastMaintenanceAt: "2026-09-06T03:00:00+02:00",
+    // Overdue, and that is the whole of what is wrong with it: every
+    // probe passes and no restore point is affected, which is what
+    // DEGRADED means and why the maintenance screen says an overdue
+    // domain costs storage rather than backups. Its owner is another
+    // instance, so this is also the domain nothing on this deployment
+    // can fix.
+    maintenanceOverdue: true,
+    lastMaintenanceAt: "2026-08-29T03:00:00+02:00",
     lastMaintenanceResult: "full maintenance completed by nas-02",
     lastSnapshotAt: "2026-09-12T23:40:00+02:00",
     lastSnapshotStatus: "SUCCESS",
     lastVerificationAt: "2026-09-12T23:44:00+02:00",
     lastVerificationStatus: "passed",
     backupSets: [],
-    detail: "Isolated: one backup set only. A second set pointed here is refused."
+    detail:
+      "Isolated: one backup set only. A second set pointed here is refused. Full maintenance has not run inside its window since nas-02 last claimed it."
   }
 ];
 
@@ -1446,7 +1461,6 @@ const MOCK_MAINTENANCE: Record<string, RepositoryMaintenance> = {
   "primary-nas": {
     domain: "primary-nas",
     owner: "nas-01",
-    ownedUntil: "2026-09-13T08:00:00+02:00",
     lastQuickAt: "2026-09-13T04:05:00+02:00",
     lastFullAt: "2026-09-08T02:00:00+02:00",
     nextEligibleAt: "2026-09-15T02:00:00+02:00",
@@ -1462,7 +1476,6 @@ const MOCK_MAINTENANCE: Record<string, RepositoryMaintenance> = {
   "offsite-b2": {
     domain: "offsite-b2",
     owner: "nas-01",
-    ownedUntil: "2026-09-13T08:00:00+02:00",
     lastQuickAt: "2026-09-12T04:10:00+02:00",
     lastFullAt: "2026-08-30T02:00:00+02:00",
     nextEligibleAt: "2026-09-13T02:00:00+02:00",
@@ -1481,14 +1494,17 @@ const MOCK_MAINTENANCE: Record<string, RepositoryMaintenance> = {
   "vault-isolated": {
     domain: "vault-isolated",
     owner: "nas-02",
-    ownedUntil: "2026-09-13T12:00:00+02:00",
     lastQuickAt: "2026-09-12T23:50:00+02:00",
-    lastFullAt: "2026-09-06T03:00:00+02:00",
+    lastFullAt: "2026-08-29T03:00:00+02:00",
     nextEligibleAt: "2026-09-13T03:00:00+02:00",
-    due: false,
-    dueMode: "",
-    dueReason: "",
-    overdue: false,
+    // Due AND overdue, matching this domain's health record: quick
+    // passes are still running, the full window has been missed, and the
+    // instance that owns it is the only one that can do anything about
+    // that.
+    due: true,
+    dueMode: "full",
+    dueReason: "full maintenance has not run inside its 7-day window",
+    overdue: true,
     runs: 58,
     failures: 0,
     reclaimedBytes: 7 * GB,

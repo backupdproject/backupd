@@ -389,7 +389,14 @@ export function SnapshotRestorePage({ readOnly }: { readOnly: boolean }) {
           }
           onFinish={() => {
             if (selected === null || selected.snapshotId === null) return;
-            restore.submit(({ configRevision, idempotencyKey }) =>
+            // Target: the snapshot AND where it is being written. A
+            // second press with the same answers is a retry of one
+            // submission; an operator who changed the destination after
+            // a refusal is asking for a different restore, and re-using
+            // the key would have the service replay the first.
+            restore.submit(
+              selected.snapshotId + " -> " + targetPath.trim(),
+              ({ configRevision, idempotencyKey }) =>
               api.restoreSnapshot({
                 backupSetId: setId,
                 snapshotId: selected.snapshotId ?? undefined,

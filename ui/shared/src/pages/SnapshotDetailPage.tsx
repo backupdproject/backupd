@@ -133,6 +133,7 @@ export function SnapshotDetailPage({ readOnly }: { readOnly: boolean }) {
               disabled={readOnly || verify.busy || !verify.ready}
               onClick={() =>
                 verify.submit(
+                  snapshot.runId,
                   ({ configRevision, idempotencyKey }) =>
                     api.verifySnapshot({
                       backupSetId: setId,
@@ -430,6 +431,7 @@ export function SnapshotDetailPage({ readOnly }: { readOnly: boolean }) {
         onCancel={() => setHoldOpen(false)}
         onConfirm={() =>
           hold.submit(
+            snapshot.runId,
             ({ configRevision, idempotencyKey }) =>
               api.holdSnapshot({
                 backupSetId: setId,
@@ -472,6 +474,7 @@ export function SnapshotDetailPage({ readOnly }: { readOnly: boolean }) {
           const target = releasing;
           if (target === null) return;
           release.submit(
+            target.holdId,
             ({ configRevision, idempotencyKey }) =>
               api.releaseSnapshotHold({
                 backupSetId: setId,
