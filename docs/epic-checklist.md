@@ -1,0 +1,265 @@
+# What every EPIC has to update
+
+A checklist, written because the expensive misses in this repository have never
+been the code. They have been a surface that went out of step with the code: a
+command with no row on the reference page, a route with no CLI equivalent, a
+screenshot showing a screen that no longer exists, a config field the web UI
+could set and the terminal could not.
+
+Each item below says **who catches it**. That split is the point of the file:
+
+- **Gated** means a check fails if I skip it. `scripts/ci-local.sh` or CI goes
+  red and the epic cannot merge. I do not need to remember these, I need to not
+  fight them.
+- **Ungated** means nothing checks it and the only thing standing between the
+  epic and a stale surface is this list. Every one of these has gone stale at
+  least once already.
+
+Read it twice per epic: once when writing the spec, so the work is sized with
+these in it, and once at each phase exit gate.
+
+---
+
+## 1. The shape of the epic itself
+
+- [ ] **Two phases, maximum. Five issues per phase, maximum.** *(Ungated.)* If it
+  does not fit, cut scope and write a "What I cut to fit two phases, and why"
+  section, the way `docs/EPIC-E-alternative-storage.md` does. Deferred work
+  becomes the next epic, not a third phase.
+- [ ] **An org-unique epic letter**, and sub-issues titled `<letter><phase>.<n>`
+  (`E1.2`, `E2.4`). *(Ungated.)* A, B, D and E are taken.
+- [ ] **The spec lives at `docs/EPIC-<letter>-<slug>.md`** with the Status block
+  the existing two carry: type, repository, parent epics, primary implementation
+  root, tracker issue with its sub-issue range, and an explicit FR-numbering
+  sentence. *(Ungated.)*
+- [ ] **FR numbers continue the global series and renumber nothing.** *(Ungated.)*
+  The next free number is **FR-36**. FR-1 to FR-24 are in `docs/EPIC.md`, FR-26 is
+  the `version` command, FR-27 to FR-35 are EPIC E. FR-25 is an unclaimed hole:
+  leave it alone rather than filling it, because anything citing "FR-25" today is
+  citing nothing.
+- [ ] **A five-expert adversarial review section**, initial verdicts and consensus
+  position, before implementation starts. *(Ungated.)*
+- [ ] **Entry gate and exit gate per phase**, written as checkable claims rather
+  than intentions. *(Ungated.)*
+- [ ] **A conformance matrix at `docs/conformance/epic-<letter>-matrix.md`.**
+  *(Ungated, and it is the one that matters most.)* One row per exit-gate line and
+  per planted violation, each with a **falsification**: the mutation that must
+  turn the cell red. `PASS` only once that mutation has been run and watched to
+  fail. `BLOCKED` for anything whose code has not landed. No row is green because
+  nobody looked.
+- [ ] **Every PR closes an issue** with `Closes #N`. *(Ungated by CI, required by
+  `CONTRIBUTING.md`.)*
+
+## 2. Settings: global default plus per-set override
+
+Every new knob gets both halves, and the global half has to have a default good
+enough that nobody has to set it.
+
+- [ ] **A global setting on `Config`** in `core/internal/config/config.go`, with a
+  smart default that makes the field optional in practice. *(Ungated.)*
+- [ ] **A per-backup-set override**, following the three-field pattern the file
+  already uses: `XConfig *T` with `yaml:"...,omitempty"` where nil means inherit,
+  a resolved `X T` with `yaml:"-"` that `Validate` fills in, and every consumer
+  reading the resolved field, never the pointer. *(Ungated.)*
+- [ ] **Re-resolve after any mutation of the global.** *(Ungated.)* Mutating the
+  top-level value without a `Validate` pass leaves every set deciding under the
+  old policy. The retention override flags were a silent no-op this exact way.
+- [ ] **A compat fixture** in `core/tests/compat/testdata/configs/`, plus an
+  invalid-input fixture for whatever the field refuses. *(Gated.)*
+- [ ] **Say so if it is a one-way door.** *(Ungated.)* `Load` uses
+  `KnownFields(true)`, so a config carrying a new key cannot be parsed at all by
+  an older build. Anything an operator reaches for during an incident deserves
+  that sentence in the CHANGELOG.
+
+## 3. No functionality gap between the CLI and the web UI
+
+- [ ] **Every new `/api/v1` route gets a `cliecho` entry** in
+  `core/cliecho/routes.go`: either a builder that prints the equivalent command,
+  or a `why` sentence saying what would have to be built. *(Gated:*
+  `TestEveryAPIRouteNamesItsCLIEquivalentOrTheGap` in
+  `apps/common/webhost/actionlog_test.go` fails on a route with neither.*)*
+- [ ] **A gap sentence must not name a verb this binary ships.** *(Gated:*
+  `TestNoGapClaimsAVerbThisBinaryShips` in `core/cmd/backupd/cliechogaps_test.go`.*)* Five of these once claimed a verb did
+  not exist while the same tree shipped it.
+- [ ] **Every new CLI verb reaches the dispatch table** in
+  `core/cmd/backupd/main.go` **and gets a row in `docs/site/reference.html`.**
+  *(Gated:* `distribution/packaging/site_reference_test.go` reads the dispatch
+  table and the page and compares them.*)*
+- [ ] **The refusals match on both routes**, same reason and same exit code.
+  *(Gated:* `core/cmd/backupd/routeparity_test.go`.*)*
+- [ ] **Check the gap in both directions.** *(Ungated.)* The tests above catch an
+  API route with no command. Nothing catches a command with no way to do it in
+  the browser, so that one is mine to check by hand.
+
+## 4. Progress has to reach the terminal and the activity feed
+
+Anything the new functionality does that takes time, or that an operator would
+want to see happening, has to show up live.
+
+- [ ] **An event constant and a typed method** in `core/internal/obs/events.go`,
+  in the FR-23 catalog. *(Ungated.)* These strings are a wire contract: renaming
+  one is a breaking change, not a cleanup.
+- [ ] **Completions state an outcome**, as a `Result`, rather than leaving a
+  client to infer it from a missing error field. *(Ungated.)*
+- [ ] **The activity feed carries it**: `core/service/activity.go`,
+  `liveactivity.go` and the handlers in `apps/common/webhost/`. *(Ungated.)*
+- [ ] **The UI surfaces update**: `ActivityStrip.tsx` (the global terminal),
+  `SetActivityPanel.tsx` (per set), `DashboardActivity.tsx` and
+  `useActivityFeed.ts`. *(Ungated.)*
+- [ ] **`CommandEcho.tsx` shows the command** the UI action is equivalent to.
+  *(Ungated.)*
+- [ ] **Paging still works.** *(Ungated.)* The feed is cursor-paged (`before` /
+  `next_cursor`) and the record is append-only, so a new high-volume event is a
+  performance decision, not just a display one.
+
+## 5. Web UI design
+
+- [ ] **Mock it up in Claude Designer first**, and keep it in line with what
+  already ships. *(Ungated.)* `docs/design/Backup Manager.dc.html` is the
+  interactive design the frontend was built from, both themes, every provider
+  treatment, every risk state. `docs/deployment.md` cites it as the authority when
+  the UI and the design disagree.
+- [ ] **Land the mockup in `docs/design/`** as a per-issue note: the `.html` and a
+  matching `.png`, the reasoning beside the picture, dated by its issue.
+  *(Ungated.)* These are a record of a decision at the moment it was taken and are
+  deliberately not kept in step with later work.
+- [ ] **Global settings page and per-set card both get the new control**:
+  `SettingsPage.tsx` and the per-set cards such as `BackupSetRetentionCard.tsx`.
+  *(Ungated.)*
+- [ ] **Frontend gate green**: typecheck, typecheck every provider, eslint,
+  vitest, build. *(Gated.)*
+
+## 6. The API contract
+
+- [ ] **`api/v1/openapi.json` is authoritative**, and both generated bindings are
+  regenerated from it: `core/apicontract/contract.gen.go` and
+  `ui/shared/src/api/generated/contract.ts`. *(Gated:*
+  `scripts/api/check-contract-drift.sh`.*)*
+- [ ] **The shared client only builds declared paths.** *(Gated.)*
+- [ ] **`ui/shared` actually consumes the generated module.** *(Gated:*
+  `contract.conformance.test.ts`, which is a different question from drift.*)*
+- [ ] **`docs/api/contract.md` reflects the new surface.** *(Ungated.)*
+
+## 7. Storage, state and migrations
+
+- [ ] **A numbered migration** in `core/migrations/`, next after `0008`. *(Gated
+  by the suite, ungated as a decision.)*
+- [ ] **Journal truth stays journal truth.** *(Ungated.)* Placement and lifecycle
+  answers come from the journal, not from a listing.
+- [ ] **Compat captures updated** where the change touches config, CLI output, the
+  API, state or upgrade: `core/tests/compat/capture_*.go`. *(Gated.)*
+
+## 8. Providers
+
+Eleven of them: casaos, dockge, generic, openmediavault, portainer, proxmox,
+synology, truenas, ugos, unraid, zimaos.
+
+- [ ] **New platform behaviour goes through the capability contract**
+  (`apps/common/platform/capabilities/`) rather than into one provider. *(Ungated.)*
+- [ ] **The cross-provider conformance suite passes** (`apps/common/tests`).
+  *(Gated.)*
+- [ ] **Per-provider acceptance docs** in `docs/acceptance/` where the behaviour is
+  provider-visible. *(Ungated.)*
+- [ ] **Packaging stays consistent**: `distribution/packaging/` and its
+  `submission.json`, `canonical.json`, `conformance.json`, plus
+  `container/compose.yaml` as the canonical definition and the installer's own
+  embedded copy (`scripts/install/embed_compose.py`). *(Gated.)*
+
+## 9. Documentation
+
+- [ ] **`README.md`**: the install block, the subcommand list and "What the browser
+  looks like while it works". *(Ungated.)*
+- [ ] **The site**, all five pages, whichever the change touches:
+  `docs/site/index.html`, `web-ui.html`, `reference.html`, `first-run.html`,
+  `ssh.html`. *(Partly gated:* only `reference.html`'s command table is held to the
+  binary.*)*
+- [ ] **The site's "What has not been proven" section** (`index.html#honest`) says
+  honestly what the epic did and did not demonstrate, including on hardware nobody
+  here owns. *(Ungated.)*
+- [ ] **The prose docs the change touches**: `install.md`, `deployment.md`,
+  `runtime-contract.md`, `recovery.md`, `recovery-without-a-terminal.md`,
+  `storage-mediums.md`, `ssh-setup.md`. *(Ungated.)*
+- [ ] **An ADR in `docs/adr/`** for any decision a later reader would otherwise
+  have to reconstruct. *(Ungated.)*
+- [ ] **A CHANGELOG entry under `[Unreleased]`**, with the issue number, what
+  changed, why it was needed, and what an existing deployment sees. *(Ungated.)*
+- [ ] **Package doc baselines** regenerated when a package overview changes
+  (`scripts/docs/package-doc.baseline`). *(Gated.)*
+- [ ] **Comments the change falsified are fixed.** *(Ungated.)* Several defects
+  here came from trusting a comment that had quietly stopped being true.
+
+## 10. Screenshots and GIFs for the site
+
+- [ ] **Regenerate `docs/site/screens/`** with the capture scripts in
+  `docs/site/tools/`: `capture-first-run.mjs`, `capture-reference.mjs`,
+  `capture-ssh.mjs`, `capture-web-ui.mjs`. *(Ungated.)* 44 files today, 10 of them
+  animated.
+- [ ] **A new screen or interaction gets a capture step added to the right
+  script**, never a picture taken by hand. *(Ungated.)* A hand-taken image is one
+  nobody can reproduce after the UI moves.
+- [ ] **Captures run against the mock API, never a real deployment.** *(Ungated,
+  and load-bearing.)* The first-run flow claims the administrator account and burns
+  the enrollment token, so a capture pointed at a real instance finishes somebody's
+  setup for them. The harness starts `ui/shared`'s own dev server, where
+  `createMockApi` is substituted under `import.meta.env.DEV`.
+- [ ] **The clock stays pinned** (`page.clock.setFixedTime`). *(Ungated.)* Without
+  it every re-record differs in every frame with a timestamp in it, and the diff
+  stops telling anybody which picture actually moved.
+- [ ] **Playwright is borrowed, not installed**, out of the `backupd-tests`
+  checkout at the sha in `scripts/e2e/tests-repo.pin`. *(Ungated.)* If the e2e gate
+  has not run on this machine, there is nothing to borrow from and the capture says
+  so rather than guessing.
+- [ ] **Store submission screenshots are a separate thing and cannot be
+  generated.** *(Ungated.)* `docs/submission/screenshots.md` requires real hardware
+  running a real installation against a real SFTP source. Never substitute a mock
+  there. If the epic changes a screen a store listing shows, the row goes back to
+  outstanding rather than quietly keeping the old picture.
+
+## 11. Compliance and supply chain
+
+- [ ] **NOTICE and the licence inventory** regenerated if the module graph or the
+  frontend lockfile moved. *(Gated.)* They claim to account for everything, so
+  vendoring anything a package manager cannot see means declaring it.
+- [ ] **No credential reaches disk or a log.** *(Ungated as a rule, mechanised in
+  places.)*
+- [ ] **`docs/compliance/` and `docs/submission/`** updated where the epic changes
+  what is collected, stored or sent. *(Ungated.)*
+
+## 12. Gates
+
+- [ ] **`scripts/ci-local.sh` green.** *(Gated.)* About 45 minutes. It is also the
+  pre-commit hook, so committing with `--no-verify` and running it deliberately is
+  the normal pattern.
+- [ ] **Every new guard has a mutation self-test.** *(Gated for the existing ones,
+  ungated for a new one until I write it.)* A guard whose only evidence is that it
+  passes on the tree it ships with has proven nothing. Three checks here were found
+  in one day that could not fail.
+- [ ] **A new CI job goes in the release gate's needs list.** *(Gated:*
+  `scripts/tests/release-gate-covers-every-job.test.sh`.*)*
+- [ ] **No new `RM_` / `BM_` / `bm_` / `rbm_` identifier.** *(Gated.)*
+- [ ] **Tests are red before they are green**, and pushed in that order where
+  practical. *(Ungated.)*
+
+---
+
+## The ungated items, in one place
+
+If I only re-read one section at a phase exit gate, this is it. Nothing in the
+repository will tell me I got these wrong:
+
+1. Two phases, five issues each, and the cut list.
+2. The conformance matrix, with a falsification per row that has actually been
+   watched to fail.
+3. A command with no equivalent in the browser (the reverse direction is gated,
+   this one is not).
+4. Progress reaching the activity feed, the global terminal and the per-set panel.
+5. A global default good enough that nobody has to set it, plus the per-set
+   override, plus the re-resolve after mutation.
+6. The Claude Designer mockup, and the design note landing in `docs/design/`.
+7. README, the four site pages that are not `reference.html`, and the prose docs.
+8. The "What has not been proven" section telling the truth about this epic.
+9. Regenerated GIFs and screenshots, through the capture scripts.
+10. Store submission screenshots going back to outstanding when a listed screen
+    changes.
+11. The CHANGELOG entry.
+12. Comments the change falsified.
