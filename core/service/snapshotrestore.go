@@ -167,6 +167,15 @@ func (b *BackupService) SubmitSnapshotRestore(ctx context.Context, req SnapshotR
 		return Operation{}, fmt.Errorf("%w: %s", ErrSnapshotRestoreUnsupported, req.BackupSetID)
 	}
 
+	// EPIC K's production gate (#789), refused at the same point and for
+	// the same reason: internal/app will refuse this restore the instant
+	// the operation starts, and a durable row written first is an
+	// operator polling an operation to be told what this call already
+	// knew. See incrementalgate.go.
+	if err := refuseGatedIncrementalEngine(st.inner.Config); err != nil {
+		return Operation{}, err
+	}
+
 	parameters, err := json.Marshal(snapshotRestoreParameters{
 		BackupSetID: req.BackupSetID,
 		SnapshotID:  req.SnapshotID,

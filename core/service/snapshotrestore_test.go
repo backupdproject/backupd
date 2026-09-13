@@ -53,6 +53,11 @@ func openRestoreTestService(t *testing.T) *BackupService {
 
 	configPath := writeTestConfigFileWithRetention(t,
 		"retention:\n  timezone: UTC\n  week_starts_on: monday\n"+
+			// EPIC K's production gate (#789) open. Off by default, so a
+			// fixture that omitted it would be testing the gate rather
+			// than the restore: see TestSubmitSnapshotRestore_IsRefused
+			// WhenTheIncrementalEngineIsGatedOff for the closed case.
+			"incremental_engine:\n  enabled: true\n"+
 			"repository_domains:\n"+
 			"  - id: production\n"+
 			"    description: Snapshots for this deployment\n"+

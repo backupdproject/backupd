@@ -41,9 +41,20 @@ import (
 // resolveTestRetention just below for what a set left at the zero Retention
 // actually is. Anything constructing a config.Config directly rather than
 // through here inherits that trap.
+//
+// It also opens EPIC K's production gate (#789), because this fixture
+// stands for a deployment that runs whatever engines its sets name: the
+// gate is off by default, so leaving it shut here would turn every
+// incremental test in this package into a test of the gate. The gate's own
+// tests (incrementalgate_test.go) shut it explicitly, which is the only
+// way a reader should ever see it closed in these fixtures.
 func testConfig(t *testing.T, sources ...config.Source) *config.Config {
 	t.Helper()
-	c := &config.Config{Sources: sources, Retention: testRetention()}
+	c := &config.Config{
+		Sources:           sources,
+		Retention:         testRetention(),
+		IncrementalEngine: config.IncrementalEngine{Enabled: true},
+	}
 	// Issue #333: resolve each set's effective retention the way Validate
 	// does, for the same reason testRetention mirrors validateRetention's
 	// defaults. These fixtures are built by hand rather than loaded, so

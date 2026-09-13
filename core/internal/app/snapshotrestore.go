@@ -182,7 +182,20 @@ func (s *Service) RestoreSnapshot(ctx context.Context, req SnapshotRestoreReques
 
 // incrementalBackupSet finds the configured set a restore names, and
 // refuses one that does not store snapshots.
+//
+// It is also where EPIC K's production gate (#789) is enforced for every
+// per-set incremental surface, because it is the one door all of them go
+// through: snapshotSurface calls it, and so does every caller of that.
+// The gate is checked BEFORE the set is looked up, deliberately -- with
+// the engine disabled the whole surface is unavailable, and answering
+// "no such backup set" to a request about a set that is right there in
+// the configuration would send an operator looking for the wrong
+// mistake. See incrementalgate.go.
 func (s *Service) incrementalBackupSet(sourceName, setName string) (config.BackupSet, error) {
+	if err := s.incrementalEngineGate(); err != nil {
+		return config.BackupSet{}, err
+	}
+
 	if s.Config == nil {
 		return config.BackupSet{}, ErrBackupSetNotConfigured
 	}

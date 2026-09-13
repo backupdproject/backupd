@@ -183,6 +183,13 @@ func TestSnapshotActions_TypedRefusalsCarryTheirDeclaredCode(t *testing.T) {
 		{"the hold is gone", service.ErrSnapshotHoldNotFound, http.StatusNotFound, "SNAPSHOT_HOLD_NOT_FOUND"},
 		{"the snapshot cannot be held", service.ErrSnapshotNotHoldable, http.StatusConflict, "SNAPSHOT_NOT_HOLDABLE"},
 		{"the set is not incremental", service.ErrSnapshotRestoreUnsupported, http.StatusBadRequest, "BACKUP_SET_NOT_INCREMENTAL"},
+		// EPIC K's production gate (#789). Its own code and a conflict
+		// rather than the 400 above it, because the two offer an operator
+		// different things: that one says ask about a different set, this
+		// one says this deployment does not run the engine at all, and a
+		// client that could not tell them apart would offer the wrong way
+		// out for both.
+		{"the incremental engine is gated off", service.ErrIncrementalEngineDisabled, http.StatusConflict, "INCREMENTAL_ENGINE_DISABLED"},
 		{"the set is gone", service.ErrBackupSetNotFound, http.StatusNotFound, "BACKUP_SET_NOT_FOUND"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

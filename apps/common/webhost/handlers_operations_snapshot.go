@@ -217,6 +217,15 @@ func (h *handlers) writeSnapshotActionError(w http.ResponseWriter, r *http.Reque
 	case errors.Is(err, service.ErrSnapshotRestoreUnsupported):
 		h.logRefusal(r, http.StatusBadRequest, "BACKUP_SET_NOT_INCREMENTAL",
 			writeError(w, http.StatusBadRequest, "BACKUP_SET_NOT_INCREMENTAL", err.Error()), err)
+	case errors.Is(err, service.ErrIncrementalEngineDisabled):
+		// EPIC K's production feature gate (#789), a conflict for
+		// writeSnapshotError's reason: this deployment does not run the
+		// engine, and no change to this request makes it work. It is
+		// refused BEFORE any durable operation row is written
+		// (core/service), so there is nothing in the activity feed for
+		// an operator to go and look at.
+		h.logRefusal(r, http.StatusConflict, "INCREMENTAL_ENGINE_DISABLED",
+			writeError(w, http.StatusConflict, "INCREMENTAL_ENGINE_DISABLED", err.Error()), err)
 	case errors.Is(err, service.ErrInvalidRequest):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 	default:

@@ -322,6 +322,16 @@ func (h *handlers) writeSnapshotError(w http.ResponseWriter, r *http.Request, er
 		// validation failure would offer the operator a fix to the body.
 		h.logRefusal(r, http.StatusBadRequest, "BACKUP_SET_NOT_INCREMENTAL",
 			writeError(w, http.StatusBadRequest, "BACKUP_SET_NOT_INCREMENTAL", err.Error()), err)
+	case errors.Is(err, service.ErrIncrementalEngineDisabled):
+		// EPIC K's production feature gate (#789). A conflict rather
+		// than the 400 above, and the difference is the fix: that one
+		// says this SET is the wrong kind, which a client answers by
+		// asking about a different set; this one says the DEPLOYMENT does
+		// not run the engine, which only a configuration change answers.
+		// Safe to echo -- core/internal/config's own sentence, naming
+		// the config key and the environment variable.
+		h.logRefusal(r, http.StatusConflict, "INCREMENTAL_ENGINE_DISABLED",
+			writeError(w, http.StatusConflict, "INCREMENTAL_ENGINE_DISABLED", err.Error()), err)
 	default:
 		h.internalError(w, r, "INTERNAL", "an internal error occurred", err)
 	}

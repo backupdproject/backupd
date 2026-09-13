@@ -90,11 +90,24 @@ const repositoryProbeTimeout = 30 * time.Second
 // It never fails as a whole for one bad repository: a domain that could
 // not be reached is a RESULT, and returning an error instead would let
 // one unplugged NAS hide the health of every other repository in the
-// deployment. The only error it returns is one that makes the whole
-// question unanswerable.
+// deployment. The only errors it returns are the two that make the whole
+// question unanswerable: no configuration at all, and EPIC K's
+// production gate being shut (#789).
+//
+// The gate is an error rather than a row per domain with a "disabled"
+// verdict, and that is the honest shape. health.RepositoryHealth's
+// states say whether a repository can take a backup; with the engine
+// disabled nothing may open one, so every field would be a guess. An
+// operator asking this question gets the one answer that is true and
+// actionable -- the engine is off, here is the flag -- rather than six
+// booleans nobody measured.
 func (s *Service) RepositoryHealth(ctx context.Context) ([]health.RepositoryHealth, error) {
 	if s.Config == nil {
 		return nil, errors.New("app: this service holds no configuration, so it can name no repository")
+	}
+
+	if err := s.incrementalEngineGate(); err != nil {
+		return nil, err
 	}
 
 	sets := s.setsByDomain()
@@ -531,18 +544,40 @@ func (s *Service) setsByDomain() map[model.RepositoryDomainID][]config.BackupSet
 // RepositoryAlertConditions is what this deployment's repositories mean
 // to the notification path, in internal/alert's own vocabulary.
 //
-// Only conditions an operator can act on, and only ones the existing
-// alert kinds already name: a repository whose maintenance is failing is
-// alert.MaintenanceFailed, which repomaintenance already composes the
-// sentence for. Nothing here invents a kind, because a kind is something
-// an operator configures around and adding one silently is a change to
-// their notification rules.
+// Two conditions, from two different sources, and the split is the point.
+// A repository whose maintenance is failing is alert.MaintenanceFailed,
+// read from the durable ownership record -- a file beside this
+// deployment's own state, so that question is answerable while the
+// repository is the very thing not answering. A repository that cannot
+// take a backup at all is alert.RepositoryUnavailable, and that one can
+// only come from a probe.
 //
-// A repository that is merely unreachable raises nothing here on purpose.
-// The backup sets inside it go stale, which is the condition that already
-// exists and already says the thing an operator has to do something
-// about; a second alert for the same outage is how a product teaches
-// people to filter its notifications.
+// # Why the probe runs here, on the alerting cadence
+//
+// #788 left this pass record-only and said so: "the probes that DO open
+// a repository deliberately raise nothing here", on the argument that a
+// repository that has gone away makes its backup sets go stale and
+// StaleBackup already covers it. #789 closes that: staleness is a
+// days-long window, RepeatedFailure's count arm counts FAILED artifacts
+// an incremental set never produces, and so the fast signal for "every
+// backup into this repository is failing right now" was missing
+// entirely. alert.RepositoryUnavailable's own doc has the full argument.
+//
+// The cost is one repository open per declared domain per alerting pass,
+// and it is affordable for a reason worth writing down: this deployment
+// ALREADY opens each of those repositories on that same cadence, once
+// per incremental set, because that is what a processing cycle does. One
+// extra open per domain is the same order as the work already happening,
+// and it is what buys an alert that arrives before the next cycle rather
+// than a day later.
+//
+// A gated deployment is silent here (#789's production flag): with the
+// engine disabled nothing may open a repository, so there is nothing to
+// probe and nothing that could be failing. That silence is correct
+// rather than convenient -- an operator who turned the engine off must
+// not be notified about the store it is not using -- and it is the
+// reason this returns nil rather than passing the gate's error up: a
+// gate is not an incident.
 func (s *Service) RepositoryAlertConditions(ctx context.Context) []alert.Condition {
 	if s.Config == nil {
 		return nil
@@ -556,6 +591,19 @@ func (s *Service) RepositoryAlertConditions(ctx context.Context) []alert.Conditi
 		}
 
 		out = append(out, repomaintenance.AlertConditions(*record)...)
+	}
+
+	// RepositoryHealth refuses as a whole exactly twice: no
+	// configuration, and the gate. Both are "there is nothing to alert
+	// about", never a condition of their own, so the maintenance
+	// conditions above stand and this half adds nothing.
+	reports, err := s.RepositoryHealth(ctx)
+	if err != nil {
+		return out
+	}
+
+	for _, report := range reports {
+		out = append(out, alert.RepositoryConditions(report.Domain, report)...)
 	}
 
 	return out

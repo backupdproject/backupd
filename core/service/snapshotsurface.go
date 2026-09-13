@@ -438,6 +438,18 @@ func (b *BackupService) SnapshotRetention(ctx context.Context, id string) (Snaps
 func (b *BackupService) ListRepositories(ctx context.Context) (RepositoryHealthReport, error) {
 	repos, err := b.state.Load().inner.RepositoryHealth(ctx)
 	if err != nil {
+		// EPIC K's production gate (#789) is carried through rather than
+		// flattened into the internal-error sentence below. The sentence
+		// is config's own -- a config key and an environment variable,
+		// no path, endpoint or credential -- so the rule that generic
+		// sentence enforces is not in play, and the gate is the one
+		// refusal here an operator can actually act on. A 500 INTERNAL
+		// would tell a dashboard something is broken about a deployment
+		// where nothing is.
+		if errors.Is(err, ErrIncrementalEngineDisabled) {
+			return RepositoryHealthReport{}, err
+		}
+
 		return RepositoryHealthReport{}, fmt.Errorf("service: reading repository health: an internal error occurred")
 	}
 
@@ -477,6 +489,13 @@ func snapshotSurfaceError(id string, err error) error {
 		return fmt.Errorf("%w: %s", ErrSnapshotNotFound, id)
 	case errors.Is(err, state.ErrSnapshotHoldNotFound):
 		return fmt.Errorf("%w: %s", ErrSnapshotHoldNotFound, id)
+	case errors.Is(err, ErrIncrementalEngineDisabled):
+		// EPIC K's production gate (#789), carried through for
+		// ListRepositories' reason: config's own sentence names the key
+		// to set and nothing about this deployment's storage, and it is
+		// the one refusal on these surfaces that is neither about the
+		// set nor about a snapshot.
+		return err
 	case errors.Is(err, app.ErrSnapshotNotHoldable):
 		// The app layer's sentence is carried through, which every arm
 		// above deliberately does not do. It is safe here and it is the

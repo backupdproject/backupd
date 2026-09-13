@@ -119,7 +119,12 @@ func holdService(t *testing.T) *Service {
 
 	cfg := &config.Config{
 		Capacity: config.Capacity{BackupRoot: t.TempDir()},
-		Sources:  []config.Source{{Name: "production", BackupSets: []config.BackupSet{bs}}},
+		// EPIC K's production gate (#789) open: these tests are about
+		// what a hold refuses on a deployment that runs the incremental
+		// engine, and the gate refuses every per-set incremental surface
+		// before it looks at the set at all.
+		IncrementalEngine: config.IncrementalEngine{Enabled: true},
+		Sources:           []config.Source{{Name: "production", BackupSets: []config.BackupSet{bs}}},
 	}
 
 	return &Service{Config: cfg, Journal: openJournal(t), Now: fixedNow(time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC))}

@@ -2,13 +2,14 @@ package alert
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/backupdproject/backupd/core/internal/capacity"
 	"github.com/backupdproject/backupd/core/internal/health"
 	"github.com/backupdproject/backupd/core/internal/transport"
 )
 
-// This file is the whole of this package's translation layer: three pure
+// This file is the whole of this package's translation layer: four pure
 // functions turning a verdict some other package already reached into the
 // Condition vocabulary Dispatcher de-duplicates on. None of them decides
 // anything. If one of them ever needs an `if` about thresholds, freshness
@@ -171,5 +172,51 @@ func HostKeyConditions(scope string, category transport.Category) []Condition {
 		Scope: scope,
 		Detail: fmt.Sprintf("The SSH host key for backup set %s no longer matches its known_hosts entry. The connection was refused and no backup ran. Verify the new key out of band and update known_hosts yourself; the manager will not trust it on its own.",
 			scope),
+	}}
+}
+
+// RepositoryConditions returns the conditions h implies about the
+// repository domain named by scope, which is EPIC K's repository outage
+// (#789): RepositoryUnavailable, exactly when h.State is health.Failing.
+//
+// Nothing here decides what "failing" means, and that is the whole
+// reason this is three lines. internal/app's probe asks the storage the
+// four access questions and decideRepositoryState reserves Failing for
+// the repository that cannot take a backup at all -- unreachable,
+// unreadable, credentials refused, or read-only. A second threshold here
+// would drift from the verdict GET /api/v1/repositories and `backupd
+// repository health` render, and an operator would be alerted about a
+// state their own status page does not show.
+//
+// Degraded is deliberately quiet, for the reason CriticalStoragePressure
+// leaves Warning quiet: overdue maintenance, a drifted clock and a failed
+// verification are all worth an operator's attention and none of them
+// stops the next backup. Overdue maintenance has its own kind already
+// (MaintenanceFailed, from the durable record rather than from a probe),
+// so alerting on Degraded here would also double-report it.
+//
+// The Detail is the probe's own sentence, unchanged. It is composed by
+// internal/app precisely so that it carries no path, endpoint or
+// credential (see repositoryWarningSentence), which is the same promise
+// an alert has to keep: this text is delivered to a phone, an email and
+// a platform notification centre. A repository that is Failing with
+// nothing to say gets a generic sentence rather than an empty one --
+// notifying somebody of a blank line is worse than notifying them of
+// little.
+func RepositoryConditions(scope string, h health.RepositoryHealth) []Condition {
+	if h.State != health.Failing {
+		return nil
+	}
+
+	detail := strings.TrimSpace(h.Detail)
+	if detail == "" {
+		detail = "this repository cannot be written to, so no incremental backup into it can succeed"
+	}
+
+	return []Condition{{
+		Kind:  RepositoryUnavailable,
+		Scope: scope,
+		Detail: fmt.Sprintf("Repository domain %s cannot take a backup: %s No snapshot has been deleted and no restore point has been lost.",
+			scope, detail),
 	}}
 }

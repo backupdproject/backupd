@@ -86,7 +86,21 @@ type repositoryMaintenanceResponse struct {
 func (h *handlers) listRepositories(w http.ResponseWriter, r *http.Request) {
 	report, err := h.backend.ListRepositories(r.Context())
 	if err != nil {
+		// EPIC K's production feature gate (#789) is the one refusal
+		// this read has that is not an internal error: with the engine
+		// disabled nothing may open a repository, so there is no verdict
+		// to serve and every field would be a guess. 409 with the flag
+		// named, so the page can say "the incremental engine is disabled
+		// in this deployment" instead of "something went wrong".
+		if errors.Is(err, service.ErrIncrementalEngineDisabled) {
+			h.logRefusal(r, http.StatusConflict, "INCREMENTAL_ENGINE_DISABLED",
+				writeError(w, http.StatusConflict, "INCREMENTAL_ENGINE_DISABLED", err.Error()), err)
+
+			return
+		}
+
 		h.internalError(w, r, "INTERNAL", "an internal error occurred", err)
+
 		return
 	}
 

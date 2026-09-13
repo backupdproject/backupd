@@ -718,6 +718,26 @@ func (b *BackupService) CreateBackupSet(ctx context.Context, req CreateBackupSet
 		return CreateBackupSetResult{}, fmt.Errorf("service: re-reading configuration: %w", err)
 	}
 
+	// EPIC K's production gate (#789): a set running the incremental
+	// engine is not created into a deployment that does not run it.
+	//
+	// Read from the file this method just re-read, not from the
+	// in-memory configuration, for the reason that read exists: the gate
+	// this write has to respect is the one in the revision the write is
+	// based on. It is asked before newBackupSetFor for the reason the
+	// acknowledgement below is -- that function writes this set's
+	// known_hosts file, and a refusal must leave nothing behind.
+	//
+	// Only a create is gated. Editing and deleting an existing
+	// incremental set stay available with the engine switched off (see
+	// incrementalgate.go): an operator must be able to get rid of a set
+	// they cannot run.
+	if engine, _ := model.ResolveBackupEngine(req.Engine); engine == model.EngineKopia {
+		if err := refuseGatedIncrementalEngine(cfg); err != nil {
+			return CreateBackupSetResult{}, err
+		}
+	}
+
 	// Asked before newBackupSetFor, because that function writes this
 	// set's known_hosts file, and a refusal must leave nothing behind. It
 	// is asked at all only for an id the configuration does not already
