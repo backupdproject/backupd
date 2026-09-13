@@ -90,6 +90,21 @@ type MaintenanceOutcome struct {
 
 	// Err is the failure, rendered, or empty when it succeeded.
 	Err string `json:"error,omitempty"`
+
+	// Reclaimed is the change in the repository's physical size across
+	// this run, in bytes: positive when the run freed storage.
+	//
+	// It is a MEASUREMENT taken either side of the run and not a claim
+	// about causation, which is why it can be negative. A full
+	// maintenance that consolidated short packs writes new blobs before
+	// it deletes the old ones, and a backup that ran during the window
+	// added content of its own; reporting only the positive half would
+	// tell an operator maintenance never costs anything.
+	//
+	// Zero also means "not measured": quick maintenance does not reclaim
+	// blobs and does not pay for the storage listing that would measure
+	// it. See repomaintenance.Runner.
+	Reclaimed int64 `json:"reclaimed_bytes,omitempty"`
 }
 
 // MaintenanceOwnership is the durable record of one repository's
@@ -119,6 +134,32 @@ type MaintenanceOwnership struct {
 	// LastResult is how the most recent attempt ended, whichever mode it
 	// was.
 	LastResult MaintenanceOutcome `json:"last_result,omitzero"`
+
+	// History is the recent attempts, oldest first, INCLUDING the one
+	// LastResult repeats.
+	//
+	// It is bounded by whoever writes it (repomaintenance's
+	// DefaultHistoryLimit) because this file is rewritten after every
+	// maintenance window for the life of the deployment, and an
+	// unbounded list would grow until the atomic rewrite that keeps the
+	// record readable is the most expensive part of a quick maintenance.
+	History []MaintenanceOutcome `json:"history,omitempty"`
+
+	// Runs and Failures count every attempt this record has ever
+	// described, not the ones History still holds.
+	//
+	// They are durable counters rather than something derived from
+	// History for exactly that reason: a bounded list cannot answer "how
+	// often has this repository's maintenance failed", and a surface that
+	// counted the retained entries would report a number that silently
+	// shrinks as the history rolls over.
+	Runs     int `json:"runs,omitempty"`
+	Failures int `json:"failures,omitempty"`
+
+	// ReclaimedBytes is the sum of every run's measured change, over the
+	// life of the record. See MaintenanceOutcome.Reclaimed for what one
+	// measurement means and why it can be negative.
+	ReclaimedBytes int64 `json:"reclaimed_bytes,omitempty"`
 }
 
 // Validate refuses a record that could not be matched back to a
