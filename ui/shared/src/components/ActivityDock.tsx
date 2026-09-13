@@ -92,6 +92,8 @@ import { browserNoticesNode } from "@shared/state/browserNotices";
 import type { BrowserNotice } from "@shared/state/browserNotices";
 import type { LiveActivity, SetActivity, SetActivityEvent, UnfinishedAction } from "@shared/types/activity";
 import { clock } from "@shared/utilities/format";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 /** How many lines the dock holds.
  *
@@ -677,22 +679,26 @@ export function ActivityDock() {
           fontSize: "var(--text-xs)"
         }}
       >
-        <button
-          type="button"
-          className="activity-toolbar__toggle"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-        >
-          {open ? "Hide terminal" : "Show terminal"}
-        </button>
+        <InfoTooltip id="activity.dock.toggle">
+          <button
+            type="button"
+            className="activity-toolbar__toggle"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+          >
+            {open ? "Hide terminal" : "Show terminal"}
+          </button>
+        </InfoTooltip>
 
         {/* Collapsed it keeps the newest line and a count of what went
             wrong, because a terminal that collapses to nothing teaches an
             operator to stop opening it. */}
         {!open ? (
-          <span className="mono" style={{ color: "var(--text-3)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {newestLine(all, viewer)}
-          </span>
+          <InfoTooltip id="activity.dock.newest" style={{ flex: 1, minWidth: 0 }}>
+            <span className="mono" style={{ color: "var(--text-3)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {newestLine(all, viewer)}
+            </span>
+          </InfoTooltip>
         ) : (
           /* One line that scrolls, never a second row.
            *
@@ -738,33 +744,40 @@ export function ActivityDock() {
             }}
           >
             {chips(sets).map((chip) => (
-              <button
+              <InfoTooltip
                 key={chip.value}
-                type="button"
-                className="activity-toolbar__button"
-                aria-pressed={filter === chip.value}
-                onClick={() => setFilter(chip.value)}
-                style={{
-                  // Never shrink and never wrap the label: a chip narrowed
-                  // to fit is a set id an operator cannot read, which is a
-                  // quieter version of the same defect.
-                  flex: "0 0 auto",
-                  whiteSpace: "nowrap",
-                  ...(filter === chip.value ? { background: "var(--accent-quiet)", color: "var(--text)" } : {})
-                }}
+                id={FILTER_TIPS[chip.value] ?? "activity.dock.filter-set"}
+                style={{ flex: "0 0 auto" }}
               >
-                {chip.label}
-              </button>
+                <button
+                  type="button"
+                  className="activity-toolbar__button"
+                  aria-pressed={filter === chip.value}
+                  onClick={() => setFilter(chip.value)}
+                  style={{
+                    // Never shrink and never wrap the label: a chip narrowed
+                    // to fit is a set id an operator cannot read, which is a
+                    // quieter version of the same defect.
+                    flex: "0 0 auto",
+                    whiteSpace: "nowrap",
+                    ...(filter === chip.value ? { background: "var(--accent-quiet)", color: "var(--text)" } : {})
+                  }}
+                >
+                  {chip.label}
+                </button>
+              </InfoTooltip>
             ))}
           </span>
         )}
 
         {problems.errors > 0 || problems.warnings > 0 ? (
-          <span className="mono" style={{ flex: "none", color: problems.errors > 0 ? "var(--danger)" : "var(--warn)" }}>
-            {problems.errors > 0 ? problems.errors + " error" + (problems.errors === 1 ? "" : "s") : ""}
-            {problems.errors > 0 && problems.warnings > 0 ? " · " : ""}
-            {problems.warnings > 0 ? problems.warnings + " warning" + (problems.warnings === 1 ? "" : "s") : ""}
-          </span>
+          <InfoTooltip id="activity.dock.problems" style={{ flex: "none" }}>
+            <span className="mono" style={{ flex: "none", color: problems.errors > 0 ? "var(--danger)" : "var(--warn)" }}>
+              {problems.errors > 0 ? problems.errors + " error" + (problems.errors === 1 ? "" : "s") : ""}
+              {problems.errors > 0 && problems.warnings > 0 ? " · " : ""}
+              {problems.warnings > 0 ? problems.warnings + " warning" + (problems.warnings === 1 ? "" : "s") : ""}
+            </span>
+          </InfoTooltip>
         ) : null}
 
         {/* Never a spinner over a word: while the poll is failing the dock
@@ -774,19 +787,33 @@ export function ActivityDock() {
             strip is the only thing in this bar that may shrink, and a
             line count or a Save button squeezed to nothing would be the
             clip moved rather than fixed. */}
-        <span className="mono" style={{ flex: "none", color: feed.error ? "var(--warn)" : "var(--text-3)" }}>
-          {feed.error ? "not refreshing" : shown.length + (shown.length === 1 ? " line" : " lines")}
-        </span>
+        <InfoTooltip id="activity.dock.status" style={{ flex: "none" }}>
+          <span className="mono" style={{ flex: "none", color: feed.error ? "var(--warn)" : "var(--text-3)" }}>
+            {feed.error ? "not refreshing" : shown.length + (shown.length === 1 ? " line" : " lines")}
+          </span>
+        </InfoTooltip>
+
+        {/* What a line in the scrollback is made of, said once beside the
+            log rather than on each of the thousand lines it can hold. */}
+        <InfoTooltip id="activity.dock.log-format" style={{ flex: "none" }} />
 
         {open ? (
           <>
-            {copied ? <span style={{ color: "var(--ok)", fontWeight: 600 }}>copied</span> : null}
-            <button type="button" className="activity-toolbar__button" onClick={copy}>
-              Copy
-            </button>
-            <button type="button" className="activity-toolbar__button" onClick={save}>
-              Save .txt
-            </button>
+            {copied ? (
+              <InfoTooltip id="activity.dock.copied" alignEnd>
+                <span style={{ color: "var(--ok)", fontWeight: 600 }}>copied</span>
+              </InfoTooltip>
+            ) : null}
+            <InfoTooltip id="activity.dock.copy" alignEnd>
+              <button type="button" className="activity-toolbar__button" onClick={copy}>
+                Copy
+              </button>
+            </InfoTooltip>
+            <InfoTooltip id="activity.dock.save" alignEnd>
+              <button type="button" className="activity-toolbar__button" onClick={save}>
+                Save .txt
+              </button>
+            </InfoTooltip>
           </>
         ) : null}
       </div>
@@ -833,6 +860,17 @@ function chips(sets: string[]): { value: DockFilter; label: string }[] {
     { value: "commands", label: "Commands only" }
   ];
 }
+
+/** Which explanation a chip carries. The four fixed chips each say
+ *  something different about what they keep; the per-set chips all say the
+ *  same thing, so they share one entry rather than inventing a registry id
+ *  per configured set. */
+const FILTER_TIPS: Record<string, TooltipId> = {
+  all: "activity.dock.filter-all",
+  engine: "activity.dock.filter-engine",
+  mine: "activity.dock.filter-mine",
+  commands: "activity.dock.filter-commands"
+};
 
 /**
  * The scrollback.
@@ -901,13 +939,15 @@ function DockLog({
 
   return (
     <>
-      <div
-        onPointerDown={startResize}
-        role="separator"
-        aria-label="Resize terminal"
-        aria-orientation="horizontal"
-        style={{ height: 4, cursor: "row-resize", background: "var(--border)", flex: "none" }}
-      />
+      <InfoTooltip id="activity.dock.resize" block style={{ flex: "none" }}>
+        <div
+          onPointerDown={startResize}
+          role="separator"
+          aria-label="Resize terminal"
+          aria-orientation="horizontal"
+          style={{ height: 4, cursor: "row-resize", background: "var(--border)", flex: "none" }}
+        />
+      </InfoTooltip>
       <div
         className="activity-log"
         role="log"
@@ -920,23 +960,29 @@ function DockLog({
             rather than on every line, so each command stays clean and
             runnable under it. Muted, because it is a header and not an
             event: nothing happened at it. */}
-        <div className="activity-log__time" style={{ color: "var(--text-3)" }}>
-          {preamble}
-        </div>
+        <InfoTooltip id="activity.dock.preamble" block>
+          <div className="activity-log__time" style={{ color: "var(--text-3)" }}>
+            {preamble}
+          </div>
+        </InfoTooltip>
         {/* One line at the top of the scrollback rather than a toast that
             disappears: what is gone is gone, and the durable record has a
             name. */}
         {dropped ? (
-          <div style={{ color: "var(--text-3)" }}>
-            {"──── earlier lines are not held here any more · the full record is on the Activity page ────"}
-          </div>
+          <InfoTooltip id="activity.dock.dropped" block>
+            <div style={{ color: "var(--text-3)" }}>
+              {"──── earlier lines are not held here any more · the full record is on the Activity page ────"}
+            </div>
+          </InfoTooltip>
         ) : null}
         {entries.map((entry, i) => {
           if (entry.kind === "restart") {
             return (
-              <div key={"restart-" + i} style={{ color: "var(--warn)" }}>
-                {restartRule(entry.at)}
-              </div>
+              <InfoTooltip key={"restart-" + i} id="activity.dock.restart" block>
+                <div style={{ color: "var(--warn)" }}>
+                  {restartRule(entry.at)}
+                </div>
+              </InfoTooltip>
             );
           }
           const event = entryEvent(entry, i);

@@ -1,12 +1,12 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { FieldHelpCopy } from "@shared/components/fieldHelpCopy";
 import { useTooltipsVisible } from "@shared/hooks/useTooltips";
-import { noteTooltipClosed } from "@shared/state/tooltipNodes";
+import { useHoverPopover } from "@shared/tooltips/useHoverPopover";
 
 /**
- * Issue #278: the explanatory pop-up an input carries, and the four states
- * it can be in.
+ * Issue #278: the explanatory pop-up an input carries, and what is true of
+ * it that is not true of every other pop-up in the app.
  *
  * # The interaction
  *
@@ -18,22 +18,13 @@ import { noteTooltipClosed } from "@shared/state/tooltipNodes";
  * close control, or on Escape.
  *
  * Four visible states (hidden, hover-shown, pinned, dismissed) fall out of
- * four booleans rather than one enum, because two of them are independent
- * inputs from the environment (is the pointer inside, is the focus inside)
- * and two are the operator's own decisions (pinned, dismissed). An enum
- * would have to re-derive "is the pointer still inside" on every exit from
- * the pinned state, and getting that wrong is exactly how a pop-up ends up
- * stuck on screen.
- *
- * `dismissed` is set by all three exits, and also by clicking the control
- * itself. It is the one that is easy to leave out and is not optional:
- * without it, closing a pinned pop-up while the pointer is still over the
- * input re-opens it instantly as a hover pop-up, so the close control and
- * Escape both appear to do nothing. It is cleared on the next thing that
- * ASKS for the pop-up rather than on the next thing that would hide it: a
- * pointer arriving, focus arriving, or a touch tap. Clearing it on the way
- * out as well reads like belt and braces and is not, because nothing can
- * observe it while neither the pointer nor the focus is here.
+ * four booleans rather than one enum. Those booleans, and the reasoning
+ * behind each of them, are tooltips/useHoverPopover.ts: issue #834 put the
+ * same interaction on buttons, badges and metrics, at which point it
+ * stopped being this component's behaviour and became the hook both of
+ * them call. What is left here is the field-shaped half — the copy's
+ * three-part shape, the aria-describedby contract with the caller's
+ * control, and where focus goes when the pop-up is closed.
  *
  * # It is an overlay, so it has to get out of the way
  *
@@ -136,12 +127,22 @@ export interface FieldHelpProps {
 
 export function FieldHelp({ label, help, children, style }: FieldHelpProps) {
   const helpId = useId();
-  const wrapper = useRef<HTMLDivElement | null>(null);
 
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const [pinned, setPinned] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
+  // The four-state hover interaction, which lived here until issue #834
+  // put the same pop-up on buttons, badges and metrics and made it two
+  // callers' behaviour rather than this component's. Nothing about the
+  // rules changed; they are argued in tooltips/useHoverPopover.ts now, and
+  // what stays here is the part that is specific to a labelled input.
+  const { ref: wrapper, shown, hostProps, pin, dismiss } = useHoverPopover<HTMLDivElement>({
+    onDismiss: () => {
+      // Put the operator back on the control they were describing rather
+      // than dropping focus to the document, which is where a keyboard
+      // user would otherwise have to Tab back from. The pop-up does not
+      // re-open: this focus never leaves the wrapper, so `dismissed` is
+      // not cleared.
+      wrapper.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+    }
+  });
 
   // Issue #829: a fifth input, and the only one that is not this field's
   // own. It gates the four states rather than joining them, because it
@@ -158,125 +159,14 @@ export function FieldHelp({ label, help, children, style }: FieldHelpProps) {
   // what the preference removes.
   const tooltipsVisible = useTooltipsVisible();
 
-  const open = tooltipsVisible && (pinned || ((hovered || focused) && !dismissed));
-
-  // A pinned pop-up closes on a click anywhere outside it. Registered in
-  // the CAPTURE phase so this runs before React's own delegated handlers
-  // at the root container: the alternative depends on whether a nested
-  // handler stopped propagation, which is a needlessly fragile thing for
-  // "did the operator click somewhere else" to rest on.
-  useEffect(() => {
-    if (!pinned) return;
-    const onDocumentClick = (event: MouseEvent) => {
-      const node = wrapper.current;
-      if (node && event.target instanceof Node && node.contains(event.target)) return;
-      setPinned(false);
-      setDismissed(true);
-    };
-    document.addEventListener("click", onDocumentClick, true);
-    return () => document.removeEventListener("click", onDocumentClick, true);
-  }, [pinned]);
-
-  // Escape dismisses whatever is showing. On the document rather than on
-  // the wrapper, so it works for a pop-up opened by hover with the focus
-  // somewhere else entirely, not only for the keyboard case.
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setPinned(false);
-      setDismissed(true);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
-
-  /** Focus moving between the control and the close button is movement
-   *  WITHIN this field's help, not away from it. relatedTarget is the
-   *  element focus is arriving at (on focusout) or leaving from (on
-   *  focusin), and it is null when focus came from or went to nowhere. */
-  const staysInside = (event: React.FocusEvent<HTMLDivElement>) => {
-    const other = event.relatedTarget;
-    return other instanceof Node && event.currentTarget.contains(other);
-  };
-
-  /** The close control, and only the close control. Escape and a click
-   *  away close a pop-up too and deliberately do not come through here:
-   *  #829 asks about the "x" because pressing it is the one exit that is
-   *  unambiguously aimed AT the pop-up, rather than at the page behind it
-   *  or at whatever the operator is typing. */
-  const dismiss = () => {
-    setPinned(false);
-    setDismissed(true);
-    // Put the operator back on the control they were describing rather
-    // than dropping focus to the document, which is where a keyboard user
-    // would otherwise have to Tab back from. The pop-up does not re-open:
-    // this focus never leaves the wrapper, so `dismissed` is not cleared.
-    wrapper.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
-    // Offers the global opt-out, the first time this happens in this
-    // browser and never again (state/tooltipNodes.ts owns that decision,
-    // so every tooltip host shares one answer rather than one each).
-    noteTooltipClosed();
-  };
+  const open = tooltipsVisible && shown;
 
   return (
     <div
       ref={wrapper}
       className="fieldhelp"
       style={style}
-      onMouseEnter={() => {
-        setHovered(true);
-        setDismissed(false);
-      }}
-      onMouseLeave={() => setHovered(false)}
-      onFocus={(event) => {
-        if (staysInside(event)) return;
-        setFocused(true);
-        setDismissed(false);
-      }}
-      onBlur={(event) => {
-        if (staysInside(event)) return;
-        setFocused(false);
-      }}
-      onClick={() => {
-        // Acting on the control puts its help away. This is not cosmetic:
-        // the pop-up is a real overlay, so while it is up it covers, and
-        // takes the clicks meant for, whatever sits below the field, which
-        // in these forms is the Save button, the Sign in button or the next
-        // row of the chain. Once the operator has clicked the control they have
-        // read what they were going to read and are on their way somewhere
-        // else, so this is the moment to get out of that way. Hovering or
-        // focusing the field again brings it straight back.
-        //
-        // Every click inside this field's help lands here, the pop-up's
-        // own included, and none of them needs excluding: `pinned` wins
-        // over `dismissed` in `open` above, so a click that pins survives
-        // the dismissal it also records. That ordering is what makes a
-        // touch tap work too, since a tap is a pointerdown that pins
-        // followed by a click that lands here.
-        setDismissed(true);
-      }}
-      onChange={() => {
-        // The same "acting on the control puts its help away" rule as
-        // onClick above, for the one way a control changes value WITHOUT a
-        // click ever firing: a paste that lands via keyboard, a browser
-        // autofill, or Playwright's own .fill(), all of which set the
-        // value and dispatch input/change directly. Found the hard way, on
-        // a multi-row textarea (the wizard's private-key field) tall
-        // enough that its own pop-up, opened by the FOCUS .fill() does
-        // cause, reached down over the button beneath it: a keyboard-only
-        // path into the field left that button uncoverable by mouse until
-        // something else dismissed the help first. onChange closes that
-        // gap the same way onClick already closes it for a mouse.
-        setDismissed(true);
-      }}
-      onPointerDown={(event) => {
-        // Touch only. See the module doc: a tap is the pinned case,
-        // because there is no hover to show a pop-up with first.
-        if (event.pointerType !== "touch") return;
-        setPinned(true);
-        setDismissed(false);
-      }}
+      {...hostProps}
     >
       {children(helpId)}
 
@@ -285,7 +175,7 @@ export function FieldHelp({ label, help, children, style }: FieldHelpProps) {
         hidden={!open}
         // Clicking the pop-up pins it. A click on the close button inside
         // stops before it reaches here, so closing cannot re-pin.
-        onClick={() => setPinned(true)}
+        onClick={pin}
       >
         {/* The described node holds the copy and nothing else, so the close
             button's own label is not concatenated into the description a
@@ -306,7 +196,7 @@ export function FieldHelp({ label, help, children, style }: FieldHelpProps) {
             dismiss();
           }}
         >
-          <span aria-hidden="true">{"×"}</span>
+          <span aria-hidden="true">{"\u00d7"}</span>
           <span className="visually-hidden">{"Close help for " + label}</span>
         </button>
       </div>

@@ -214,6 +214,78 @@ input, select, textarea, button {
 }
 .fieldhelp__close:hover { background: var(--surface-3); color: var(--text); }
 
+/* Registry tooltips (issue #834). The interaction lives in
+   tooltips/InfoTooltip.tsx and the copy in tooltips/tooltips.json; this is
+   only their shape. Same anatomy as the field-help pop-up above, one class
+   tree down, because this one hangs off buttons, nav rows, badges and
+   numbers rather than off a labelled input: it sizes to its content
+   instead of to the control, it can align to its host's right edge for a
+   host at the end of a row, and it styles the tags the registry's HTML is
+   allowed to use. */
+.tooltip { position: relative; display: inline-flex; align-items: center; }
+.tooltip--block { display: block; }
+/* The icon-only host, for headings and column labels with no control of
+   their own to hang the explanation off. Quiet until it is wanted. */
+.tooltip__trigger {
+  flex: none; width: 18px; height: 18px; margin: 0 0 0 5px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  vertical-align: middle;
+  border: 0; border-radius: var(--radius-pill);
+  background: transparent; color: var(--text-3);
+  font: inherit; cursor: help;
+}
+.tooltip__trigger:hover { background: var(--surface-3); color: var(--text-2); }
+.tooltip__pop {
+  position: absolute; z-index: 40;
+  top: calc(100% + 6px); left: 0;
+  width: max-content; max-width: min(340px, 84vw);
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  line-height: var(--leading-normal);
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+  color: var(--text-2);
+  cursor: default;
+}
+/* A host at the right-hand end of a row would otherwise push its pop-up
+   off the page. */
+.tooltip__pop--end { left: auto; right: 0; }
+/* Load-bearing, exactly as it is for .fieldhelp__pop above and for the
+   same reason: `hidden` gets its display: none from the user-agent
+   stylesheet, which the author `display` above beats outright. Without
+   this line every tooltip in the app is permanently open. It goes AFTER
+   the rule it overrides, because jsdom's cascade is order-based. */
+.tooltip__pop[hidden] { display: none; }
+.tooltip__icon { flex: none; margin-top: 1px; color: var(--text-3); }
+.tooltip__body { flex: 1; min-width: 0; }
+/* The tags the registry's copy is allowed to use, and all of them. Copy
+   that wants something else wants rewording, not a new rule here: these
+   pop-ups are two sentences, not a document. */
+.tooltip__body strong { color: var(--text); font-weight: 600; }
+.tooltip__body em { font-style: normal; color: var(--text); }
+.tooltip__body code {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  padding: 0 4px; border-radius: var(--radius-sm);
+  background: var(--surface-3); color: var(--text);
+  overflow-wrap: anywhere;
+}
+.tooltip__close {
+  flex: none; width: 22px; height: 22px; margin: -2px -3px 0 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-3);
+  font: inherit; font-size: 15px; line-height: 1; cursor: pointer;
+}
+.tooltip__close:hover { background: var(--surface-3); color: var(--text); }
+
 /* ---- activity strip (issue #573) -------------------------------------
    The strip pinned at the foot of the dashboard, one per backup set.
 

@@ -36,6 +36,8 @@ import { StatusBadge } from "@shared/components/StatusBadge";
 import { Icon } from "@shared/design-system/icons";
 import type { IconName } from "@shared/design-system/icons";
 import { usePlatform } from "@shared/platform/PlatformContext";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 import type { SystemHealth, VersionInfo } from "@shared/types/operation";
 
 export interface NavCounts {
@@ -56,13 +58,20 @@ const NAV: {
   end?: boolean;
   count?: keyof NavCounts;
   alert?: boolean;
+  /** What this section is, in the registry (issue #834). Named per row
+   *  rather than derived from the route, so a renamed route is a compile
+   *  error here instead of six silently unexplained nav rows. */
+  tip: TooltipId;
 }[] = [
-  { to: "/", label: "Dashboard", icon: "dashboard", end: true },
-  { to: "/sets", label: "Backup sets", icon: "backup-sets", count: "sets" },
-  { to: "/backups", label: "Backups", icon: "backups", count: "backups" },
-  { to: "/activity", label: "Activity", icon: "activity" },
-  { to: "/quarantine", label: "Quarantine", icon: "quarantine", count: "quarantine", alert: true },
-  { to: "/settings", label: "Settings", icon: "settings" }
+  { to: "/", label: "Dashboard", icon: "dashboard", end: true, tip: "nav.dashboard" },
+  { to: "/sets", label: "Backup sets", icon: "backup-sets", count: "sets", tip: "nav.sets" },
+  { to: "/backups", label: "Backups", icon: "backups", count: "backups", tip: "nav.backups" },
+  { to: "/activity", label: "Activity", icon: "activity", tip: "nav.activity" },
+  {
+    to: "/quarantine", label: "Quarantine", icon: "quarantine", count: "quarantine", alert: true,
+    tip: "nav.quarantine"
+  },
+  { to: "/settings", label: "Settings", icon: "settings", tip: "nav.settings" }
 ];
 
 export function AppShell({
@@ -114,19 +123,25 @@ export function AppShell({
         </div>
 
         {health ? (
-          <StatusBadge tone={health.serviceRunning ? "ok" : "danger"} icon={health.serviceRunning ? "status-active" : "failure"}>
-            {(health.serviceRunning ? "Service running" : "Service stopped") +
-              (version ? " \u00b7 v" + version.service : "")}
-          </StatusBadge>
+          <InfoTooltip id="shell.service-status">
+            <StatusBadge tone={health.serviceRunning ? "ok" : "danger"} icon={health.serviceRunning ? "status-active" : "failure"}>
+              {(health.serviceRunning ? "Service running" : "Service stopped") +
+                (version ? " \u00b7 v" + version.service : "")}
+            </StatusBadge>
+          </InfoTooltip>
         ) : null}
 
         <div style={{ flex: 1 }} />
 
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button className="btn btn--sm" onClick={onToggleTheme} aria-label="Toggle colour theme">
-            {theme === "light" ? "Dark" : "Light"}
-          </button>
-          <button className="btn btn--sm btn--quiet" onClick={onSignOut}>Sign out</button>
+          <InfoTooltip id="shell.theme-toggle" alignEnd>
+            <button className="btn btn--sm" onClick={onToggleTheme} aria-label="Toggle colour theme">
+              {theme === "light" ? "Dark" : "Light"}
+            </button>
+          </InfoTooltip>
+          <InfoTooltip id="shell.sign-out" alignEnd>
+            <button className="btn btn--sm btn--quiet" onClick={onSignOut}>Sign out</button>
+          </InfoTooltip>
         </div>
       </header>
 
@@ -141,52 +156,59 @@ export function AppShell({
           {NAV.map((item) => {
             const count = item.count ? counts[item.count] : undefined;
             return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                style={({ isActive }) => ({
-                  display: "flex", alignItems: "center", gap: 9, height: 33,
-                  padding: "0 10px", borderRadius: 7, textDecoration: "none",
-                  fontSize: 13.5,
-                  background: isActive ? "var(--accent-quiet)" : "transparent",
-                  color: isActive ? "var(--text)" : "var(--text-2)",
-                  fontWeight: isActive ? 600 : 400
-                })}
-              >
-                <span
-                  aria-hidden="true"
-                  style={{ width: 15, display: "inline-flex", justifyContent: "center", opacity: 0.7 }}
+              // One tooltip per row, covering the count inside it too: a
+              // second host nested in this one would open two overlapping
+              // pop-ups from a single hover, so what the number means is
+              // said in the row's own copy instead.
+              <InfoTooltip key={item.to} id={item.tip} block>
+                <NavLink
+                  to={item.to}
+                  end={item.end}
+                  style={({ isActive }) => ({
+                    display: "flex", alignItems: "center", gap: 9, height: 33,
+                    padding: "0 10px", borderRadius: 7, textDecoration: "none",
+                    fontSize: 13.5,
+                    background: isActive ? "var(--accent-quiet)" : "transparent",
+                    color: isActive ? "var(--text)" : "var(--text-2)",
+                    fontWeight: isActive ? 600 : 400
+                  })}
                 >
-                  {/* Sized off the row rather than off the text, because
-                      these are the six icons that have to be told apart
-                      from each other rather than read alongside a word.
-                      13px is where the two hatched squares they replace
-                      became the same shape. */}
-                  <Icon name={item.icon} size={14} />
-                </span>
-                <span style={{ flex: 1 }}>{item.label}</span>
-                {count ? (
                   <span
-                    className="mono"
-                    style={{
-                      fontSize: "var(--text-xs)", padding: "1px 6px",
-                      borderRadius: "var(--radius-pill)",
-                      background: item.alert ? "var(--warn-quiet)" : undefined,
-                      border: item.alert ? "1px solid var(--warn)" : undefined,
-                      color: item.alert ? "var(--text)" : "var(--text-3)"
-                    }}
+                    aria-hidden="true"
+                    style={{ width: 15, display: "inline-flex", justifyContent: "center", opacity: 0.7 }}
                   >
-                    {count}
+                    {/* Sized off the row rather than off the text, because
+                        these are the six icons that have to be told apart
+                        from each other rather than read alongside a word.
+                        13px is where the two hatched squares they replace
+                        became the same shape. */}
+                    <Icon name={item.icon} size={14} />
                   </span>
-                ) : null}
-              </NavLink>
+                  <span style={{ flex: 1 }}>{item.label}</span>
+                  {count ? (
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: "var(--text-xs)", padding: "1px 6px",
+                        borderRadius: "var(--radius-pill)",
+                        background: item.alert ? "var(--warn-quiet)" : undefined,
+                        border: item.alert ? "1px solid var(--warn)" : undefined,
+                        color: item.alert ? "var(--text)" : "var(--text-3)"
+                      }}
+                    >
+                      {count}
+                    </span>
+                  ) : null}
+                </NavLink>
+              </InfoTooltip>
             );
           })}
 
           <div style={{ flex: 1, minHeight: 20 }} />
           <div style={{ padding: "12px 10px", borderTop: "1px solid var(--border)" }}>
-            <PlatformBadge compact />
+            <InfoTooltip id="shell.platform" block>
+              <PlatformBadge compact />
+            </InfoTooltip>
           </div>
         </nav>
 

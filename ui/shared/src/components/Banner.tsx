@@ -1,5 +1,7 @@
 import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 /** The four tones a notice can be drawn in. */
 export type BannerTone = "info" | "ok" | "warn" | "danger";
@@ -66,6 +68,11 @@ export interface BannerProps {
    *  carries more than one banner at once, where the default leaves a
    *  reader, and a locator, with two controls of the same name. */
   dismissLabel?: string;
+  /** The registry entry explaining what this notice IS, for a caller whose
+   *  banner says something an operator may not be able to place from its
+   *  words alone (#834). Omitted, the banner draws no explanation icon at
+   *  all and renders exactly as it did before. */
+  tip?: TooltipId;
   children?: ReactNode;
 }
 
@@ -144,6 +151,7 @@ export function Banner({
   dismissible = true,
   dismissKey,
   dismissLabel = "Dismiss this notice",
+  tip,
   children
 }: BannerProps) {
   const [dismissed, setDismissed] = useState(false);
@@ -178,6 +186,15 @@ export function Banner({
   return (
     <Tag className={classes.join(" ")} role={role} aria-label={ariaLabel} style={style}>
       {children}
+      {/* The banner's own explanation, when a caller names one (#834).
+          Last in the row, so it sits at the end of the notice rather than
+          in front of the words it is explaining. */}
+      {tip ? <InfoTooltip id={tip} alignEnd /> : null}
+      {/* The close control is deliberately NOT wrapped in a host of its
+          own (#834). `.banner__close` is positioned against `.banner`,
+          and any wrapper around it becomes that containing block, so
+          explaining it here would mean moving it: the notice's own copy
+          says what closing it does instead. */}
       {dismissible ? (
         <button type="button" className="banner__close" onClick={() => setDismissed(true)}>
           {/* A literal in a braced expression rather than JSX text or a

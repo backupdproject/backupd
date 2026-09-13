@@ -773,8 +773,12 @@ describe("the filter chips fit the bar", () => {
     // jsdom normalises a unitless zero, which is the same declaration.
     expect(strip.style.minWidth).toBe("0");
 
+    // Awaited rather than read synchronously: the four fixed chips are on
+    // the bar from the first paint, but a per-set chip exists only once
+    // the first reading has been applied, so reading them synchronously
+    // races the poll instead of asserting anything about the bar.
     for (const id of FOUR_SETS) {
-      expect(within(strip).getByRole("button", { name: id })).toBeInTheDocument();
+      expect(await within(strip).findByRole("button", { name: id })).toBeInTheDocument();
     }
     expect(within(strip).getByRole("button", { name: "This browser" })).toBeInTheDocument();
     expect(within(strip).getByRole("button", { name: "Commands only" })).toBeInTheDocument();

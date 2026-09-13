@@ -10,6 +10,8 @@ import type {
   SSHKeyListing
 } from "@shared/api/contracts";
 import type { BackupSet } from "@shared/types/backup";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 /**
  * Issue #592: replacing a backup set's SSH authentication, guided.
@@ -397,21 +399,27 @@ function OpenWizard({
             <p style={eyebrow}>SSH authentication</p>
             <h2 style={heading}>{"Replace the authentication on " + set.id}</h2>
           </div>
-          <ol style={rail}>
-            {STEP_TITLES.map((title, i) => (
-              <li
-                key={title}
-                aria-current={i === step ? "step" : undefined}
-                style={{
-                  ...railStep,
-                  color: i === step ? "var(--accent)" : i < step ? "var(--ok)" : "var(--text-3)",
-                  fontWeight: i === step ? 600 : 400
-                }}
-              >
-                {String(i + 1) + ". " + title}
-              </li>
-            ))}
-          </ol>
+          {/* The whole rail is one hoverable region: the four steps are
+              one explanation, and a host per <li> would both open four
+              pop-ups across one rail and put a span between the <ol> and
+              its items (#834). */}
+          <InfoTooltip id="wizard.ssh.steps" alignEnd>
+            <ol style={rail}>
+              {STEP_TITLES.map((title, i) => (
+                <li
+                  key={title}
+                  aria-current={i === step ? "step" : undefined}
+                  style={{
+                    ...railStep,
+                    color: i === step ? "var(--accent)" : i < step ? "var(--ok)" : "var(--text-3)",
+                    fontWeight: i === step ? 600 : 400
+                  }}
+                >
+                  {String(i + 1) + ". " + title}
+                </li>
+              ))}
+            </ol>
+          </InfoTooltip>
         </header>
 
         <div style={body}>
@@ -473,39 +481,51 @@ function OpenWizard({
         </div>
 
         <footer style={foot}>
-          <button type="button" onClick={onCancel} style={btn} disabled={busy !== null}>
-            {step === 3 ? "Cancel" : "Close"}
-          </button>
-          <span style={{ flex: 1 }} />
-          {busy ? <span style={hint}>{busy}</span> : null}
-          {step > 0 ? (
-            <button
-              type="button"
-              onClick={() => setStep((s) => (s - 1) as StepIndex)}
-              style={btn}
-              disabled={busy !== null}
-            >
-              Back
+          <InfoTooltip id="wizard.ssh.close">
+            <button type="button" onClick={onCancel} style={btn} disabled={busy !== null}>
+              {step === 3 ? "Cancel" : "Close"}
             </button>
+          </InfoTooltip>
+          <span style={{ flex: 1 }} />
+          {busy ? (
+            <InfoTooltip id="wizard.ssh.busy" alignEnd>
+              <span style={hint}>{busy}</span>
+            </InfoTooltip>
+          ) : null}
+          {step > 0 ? (
+            <InfoTooltip id="wizard.ssh.back" alignEnd>
+              <button
+                type="button"
+                onClick={() => setStep((s) => (s - 1) as StepIndex)}
+                style={btn}
+                disabled={busy !== null}
+              >
+                Back
+              </button>
+            </InfoTooltip>
           ) : null}
           {step < 3 ? (
-            <button
-              type="button"
-              onClick={() => setStep((s) => (s + 1) as StepIndex)}
-              style={{ ...btn, ...btnPrimary }}
-              disabled={busy !== null || !canLeaveStep[step]}
-            >
-              {"Next: " + STEP_TITLES[step + 1].toLowerCase()}
-            </button>
+            <InfoTooltip id="wizard.ssh.next" alignEnd>
+              <button
+                type="button"
+                onClick={() => setStep((s) => (s + 1) as StepIndex)}
+                style={{ ...btn, ...btnPrimary }}
+                disabled={busy !== null || !canLeaveStep[step]}
+              >
+                {"Next: " + STEP_TITLES[step + 1].toLowerCase()}
+              </button>
+            </InfoTooltip>
           ) : (
-            <button
-              type="button"
-              onClick={() => void apply()}
-              style={{ ...btn, ...btnPrimary }}
-              disabled={busy !== null || !allPassed}
-            >
-              Apply and close
-            </button>
+            <InfoTooltip id="wizard.ssh.apply" alignEnd>
+              <button
+                type="button"
+                onClick={() => void apply()}
+                style={{ ...btn, ...btnPrimary }}
+                disabled={busy !== null || !allPassed}
+              >
+                Apply and close
+              </button>
+            </InfoTooltip>
           )}
         </footer>
       </div>
@@ -565,6 +585,7 @@ function MethodStep({
               selected={chosen?.keyId === k.id}
               disabled={busy !== null || k.passphraseProtected || k.fingerprint === ""}
               onSelect={() => onSelectStored(k)}
+              tip="wizard.ssh.key-stored"
               title={(k.algorithm || "key") + (k.importedAt ? " imported " + k.importedAt.slice(0, 10) : "")}
               fingerprint={k.fingerprint}
               tags={[
@@ -629,6 +650,7 @@ function MethodStep({
                   selected={chosen?.origin === c.path}
                   disabled={busy !== null || !c.selectable}
                   onSelect={() => onSelectCandidate(c)}
+                  tip="wizard.ssh.key-candidate"
                   title={c.path}
                   fingerprint={c.fingerprint}
                   tags={["ON THIS MACHINE", ...(c.mode ? ["MODE " + c.mode] : [])]}
@@ -678,14 +700,16 @@ function MethodStep({
           Sent once, validated, written into the key store with 0600 permissions, and never
           displayed again. This page discards its own copy the instant the import returns.
         </p>
-        <button
-          type="button"
-          onClick={onImportPasted}
-          style={btn}
-          disabled={busy !== null || pastedKey.trim() === ""}
-        >
-          Import and use this key
-        </button>
+        <InfoTooltip id="wizard.ssh.import-key" style={{ alignSelf: "flex-start" }}>
+          <button
+            type="button"
+            onClick={onImportPasted}
+            style={btn}
+            disabled={busy !== null || pastedKey.trim() === ""}
+          >
+            Import and use this key
+          </button>
+        </InfoTooltip>
       </Group>
 
       {chosen ? (
@@ -734,7 +758,11 @@ function IdentityStep({
 
       <div style={compare}>
         <div style={compareBox}>
-          <p style={compareKey}>On record for this set</p>
+          {/* The column's own heading is wrapped rather than given an
+              icon inside it, so the words stay the whole of its text. */}
+          <InfoTooltip id="wizard.ssh.on-record" block>
+            <p style={compareKey}>On record for this set</p>
+          </InfoTooltip>
           {nothingOnRecord ? (
             <p style={quiet}>
               This deployment could not report what this set trusts. That covers an anchor
@@ -750,7 +778,9 @@ function IdentityStep({
           )}
         </div>
         <div style={compareBox}>
-          <p style={compareKey}>Offered just now</p>
+          <InfoTooltip id="wizard.ssh.offered" block>
+            <p style={compareKey}>Offered just now</p>
+          </InfoTooltip>
           {probed ? (
             <p style={mono}>{probed.algorithm + " " + probed.fingerprint}</p>
           ) : (
@@ -759,9 +789,11 @@ function IdentityStep({
         </div>
       </div>
 
-      <button type="button" onClick={onProbe} style={btn} disabled={busy !== null}>
-        {probed ? "Ask again" : "Ask the server"}
-      </button>
+      <InfoTooltip id="wizard.ssh.probe" style={{ alignSelf: "flex-start" }}>
+        <button type="button" onClick={onProbe} style={btn} disabled={busy !== null}>
+          {probed ? "Ask again" : "Ask the server"}
+        </button>
+      </InfoTooltip>
 
       {probed && probeMatches ? (
         <Notice tone="ok">
@@ -826,14 +858,16 @@ function VerifyStep({
         This runs the selected key against the settled host key and lists the folder this
         set pulls from. Nothing is written to the server and nothing is persisted here.
       </p>
-      <button
-        type="button"
-        onClick={onVerify}
-        style={{ ...btn, ...btnPrimary }}
-        disabled={busy !== null}
-      >
-        {outcome ? "Verify again" : "Verify"}
-      </button>
+      <InfoTooltip id="wizard.ssh.verify" style={{ alignSelf: "flex-start" }}>
+        <button
+          type="button"
+          onClick={onVerify}
+          style={{ ...btn, ...btnPrimary }}
+          disabled={busy !== null}
+        >
+          {outcome ? "Verify again" : "Verify"}
+        </button>
+      </InfoTooltip>
 
       {outcome === null ? null : outcome.checks.length === 0 ? (
         <Notice tone="warn">
@@ -843,20 +877,25 @@ function VerifyStep({
             (outcome.message ?? "")}
         </Notice>
       ) : (
-        <ol style={checkList}>
-          {outcome.checks.map((c) => (
-            <li key={c.step} style={checkRow}>
-              <span style={{ ...checkGlyph, color: glyphColour(c.outcome) }}>{glyph(c.outcome)}</span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ fontWeight: 600 }}>{stepTitle(c, user)}</span>
-                {c.detail ? (
-                  <span style={{ ...mono, display: "block", color: "var(--text-3)" }}>{c.detail}</span>
-                ) : null}
-              </span>
-              <span style={quietInline}>{timing(c)}</span>
-            </li>
-          ))}
-        </ol>
+        // One region for the report: the glyph column, the step titles,
+        // the details and the timings are one explanation, and a host
+        // per row would open six pop-ups down one list (#834).
+        <InfoTooltip id="wizard.ssh.checks" block>
+          <ol style={checkList}>
+            {outcome.checks.map((c) => (
+              <li key={c.step} style={checkRow}>
+                <span style={{ ...checkGlyph, color: glyphColour(c.outcome) }}>{glyph(c.outcome)}</span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontWeight: 600 }}>{stepTitle(c, user)}</span>
+                  {c.detail ? (
+                    <span style={{ ...mono, display: "block", color: "var(--text-3)" }}>{c.detail}</span>
+                  ) : null}
+                </span>
+                <span style={quietInline}>{timing(c)}</span>
+              </li>
+            ))}
+          </ol>
+        </InfoTooltip>
       )}
 
       {stale ? (
@@ -914,32 +953,34 @@ function ApplyStep({
         beside the one replacing it, because &ldquo;replace the existing method&rdquo; is
         meaningless if the thing being replaced is never shown.
       </p>
-      <dl style={ledger}>
-        <LedgerRow
-          label="Key it uses now"
-          value={set.sshKeyId === "" ? "a key this deployment does not manage" : set.sshKeyId}
-        />
-        <LedgerRow
-          label="Key it will use"
-          value={(chosen.algorithm || "key") + " " + chosen.fingerprint}
-        />
-        <LedgerRow
-          label="Host key it trusts now"
-          value={
-            onRecord.length === 0
-              ? "not reported by this deployment"
-              : onRecord.map((k) => k.algorithm + " " + k.fingerprint).join(", ")
-          }
-        />
-        <LedgerRow
-          label="Host key it will trust"
-          value={probed.algorithm + " " + probed.fingerprint}
-        />
-        <LedgerRow
-          label="Everything else"
-          value="unchanged: host, port, user, folders, retention, validation"
-        />
-      </dl>
+      <InfoTooltip id="wizard.ssh.ledger" block>
+        <dl style={ledger}>
+          <LedgerRow
+            label="Key it uses now"
+            value={set.sshKeyId === "" ? "a key this deployment does not manage" : set.sshKeyId}
+          />
+          <LedgerRow
+            label="Key it will use"
+            value={(chosen.algorithm || "key") + " " + chosen.fingerprint}
+          />
+          <LedgerRow
+            label="Host key it trusts now"
+            value={
+              onRecord.length === 0
+                ? "not reported by this deployment"
+                : onRecord.map((k) => k.algorithm + " " + k.fingerprint).join(", ")
+            }
+          />
+          <LedgerRow
+            label="Host key it will trust"
+            value={probed.algorithm + " " + probed.fingerprint}
+          />
+          <LedgerRow
+            label="Everything else"
+            value="unchanged: host, port, user, folders, retention, validation"
+          />
+        </dl>
+      </InfoTooltip>
       {acknowledging ? (
         <Notice tone="warn">
           {"This carries your acknowledgement for " +
@@ -1012,6 +1053,7 @@ function Option({
   selected,
   disabled,
   onSelect,
+  tip,
   title,
   fingerprint,
   tags,
@@ -1020,41 +1062,50 @@ function Option({
   selected: boolean;
   disabled: boolean;
   onSelect(): void;
+  /** Which explanation this row gets. A key already in the store and a
+   *  key found on this machine are the same control and two different
+   *  consequences, so the id comes from the call site (#834). */
+  tip: TooltipId;
   title: string;
   fingerprint: string;
   tags: string[];
   note: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      disabled={disabled}
-      aria-pressed={selected}
-      style={{
-        ...option,
-        borderColor: selected ? "var(--accent)" : "var(--border)",
-        opacity: disabled ? 0.62 : 1,
-        cursor: disabled ? "default" : "pointer"
-      }}
-    >
-      <span style={{ fontWeight: 600, display: "block" }}>
-        {title}
-        {tags.map((t) => (
-          <span key={t} style={chip}>
-            {t}
-          </span>
-        ))}
-      </span>
-      {/* An empty fingerprint is said, never left blank. A blank under a
-          confident heading is the defect this whole listing exists to
-          end, and here it also means something specific: the private key
-          was not read in order to invent one. */}
-      <span style={{ ...mono, display: "block", color: "var(--text-2)" }}>
-        {fingerprint === "" ? "no fingerprint available" : fingerprint}
-      </span>
-      <span style={{ ...quiet, display: "block", margin: "3px 0 0" }}>{note}</span>
-    </button>
+    // A flex host stretches its one child exactly as the surrounding
+    // column did, so the row stays as wide as its group without the
+    // button's own style changing.
+    <InfoTooltip id={tip} block style={{ display: "flex" }}>
+      <button
+        type="button"
+        onClick={onSelect}
+        disabled={disabled}
+        aria-pressed={selected}
+        style={{
+          ...option,
+          borderColor: selected ? "var(--accent)" : "var(--border)",
+          opacity: disabled ? 0.62 : 1,
+          cursor: disabled ? "default" : "pointer"
+        }}
+      >
+        <span style={{ fontWeight: 600, display: "block" }}>
+          {title}
+          {tags.map((t) => (
+            <span key={t} style={chip}>
+              {t}
+            </span>
+          ))}
+        </span>
+        {/* An empty fingerprint is said, never left blank. A blank under a
+            confident heading is the defect this whole listing exists to
+            end, and here it also means something specific: the private key
+            was not read in order to invent one. */}
+        <span style={{ ...mono, display: "block", color: "var(--text-2)" }}>
+          {fingerprint === "" ? "no fingerprint available" : fingerprint}
+        </span>
+        <span style={{ ...quiet, display: "block", margin: "3px 0 0" }}>{note}</span>
+      </button>
+    </InfoTooltip>
   );
 }
 

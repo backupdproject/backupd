@@ -41,6 +41,7 @@
 import { useMemo } from "react";
 import { ActivityStrip } from "@shared/pages/ActivityStrip";
 import { ErrorState } from "@shared/components/EmptyState";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import { useCausl } from "@shared/state/graph";
 import { browserNoticesNode, noticesForBackupSet } from "@shared/state/browserNotices";
 import type { BrowserNotice } from "@shared/state/browserNotices";
@@ -136,7 +137,11 @@ export function SetActivityPanel({ set, feed }: { set: BackupSet; feed: Activity
           fontSize: "var(--text-xs)", color: "var(--text-3)", paddingBottom: "var(--space-2)"
         }}
       >
-        {feed.error ? "not refreshing" : "refreshing every " + Math.round(feed.pollAfterMs / 1000) + "s"}
+        <InfoTooltip id="sets.activity.refresh" alignEnd>
+          <span>
+            {feed.error ? "not refreshing" : "refreshing every " + Math.round(feed.pollAfterMs / 1000) + "s"}
+          </span>
+        </InfoTooltip>
       </div>
       {/* A failed poll states itself and leaves the strip where it is.
           Blanking a panel somebody is reading is a worse answer than an

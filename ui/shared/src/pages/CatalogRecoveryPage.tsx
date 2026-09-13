@@ -25,6 +25,7 @@ import { EmptyState, ErrorState } from "@shared/components/EmptyState";
 import { Icon } from "@shared/design-system/icons";
 import { useCausl } from "@shared/state/graph";
 import { configuredNode } from "@shared/state/appNodes";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import type { CatalogScanPreview } from "@shared/api/contracts";
 
 /** This flow must feel safe and non-destructive at every step (§39). */
@@ -65,6 +66,7 @@ export function CatalogRecoveryPage({ readOnly }: { readOnly: boolean }) {
           message={failure.message}
           remediation={failure.remediation}
           correlationId={failure.correlationId}
+          tip="quarantine.recovery.failure"
         />
       ) : null}
 
@@ -75,10 +77,13 @@ export function CatalogRecoveryPage({ readOnly }: { readOnly: boolean }) {
         // outcome is a refusal.
         <EmptyState
           title="There is no storage location to scan yet"
+          tip="quarantine.recovery.no-storage"
           action={
-            <button className="btn btn--primary" onClick={() => navigate("/sets/new")}>
-              Add backup set
-            </button>
+            <InfoTooltip id="quarantine.recovery.add-set">
+              <button className="btn btn--primary" onClick={() => navigate("/sets/new")}>
+                Add backup set
+              </button>
+            </InfoTooltip>
           }
         >
           Catalog recovery rebuilds the catalog from backup files already on this NAS.
@@ -88,22 +93,30 @@ export function CatalogRecoveryPage({ readOnly }: { readOnly: boolean }) {
       ) : (
         <section className="card">
           <div className="card__body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ fontSize: 15, fontWeight: 600 }}>Existing backup data detected</div>
+            <InfoTooltip id="quarantine.recovery.detected" block>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Existing backup data detected</div>
+            </InfoTooltip>
             <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", maxWidth: "74ch" }}>
               Backup files were found in the configured storage location, but they are not
               currently present in the Backupd catalog. Scanning reads file
               metadata and checksums only.
             </p>
-            <Banner tone="ok" style={{ fontSize: "var(--text-sm)" }}>
+            <Banner
+              tone="ok"
+              style={{ fontSize: "var(--text-sm)" }}
+              tip="quarantine.recovery.scan-safety"
+            >
               <span aria-hidden="true" style={{ color: "var(--ok)", lineHeight: 1.5 }}>
                 <Icon name="success" />
               </span>
               <span>No files will be deleted, moved, or modified by a scan or a rebuild.</span>
             </Banner>
             <div>
-              <button className="btn btn--primary" disabled={readOnly || scanning} onClick={scan}>
-                {scanning ? "Scanning backup storage…" : "Scan backup storage"}
-              </button>
+              <InfoTooltip id="quarantine.recovery.scan">
+                <button className="btn btn--primary" disabled={readOnly || scanning} onClick={scan}>
+                  {scanning ? "Scanning backup storage…" : "Scan backup storage"}
+                </button>
+              </InfoTooltip>
             </div>
           </div>
         </section>
@@ -111,25 +124,51 @@ export function CatalogRecoveryPage({ readOnly }: { readOnly: boolean }) {
 
       {preview ? (
         <section className="card">
-          <div className="card__header"><h2 className="eyebrow">Catalog rebuild preview</h2></div>
+          <div className="card__header">
+            {/* The heading wrapped rather than annotated: an icon inside
+                an <h2> becomes part of the heading's own name (#834). */}
+            <InfoTooltip id="quarantine.recovery.preview" block>
+              <h2 className="eyebrow">Catalog rebuild preview</h2>
+            </InfoTooltip>
+          </div>
           <div className="card__body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "1fr auto", gap: "9px 14px", fontSize: 13 }}>
               <dt style={{ color: "var(--text-2)" }}>Backup artifacts discovered</dt>
-              <dd className="mono" style={{ margin: 0 }}>{preview.discovered}</dd>
+              <dd className="mono" style={{ margin: 0 }}>
+                <InfoTooltip id="quarantine.recovery.discovered" alignEnd>
+                  <span>{preview.discovered}</span>
+                </InfoTooltip>
+              </dd>
               <dt style={{ color: "var(--text-2)" }}>Valid</dt>
-              <dd className="mono" style={{ margin: 0, color: "var(--ok)" }}>{preview.valid}</dd>
+              <dd className="mono" style={{ margin: 0, color: "var(--ok)" }}>
+                <InfoTooltip id="quarantine.recovery.valid" alignEnd>
+                  <span>{preview.valid}</span>
+                </InfoTooltip>
+              </dd>
               <dt style={{ color: "var(--text-2)" }}>Require review</dt>
-              <dd className="mono" style={{ margin: 0, color: "var(--warn)" }}>{preview.requiresReview}</dd>
+              <dd className="mono" style={{ margin: 0, color: "var(--warn)" }}>
+                <InfoTooltip id="quarantine.recovery.requires-review" alignEnd>
+                  <span>{preview.requiresReview}</span>
+                </InfoTooltip>
+              </dd>
             </dl>
-            <Banner tone="info" style={{ fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
+            <Banner
+              tone="info"
+              style={{ fontSize: "var(--text-sm)", color: "var(--text-2)" }}
+              tip="quarantine.recovery.review-notice"
+            >
               <span aria-hidden="true" style={{ color: "var(--text-3)" }}>i</span>
               <span>Artifacts requiring review are placed in Quarantine, not deleted.</span>
             </Banner>
             <div style={{ display: "flex", gap: 9 }}>
-              <button className="btn" onClick={() => setPreview(null)}>Cancel</button>
-              <button className="btn btn--primary" disabled={readOnly} onClick={() => setConfirming(true)}>
-                Rebuild catalog
-              </button>
+              <InfoTooltip id="quarantine.recovery.cancel">
+                <button className="btn" onClick={() => setPreview(null)}>Cancel</button>
+              </InfoTooltip>
+              <InfoTooltip id="quarantine.recovery.rebuild">
+                <button className="btn btn--primary" disabled={readOnly} onClick={() => setConfirming(true)}>
+                  Rebuild catalog
+                </button>
+              </InfoTooltip>
             </div>
           </div>
         </section>

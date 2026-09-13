@@ -18,16 +18,25 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { Banner } from "@shared/components/Banner";
 import { Icon } from "@shared/design-system/icons";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 export function EmptyState({
   title,
   children,
-  action
+  action,
+  tip
 }: {
   title: string;
   children?: ReactNode;
   action?: ReactNode;
+  /** What this panel's emptiness MEANS, from the registry (#834). It wraps
+   *  the heading and nothing else, so the panel looks exactly as it did
+   *  and a caller's `action` keeps whatever explanation it carries of its
+   *  own. */
+  tip?: TooltipId;
 }) {
+  const heading = <div style={{ fontSize: 15, fontWeight: 600 }}>{title}</div>;
   return (
     <div
       style={{
@@ -36,7 +45,13 @@ export function EmptyState({
         background: "var(--surface-2)"
       }}
     >
-      <div style={{ fontSize: 15, fontWeight: 600 }}>{title}</div>
+      {tip ? (
+        <InfoTooltip id={tip} block>
+          {heading}
+        </InfoTooltip>
+      ) : (
+        heading
+      )}
       {children ? (
         <p
           style={{
@@ -86,7 +101,8 @@ export function ErrorState({
   correlationId,
   detail,
   onRetry,
-  retriedAt
+  retriedAt,
+  tip
 }: {
   message: string;
   remediation?: string;
@@ -107,6 +123,11 @@ export function ErrorState({
    *  (#598). The caller owns this rather than this component, because this
    *  component unmounts for the moment the retry is in flight. */
   retriedAt?: string;
+  /** What the caller could not show, from the registry (#834). Wrapped
+   *  around the headline, where the controls below keep their own
+   *  explanations: the message itself is the service's words and says what
+   *  broke, not what the operator has lost by it. */
+  tip?: TooltipId;
 }) {
   const [copied, setCopied] = useState<"idle" | "done" | "failed">("idle");
 
@@ -117,6 +138,12 @@ export function ErrorState({
   // Nothing to disclose is not a disclosure with nothing in it. A failure
   // that carried neither an id nor a detail offers no panel at all.
   const advanced = lines === "" ? undefined : lines;
+
+  // Held in a variable rather than written twice: `tip` wraps this line
+  // when the caller named an entry, and wrapping is what leaves the
+  // element — and the text every other surface finds this panel by —
+  // exactly as it was (#834).
+  const headline = <div style={{ fontWeight: 600, fontSize: 13.5 }}>{message}</div>;
 
   return (
     // Not dismissible (#620). Every caller renders this INSTEAD of the
@@ -131,7 +158,13 @@ export function ErrorState({
           <Icon name="failure" />
         </span>
         <div>
-          <div style={{ fontWeight: 600, fontSize: 13.5 }}>{message}</div>
+          {tip ? (
+            <InfoTooltip id={tip} block>
+              {headline}
+            </InfoTooltip>
+          ) : (
+            headline
+          )}
           {remediation ? (
             <div style={{ marginTop: 4, fontSize: 13, color: "var(--text-2)" }}>{remediation}</div>
           ) : null}
@@ -143,17 +176,19 @@ export function ErrorState({
               {/* The next thing an operator does with a failure is paste
                   it somewhere, and retyping four lines of exception text
                   off a screen is how the useful half gets left out. */}
-              <button
-                className="btn btn--sm"
-                style={{ marginTop: 8 }}
-                onClick={() => {
-                  void copyToClipboard(message + "\n" + (remediation ? remediation + "\n" : "") + advanced).then(
-                    (ok) => setCopied(ok ? "done" : "failed")
-                  );
-                }}
-              >
-                Copy details
-              </button>
+              <InfoTooltip id="common.error-copy-details">
+                <button
+                  className="btn btn--sm"
+                  style={{ marginTop: 8 }}
+                  onClick={() => {
+                    void copyToClipboard(message + "\n" + (remediation ? remediation + "\n" : "") + advanced).then(
+                      (ok) => setCopied(ok ? "done" : "failed")
+                    );
+                  }}
+                >
+                  Copy details
+                </button>
+              </InfoTooltip>
               {copied === "done" ? (
                 <span role="status" style={{ marginLeft: 8 }}>Copied</span>
               ) : null}
@@ -166,13 +201,17 @@ export function ErrorState({
           ) : null}
           {onRetry ? (
             <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
-              <button className="btn btn--sm" onClick={onRetry}>
-                Try again
-              </button>
+              <InfoTooltip id="common.error-retry">
+                <button className="btn btn--sm" onClick={onRetry}>
+                  Try again
+                </button>
+              </InfoTooltip>
               {retriedAt ? (
-                <span role="status" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-                  {"Tried again at " + retriedAt + ", and it failed the same way."}
-                </span>
+                <InfoTooltip id="common.error-retried-at">
+                  <span role="status" style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+                    {"Tried again at " + retriedAt + ", and it failed the same way."}
+                  </span>
+                </InfoTooltip>
               ) : null}
             </div>
           ) : null}

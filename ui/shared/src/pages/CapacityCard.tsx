@@ -9,6 +9,7 @@ import { FIELD_HELP } from "@shared/components/fieldHelpCopy";
 import { ErrorState } from "@shared/components/EmptyState";
 import { Icon } from "@shared/design-system/icons";
 import { isNotConfigured } from "@shared/api/failure";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 /**
  * Issue #286 — the storage cap and its two FR-21 thresholds, the write
@@ -49,7 +50,9 @@ export function CapacityCard({ readOnly }: { readOnly: boolean }) {
   return (
     <section className="card">
       <div className="card__header">
-        <h2 className="eyebrow">Storage capacity</h2>
+        <InfoTooltip id="capacity.card" block>
+          <h2 className="eyebrow">Storage capacity</h2>
+        </InfoTooltip>
       </div>
       <div className="card__body">
         {isNotConfigured(settings.error) ? (
@@ -163,30 +166,34 @@ function ByteAmountField({
             />
           )}
         </HelpField>
-        <label className="field" style={{ width: 88 }}>
-          <span className="visually-hidden">{label + " unit"}</span>
-          <select
-            className="select"
-            value={draft.unit}
-            disabled={readOnly}
-            onChange={(e) => {
-              const nextUnit = e.target.value as ByteUnit;
-              const b = draftToBytes(draft);
-              onChange({
-                amount: Number.isFinite(b) ? trimAmount(b / UNIT_BYTES[nextUnit]) : draft.amount,
-                unit: nextUnit
-              });
-            }}
-          >
-            <option value="MB">MB</option>
-            <option value="GB">GB</option>
-          </select>
-        </label>
+        <InfoTooltip id="capacity.unit" alignEnd>
+          <label className="field" style={{ width: 88 }}>
+            <span className="visually-hidden">{label + " unit"}</span>
+            <select
+              className="select"
+              value={draft.unit}
+              disabled={readOnly}
+              onChange={(e) => {
+                const nextUnit = e.target.value as ByteUnit;
+                const b = draftToBytes(draft);
+                onChange({
+                  amount: Number.isFinite(b) ? trimAmount(b / UNIT_BYTES[nextUnit]) : draft.amount,
+                  unit: nextUnit
+                });
+              }}
+            >
+              <option value="MB">MB</option>
+              <option value="GB">GB</option>
+            </select>
+          </label>
+        </InfoTooltip>
       </div>
       {error ? (
         <span style={{ fontSize: "var(--text-sm)", color: "var(--danger)" }}>{error}</span>
       ) : hint ? (
-        <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>{hint}</span>
+        <InfoTooltip id="capacity.no-cap-hint">
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>{hint}</span>
+        </InfoTooltip>
       ) : null}
     </div>
   );
@@ -349,15 +356,19 @@ function CapacityEditor({ loaded, readOnly }: { loaded: CapacitySettings; readOn
       </div>
 
       {baseline.backupRoot ? (
-        <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-          {(baseline.backupRootConfigured ? "Measured at " : "Measured at the shared backup destination, ")
-            + baseline.backupRoot
-            + (baseline.backupRootConfigured ? "." : " (derived from your configured backup sets).")}
-        </p>
+        <InfoTooltip id="capacity.measured-at" block>
+          <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+            {(baseline.backupRootConfigured ? "Measured at " : "Measured at the shared backup destination, ")
+              + baseline.backupRoot
+              + (baseline.backupRootConfigured ? "." : " (derived from your configured backup sets).")}
+          </p>
+        </InfoTooltip>
       ) : (
-        <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-          No filesystem to measure yet: add a backup set first.
-        </p>
+        <InfoTooltip id="capacity.no-filesystem" block>
+          <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+            No filesystem to measure yet: add a backup set first.
+          </p>
+        </InfoTooltip>
       )}
 
       {saveError ? (
@@ -378,15 +389,17 @@ function CapacityEditor({ loaded, readOnly }: { loaded: CapacitySettings; readOn
       ) : null}
 
       <div>
-        <button
-          className="btn btn--primary"
-          type="button"
-          style={{ height: 40 }}
-          disabled={readOnly || invalid || !dirty || busy}
-          onClick={onSave}
-        >
-          {busy ? "Saving…" : "Save storage capacity"}
-        </button>
+        <InfoTooltip id="capacity.save">
+          <button
+            className="btn btn--primary"
+            type="button"
+            style={{ height: 40 }}
+            disabled={readOnly || invalid || !dirty || busy}
+            onClick={onSave}
+          >
+            {busy ? "Saving…" : "Save storage capacity"}
+          </button>
+        </InfoTooltip>
       </div>
     </div>
   );

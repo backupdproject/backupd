@@ -23,6 +23,8 @@
  * keeps the history for the terminals.
  */
 import { WarningBanner } from "@shared/components/WarningBanner";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 import type { BrowserNotice } from "@shared/state/browserNotices";
 
 const TONE = { ok: "ok", refused: "danger", unreachable: "warn" } as const;
@@ -33,10 +35,24 @@ const EYEBROW = {
   unreachable: "No answer"
 } as const;
 
-export function RunControlNotice({ notice }: { notice: BrowserNotice | null }) {
+/** `tip` defaults, like HaltBanner's: what this banner is — the last
+ *  answer a run control gave — is the same fact on every page that renders
+ *  one, and a page that wants to say more names its own entry (#834). */
+export function RunControlNotice({
+  notice,
+  tip = "common.run-control-notice"
+}: {
+  notice: BrowserNotice | null;
+  tip?: TooltipId;
+}) {
   if (notice === null) return null;
   return (
-    <WarningBanner tone={TONE[notice.outcome]} eyebrow={EYEBROW[notice.outcome]} title={notice.message}>
+    <WarningBanner
+      tone={TONE[notice.outcome]}
+      eyebrow={EYEBROW[notice.outcome]}
+      title={notice.message}
+      tip={tip}
+    >
       {notice.remediation ? <p style={{ margin: 0 }}>{notice.remediation}</p> : null}
       {/* The command this button is equivalent to, copy-pasteable exactly
           as shown. It is printed on a refusal too, and that is the point
@@ -44,18 +60,20 @@ export function RunControlNotice({ notice }: { notice: BrowserNotice | null }) {
           the only remaining way to start the backup that was just
           refused. */}
       {notice.command ? (
-        <pre
-          style={{
-            margin: "6px 0 0",
-            padding: "6px 8px",
-            background: "var(--surface-2, rgba(0,0,0,0.04))",
-            borderRadius: 4,
-            fontSize: 12,
-            overflowX: "auto"
-          }}
-        >
-          $ {notice.command}
-        </pre>
+        <InfoTooltip id="common.run-command" block>
+          <pre
+            style={{
+              margin: "6px 0 0",
+              padding: "6px 8px",
+              background: "var(--surface-2, rgba(0,0,0,0.04))",
+              borderRadius: 4,
+              fontSize: 12,
+              overflowX: "auto"
+            }}
+          >
+            $ {notice.command}
+          </pre>
+        </InfoTooltip>
       ) : null}
       {/* Behind the sentence rather than in it: an id is what somebody
           copies into a support message, and it is worth nothing in a
@@ -63,9 +81,11 @@ export function RunControlNotice({ notice }: { notice: BrowserNotice | null }) {
           never reached the service, because an id that matches no log
           line is worse than none (#274). */}
       {notice.correlationId ? (
-        <div style={{ marginTop: 6, fontSize: 12, color: "var(--text-3)" }}>
-          Correlation id: <code>{notice.correlationId}</code>
-        </div>
+        <InfoTooltip id="common.correlation-id" block>
+          <div style={{ marginTop: 6, fontSize: 12, color: "var(--text-3)" }}>
+            Correlation id: <code>{notice.correlationId}</code>
+          </div>
+        </InfoTooltip>
       ) : null}
     </WarningBanner>
   );

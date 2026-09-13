@@ -2,6 +2,8 @@ import type { BackupSet } from "@shared/types/backup";
 import { HealthBadge, HEALTH_PRESENTATION, StatusBadge } from "./StatusBadge";
 import { backupSetIdentity } from "@shared/utilities/backupSetIdentity";
 import { bytes, relativeAge } from "@shared/utilities/format";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 /**
  * One backup set, as a card.
@@ -89,7 +91,9 @@ export function BackupSetCard({
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>{set.name}</div>
+          <InfoTooltip id="sets.card.name" block>
+            <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>{set.name}</div>
+          </InfoTooltip>
           {/* The set's canonical identity, on the row. `name` is a display
               label two sets under different sources may share; this is the
               pair the API takes, the pair the set's own URL carries, and
@@ -97,34 +101,44 @@ export function BackupSetCard({
               retyped. Printing it here is what makes that retyping a
               recognition rather than a copy out of the dialog doing the
               asking. */}
-          <div className="mono" style={{ marginTop: 3, fontSize: "var(--text-sm)", color: "var(--text-2)", overflowWrap: "anywhere" }}>
-            {backupSetIdentity(set)}
-          </div>
-          <div className="mono" style={{ marginTop: 2, fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
-            {set.host + ":" + set.port}
-          </div>
+          <InfoTooltip id="sets.card.identity" block>
+            <div className="mono" style={{ marginTop: 3, fontSize: "var(--text-sm)", color: "var(--text-2)", overflowWrap: "anywhere" }}>
+              {backupSetIdentity(set)}
+            </div>
+          </InfoTooltip>
+          <InfoTooltip id="sets.card.endpoint" block>
+            <div className="mono" style={{ marginTop: 2, fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+              {set.host + ":" + set.port}
+            </div>
+          </InfoTooltip>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-          <HealthBadge state={set.state} />
+          <InfoTooltip id="sets.card.health" alignEnd>
+            <HealthBadge state={set.state} />
+          </InfoTooltip>
           {/* State, not just an action. An operator scanning this page can
               see which sets are paused without pressing anything, which
               the enable/disable button's own label cannot do on its own:
               a button reading "Enable" is equally consistent with "this
               set is off" and with "this button turns sets on". */}
           {set.enabled ? null : (
-            <StatusBadge tone="neutral" icon="status-idle">Disabled</StatusBadge>
+            <InfoTooltip id="sets.card.disabled" alignEnd>
+              <StatusBadge tone="neutral" icon="status-idle">Disabled</StatusBadge>
+            </InfoTooltip>
           )}
         </div>
       </div>
 
-      <p
-        style={{
-          margin: 0, padding: "0 17px 13px", fontSize: "var(--text-sm)",
-          color: "var(--text-2)", minHeight: 34
-        }}
-      >
-        {set.stateNote}
-      </p>
+      <InfoTooltip id="sets.card.state-note" block>
+        <p
+          style={{
+            margin: 0, padding: "0 17px 13px", fontSize: "var(--text-sm)",
+            color: "var(--text-2)", minHeight: 34
+          }}
+        >
+          {set.stateNote}
+        </p>
+      </InfoTooltip>
 
       <dl
         style={{
@@ -133,8 +147,8 @@ export function BackupSetCard({
           fontSize: "var(--text-sm)"
         }}
       >
-        <Field label="Newest known-good" value={relativeAge(set.newestKnownGoodAt)} mono />
-        <Field label="Last run" value={relativeAge(set.lastRunAt)} mono />
+        <Field label="Newest known-good" value={relativeAge(set.newestKnownGoodAt)} mono tip="sets.card.newest-known-good" />
+        <Field label="Last run" value={relativeAge(set.lastRunAt)} mono tip="sets.card.last-run" />
         {/* Issue #333. This used to read "0 / 0 / 0" on every card in
             every real deployment, because the daily/weekly/monthly numbers
             behind it were a hardcoded placeholder nothing computed. It
@@ -144,6 +158,7 @@ export function BackupSetCard({
         <Field
           label="Retention"
           value={set.retentionIsOverride ? "This set's own policy" : "Deployment policy"}
+          tip="sets.card.retention"
         />
         {/* "Not reported" is a fourth answer, and it is the one every real
             deployment gets: nothing on the wire carries a validation
@@ -153,6 +168,7 @@ export function BackupSetCard({
             whose validator may have been failing for a month. */}
         <Field
           label="Last validation"
+          tip="sets.card.last-validation"
           value={
             set.lastValidation === "passed"
               ? "Passed"
@@ -165,6 +181,7 @@ export function BackupSetCard({
         />
         <Field
           label="Retained"
+          tip="sets.card.retained"
           value={
             set.retainedCount === null || set.retainedBytes === null
               ? "Not reported"
@@ -176,6 +193,7 @@ export function BackupSetCard({
           label="Expected every"
           value={set.expectedIntervalHours === null ? "Not reported" : set.expectedIntervalHours + "h"}
           mono
+          tip="sets.card.expected-every"
         />
       </dl>
 
@@ -183,39 +201,47 @@ export function BackupSetCard({
         className="card__footer"
         style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}
       >
-        <button className="btn btn--sm" onClick={onOpen}>Open</button>
-        <button className="btn btn--sm btn--quiet" onClick={onTest} disabled={rowDisabled}>
-          Test connection
-        </button>
+        <InfoTooltip id="sets.card.open">
+          <button className="btn btn--sm" onClick={onOpen}>Open</button>
+        </InfoTooltip>
+        <InfoTooltip id="sets.card.test">
+          <button className="btn btn--sm btn--quiet" onClick={onTest} disabled={rowDisabled}>
+            Test connection
+          </button>
+        </InfoTooltip>
         {/* Caution tier, same as the detail page's copy of this control,
             and no typed confirmation: pausing a backup set is reversible
             by pressing the same button again, and making an operator type
             a name for that would be ceremony without a risk behind it. */}
-        <button
-          className="btn btn--sm btn--caution"
-          onClick={onToggleEnabled}
-          disabled={rowDisabled}
-        >
-          {set.enabled ? "Disable" : "Enable"}
-          {/* The rest of the accessible name, off screen. Four rows means
-              four buttons reading "Disable", which is four controls an
-              assistive technology cannot tell apart and, incidentally,
-              four a test cannot address either. The visible half stays
-              short because the row is narrow, and the visible half is a
-              prefix of the whole so the spoken name still starts with
-              what is written on it. The wording is the detail page's own
-              ("Disable backup set"), so the same action reads the same
-              way wherever it is offered. */}
-          <span className="visually-hidden">{" backup set " + set.name}</span>
-        </button>
-        <button
-          className="btn btn--sm btn--destructive"
-          onClick={onRemove}
-          disabled={rowDisabled}
-        >
-          {"Remove\u2026"}
-          <span className="visually-hidden">{" set configuration for " + set.name}</span>
-        </button>
+        <InfoTooltip id="sets.card.toggle-enabled">
+          <button
+            className="btn btn--sm btn--caution"
+            onClick={onToggleEnabled}
+            disabled={rowDisabled}
+          >
+            {set.enabled ? "Disable" : "Enable"}
+            {/* The rest of the accessible name, off screen. Four rows means
+                four buttons reading "Disable", which is four controls an
+                assistive technology cannot tell apart and, incidentally,
+                four a test cannot address either. The visible half stays
+                short because the row is narrow, and the visible half is a
+                prefix of the whole so the spoken name still starts with
+                what is written on it. The wording is the detail page's own
+                ("Disable backup set"), so the same action reads the same
+                way wherever it is offered. */}
+            <span className="visually-hidden">{" backup set " + set.name}</span>
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="sets.card.remove">
+          <button
+            className="btn btn--sm btn--destructive"
+            onClick={onRemove}
+            disabled={rowDisabled}
+          >
+            {"Remove\u2026"}
+            <span className="visually-hidden">{" set configuration for " + set.name}</span>
+          </button>
+        </InfoTooltip>
         <div style={{ flex: 1 }} />
         {/* What is running for this set right now, and nothing more. The
             fallback used to be `set.halted ? "halted" : "idle"`, and
@@ -226,15 +252,17 @@ export function BackupSetCard({
             only what operationsNode actually reports (#231). Why the set
             is not running, when the manager knows, is stateNote's job and
             the detail page's host-key banner's. */}
-        <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
-          {currentOperation ?? "idle"}
-        </span>
+        <InfoTooltip id="sets.card.current-operation" alignEnd>
+          <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+            {currentOperation ?? "idle"}
+          </span>
+        </InfoTooltip>
       </div>
     </article>
   );
 }
 
-function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Field({ label, value, mono, tip }: { label: string; value: string; mono?: boolean; tip?: TooltipId }) {
   return (
     <div>
       <dt
@@ -243,8 +271,13 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
       >
         {label}
       </dt>
+      {/* The tooltip goes round the VALUE rather than round this pair: a
+          <dl> associates its terms and definitions through its own
+          children, so a host between the list and them would be a
+          wrapper an assistive technology has to walk past to find the
+          row. */}
       <dd style={{ margin: "3px 0 0", fontFamily: mono ? "var(--font-mono)" : undefined }}>
-        {value}
+        {tip ? <InfoTooltip id={tip}><span>{value}</span></InfoTooltip> : value}
       </dd>
     </div>
   );

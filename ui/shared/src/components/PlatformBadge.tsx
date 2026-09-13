@@ -13,6 +13,7 @@
  * appears as a value in a row and not as a title anywhere.
  */
 import { usePlatform } from "@shared/platform/PlatformContext";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 const INTEGRATION_LABEL: Record<string, string> = {
   standalone: "Standalone web app",
@@ -48,17 +49,32 @@ export function PlatformBadge({ compact = false }: { compact?: boolean }) {
         gap: "11px 14px", fontSize: 13
       }}
     >
-      <dt style={{ color: "var(--text-2)" }}>Platform</dt>
+      {/* Issue #834: the explanation goes on the TERM, not on the value.
+          A deployment label and a storage mount are strings an
+          administrator is asked to quote, and what they mean is a property
+          of the row rather than of today's value. The compact rendering
+          carries no "i" of its own because the nav wraps the whole block
+          in one tooltip already. */}
+      <dt style={{ color: "var(--text-2)" }}><span>Platform</span><InfoTooltip id="platform.name" /></dt>
       <dd style={{ margin: 0, fontWeight: 500 }}>{bridge.name}</dd>
-      <dt style={{ color: "var(--text-2)" }}>Integration</dt>
+      <dt style={{ color: "var(--text-2)" }}>
+        <span>Integration</span>
+        <InfoTooltip id="platform.integration" />
+      </dt>
       <dd style={{ margin: 0 }}>{INTEGRATION_LABEL[bridge.integration]}</dd>
-      <dt style={{ color: "var(--text-2)" }}>Authentication</dt>
+      <dt style={{ color: "var(--text-2)" }}><span>Authentication</span><InfoTooltip id="platform.auth" /></dt>
       <dd style={{ margin: 0 }}>{authLabel}</dd>
-      <dt style={{ color: "var(--text-2)" }}>Deployment</dt>
+      <dt style={{ color: "var(--text-2)" }}>
+        <span>Deployment</span>
+        <InfoTooltip id="platform.deployment" />
+      </dt>
       <dd className="mono" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
         {bridge.deployment.label}
       </dd>
-      <dt style={{ color: "var(--text-2)" }}>Storage mount</dt>
+      <dt style={{ color: "var(--text-2)" }}>
+        <span>Storage mount</span>
+        <InfoTooltip id="platform.storage-mount" />
+      </dt>
       <dd className="mono" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
         {bridge.deployment.storageMount}
       </dd>

@@ -15,6 +15,7 @@
 import { ErrorState } from "@shared/components/EmptyState";
 import { ActivityStrip } from "@shared/pages/ActivityStrip";
 import { useActivityFeed } from "@shared/pages/useActivityFeed";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import type { BackupSet } from "@shared/types/backup";
 
 export { feedRestarted, mergeActivity } from "@shared/pages/useActivityFeed";
@@ -27,10 +28,14 @@ export function DashboardActivity({ sets }: { sets: BackupSet[] | null }) {
   return (
     <section className="card" aria-label="Activity">
       <div className="card__header">
-        <h2 className="eyebrow">Activity</h2>
-        <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-          {feed.error ? "not refreshing" : "refreshing every " + Math.round(feed.pollAfterMs / 1000) + "s"}
-        </span>
+        <InfoTooltip id="dashboard.activity.panel">
+          <h2 className="eyebrow">Activity</h2>
+        </InfoTooltip>
+        <InfoTooltip id="dashboard.activity.cadence" alignEnd>
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+            {feed.error ? "not refreshing" : "refreshing every " + Math.round(feed.pollAfterMs / 1000) + "s"}
+          </span>
+        </InfoTooltip>
       </div>
       {/* A failed poll states itself and leaves the strips where they are.
           The last good reading stays on screen under the notice, because

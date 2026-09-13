@@ -56,6 +56,8 @@ import { ErrorState } from "@shared/components/EmptyState";
 import { RunControlNotice } from "@shared/components/RunControlNotice";
 import { useRunControls } from "@shared/hooks/useRunControls";
 import { useHoverTitle } from "@shared/hooks/useTooltips";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 import { RetentionPreviewDialog } from "./RetentionPreviewDialog";
 import { BackupSetRetentionCard } from "./BackupSetRetentionCard";
 import { EDIT_FIELDS, readEditFields, visibleEditFields, withCompanions } from "./backupSetEditFields";
@@ -618,16 +620,21 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
     <>
       <PageHeader
         back={{ label: "Backup sets", onClick: () => requestExit("backup-sets") }}
+        tip="sets.detail.page"
         title={
           <span style={{ display: "inline-flex", alignItems: "center", gap: 11 }}>
             {s.name}
-            <HealthBadge state={s.state} />
+            <InfoTooltip id="sets.detail.health">
+              <HealthBadge state={s.state} />
+            </InfoTooltip>
           </span>
         }
         subtitle={
-          <span className="mono">
-            {s.host + ":" + s.port + " \u00b7 " + s.remoteFolder}
-          </span>
+          <InfoTooltip id="sets.detail.endpoint">
+            <span className="mono">
+              {s.host + ":" + s.port + " \u00b7 " + s.remoteFolder}
+            </span>
+          </InfoTooltip>
         }
         actions={
           <>
@@ -686,13 +693,15 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                 picks them up), and a refusal that never reached the
                 engine at all is written into that same terminal from
                 here rather than being swallowed. */}
-            <button
-              className="btn"
-              disabled={readOnly || testing}
-              onClick={() => void runConnectionTest()}
-            >
-              {testing ? "Testing\u2026" : "Test connection"}
-            </button>
+            <InfoTooltip id="sets.detail.test-connection">
+              <button
+                className="btn"
+                disabled={readOnly || testing}
+                onClick={() => void runConnectionTest()}
+              >
+                {testing ? "Testing\u2026" : "Test connection"}
+              </button>
+            </InfoTooltip>
             {/* Issue #350: Edit is a mode, so this one button is both the
                 way in and the way out. Read-only keeps it unavailable
                 exactly as it always has. */}
@@ -706,15 +715,19 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
               // unsaved" and then re-sends something already saved is
               // lying about its scope, which is the thing this issue is
               // about.
-              <button
-                className="btn btn--primary"
-                disabled={savingFields.length > 0}
-                onClick={() => void saveAllAndExit()}
-              >
-                SAVE ALL &amp; EXIT EDIT
-              </button>
+              <InfoTooltip id="sets.detail.save-all">
+                <button
+                  className="btn btn--primary"
+                  disabled={savingFields.length > 0}
+                  onClick={() => void saveAllAndExit()}
+                >
+                  SAVE ALL &amp; EXIT EDIT
+                </button>
+              </InfoTooltip>
             ) : (
-              <button className="btn" disabled={readOnly} onClick={() => void onEditPressed()}>Edit</button>
+              <InfoTooltip id="sets.detail.edit">
+                <button className="btn" disabled={readOnly} onClick={() => void onEditPressed()}>Edit</button>
+              </InfoTooltip>
             )}
             {/* Issue #591: the way out that writes nothing. Caution tier
                 rather than primary, beside the exit that saves, and
@@ -730,15 +743,19 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                 point of this control, so it waits the moment out rather
                 than printing something false. */}
             {editing ? (
-              <button
-                className="btn btn--caution"
-                disabled={savingFields.length > 0}
-                onClick={() => requestExit("edit-mode")}
-              >
-                CANCEL &amp; EXIT EDIT MODE
-              </button>
+              <InfoTooltip id="sets.detail.cancel-edit">
+                <button
+                  className="btn btn--caution"
+                  disabled={savingFields.length > 0}
+                  onClick={() => requestExit("edit-mode")}
+                >
+                  CANCEL &amp; EXIT EDIT MODE
+                </button>
+              </InfoTooltip>
             ) : null}
-            <button className="btn" disabled={readOnly} onClick={() => setPreviewOpen(true)}>Preview retention</button>
+            <InfoTooltip id="sets.detail.preview-retention" alignEnd>
+              <button className="btn" disabled={readOnly} onClick={() => setPreviewOpen(true)}>Preview retention</button>
+            </InfoTooltip>
           </>
         }
       />
@@ -776,9 +793,11 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
             tone="warn"
             title="This connection has never been proven"
             actions={
-              <button className="btn btn--sm" disabled={readOnly || testing} onClick={() => void runConnectionTest()}>
-                {testing ? "Testing\u2026" : "Test connection"}
-              </button>
+              <InfoTooltip id="sets.detail.test-connection" alignEnd>
+                <button className="btn btn--sm" disabled={readOnly || testing} onClick={() => void runConnectionTest()}>
+                  {testing ? "Testing\u2026" : "Test connection"}
+                </button>
+              </InfoTooltip>
             }
           >
             This backup set was created without a connection test, so nothing has shown
@@ -802,7 +821,9 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
             tone="warn"
             title="This backup set changed since you opened edit mode"
             actions={
-              <button className="btn btn--sm" onClick={reloadLatestValues}>Reload latest values</button>
+              <InfoTooltip id="sets.detail.reload-values" alignEnd>
+                <button className="btn btn--sm" onClick={reloadLatestValues}>Reload latest values</button>
+              </InfoTooltip>
             }
           >
             Someone (or something) else saved a change to this set first. Nothing from
@@ -818,16 +839,20 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
             title={REFUSAL_TITLE[refusal.kind]}
             actions={
               <>
-                <button
-                  className="btn btn--sm btn--primary"
-                  disabled={savingFields.length > 0}
-                  onClick={() => void confirmRefusal()}
-                >
-                  Save anyway
-                </button>
-                <button className="btn btn--sm" onClick={() => setRefusal(null)}>
-                  Leave it as it was
-                </button>
+                <InfoTooltip id="sets.detail.save-anyway">
+                  <button
+                    className="btn btn--sm btn--primary"
+                    disabled={savingFields.length > 0}
+                    onClick={() => void confirmRefusal()}
+                  >
+                    Save anyway
+                  </button>
+                </InfoTooltip>
+                <InfoTooltip id="sets.detail.leave-as-was" alignEnd>
+                  <button className="btn btn--sm" onClick={() => setRefusal(null)}>
+                    Leave it as it was
+                  </button>
+                </InfoTooltip>
               </>
             }
           >
@@ -853,7 +878,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-          <Section title="Overview">
+          <Section title="Overview" tip="sets.detail.overview">
             <dl
               style={{
                 margin: 0, display: "grid",
@@ -861,14 +886,15 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                 gap: "15px 18px", fontSize: 13
               }}
             >
-              <Cell label="Newest known-good" value={relativeAge(s.newestKnownGoodAt)} mono />
-              <Cell label="Last successful run" value={relativeAge(s.lastRunAt)} mono />
+              <Cell label="Newest known-good" value={relativeAge(s.newestKnownGoodAt)} mono tip="sets.detail.newest-known-good" />
+              <Cell label="Last successful run" value={relativeAge(s.lastRunAt)} mono tip="sets.detail.last-run" />
               {/* "Not reported", not "0 \u00b7 0 B" and not "every 0h". Both
                   of these were literals in api/client.ts on every real
                   deployment, and a zero here is a claim about how much a
                   set is keeping. */}
               <Cell
                 label="Retained"
+                tip="sets.detail.retained"
                 value={
                   s.retainedCount === null || s.retainedBytes === null
                     ? "Not reported"
@@ -878,10 +904,11 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
               />
               <Cell
                 label="Expected cadence"
+                tip="sets.detail.expected-cadence"
                 value={s.expectedIntervalHours === null ? "Not reported" : "every " + s.expectedIntervalHours + "h"}
                 mono
               />
-              <Cell label="State" value={s.stateNote} />
+              <Cell label="State" value={s.stateNote} tip="sets.detail.state" />
               {/* This cell was labelled "Remote cleanup" and read
                   `s.enabled`, which are two different facts. `enabled` is
                   config.BackupSet.Disabled inverted, and that field's own
@@ -898,6 +925,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
               <Cell
                 label="Collection"
                 value={s.enabled ? "Enabled" : "Disabled \u2014 skipped by every run"}
+                tip="sets.detail.collection"
               />
               {/* Issue #282/#316: the axis that decides whether the
                   source original is deleted after a commit, which is
@@ -911,6 +939,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                   this exact figure. */}
               <Cell
                 label="Read-only source"
+                tip="sets.detail.read-only"
                 value={
                   s.readOnly
                     ? s.readOnlyRetainedCount > 0
@@ -923,7 +952,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
           </Section>
 
           {editing && draft && baseline ? (
-            <Section title="Edit this backup set">
+            <Section title="Edit this backup set" tip="sets.detail.edit-section">
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {visibleEditFields(draft).map((field) => (
                   <EditRow
@@ -950,7 +979,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
             </Section>
           ) : null}
 
-          <Section title="Connection">
+          <Section title="Connection" tip="sets.detail.connection">
             {/* Every value in here is one the service read out of this
                 set's own known_hosts. It used to be one literal and one
                 empty string: the algorithm was "ssh-ed25519" written into
@@ -964,6 +993,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
               host={s.host + ":" + s.port}
               keys={s.trustedHostKeys}
               trustedAt={s.trustedHostKeyRecordedAt}
+              tip="sets.detail.host-keys"
             />
             <p style={{ margin: "12px 0 0", fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
               The private key never leaves this NAS and is never displayed.
@@ -976,24 +1006,29 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                 refusal, and proves the whole path before it writes
                 anything. */}
             <div style={{ marginTop: 12 }}>
-              <button className="btn btn--sm" onClick={() => setSSHWizardOpen(true)}>
-                Change SSH authentication
-              </button>
-              <p style={{ margin: "8px 0 0", fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-                {s.sshKeyId === ""
-                  ? "This set uses a key this deployment does not manage, so there is no key id to show. The wizard can point it at one this deployment holds."
-                  : "Authenticating with key " + s.sshKeyId + "."}
-              </p>
+              <InfoTooltip id="sets.detail.change-ssh">
+                <button className="btn btn--sm" onClick={() => setSSHWizardOpen(true)}>
+                  Change SSH authentication
+                </button>
+              </InfoTooltip>
+              <InfoTooltip id="sets.detail.ssh-key" block>
+                <p style={{ margin: "8px 0 0", fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
+                  {s.sshKeyId === ""
+                    ? "This set uses a key this deployment does not manage, so there is no key id to show. The wizard can point it at one this deployment holds."
+                    : "Authenticating with key " + s.sshKeyId + "."}
+                </p>
+              </InfoTooltip>
             </div>
           </Section>
 
-          <Section title="Backup discovery">
+          <Section title="Backup discovery" tip="sets.detail.discovery">
             <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "172px 1fr", gap: "11px 16px", fontSize: 13 }}>
-              <Row label="Remote folder" value={s.remoteFolder} mono />
-              <Row label="Include" value={s.includePatterns.join(", ") || "\u2014"} mono />
-              <Row label="Exclude" value={s.excludePatterns.join(", ") || "\u2014"} mono />
+              <Row label="Remote folder" value={s.remoteFolder} mono tip="sets.detail.remote-folder" />
+              <Row label="Include" value={s.includePatterns.join(", ") || "\u2014"} mono tip="sets.detail.include" />
+              <Row label="Exclude" value={s.excludePatterns.join(", ") || "\u2014"} mono tip="sets.detail.exclude" />
               <Row
                 label="Completion method"
+                tip="sets.detail.completion-method"
                 value={
                   <>
                     {methodLabel}
@@ -1012,7 +1047,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
             ) : null}
           </Section>
 
-          <Section title="Activity">
+          <Section title="Activity" tip="sets.detail.activity">
             {/* Two feeds, side by side, because neither can be built from
                 the other (types/activity.ts argues this at length). The
                 panel is the bounded in-memory tail that knows a transfer
@@ -1033,7 +1068,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
               names which policy retains this set, shows the chain that
               policy actually is, and carries the three operations that
               change it. */}
-          <Section title="Retention">
+          <Section title="Retention" tip="sets.detail.retention">
             <BackupSetRetentionCard
               source={s.source}
               set={s.set}
@@ -1042,7 +1077,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
             />
           </Section>
 
-          <Section title="Validation">
+          <Section title="Validation" tip="sets.detail.validation">
             <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 10, fontSize: 13 }}>
               {(["transfer", "checksum", "application"] as const).map((v) => {
                 const on = s.validations.includes(v);
@@ -1055,10 +1090,12 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                     <span aria-hidden="true" style={{ color: on ? "var(--ok)" : "var(--text-3)" }}>
                       {on ? <Icon name="success" /> : "\u2013"}
                     </span>
-                    <span>
-                      {v === "transfer" ? "Transfer verification" : v === "checksum" ? "Checksum verification (SHA-256)" : "Application validation"}
-                      {on ? null : <span style={{ color: "var(--text-3)" }}> — not enabled</span>}
-                    </span>
+                    <InfoTooltip id={VALIDATION_TIPS[v]}>
+                      <span>
+                        {v === "transfer" ? "Transfer verification" : v === "checksum" ? "Checksum verification (SHA-256)" : "Application validation"}
+                        {on ? null : <span style={{ color: "var(--text-3)" }}> — not enabled</span>}
+                      </span>
+                    </InfoTooltip>
                   </li>
                 );
               })}
@@ -1066,11 +1103,13 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
           </Section>
 
           {/* Caution and destructive actions live apart from ordinary ones (§11, §35). */}
-          <Section title="Set management">
+          <Section title="Set management" tip="sets.detail.management">
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <button className="btn btn--caution" disabled={readOnly} onClick={() => api.setEnabled(s.source, s.set, !s.enabled).then(set.reload)}>
-                {s.enabled ? "Disable backup set" : "Enable backup set"}
-              </button>
+              <InfoTooltip id="sets.detail.toggle-enabled" block>
+                <button className="btn btn--caution" disabled={readOnly} onClick={() => api.setEnabled(s.source, s.set, !s.enabled).then(set.reload)}>
+                  {s.enabled ? "Disable backup set" : "Enable backup set"}
+                </button>
+              </InfoTooltip>
               {/* Issue #316: the read-only counterpart to the
                   enable/disable toggle above, following the same
                   CRUD-parity shape (a dedicated toggle route, not a
@@ -1080,19 +1119,25 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                   (core/service.SetBackupSetReadOnly's own doc) — so it
                   sits in the caution tier beside Disable, not the
                   destructive one below. */}
-              <button
-                className="btn btn--caution"
-                disabled={readOnly}
-                onClick={() => api.setReadOnly(s.source, s.set, !s.readOnly).then(set.reload)}
-              >
-                {s.readOnly ? "Allow remote deletion again" : "Declare source read-only"}
-              </button>
-              <button className="btn btn--destructive" disabled={readOnly} onClick={() => setPreviewOpen(true)}>
-                Apply retention now…
-              </button>
-              <button className="btn btn--destructive" disabled={readOnly} onClick={() => setRemoveOpen(true)}>
-                Remove set configuration…
-              </button>
+              <InfoTooltip id="sets.detail.toggle-read-only" block>
+                <button
+                  className="btn btn--caution"
+                  disabled={readOnly}
+                  onClick={() => api.setReadOnly(s.source, s.set, !s.readOnly).then(set.reload)}
+                >
+                  {s.readOnly ? "Allow remote deletion again" : "Declare source read-only"}
+                </button>
+              </InfoTooltip>
+              <InfoTooltip id="sets.detail.apply-retention" block>
+                <button className="btn btn--destructive" disabled={readOnly} onClick={() => setPreviewOpen(true)}>
+                  Apply retention now…
+                </button>
+              </InfoTooltip>
+              <InfoTooltip id="sets.detail.remove" block>
+                <button className="btn btn--destructive" disabled={readOnly} onClick={() => setRemoveOpen(true)}>
+                  Remove set configuration…
+                </button>
+              </InfoTooltip>
               <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
                 Removing configuration never deletes retained backups from NAS storage.
               </p>
@@ -1250,14 +1295,16 @@ function EditRow({
         </div>
         {/* The accessible name names the box, so a screen reader (and a
             test) can tell seven Saves apart. */}
-        <button
-          className="btn btn--sm"
-          aria-label={"Save " + field.label.toLowerCase()}
-          disabled={!dirty || saving}
-          onClick={onSave}
-        >
-          {saving ? "Saving\u2026" : "Save"}
-        </button>
+        <InfoTooltip id="sets.detail.save-field" alignEnd>
+          <button
+            className="btn btn--sm"
+            aria-label={"Save " + field.label.toLowerCase()}
+            disabled={!dirty || saving}
+            onClick={onSave}
+          >
+            {saving ? "Saving\u2026" : "Save"}
+          </button>
+        </InfoTooltip>
       </div>
       {error ? (
         <p role="alert" style={{ margin: "6px 0 0", fontSize: "var(--text-sm)", color: "var(--danger)" }}>
@@ -1552,16 +1599,32 @@ function clearKeys(
   return next;
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/** One card on this page, with the explanation of what the card is on
+ *  its own heading. The host WRAPS the <h2> rather than sitting inside
+ *  it: a tooltip inside a heading joins the pop-up's copy to the
+ *  heading's accessible name, so the card would be called "Overview
+ *  Explain Overview…" by everything that reads by role. */
+function Section({ title, children, tip }: { title: string; children: React.ReactNode; tip?: TooltipId }) {
+  const heading = <h2 className="eyebrow">{title}</h2>;
   return (
     <section className="card">
       <div className="card__header">
-        <h2 className="eyebrow">{title}</h2>
+        {tip ? <InfoTooltip id={tip}>{heading}</InfoTooltip> : heading}
       </div>
       <div className="card__body">{children}</div>
     </section>
   );
 }
+
+/** Which explanation each validation stage carries. Three ids rather
+ *  than one, because "the bytes arrived" and "the application can read
+ *  what arrived" are different assurances and an operator deciding which
+ *  to turn on is choosing between exactly those. */
+const VALIDATION_TIPS: Record<"transfer" | "checksum" | "application", TooltipId> = {
+  transfer: "sets.detail.validation.transfer",
+  checksum: "sets.detail.validation.checksum",
+  application: "sets.detail.validation.application"
+};
 
 /**
  * The two label-and-value patterns this page states its facts in.
@@ -1586,20 +1649,28 @@ function Section({ title, children }: { title: string; children: React.ReactNode
  * backupSetEditFields.ts rather than about this file. See the pull
  * request that recorded it.
  */
-function Cell({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Cell({ label, value, mono, tip }: { label: string; value: string; mono?: boolean; tip?: TooltipId }) {
   return (
     <div>
       <dt className="eyebrow" style={{ fontSize: 10.5, letterSpacing: "0.06em" }}>{label}</dt>
-      <dd style={{ margin: "4px 0 0", fontFamily: mono ? "var(--font-mono)" : undefined }}>{value}</dd>
+      {/* The host goes round the VALUE, inside the <dd>. A <dl> pairs its
+          terms with its definitions through its own children, so a
+          wrapper between them would be one an assistive technology has
+          to walk past to find the row. */}
+      <dd style={{ margin: "4px 0 0", fontFamily: mono ? "var(--font-mono)" : undefined }}>
+        {tip ? <InfoTooltip id={tip}><span>{value}</span></InfoTooltip> : value}
+      </dd>
     </div>
   );
 }
 
-function Row({ label, value, mono }: { label: string; value: ReactNode; mono?: boolean }) {
+function Row({ label, value, mono, tip }: { label: string; value: ReactNode; mono?: boolean; tip?: TooltipId }) {
   return (
     <>
       <dt style={{ color: "var(--text-2)" }}>{label}</dt>
-      <dd className={mono ? "mono" : undefined} style={{ margin: 0 }}>{value}</dd>
+      <dd className={mono ? "mono" : undefined} style={{ margin: 0 }}>
+        {tip ? <InfoTooltip id={tip}><span>{value}</span></InfoTooltip> : value}
+      </dd>
     </>
   );
 }

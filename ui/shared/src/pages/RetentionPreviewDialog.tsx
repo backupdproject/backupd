@@ -31,6 +31,8 @@ import { WarningBanner } from "@shared/components/WarningBanner";
 import { RetentionTierBadges } from "@shared/components/RetentionBadge";
 import { Icon } from "@shared/design-system/icons";
 import { bytes } from "@shared/utilities/format";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 function describeApplyError(e: unknown): ApiError {
   return e instanceof BackupdError
@@ -176,14 +178,18 @@ export function RetentionPreviewDialog({
           style={{ maxWidth: 620, maxHeight: "84vh", overflow: "auto" }}
         >
           <div style={{ padding: "18px 22px", borderBottom: "1px solid var(--border)" }}>
-            <h2>Retention preview</h2>
-            <p style={{ margin: "4px 0 0", fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
-              {applyError
-                ? "Plan rejected"
-                : p
-                  ? "Plan " + p.planId + " · issued by the backup service"
-                  : "Requesting plan…"}
-            </p>
+            <InfoTooltip id="retention.preview.title" block>
+              <h2>Retention preview</h2>
+            </InfoTooltip>
+            <InfoTooltip id="retention.preview.plan-id" block>
+              <p style={{ margin: "4px 0 0", fontSize: "var(--text-sm)", color: "var(--text-2)" }}>
+                {applyError
+                  ? "Plan rejected"
+                  : p
+                    ? "Plan " + p.planId + " · issued by the backup service"
+                    : "Requesting plan…"}
+              </p>
+            </InfoTooltip>
           </div>
 
           {applyError ? (
@@ -197,15 +203,17 @@ export function RetentionPreviewDialog({
                 }
                 actions={
                   applyError.code === "RETENTION_PLAN_STALE" ? (
-                    <button
-                      className="btn btn--sm"
-                      onClick={() => {
-                        setApplyError(null);
-                        plan.reload();
-                      }}
-                    >
-                      Review new plan
-                    </button>
+                    <InfoTooltip id="retention.preview.review-new-plan">
+                      <button
+                        className="btn btn--sm"
+                        onClick={() => {
+                          setApplyError(null);
+                          plan.reload();
+                        }}
+                      >
+                        Review new plan
+                      </button>
+                    </InfoTooltip>
                   ) : undefined
                 }
               >
@@ -218,7 +226,9 @@ export function RetentionPreviewDialog({
                 tone="warn"
                 title="Retention preview changed"
                 actions={
-                  <button className="btn btn--sm" onClick={plan.reload}>Review new plan</button>
+                  <InfoTooltip id="retention.preview.review-new-plan">
+                    <button className="btn btn--sm" onClick={plan.reload}>Review new plan</button>
+                  </InfoTooltip>
                 }
               >
                 The backup inventory changed after this preview was created. No files
@@ -236,9 +246,9 @@ export function RetentionPreviewDialog({
                   borderRadius: "var(--radius-lg)", overflow: "hidden"
                 }}
               >
-                <Stat label="Keep" value={String(p.keepCount)} />
-                <Stat label="Delete" value={String(p.deleteCount)} tone="var(--danger)" />
-                <Stat label="Reclaim" value={bytes(p.reclaimBytes)} />
+                <Stat tip="retention.preview.keep-count" label="Keep" value={String(p.keepCount)} />
+                <Stat tip="retention.preview.delete-count" label="Delete" value={String(p.deleteCount)} tone="var(--danger)" />
+                <Stat tip="retention.preview.reclaim" label="Reclaim" value={bytes(p.reclaimBytes)} />
               </div>
 
               {/* Issue #333: which policy produced these verdicts, and
@@ -252,25 +262,31 @@ export function RetentionPreviewDialog({
                   pinned to the configuration revision it was computed
                   against, so a separately-fetched policy could describe
                   a chain that did not decide the list underneath it. */}
-              <p
-                style={{ margin: "12px 22px 0", fontSize: "var(--text-sm)", color: "var(--text-2)" }}
-              >
-                {(p.retentionIsOverride
-                  ? "Decided under this backup set's own retention policy: "
-                  : "Decided under the deployment's retention policy: ") +
-                  p.retention.tiers.map((t) => t.name + " " + t.keep).join(", ") +
-                  " · " + p.retention.timezone}
-              </p>
+              <InfoTooltip id="retention.preview.policy-source" block>
+                <p
+                  style={{ margin: "12px 22px 0", fontSize: "var(--text-sm)", color: "var(--text-2)" }}
+                >
+                  {(p.retentionIsOverride
+                    ? "Decided under this backup set's own retention policy: "
+                    : "Decided under the deployment's retention policy: ") +
+                    p.retention.tiers.map((t) => t.name + " " + t.keep).join(", ") +
+                    " · " + p.retention.timezone}
+                </p>
+              </InfoTooltip>
 
               <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 16 }}>
                 <div>
-                  <div className="eyebrow" style={{ color: "var(--ok)", marginBottom: 8 }}>
-                    {"Keep · " + keepVerdicts.length}
-                  </div>
+                  <InfoTooltip id="retention.preview.keep-list" block>
+                    <div className="eyebrow" style={{ color: "var(--ok)", marginBottom: 8 }}>
+                      {"Keep · " + keepVerdicts.length}
+                    </div>
+                  </InfoTooltip>
                   <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
                     {keepVerdicts.map((v) => (
                       <li key={v.artifact} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "var(--text-sm)" }}>
-                        <span className="mono">{v.artifact}</span>
+                        <InfoTooltip id="retention.preview.keep-artifact">
+                          <span className="mono">{v.artifact}</span>
+                        </InfoTooltip>
                         <RetentionTierBadges tiers={v.tiers} />
                       </li>
                     ))}
@@ -283,9 +299,11 @@ export function RetentionPreviewDialog({
                         pass): a refused delete is the plan working correctly,
                         a candidate policy did not select AND that failed an
                         FR-20 safety check — not an error to alarm over. */}
-                    <div className="eyebrow" style={{ color: "var(--text-2)", marginBottom: 8 }}>
-                      {"Refuse · " + refuseVerdicts.length}
-                    </div>
+                    <InfoTooltip id="retention.preview.refuse-list" block>
+                      <div className="eyebrow" style={{ color: "var(--text-2)", marginBottom: 8 }}>
+                        {"Refuse · " + refuseVerdicts.length}
+                      </div>
+                    </InfoTooltip>
                     <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
                       {refuseVerdicts.map((v) => (
                         // Not dismissible (#620). These rows are the
@@ -301,10 +319,12 @@ export function RetentionPreviewDialog({
                           style={{ padding: "8px 10px", fontSize: "var(--text-sm)" }}
                         >
                           <span aria-hidden="true" style={{ color: "var(--text-3)" }}>i</span>
-                          <span>
-                            <span className="mono">{v.artifact}</span>
-                            <span style={{ color: "var(--text-2)" }}>{" — " + v.reason}</span>
-                          </span>
+                          <InfoTooltip id="retention.preview.refuse-reason">
+                            <span>
+                              <span className="mono">{v.artifact}</span>
+                              <span style={{ color: "var(--text-2)" }}>{" — " + v.reason}</span>
+                            </span>
+                          </InfoTooltip>
                         </Banner>
                       ))}
                     </ul>
@@ -312,14 +332,20 @@ export function RetentionPreviewDialog({
                 ) : null}
 
                 <div>
-                  <div className="eyebrow" style={{ color: "var(--danger)", marginBottom: 8 }}>
-                    {"Delete · " + deleteVerdicts.length}
-                  </div>
+                  <InfoTooltip id="retention.preview.delete-list" block>
+                    <div className="eyebrow" style={{ color: "var(--danger)", marginBottom: 8 }}>
+                      {"Delete · " + deleteVerdicts.length}
+                    </div>
+                  </InfoTooltip>
                   <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
                     {deleteVerdicts.map((v) => (
                       <li key={v.artifact} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "var(--text-sm)" }}>
-                        <span className="mono">{v.artifact}</span>
-                        <span style={{ color: "var(--text-2)" }}>{v.reason}</span>
+                        <InfoTooltip id="retention.preview.delete-artifact">
+                          <span className="mono">{v.artifact}</span>
+                        </InfoTooltip>
+                        <InfoTooltip id="retention.preview.delete-reason" alignEnd>
+                          <span style={{ color: "var(--text-2)" }}>{v.reason}</span>
+                        </InfoTooltip>
                       </li>
                     ))}
                   </ul>
@@ -329,14 +355,18 @@ export function RetentionPreviewDialog({
           ) : null}
 
           <div className="card__footer" style={{ display: "flex", justifyContent: "flex-end", gap: 9, borderRadius: "0 0 10px 10px" }}>
-            <button className="btn" onClick={onClose}>Cancel</button>
-            <button
-              className="btn btn--destructive"
-              disabled={!p || stale || p.deleteCount === 0}
-              onClick={() => setConfirming(true)}
-            >
-              Continue…
-            </button>
+            <InfoTooltip id="retention.preview.cancel" alignEnd>
+              <button className="btn" onClick={onClose}>Cancel</button>
+            </InfoTooltip>
+            <InfoTooltip id="retention.preview.continue" alignEnd>
+              <button
+                className="btn btn--destructive"
+                disabled={!p || stale || p.deleteCount === 0}
+                onClick={() => setConfirming(true)}
+              >
+                Continue…
+              </button>
+            </InfoTooltip>
           </div>
         </div>
       </div>
@@ -371,11 +401,16 @@ export function RetentionPreviewDialog({
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+function Stat({ label, value, tone, tip }: { label: string; value: string; tone?: string; tip: TooltipId }) {
   return (
-    <div style={{ background: "var(--surface)", padding: "13px 15px" }}>
-      <div className="eyebrow" style={{ fontSize: 10.5 }}>{label}</div>
-      <div style={{ marginTop: 5, fontSize: 20, fontWeight: 600, color: tone }}>{value}</div>
-    </div>
+    // The cell keeps its own box: the host is the grid item here, so it is
+    // laid out as a grid of one to make the panel below it fill the cell
+    // rather than shrink to its own text.
+    <InfoTooltip id={tip} style={{ display: "grid" }}>
+      <div style={{ background: "var(--surface)", padding: "13px 15px" }}>
+        <div className="eyebrow" style={{ fontSize: 10.5 }}>{label}</div>
+        <div style={{ marginTop: 5, fontSize: 20, fontWeight: 600, color: tone }}>{value}</div>
+      </div>
+    </InfoTooltip>
   );
 }

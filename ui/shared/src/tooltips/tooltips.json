@@ -1,0 +1,1598 @@
+{
+  "shell.service-status": {
+    "label": "Service status",
+    "html": "Whether the <strong>backupd service</strong> is running on this machine, and which version answered. Nothing runs on a schedule while it is stopped."
+  },
+  "shell.theme-toggle": {
+    "label": "Theme",
+    "html": "Switches between the <strong>light</strong> and <strong>dark</strong> appearance. Remembered on this browser only."
+  },
+  "shell.sign-out": {
+    "label": "Sign out",
+    "html": "Ends this session and returns to the sign-in screen. Backups already running are <strong>not</strong> interrupted."
+  },
+  "shell.platform": {
+    "label": "Running on",
+    "html": "The platform this interface is running on, how it is integrated, and which account signed in. Backupd is the same product on all of them."
+  },
+  "nav.dashboard": {
+    "label": "Dashboard",
+    "html": "The one screen that answers <strong>is my data safe right now</strong>: health, capacity and what ran today."
+  },
+  "nav.sets": {
+    "label": "Backup sets",
+    "html": "A <strong>backup set</strong> is one source, its schedule, its destinations and its retention chain. This is where they are created and edited. The number is how many are configured."
+  },
+  "nav.backups": {
+    "label": "Backups",
+    "html": "Every stored backup artifact, newest first, with where it is placed and what retains it. The number is how many this deployment is holding."
+  },
+  "nav.activity": {
+    "label": "Activity",
+    "html": "The log of what the service did and why: runs, retention passes, failures and their diagnostics."
+  },
+  "nav.quarantine": {
+    "label": "Quarantine",
+    "html": "Artifacts held back because something about them could not be trusted. <strong>Nothing here is deleted</strong> until you decide. The number is <strong>meant to be zero</strong>; anything else is asking for a decision."
+  },
+  "nav.settings": {
+    "label": "Settings",
+    "html": "Deployment-wide configuration: capacity, retention defaults, appearance and this browser's own preferences."
+  },
+  "page.back": {
+    "label": "Back",
+    "html": "Returns to the list this page was opened from. Nothing is saved, cancelled or run by going back."
+  },
+  "platform.name": {
+    "label": "Platform",
+    "html": "The host Backupd is running on, as that host names itself. Backupd is the same product on every one of them; the platform only decides how it is packaged and how you sign in."
+  },
+  "platform.integration": {
+    "label": "Integration",
+    "html": "How this build is delivered: a standalone web app, a native app, an app embedded in another interface, or a container."
+  },
+  "platform.auth": {
+    "label": "Authentication",
+    "html": "Which account signed in. A <strong>platform session</strong> is the host's own login; a <strong>Backupd local account</strong> is one this service keeps itself."
+  },
+  "platform.deployment": {
+    "label": "Deployment",
+    "html": "The identifier this installation is known by. Quote it when reporting a problem: it is what distinguishes two installations on the same host."
+  },
+  "platform.storage-mount": {
+    "label": "Storage mount",
+    "html": "The path this deployment's backup storage is mounted at. Every destination path on this instance is resolved beneath it."
+  },
+  "settings.notifications": {
+    "label": "Notifications",
+    "html": "What this platform can and cannot do about alerting you, stated plainly. Where an alert goes is deliberately not configurable here."
+  },
+  "settings.interface": {
+    "label": "Interface",
+    "html": "Preferences stored in <strong>this browser only</strong>. They are never sent to the service and never affect anyone else using this instance."
+  },
+  "settings.tooltips-toggle": {
+    "label": "Show tooltips on hover",
+    "html": "Turns the explanatory pop-ups on or off everywhere in this interface, including this one. Turning them back on is always possible from here."
+  },
+  "settings.catalog-recovery": {
+    "label": "Catalog recovery",
+    "html": "Appears when backup files exist in storage that the catalog does not know about — after a restore of the service, or a catalog that was lost."
+  },
+  "settings.catalog-scan": {
+    "label": "Scan backup storage",
+    "html": "Reads the configured storage and lists what it finds so it can be adopted back into the catalog. <strong>Read-only</strong>: nothing is written, moved or deleted by scanning."
+  },
+  "settings.platform": {
+    "label": "Platform",
+    "html": "What this installation is running on and how it is integrated. Facts reported by the platform itself, not guesses made by this interface."
+  },
+  "settings.capabilities": {
+    "label": "Capabilities",
+    "html": "What this platform supports. A capability that is absent is said so here rather than being quietly emulated and presented as native."
+  },
+  "settings.capability": {
+    "label": "Capability",
+    "html": "A tick means this platform provides it; a dash means it does not, and the note on the right says what Backupd does instead."
+  },
+  "settings.system-information": {
+    "label": "System information",
+    "html": "What this build is, end to end. These are the values to quote in a bug report."
+  },
+  "settings.version.service": {
+    "label": "Service version",
+    "html": "The version of the backupd service answering this interface. This page and the compatibility banner read one source, so they cannot disagree."
+  },
+  "settings.version.api": {
+    "label": "API contract",
+    "html": "The version of the HTTP contract this interface speaks. A build that disagrees with the service here has its management actions disabled rather than being allowed to guess."
+  },
+  "settings.version.engine": {
+    "label": "Backup engine",
+    "html": "The version of the transfer engine that moves data to a destination."
+  },
+  "settings.version.go": {
+    "label": "Go toolchain",
+    "html": "The Go toolchain this service was compiled with. It matters for reproducing a build and for tracing a runtime-level fault."
+  },
+  "settings.version.config-revision": {
+    "label": "Configuration revision",
+    "html": "Identifies the configuration the service is currently running. It changes whenever configuration is written, so two instances quoting the same revision are running the same settings."
+  },
+  "settings.version.adapter": {
+    "label": "Platform adapter",
+    "html": "The version of the platform-specific layer this build ships. It moves independently of the service version."
+  },
+  "settings.version.build-commit": {
+    "label": "Build commit",
+    "html": "The exact source revision this build came from. It is the one value that identifies the code running, without ambiguity."
+  },
+  "settings.password": {
+    "label": "Administrator password",
+    "html": "Changes the password of the account signed in here. It does not affect platform accounts or anyone else's Backupd account."
+  },
+  "settings.change-password": {
+    "label": "Change password",
+    "html": "Sets the new password and <strong>signs out every other session</strong> for this account. This tab stays signed in."
+  },
+  "backups.summary": {
+    "label": "Backups summary",
+    "html": "How many retained artifacts this page is listing and what they occupy in total. With a backup set chosen in the filter, both figures count only that set."
+  },
+  "backups.table": {
+    "label": "Retained backups",
+    "html": "One row per artifact this deployment has taken and kept. Selecting a row opens that artifact's own page, where its copies and its lifecycle are."
+  },
+  "backups.col.time": {
+    "label": "Time",
+    "html": "When this deployment finished receiving the artifact, not when the producer made it. The producer's own timestamp is on the artifact's page."
+  },
+  "backups.col.set": {
+    "label": "Backup set",
+    "html": "The backup set this artifact came from. The set's schedule decided when it was taken and its retention chain decides when it goes."
+  },
+  "backups.col.artifact": {
+    "label": "Artifact",
+    "html": "The file name the producer gave this artifact. It is unique within its backup set, which is why the same name can appear once per set."
+  },
+  "backups.col.size": {
+    "label": "Size",
+    "html": "The size the artifact was received at. A copy held on a storage medium may measure differently, and the artifact's page reports each copy separately."
+  },
+  "backups.col.validation": {
+    "label": "Validation",
+    "html": "Whether a checksum has been matched against the producer's manifest. A cell that reports neither a pass nor a failure means nothing has checked this backup yet, which is a gap rather than a verdict."
+  },
+  "backups.col.retention": {
+    "label": "Retention",
+    "html": "Which retention tiers are keeping this artifact, and so what will eventually delete it. A row that names no tier is one nothing will ever expire, and it keeps its space until somebody acts."
+  },
+  "backups.col.medium": {
+    "label": "Medium",
+    "html": "The storage media holding a confirmed copy of this artifact. This column appears only where a copy exists somewhere other than the local backup root."
+  },
+  "backups.col.status": {
+    "label": "Status",
+    "html": "Whether the original has been deleted from the remote server. Removal happens only after a copy here is verified and committed, so a retained original is never a loss."
+  },
+  "backups.showing": {
+    "label": "Row count",
+    "html": "How many rows this table is showing, after the backup set filter. It counts what is listed, not everything this deployment retains."
+  },
+  "backups.detail.artifact-card": {
+    "label": "Artifact",
+    "html": "What this backup is, as the service recorded it at ingestion. Nothing in this card is measured again later, so it describes the artifact as received."
+  },
+  "backups.detail.id": {
+    "label": "Artifact ID",
+    "html": "The artifact's full identity: source, backup set and file name. It is what the command line and the service's logs name this backup by."
+  },
+  "backups.detail.set": {
+    "label": "Backup set",
+    "html": "The backup set that produced this artifact. Its schedule, its destination tiers and its retention chain are all configured there rather than here."
+  },
+  "backups.detail.remote-original": {
+    "label": "Remote original",
+    "html": "Where this artifact sat on the remote server before it was transferred. It is a record of where the file came from, not a claim that it is still there."
+  },
+  "backups.detail.ingestion-path": {
+    "label": "Ingestion path",
+    "html": "Where the transfer landed on this machine. It stays populated for a backup still arriving and for one whose copy has since moved, so it is not evidence of a readable file: the Copies card answers that."
+  },
+  "backups.detail.produced-at": {
+    "label": "Producer timestamp",
+    "html": "When the remote server finished making this artifact. A long gap between this and the received time means the transfer waited, not that the backup is old."
+  },
+  "backups.detail.received-at": {
+    "label": "Received timestamp",
+    "html": "When this deployment finished receiving the artifact. Verification and commit follow it, so this is the earliest moment the backup could be safe."
+  },
+  "backups.detail.size": {
+    "label": "Size",
+    "html": "The received size, rounded and then exact in bytes. The exact figure is the one to quote when comparing this against the producer's own record."
+  },
+  "backups.detail.checksum": {
+    "label": "Checksum",
+    "html": "The algorithm and digest this artifact was validated with. It is the value matched against the producer's manifest, and the one to compare against if a copy is ever checked by hand."
+  },
+  "backups.detail.validation": {
+    "label": "Validation result",
+    "html": "The verdict a validator recorded for this backup. Where none was recorded, nothing has ruled on the backup at all, which is a gap rather than a pass or a failure."
+  },
+  "backups.detail.retention-classes": {
+    "label": "Retention classes",
+    "html": "The tiers that currently select this artifact, such as daily or monthly. An artifact no tier selects is unclassified, and nothing will expire it."
+  },
+  "backups.detail.retention-policy": {
+    "label": "Retention policy",
+    "html": "What will eventually delete this backup, in one sentence. Where no policy governs it, the file holds its space until somebody removes it or the backup set is created again."
+  },
+  "backups.detail.remote-removed": {
+    "label": "Remote source removed",
+    "html": "Whether the original has been deleted from the remote server, and when. The service only ever removes an original after the local copy is verified and committed."
+  },
+  "backups.detail.lifecycle-card": {
+    "label": "Lifecycle",
+    "html": "Every step this backup has been through, in the one order they can happen in. The phases are read from recorded times, so an unreached phase is one that genuinely has not happened."
+  },
+  "backups.detail.recovery-card": {
+    "label": "Recovery",
+    "html": "This card appears only for a backup that failed an attempt and was not quarantined. No cycle will pick that backup up again on its own, so the operator is the only way forward."
+  },
+  "backups.detail.retry": {
+    "label": "Retry ingestion",
+    "html": "Puts this backup back into the pipeline for the next cycle to attempt. The service accepts the request rather than carrying it out at once, so the backup stays failed until an attempt actually runs."
+  },
+  "backups.lifecycle.discovered": {
+    "label": "Discovered",
+    "html": "The remote server signalled that the artifact was complete and ready to take. Nothing has been transferred at this point."
+  },
+  "backups.lifecycle.transferred": {
+    "label": "Transferred",
+    "html": "The bytes arrived over SFTP and the transfer finished. A file on disk is not yet a proven backup, which is what the next two steps are for."
+  },
+  "backups.lifecycle.verified": {
+    "label": "Verified",
+    "html": "The checksum of what arrived matched the producer's manifest, so the copy is the file the producer made. Until this is reached, nothing has checked the bytes."
+  },
+  "backups.lifecycle.committed": {
+    "label": "Committed",
+    "html": "The verified copy was written and fsynced to storage, so it survives a power loss. A copy that is only in flight or only in cache is not committed."
+  },
+  "backups.lifecycle.safe-state": {
+    "label": "Safe state persisted",
+    "html": "The catalogue now records this artifact as known-good, which is what later steps read before acting. Deleting the remote original is gated on this."
+  },
+  "backups.lifecycle.remote-deleted": {
+    "label": "Remote source deleted",
+    "html": "The original was removed from the remote server after the local copy was proven. While this step is pending the remote original is still there, so nothing has been given up."
+  },
+  "backups.lifecycle.time": {
+    "label": "Phase time",
+    "html": "When this phase happened. A dash means the phase has not been reached, so this step is either still to come or will not happen for this backup."
+  },
+  "backups.copies.card": {
+    "label": "Copies",
+    "html": "Where this backup's bytes actually are, one row per confirmed copy. A place that holds no confirmed copy is absent from this list rather than shown as empty."
+  },
+  "backups.copies.count": {
+    "label": "Copy count",
+    "html": "How many durable copies the service has confirmed for this backup. None confirmed means there is nothing to fall back on yet, not that a copy failed."
+  },
+  "backups.copies.col.where": {
+    "label": "Where",
+    "html": "The storage medium holding this copy, and underneath it the kind of place that medium is. It is where the copy IS, not where the backup set sends new backups."
+  },
+  "backups.copies.col.location": {
+    "label": "Location",
+    "html": "The path or object key this copy is stored under, as the medium reports it. It is the address to quote when looking for the copy outside this interface."
+  },
+  "backups.copies.col.size": {
+    "label": "Copy size",
+    "html": "What this particular copy measures, which may legitimately differ from the artifact's received size. Where nobody recorded a size, the cell says so rather than showing zero."
+  },
+  "backups.copies.col.class": {
+    "label": "Class",
+    "html": "The storage class the provider holds this copy in, which is what decides whether it can be read on demand. A dash means the medium reports no class."
+  },
+  "backups.copies.col.access": {
+    "label": "Access",
+    "html": "Whether this copy can be read right now, needs a restore first, or cannot be reached at all. Unreachable means this deployment cannot confirm the copy, which is not the same as it being gone."
+  },
+  "backups.copies.col.verification": {
+    "label": "Verification",
+    "html": "How thoroughly this copy has been checked, from a full content check down to existence alone. A copy nothing has checked says so, and never borrows the weakest rung."
+  },
+  "backups.copies.medium": {
+    "label": "Storage medium",
+    "html": "The medium this copy lives on, named as this deployment's configuration names it. The local backup root is the directory on this machine."
+  },
+  "backups.copies.medium-type": {
+    "label": "Medium kind",
+    "html": "What kind of place the medium is, such as a local directory or an object store. Where the configuration no longer describes it, this deployment cannot say what kind of place it was."
+  },
+  "backups.copies.access": {
+    "label": "Access state",
+    "html": "Whether the copy is readable now, waiting on a restore, or out of reach. A restore has no reported progress, so a copy in that state can take hours with nothing to watch."
+  },
+  "backups.copies.unverified": {
+    "label": "Not verified",
+    "html": "Nothing has checked this copy, so it carries no claim beyond having been written. A copy that exists and a copy that is known-good are different things."
+  },
+  "backups.copies.verification": {
+    "label": "Verification result",
+    "html": "The rung this copy has reached on the verification ladder, when it was checked, and what that rung proves. The wording of the proof comes from the service rather than from this page."
+  },
+  "storage.destinations": {
+    "label": "Storage destinations",
+    "html": "The list of places this deployment may keep backups, and the only screen where another one can be declared. An entry here is inert until some retention tier points at it."
+  },
+  "storage.add-destination": {
+    "label": "Add a destination",
+    "html": "Opens the wizard that declares a new place backups may be kept. Declaring it sends nothing anywhere; a tier has to point at it first."
+  },
+  "storage.config-key": {
+    "label": "Where destinations are stored",
+    "html": "Declaring a destination here writes it into the service's own configuration file, so the list survives a restart and reads the same from a terminal."
+  },
+  "storage.destination-id": {
+    "label": "Destination name",
+    "html": "The id a retention tier names this destination by, on the command line and in the configuration file. It is fixed once declared."
+  },
+  "storage.destination-where": {
+    "label": "Destination location",
+    "html": "Where this destination actually writes: its type, its bucket or path and prefix, and its region and storage class where it has them. Nothing about the credential is shown, because the service reports none."
+  },
+  "storage.reads-need-restore": {
+    "label": "Reads need a restore",
+    "html": "Objects in this storage class must be thawed before they can be fetched, which takes hours. No tier may be bound to it, because a copy sent there could never be checked on arrival."
+  },
+  "storage.test-connection": {
+    "label": "Test connection",
+    "html": "Writes a small object here, reads it back and deletes it, then reports each step below. A pass also clears the warning mark on a destination nothing had ever checked."
+  },
+  "storage.make-default": {
+    "label": "Make default",
+    "html": "Gives this destination the mark that decides where the next tier an operator creates will start. No backup moves and no existing tier is rewritten."
+  },
+  "storage.edit-destination": {
+    "label": "Edit destination",
+    "html": "Changes this destination's declared settings and credential. Copies already written here keep the place they name, so an edit that points it somewhere else leaves them where they are."
+  },
+  "storage.remove-destination": {
+    "label": "Remove destination",
+    "html": "Deletes this destination's declaration from the configuration. It is refused while a backup copy on record names it, and while it carries the default mark."
+  },
+  "storage.unreachable-headline": {
+    "label": "Destination unreachable",
+    "html": "The last check could not reach this destination, and this is how many copies are recorded there. Nothing has been deleted: a copy that cannot be confirmed is not treated as gone."
+  },
+  "storage.affected-sets": {
+    "label": "What is affected",
+    "html": "The backup sets with copies on this destination, named rather than counted, so the loss of contact can be judged set by set."
+  },
+  "storage.affected-set-row": {
+    "label": "Affected backup set",
+    "html": "One backup set, how many of its copies live here, and whether any of them is the last one this deployment can account for. The mark beside it means those copies cannot be asked about at the moment, not that they are gone."
+  },
+  "capacity.card": {
+    "label": "Storage capacity",
+    "html": "The ceiling this manager keeps its own backups under, and the two free-space lines that raise a warning and refuse further writes. Changes take effect without a restart."
+  },
+  "capacity.unit": {
+    "label": "Amount unit",
+    "html": "Reads the amount beside it as megabytes or gigabytes. Switching unit converts the value rather than reinterpreting it, so the stored byte count is unchanged."
+  },
+  "capacity.no-cap-hint": {
+    "label": "No cap",
+    "html": "Zero is a sentinel rather than a size: it lifts the ceiling entirely and lets this manager use the whole volume. Any other amount is enforced before a transfer that would exceed it begins."
+  },
+  "capacity.measured-at": {
+    "label": "Measured at",
+    "html": "The filesystem these figures are measured against. Where it is derived from the backup sets rather than configured, adding a set on another volume can move it."
+  },
+  "capacity.no-filesystem": {
+    "label": "Nothing to measure",
+    "html": "No backup set exists yet, so there is no backup root to measure free space against. The thresholds can still be set; they take effect once a set is added."
+  },
+  "capacity.save": {
+    "label": "Save storage capacity",
+    "html": "Writes the cap and both thresholds to the service's configuration. They are in effect immediately, and only the fields actually changed are sent."
+  },
+  "retention.policy-card": {
+    "label": "Retention policy",
+    "html": "One chain for every backup set that has no policy of its own. The chain decides what survives a retention pass; the calendar fields decide which bucket each backup falls in."
+  },
+  "retention.add-tier": {
+    "label": "Add tier",
+    "html": "Appends an empty tier to this chain, starting on the deployment's default destination. It decides nothing until the chain is saved."
+  },
+  "retention.restore-default-chain": {
+    "label": "Restore default chain",
+    "html": "Replaces the tiers above with the daily, weekly and monthly chain the service ships. Nothing is saved until the policy is saved, and no backup is deleted by the change itself."
+  },
+  "retention.save-policy": {
+    "label": "Save retention policy",
+    "html": "Writes this chain and calendar into the running service, with no restart needed. The whole configuration file is rewritten, so any comments an operator left in it are lost."
+  },
+  "retention.tier.remove": {
+    "label": "Remove tier",
+    "html": "Takes this tier out of the chain being edited. Backups it was the only tier keeping become eligible for deletion at the next retention pass, which still shows a preview first."
+  },
+  "retention.tier.test-connection": {
+    "label": "Test connection",
+    "html": "Writes an object to the destination this tier names, reads it back and deletes it. A failure does not block saving; it tells you before a retention pass starts moving real backups there."
+  },
+  "retention.tier.add-destination": {
+    "label": "Add a destination",
+    "html": "Declares a new destination without leaving this chain, and points this tier at it once it is created. The tier still has to be saved."
+  },
+  "retention.tier.readiness": {
+    "label": "Destination readiness",
+    "html": "The verdict of the last check against the destination this tier names. It is advice rather than a gate: saving is allowed either way, and the steps below say which part failed."
+  },
+  "retention.chain.tier-name": {
+    "label": "Tier name",
+    "html": "The tier's name in the configuration file and on the command line. Order matters: the first tier that selects a backup names the destination it lives on."
+  },
+  "retention.chain.tier-sentence": {
+    "label": "What this tier keeps",
+    "html": "What this tier buckets by, how far back it looks, and the destination its backups are kept on. Local disk is spelled by naming no destination."
+  },
+  "retention.chain.calendar": {
+    "label": "Policy calendar",
+    "html": "The timezone and week start these buckets are reckoned in, and whether age alone may select the newest verified backup. A different zone moves which backup counts as the newest of its day."
+  },
+  "retention.disclosure.headline": {
+    "label": "Backups leaving this machine",
+    "html": "This save changes where backups are kept, and at least one tier now keeps them somewhere other than local disk. It cannot be saved until the acknowledgement below is ticked."
+  },
+  "retention.disclosure.mappings": {
+    "label": "Tiers that would move",
+    "html": "Each tier this save would newly send off this machine, and the destination it would keep its backups on. Tiers already mapped that way are not listed: they were consented to when they were saved."
+  },
+  "retention.disclosure.acknowledge": {
+    "label": "Acknowledgement",
+    "html": "Ticking this arms the save and records that the cost of reading those backups back is understood. Any edit that changes which tiers would move clears it again."
+  },
+  "retention.preflight.check": {
+    "label": "Check this destination",
+    "html": "Runs a write, read and delete against this destination before any backup is sent to it. It is offered rather than required: a failure does not block the save."
+  },
+  "retention.preflight.readiness": {
+    "label": "Destination readiness",
+    "html": "Whether the last check could write, read back and delete an object here. Not ready means a retention pass would be moving backups to a place nothing has yet proven."
+  },
+  "retention.preflight.checks": {
+    "label": "Check steps",
+    "html": "Every step the check ran, passed ones included, with its outcome and detail. The step that matters may be the delete or the storage class rather than the write, which is why none are hidden."
+  },
+  "retention.set.policy-source": {
+    "label": "Which policy decides",
+    "html": "Which retention policy decides deletions for this backup set: its own, or the deployment's. It is the one line saying whether editing the deployment's policy would change this set."
+  },
+  "retention.set.lkg-protected": {
+    "label": "Known-good protection on",
+    "html": "A retention pass may not delete the newest backup that has been checked end to end, whatever its age (FR-19)."
+  },
+  "retention.set.lkg-unprotected": {
+    "label": "Known-good protection off",
+    "html": "Under this policy, age alone can select the newest verified backup for deletion. The service considers that the more dangerous of the two settings, so the card says it rather than leaving it to the calendar line."
+  },
+  "retention.set.edit-policy": {
+    "label": "Edit this set's policy",
+    "html": "Opens a chain editor for this backup set alone. Once this set has its own policy, later edits to the deployment's retention policy no longer reach it."
+  },
+  "retention.set.clear-override": {
+    "label": "Return to the deployment's policy",
+    "html": "Drops this set's own chain rather than keeping it as a copy, and hands the set back to the deployment-wide policy. Where that policy is narrower, more backups become eligible at the next pass."
+  },
+  "retention.set.preview": {
+    "label": "Preview retention plan",
+    "html": "Asks the service for the exact list of backups this policy would keep and delete. Nothing is deleted until that plan is approved."
+  },
+  "retention.set.chain-now": {
+    "label": "This set's policy now",
+    "html": "The chain deciding this set's deletions at the moment, shown so the two policies can be compared before the override is given up."
+  },
+  "retention.set.chain-after": {
+    "label": "The policy after",
+    "html": "The deployment's chain, which would decide this set's deletions once the override is removed. Where it keeps less, more backups become eligible for deletion."
+  },
+  "retention.set.inherit-calendar": {
+    "label": "Inherit the calendar",
+    "html": "Leaves the timezone, week start and known-good protection to the deployment while this set keeps its own chain. Ticked, a later change to those deployment-wide values reaches this set as well."
+  },
+  "retention.set.timezone": {
+    "label": "Timezone",
+    "html": "The timezone this set's buckets are reckoned in, pinned to this set rather than inherited. A different zone changes which backup falls in which day or month."
+  },
+  "retention.set.week-starts-on": {
+    "label": "Week starts on",
+    "html": "The day a weekly bucket begins for this set. It decides which backup a weekly tier treats as the newest of its week."
+  },
+  "retention.set.protect": {
+    "label": "Protect the newest known-good backup",
+    "html": "Keeps the newest verified backup out of reach of a retention pass for this set. Off, age alone can select it for deletion."
+  },
+  "retention.set.save-policy": {
+    "label": "Save this set's policy",
+    "html": "Writes this whole chain as this set's own policy, replacing the deployment's for this set only. Nothing is deleted by the save itself."
+  },
+  "retention.set.cancel-edit": {
+    "label": "Cancel",
+    "html": "Leaves the editor without writing anything. The policy currently deciding this set's deletions is unchanged."
+  },
+  "retention.preview.title": {
+    "label": "Retention preview",
+    "html": "The exact set of deletions the service proposes for this backup set. It is applied whole or not at all, and never recalculated behind the confirmation."
+  },
+  "retention.preview.plan-id": {
+    "label": "Plan identity",
+    "html": "The identifier of this plan, which is what an apply names. A plan is pinned to the inventory and configuration revisions it was computed against, and cannot be applied in part."
+  },
+  "retention.preview.keep-count": {
+    "label": "Keep",
+    "html": "How many backups this plan keeps. Each is kept because at least one retention tier selected it, listed below with the tiers that did."
+  },
+  "retention.preview.delete-count": {
+    "label": "Delete",
+    "html": "How many backups this plan would permanently remove from storage. This is the number the confirmation asks about."
+  },
+  "retention.preview.reclaim": {
+    "label": "Reclaim",
+    "html": "The space the deletions would return, measured from the recorded size of each backup. Nothing is reclaimed until the plan is applied."
+  },
+  "retention.preview.policy-source": {
+    "label": "Policy behind this plan",
+    "html": "Which policy produced these verdicts and what it keeps, read off the plan itself rather than fetched beside it. It is where to go if a backup is on the wrong side of the line."
+  },
+  "retention.preview.keep-list": {
+    "label": "Kept backups",
+    "html": "The backups this plan keeps, each with the tiers that selected it. A backup kept by any one tier is kept."
+  },
+  "retention.preview.keep-artifact": {
+    "label": "Kept backup",
+    "html": "The backup file this verdict is about. It stays where it is when the plan is applied."
+  },
+  "retention.preview.refuse-list": {
+    "label": "Refused deletions",
+    "html": "Backups no tier selected which a safety check nonetheless declined to delete. A refusal is the plan working correctly, not an error."
+  },
+  "retention.preview.refuse-reason": {
+    "label": "Refusal",
+    "html": "The backup file and the safety rule that stopped it being deleted, such as it being the newest verified copy. It is left in place by this plan."
+  },
+  "retention.preview.delete-list": {
+    "label": "Backups to delete",
+    "html": "Every backup this plan would remove permanently, listed per file rather than counted, so one that matters can be spotted before the deletion is authorised."
+  },
+  "retention.preview.delete-artifact": {
+    "label": "Backup to delete",
+    "html": "The backup file that would be removed permanently when this plan is applied. It cannot be excluded on its own: the plan applies whole."
+  },
+  "retention.preview.delete-reason": {
+    "label": "Why it is deleted",
+    "html": "Which rule selected this backup for deletion, usually that a newer backup already holds its calendar bucket. Change the policy rather than the plan if that is wrong."
+  },
+  "retention.preview.review-new-plan": {
+    "label": "Review new plan",
+    "html": "Asks the service for a fresh plan against the current inventory and configuration. Nothing was deleted by the plan being replaced."
+  },
+  "retention.preview.cancel": {
+    "label": "Cancel",
+    "html": "Closes this preview without deleting anything. The plan is discarded rather than held for later."
+  },
+  "retention.preview.continue": {
+    "label": "Continue",
+    "html": "Moves to the confirmation for this exact plan. It is off while the plan has gone stale or has nothing to delete."
+  },
+  "dashboard.polling": {
+    "label": "Set count and poll cadence",
+    "html": "How many backup sets are configured, and how often this page re-reads the service. Figures on the page can therefore be up to one interval behind what the service knows."
+  },
+  "dashboard.add-set": {
+    "label": "Add backup set",
+    "html": "Opens the wizard that defines a new source, its destination and its retention. Nothing is collected from that source until the set is saved and enabled."
+  },
+  "dashboard.halt-review": {
+    "label": "Review fingerprint",
+    "html": "Opens the halted set where its host key can be compared against the one on record and accepted or rejected. The set backs nothing up until that is decided."
+  },
+  "dashboard.metric.sets": {
+    "label": "Backup sets",
+    "html": "How many configured sets are reporting healthy backups, with the stale and failing counts beneath. A set counted stale or failing is still configured and still attempted; what it lacks is a recent verified backup."
+  },
+  "dashboard.metric.attention": {
+    "label": "Degraded or stale",
+    "html": "The degraded and stale sets added together, as one figure for how much needs looking at. Above zero is not an outage, but no set in it will recover without the reason being dealt with."
+  },
+  "dashboard.metric.quarantine": {
+    "label": "Quarantine",
+    "html": "Backups held back for review rather than accepted as good restore points. They are kept rather than deleted, and they stay held until somebody decides what to do with each one."
+  },
+  "dashboard.metric.storage": {
+    "label": "Storage",
+    "html": "Space still free at the destination this manager measures, with the capacity gauge beneath it. Where no destination has been measured yet, the figure is replaced by a statement that capacity is unknown, which is not the same as a destination with no room left."
+  },
+  "dashboard.storage.gauge": {
+    "label": "Storage capacity gauge",
+    "html": "The bar is used space as a fraction of the destination's capacity, and the caption says whether that capacity is the whole disk or a cap an operator configured. It turns amber and then red as the service's warning and critical thresholds are crossed."
+  },
+  "dashboard.health.healthy": {
+    "label": "Backups healthy",
+    "html": "Every set has a recent verified backup, so each one has a known-good point to restore from. This is a verdict about the backups alone and says nothing about the service process."
+  },
+  "dashboard.health.degraded": {
+    "label": "Backups degraded",
+    "html": "Backups are still being made, but at least one set's are incomplete or unverified. Its newest restore point is older than the set intends, and will keep ageing until the cause is cleared."
+  },
+  "dashboard.health.stale": {
+    "label": "Backups stale",
+    "html": "At least one set's newest verified backup is older than its freshness window allows. A service running perfectly reports this whenever the backups it is making are not getting through."
+  },
+  "dashboard.health.failing": {
+    "label": "Backups failing",
+    "html": "At least one set cannot complete a backup at all, so its restore point has stopped moving forward. The reason the service gave is stated on the line beneath."
+  },
+  "dashboard.health.reason": {
+    "label": "Health reason",
+    "html": "The service's own sentence for the verdict above, in its words rather than this page's. It is the reading the verdict was derived from, so it changes as soon as that measurement does."
+  },
+  "dashboard.health.service": {
+    "label": "Service status",
+    "html": "Whether the backup service answered this page's request, which is the whole of the claim. A running service is not evidence that any backup is healthy, which is why the verdict is stated separately above."
+  },
+  "dashboard.health.storage-state": {
+    "label": "Storage state",
+    "html": "The service's assessment of destination capacity: nominal, warning or critical. The two latter are threshold crossings rather than failures, but a destination left critical will eventually have no room for a new backup."
+  },
+  "dashboard.health.sets-stale": {
+    "label": "Sets counted stale",
+    "html": "How many sets have no recent verified backup. They remain configured and are still attempted every cycle; what is missing is a fresh restore point, not the set itself."
+  },
+  "dashboard.health.sets-degraded": {
+    "label": "Degraded sets",
+    "html": "How many sets are producing backups that are incomplete or not yet verified. Each of them has a restore point, and it is older than the set was meant to allow."
+  },
+  "dashboard.health.sets-halted": {
+    "label": "Halted sets",
+    "html": "How many sets the manager could not connect to, for any reason: a refused login counts here exactly as a changed host key does. A halted set backs nothing up until the refusal is resolved."
+  },
+  "dashboard.health.read-only-retained": {
+    "label": "Retained from read-only sources",
+    "html": "Backups kept here whose source was declared read-only, so nothing is ever deleted at the far end. A rising count is this manager doing precisely what that declaration asked of it."
+  },
+  "dashboard.health.last-completed": {
+    "label": "Last completed backup",
+    "html": "When a backup last ran to the end anywhere in this deployment. Completing is not the same as being verified, so this can be newer than the verified figure beneath it."
+  },
+  "dashboard.health.newest-verified": {
+    "label": "Newest verified backup",
+    "html": "The age of the newest backup proven good across every set. A restore depends on this figure rather than on when a backup merely finished."
+  },
+  "dashboard.health.freshness": {
+    "label": "Oldest set freshness",
+    "html": "How long ago the least fresh set produced its newest verified backup, which is the worst case rather than an average. Where no figure is given, some set has never produced a verified backup at all, rather than one a very long time ago."
+  },
+  "dashboard.health.free-space": {
+    "label": "Free space",
+    "html": "Room left at the measured destination as the service last read it. It falls as backups are retained and rises again only when retention deletes them."
+  },
+  "dashboard.health.capacity-unreadable": {
+    "label": "Capacity unreadable",
+    "html": "How many destinations returned no capacity reading at all, most often a mount that has gone away. While this is above zero, those destinations cannot be judged against any threshold."
+  },
+  "dashboard.operations": {
+    "label": "Active operations",
+    "html": "Work the service has in hand right now: every queued or running operation, with whatever progress each one reports. Finished runs are not listed here, they appear in recent activity below."
+  },
+  "dashboard.operations.count": {
+    "label": "Running count",
+    "html": "How many operations were queued or running at the last poll. An ellipsis stands in until the first reading arrives, because not yet read is not the same as none."
+  },
+  "dashboard.operations.idle": {
+    "label": "Nothing running",
+    "html": "The service reported no queued or running operation. Between scheduled cycles this is the ordinary state, and it says nothing about whether the last cycle got anything through."
+  },
+  "dashboard.operation.identity": {
+    "label": "Operation subject",
+    "html": "The backup set this operation is working on, followed by the kind of pass it is making. The kind of pass decides what the progress beneath can honestly be measured against."
+  },
+  "dashboard.operation.readings": {
+    "label": "Operation readings",
+    "html": "Only what the service actually measured: sets covered, backups finished, bytes moved and the current rate. The percentage belongs to the one backup being copied rather than to the run, and a dash means that backup was never sized."
+  },
+  "dashboard.operation.bar": {
+    "label": "Transfer progress",
+    "html": "The bar fills with one backup's transferred bytes, never the whole run's, because a cycle discovers what it has to do as it goes. It can sit still while that backup is being checked and recorded, when no bytes are moving and the work is not finished."
+  },
+  "dashboard.operation.stages": {
+    "label": "Transfer stages",
+    "html": "The stages each backup passes through in order, with the current one emphasised and completed ones ticked. Bytes move only during transfer; the later stages prove the copy and record it."
+  },
+  "dashboard.operation.no-progress": {
+    "label": "No progress reading",
+    "html": "Why there is no bar: the operation has not begun, has already ended, or reports nothing because the process that was measuring it is gone. A bar drawn at zero would instead claim a transfer is under way and has moved nothing."
+  },
+  "dashboard.operation.deletion": {
+    "label": "Deletion rule",
+    "html": "What this pass will do to the original. A remote artifact is removed only once the local copy has been proven good and written down permanently, and a read-only pass removes nothing at either end."
+  },
+  "dashboard.activity.panel": {
+    "label": "Activity",
+    "html": "One strip per backup set, saying what that set is doing and what it last did. Every set is listed whether or not anything is happening to it, so the place to look is the same when things are fine and when they are not."
+  },
+  "dashboard.activity.cadence": {
+    "label": "Activity refresh",
+    "html": "How often the strips below re-read the activity feed. When the last poll failed this says so instead of a cadence, and every reading beneath it is then from the past rather than live."
+  },
+  "dashboard.recent-activity": {
+    "label": "Recent activity",
+    "html": "The newest few events the service recorded, across all sets. This panel never pages; the Activity page is where earlier events are read."
+  },
+  "dashboard.activity.view-all": {
+    "label": "View all activity",
+    "html": "Opens the full activity log, where events can be read further back than these few. Nothing is changed by looking."
+  },
+  "dashboard.cycle": {
+    "label": "Last run cycle",
+    "html": "What the most recent finished cycle actually achieved, in the counts the service recorded rather than a success rate. A cycle still running is absent here, because its totals are not decided until it ends."
+  },
+  "dashboard.cycle.barren": {
+    "label": "Nothing got through",
+    "html": "The cycle had backups to make and none of them ended with their bytes on durable storage. It is still recorded as completed because it ran to the end, and this badge exists so that reading cannot pass for success."
+  },
+  "dashboard.cycle.moves-barren": {
+    "label": "Nothing moved",
+    "html": "The retention chain expected backups to reach a different medium, and none of them got there. The backups themselves may have been perfect; nothing was deleted, and each one stays where it already was."
+  },
+  "dashboard.cycle.short": {
+    "label": "Some did not get through",
+    "html": "The cycle walked more backups than it landed on durable storage. The shortfall is not lost work, but it left no restore point from this cycle."
+  },
+  "dashboard.cycle.all-through": {
+    "label": "All through",
+    "html": "Every backup this cycle had a reason to touch ended it with its bytes on durable storage. Nothing was left part-done for the next cycle to find."
+  },
+  "dashboard.cycle.walked": {
+    "label": "Backups walked",
+    "html": "How many backups the cycle found a reason to touch. It is discovered while the cycle runs rather than set beforehand, which is why there is no target beside it."
+  },
+  "dashboard.cycle.through": {
+    "label": "Backups through",
+    "html": "How many of the walked backups ended the cycle with their bytes on durable storage. Any figure below the walked count is a gap this cycle left behind."
+  },
+  "dashboard.cycle.sets": {
+    "label": "Backup sets processed",
+    "html": "How many sets the cycle covered. A set that is switched off, or held while somebody edits it, is skipped and is not counted here."
+  },
+  "dashboard.cycle.moves": {
+    "label": "Retention moves",
+    "html": "How many backups the retention chain expected to relocate to a different medium, and how many got there. A relocation that did not land deletes nothing: the backup stays where it already was."
+  },
+  "sets.page": {
+    "label": "Backup sets",
+    "html": "Every backup set this deployment is configured to collect, one card each. A set is one source folder on one server, with the schedule, retention and validation that apply to it."
+  },
+  "sets.summary": {
+    "label": "Set counts",
+    "html": "How many sets are configured, split by health: <strong>healthy</strong> backed up as expected, <strong>stale</strong> overdue against its expected cadence, <strong>failing</strong> unable to complete. Disabled sets are counted separately and only when there are any."
+  },
+  "sets.add": {
+    "label": "Add backup set",
+    "html": "Opens the wizard that defines a new source, proves the connection to it and writes it into the configuration. Nothing is collected until the wizard finishes."
+  },
+  "sets.card.name": {
+    "label": "Set name",
+    "html": "The display name given to this set when it was created. Two sets under different sources may share a name, so the pair below it is what identifies this one."
+  },
+  "sets.card.identity": {
+    "label": "Set identity",
+    "html": "The <code>source/set</code> pair this set is filed under: every backup, journal entry and recovery manifest carries it, and removing the set asks for it to be retyped. It cannot be changed after creation."
+  },
+  "sets.card.endpoint": {
+    "label": "Host and port",
+    "html": "The server and SSH port this set collects from. A set whose host answers on a different key than the one on record is refused by the transport rather than backed up."
+  },
+  "sets.card.health": {
+    "label": "Health",
+    "html": "What the service last concluded about this set: <strong>healthy</strong> backed up within its expected cadence, <strong>stale</strong> overdue, <strong>degraded</strong> collecting but not wholly sound, <strong>failing</strong> unable to complete a run. The sentence underneath says why."
+  },
+  "sets.card.disabled": {
+    "label": "Disabled",
+    "html": "This set is excluded from every run until it is enabled again. Its configuration, retention policy and backups already collected are untouched."
+  },
+  "sets.card.state-note": {
+    "label": "State note",
+    "html": "The service's own sentence about why this set is in the health state shown above it. It is the first thing to read when a set is stale or failing."
+  },
+  "sets.card.newest-known-good": {
+    "label": "Newest known-good",
+    "html": "How long ago the most recent backup that passed its validation was taken. This is the age of what could actually be recovered, which a merely finished run is not."
+  },
+  "sets.card.last-run": {
+    "label": "Last run",
+    "html": "How long ago a run last visited this set, whatever the outcome. A recent run beside a much older known-good is the shape of a set that is failing quietly."
+  },
+  "sets.card.retention": {
+    "label": "Retention",
+    "html": "Whether this set is kept under the deployment-wide retention policy or under one of its own. The chain itself is on the set's own page."
+  },
+  "sets.card.last-validation": {
+    "label": "Last validation",
+    "html": "The verdict of the last validation run against this set. A set whose verdict is <em>not reported</em> sent none at all, which is not the same as a validation that ran and passed."
+  },
+  "sets.card.retained": {
+    "label": "Retained",
+    "html": "How many backups of this set are currently kept, and what they occupy on NAS storage. A figure the service did not report is shown as such, rather than as a zero."
+  },
+  "sets.card.expected-every": {
+    "label": "Expected every",
+    "html": "How often a backup of this set is expected to arrive. A set that goes longer than this without a known-good backup is what turns the health badge <strong>stale</strong>."
+  },
+  "sets.card.open": {
+    "label": "Open",
+    "html": "Opens this set's own page, where its connection, retention chain, validation settings and activity log are. Nothing is changed by opening it."
+  },
+  "sets.card.test": {
+    "label": "Test connection",
+    "html": "Asks the service to connect to this set's host now and prove it can read the remote folder. It collects nothing and changes nothing; the steps land in this set's activity log."
+  },
+  "sets.card.toggle-enabled": {
+    "label": "Disable or enable",
+    "html": "Takes this set out of every run, or puts it back in. Disabling collects nothing further and deletes nothing already collected; it is reversed by pressing the same control again."
+  },
+  "sets.card.remove": {
+    "label": "Remove set",
+    "html": "Removes this set's configuration, after asking for its <code>source/set</code> identity to be retyped. Backups already retained on NAS storage are never deleted by it."
+  },
+  "sets.card.current-operation": {
+    "label": "Current operation",
+    "html": "What a run is doing for this set right now, with progress where the service can measure it. An idle set has nothing in flight, which is not a claim that it is healthy."
+  },
+  "sets.activity.refresh": {
+    "label": "Refresh cadence",
+    "html": "How often this terminal re-reads the set's feed. A feed that says it is not refreshing has failed its last poll, so what is below is the last good reading rather than the present state."
+  },
+  "sets.detail.page": {
+    "label": "Backup set",
+    "html": "Everything the service holds about one backup set: what it connects to, what it collects, what it keeps and what it has been doing. Editing it pauses the set until edit mode is left."
+  },
+  "sets.detail.health": {
+    "label": "Health",
+    "html": "What the service last concluded about this set: <strong>healthy</strong> backed up within its expected cadence, <strong>stale</strong> overdue, <strong>degraded</strong> collecting but not wholly sound, <strong>failing</strong> unable to complete a run. The State cell below carries the reason."
+  },
+  "sets.detail.endpoint": {
+    "label": "Source",
+    "html": "The host, SSH port and remote folder this set collects from. All three are editable, and changing any of them points the set at different data."
+  },
+  "sets.detail.test-connection": {
+    "label": "Test connection",
+    "html": "Connects to the host now and proves the key authenticates and the remote folder can be read. It collects nothing; every step is recorded in the activity terminal below."
+  },
+  "sets.detail.edit": {
+    "label": "Edit",
+    "html": "Opens edit mode, which <strong>pauses this set</strong> and stops any run in flight against it until the mode is left. You are told what would be stopped before anything is held."
+  },
+  "sets.detail.edit-section": {
+    "label": "Edit this backup set",
+    "html": "Each box saves on its own, so a save writes that box and leaves the rest of the draft alone. The set stays paused for as long as this mode is open."
+  },
+  "sets.detail.save-field": {
+    "label": "Save",
+    "html": "Writes this box alone to the configuration, where the engine picks it up immediately. Other boxes keep their unsaved drafts."
+  },
+  "sets.detail.save-all": {
+    "label": "Save all and exit edit",
+    "html": "Writes every box changed since edit mode opened, then leaves the mode and releases the hold so this set can run again."
+  },
+  "sets.detail.cancel-edit": {
+    "label": "Cancel and exit edit mode",
+    "html": "Discards the unsaved draft and leaves edit mode. Boxes already written by their own Save stay written, and the confirmation names both sides before anything is thrown away."
+  },
+  "sets.detail.reload-values": {
+    "label": "Reload latest values",
+    "html": "Replaces the form with the values the service currently holds, after somebody else saved a change first. Your unsaved draft is discarded by it."
+  },
+  "sets.detail.save-anyway": {
+    "label": "Save anyway",
+    "html": "Confirms the exact change the service refused, and sends only that one. A refusal about a host key is confirmed for the fingerprint you were shown, not for whatever the box holds afterwards."
+  },
+  "sets.detail.leave-as-was": {
+    "label": "Leave it as it was",
+    "html": "Dismisses the refusal and writes nothing. The draft stays in the boxes, so the change can be reconsidered rather than retyped."
+  },
+  "sets.detail.preview-retention": {
+    "label": "Preview retention",
+    "html": "Shows which backups this set's retention policy would keep and which it would delete, without deleting anything."
+  },
+  "sets.detail.overview": {
+    "label": "Overview",
+    "html": "What this set has actually produced, as opposed to what it is configured to do: the age of its newest recoverable backup, how much it keeps, and whether it is collected at all."
+  },
+  "sets.detail.newest-known-good": {
+    "label": "Newest known-good",
+    "html": "How long ago the most recent backup that passed its validation was taken. This is the age of what could be recovered now, which a merely finished run is not."
+  },
+  "sets.detail.last-run": {
+    "label": "Last successful run",
+    "html": "How long ago a run last completed for this set. A recent run beside a much older known-good means backups are arriving but not passing validation."
+  },
+  "sets.detail.retained": {
+    "label": "Retained",
+    "html": "How many backups of this set are kept, and what they occupy on NAS storage. A figure the service did not report is shown as such, rather than as a zero."
+  },
+  "sets.detail.expected-cadence": {
+    "label": "Expected cadence",
+    "html": "How often a backup of this set is expected to arrive. Going longer than this without a known-good backup is what makes the set <strong>stale</strong>."
+  },
+  "sets.detail.state": {
+    "label": "State",
+    "html": "The service's own sentence about why this set is in the health state shown beside its name. It is the first thing to read when a set is stale or failing."
+  },
+  "sets.detail.collection": {
+    "label": "Collection",
+    "html": "Whether runs visit this set at all. A disabled set is skipped by every run and collects nothing new; it keeps its configuration and everything already retained."
+  },
+  "sets.detail.read-only": {
+    "label": "Read-only source",
+    "html": "Whether this set is forbidden from deleting the original on the source server after a backup is committed. It is independent of whether the set is collected: a disabled set still has a cleanup policy for when it runs again."
+  },
+  "sets.detail.connection": {
+    "label": "Connection",
+    "html": "How this set reaches its host and what it checks the host against. The private key stays on this NAS and is never shown here."
+  },
+  "sets.detail.host-keys": {
+    "label": "Trusted host keys",
+    "html": "The host keys this set will accept, read from its own <code>known_hosts</code>, and when they were trusted. A host offering anything else is refused rather than backed up, so these are the fingerprints to compare against the server when a set halts."
+  },
+  "sets.detail.change-ssh": {
+    "label": "Change SSH authentication",
+    "html": "Opens the wizard that repoints this set at a different key, settles the host key and proves the whole path before it writes anything."
+  },
+  "sets.detail.ssh-key": {
+    "label": "SSH key",
+    "html": "Which key this set authenticates with. A set pointed at a key this deployment does not manage has no id to show, and can be moved onto a managed one through the wizard above."
+  },
+  "sets.detail.discovery": {
+    "label": "Backup discovery",
+    "html": "What this set looks for on the source, and how it decides a file there is finished being written. Everything collected is chosen by these four values."
+  },
+  "sets.detail.remote-folder": {
+    "label": "Remote folder",
+    "html": "The folder on the source server this set collects from. Changing it points the set at different data, which the service refuses until that is confirmed."
+  },
+  "sets.detail.include": {
+    "label": "Include",
+    "html": "The patterns a file must match to be collected. An empty list, shown as a dash, collects everything in the remote folder."
+  },
+  "sets.detail.exclude": {
+    "label": "Exclude",
+    "html": "The patterns that keep a file out of this set even when it matched an include. A dash means nothing is excluded."
+  },
+  "sets.detail.completion-method": {
+    "label": "Completion method",
+    "html": "How this set decides a file on the source has finished being written before it is collected. A producer-provided marker is definite; inferring completion from a size that stopped changing is a guess, and half a file collected as though it were whole is not recoverable."
+  },
+  "sets.detail.activity": {
+    "label": "Activity",
+    "html": "This set's live terminal above the durable record beneath it. The terminal knows the transfer rate of what is running now and forgets it; the timeline remembers what happened weeks ago and never knew the rate."
+  },
+  "sets.detail.retention": {
+    "label": "Retention",
+    "html": "Which policy decides how long this set's backups are kept, and what that policy currently is. Applying it deletes the backups it no longer keeps."
+  },
+  "sets.detail.validation": {
+    "label": "Validation",
+    "html": "Which checks a backup of this set must pass before it counts as known-good. A backup that only transferred is not one that has been shown to be recoverable."
+  },
+  "sets.detail.validation.transfer": {
+    "label": "Transfer verification",
+    "html": "Checks that what arrived on NAS storage is the size and shape of what was read from the source. It catches a truncated or interrupted copy, and nothing about the contents."
+  },
+  "sets.detail.validation.checksum": {
+    "label": "Checksum verification",
+    "html": "Hashes the stored copy with SHA-256 and compares it against what was read from the source, so silent corruption in transit or at rest is caught rather than retained as a good backup."
+  },
+  "sets.detail.validation.application": {
+    "label": "Application validation",
+    "html": "Asks the application that produced the backup whether it can read it back. It is the only check here that says anything about the backup being <em>restorable</em> rather than merely intact."
+  },
+  "sets.detail.management": {
+    "label": "Set management",
+    "html": "The controls that change whether this set runs, whether it may delete from its source, and whether it exists at all. They are kept apart from the ordinary ones because each of them has a consequence to weigh."
+  },
+  "sets.detail.toggle-enabled": {
+    "label": "Disable or enable backup set",
+    "html": "Takes this set out of every run, or puts it back in. Disabling collects nothing further and deletes nothing already collected; it is reversed by pressing the same control again."
+  },
+  "sets.detail.toggle-read-only": {
+    "label": "Read-only source",
+    "html": "Declaring the source read-only stops this set deleting originals from the server after a backup is committed. Allowing deletion again applies to future runs only and does not reach back."
+  },
+  "sets.detail.apply-retention": {
+    "label": "Apply retention now",
+    "html": "Runs this set's retention policy immediately, deleting the backups it no longer keeps. The preview it opens with is what those deletions would be."
+  },
+  "sets.detail.remove": {
+    "label": "Remove set configuration",
+    "html": "Removes this set from the configuration, after asking for its <code>source/set</code> identity to be retyped. Backups already retained on NAS storage are never deleted by it."
+  },
+  "activity.timeline.time": {
+    "label": "Event time",
+    "html": "When the service recorded this event, in this browser's local time. The compact form on other pages drops the date and keeps only the time of day, because a short list of the latest events already implies the day."
+  },
+  "activity.timeline.severity": {
+    "label": "Event severity",
+    "html": "How serious the service considered what happened: a tick for something that succeeded, a neutral mark for information, amber for a warning and red for a failure. Warnings and failures are bolded as well, so the bad line can be found by scanning."
+  },
+  "activity.timeline.event": {
+    "label": "What happened",
+    "html": "The sentence the service recorded, followed in grey by its supporting detail — the artifact, the count or the reason behind the headline."
+  },
+  "activity.timeline.set": {
+    "label": "Backup set",
+    "html": "Which backup set the event belongs to. The filter at the top of the page narrows the list to one of them."
+  },
+  "activity.page.load-older": {
+    "label": "Load older events",
+    "html": "Reads one more page of events from before the oldest one on screen and appends it. The filters apply to everything loaded so far, so a match further back only appears once its page has been read."
+  },
+  "activity.page.load-older-failed": {
+    "label": "Older events could not be read",
+    "html": "The page behind the one on screen could not be read, so nothing was added. What is already listed is still what the service reported; pressing the control again retries from the same point."
+  },
+  "activity.page.debug": {
+    "label": "Diagnostic detail",
+    "html": "Only drawn with diagnostics turned on. It carries the failure code, the correlation id to quote to whoever is reading the service log, and the technical detail behind the message above."
+  },
+  "activity.page.empty-unconfigured": {
+    "label": "No activity yet",
+    "html": "An empty record is the truth on an instance with nothing configured, rather than a sign that the page failed to read. Add a source and a backup set and the first run will start filling this in."
+  },
+  "activity.page.empty-filtered": {
+    "label": "No matching events",
+    "html": "Nothing in the pages loaded so far matches the two filters above. Older matches may still exist further back in the record, which is what the control at the foot of the page reads."
+  },
+  "activity.page.error": {
+    "label": "Activity could not be read",
+    "html": "The request for the record failed, so no events are shown rather than a stale list being passed off as current. The record itself is unaffected; the service or the connection to it is what is at fault."
+  },
+  "activity.strip.name": {
+    "label": "Backup set",
+    "html": "The set this strip reports on. The bar, the sentence and the log underneath describe that set alone."
+  },
+  "activity.strip.remote": {
+    "label": "Remote folder",
+    "html": "The folder on the destination this set writes into. A set the deployment may not write to is marked as such beside it, and nothing on this strip will start a transfer for one."
+  },
+  "activity.strip.checking": {
+    "label": "First reading pending",
+    "html": "No reading has arrived for this set yet, so nothing is claimed about it. Saying the set is doing nothing would be a claim an unfinished fetch does not support; the strip fills in as soon as the service answers."
+  },
+  "activity.strip.state": {
+    "label": "Set state",
+    "html": "While a pass is running this names the step it has reached. With nothing running it says how the last pass ended, and only then falls back to the set's own health. The pulse is the signal that the reading is current: it stops the moment the poll behind it fails."
+  },
+  "activity.strip.progress": {
+    "label": "Progress bar",
+    "html": "How far the pass has got, counted in artifacts completed against artifacts discovered. The colour is the outcome rather than the count: accent while work is under way, green for a clean finish, amber for a pass somebody stopped, red for one that failed."
+  },
+  "activity.strip.percent": {
+    "label": "Progress figure",
+    "html": "The same fraction as a whole percentage, or a dash when nothing has been discovered yet and there is no honest denominator. A figure that sits still is not proof of a stall: one large artifact can take minutes without moving the artifact count, and a reading that has stopped arriving keeps the last percentage that was measured."
+  },
+  "activity.strip.step": {
+    "label": "What is happening",
+    "html": "Names the step, the artifact being worked on and the numbers behind it: artifacts done, transfer rate and a rough estimate of what is left. The rate and the estimate are claims about this moment, so both are withdrawn when the readings stop arriving."
+  },
+  "activity.strip.dropped": {
+    "label": "Earlier lines dropped",
+    "html": "This panel holds a bounded window and older lines have fallen out of it. Nothing was lost from the record itself — the Activity page still has them."
+  },
+  "activity.unfinished-action": {
+    "label": "Action with no outcome",
+    "html": "Something asked the service to act and no result for it has arrived. The age is given instead of a verdict on purpose: a few seconds old is work in flight, hours old is stuck, and the reader is better placed to tell those apart than this panel is."
+  },
+  "activity.strip.toggle-log": {
+    "label": "Show or hide the log",
+    "html": "Folds the event log away and back. It changes only what is drawn: lines keep arriving while it is closed, and the count beside it keeps counting them."
+  },
+  "activity.strip.line-count": {
+    "label": "Line count",
+    "html": "How many lines this set's log is holding. The window is bounded, so on a long cycle the oldest lines fall out of it and the number stops rising."
+  },
+  "activity.strip.log-format": {
+    "label": "Log lines",
+    "html": "Every line starts with the time the engine recorded the event, then the sentence this app composes from it. Colour is severity: grey for information, green for something that settled, amber for a warning and red for a failure."
+  },
+  "activity.strip.copied": {
+    "label": "Copied",
+    "html": "The log text reached the clipboard. The word clears itself after a couple of seconds."
+  },
+  "activity.strip.copy": {
+    "label": "Copy the log",
+    "html": "Puts the log on the clipboard exactly as it reads here, so a checksum or an error can be pasted into a report rather than retyped. A browser with no clipboard access, most often one served over plain HTTP, copies nothing."
+  },
+  "activity.strip.save": {
+    "label": "Save the log",
+    "html": "Downloads the log as a text file named after this set. Its lines are the ones on screen, so what is attached to a report is what was being read."
+  },
+  "activity.dock.toggle": {
+    "label": "Show or hide the terminal",
+    "html": "Collapses the terminal to a single bar and opens it again. Lines keep arriving either way, and the choice is remembered in this browser."
+  },
+  "activity.dock.newest": {
+    "label": "Newest line",
+    "html": "The most recent line in the buffer, kept on the bar so a collapsed terminal is never blank. A line this browser wrote appears here too, which is what a refused press looks like while the panel is shut."
+  },
+  "activity.dock.filter-all": {
+    "label": "Everything",
+    "html": "Draws every line the buffer holds, from the engine and from this browser. A filter never discards a line, only hides it, so coming back here brings all of them into view."
+  },
+  "activity.dock.filter-engine": {
+    "label": "Engine",
+    "html": "Keeps the lines that belong to the deployment rather than to any one backup set, such as the service starting and stopping. Lines this browser wrote are left out: the engine never saw them."
+  },
+  "activity.dock.filter-set": {
+    "label": "One backup set",
+    "html": "Keeps the lines belonging to this backup set, including refusals this browser recorded against it. There is one such chip per set the latest reading names."
+  },
+  "activity.dock.filter-mine": {
+    "label": "This browser",
+    "html": "Keeps what this session did: actions the service attributed to the signed-in account, and requests this browser refused before they ever reached the service. Another administrator's actions are filtered out."
+  },
+  "activity.dock.filter-commands": {
+    "label": "Commands only",
+    "html": "Keeps the lines that record an action somebody took, each carrying the command that would do the same thing from a shell. It is the quickest way to read back what has been done to this deployment."
+  },
+  "activity.dock.problems": {
+    "label": "Problems held",
+    "html": "How many held lines were recorded as failures or as warnings, counted across every set and across the whole buffer rather than the filter in force. A press the browser refused counts as a warning here, because no other reading of the feed can ever show it."
+  },
+  "activity.dock.status": {
+    "label": "Feed state",
+    "html": "Normally the number of lines the current filter is drawing. When the poll behind the terminal fails it says so in place of that count: what is below is then the last thing received rather than anything current, and the service may be unreachable."
+  },
+  "activity.dock.log-format": {
+    "label": "Terminal lines",
+    "html": "Each line carries the time, then a name in square brackets saying who it is about — the engine, one backup set, your own session, or another administrator's account. Colour is severity, and a rule drawn across the panel marks a restart of the service process."
+  },
+  "activity.dock.copied": {
+    "label": "Copied",
+    "html": "The terminal text reached the clipboard. The word clears itself after a couple of seconds."
+  },
+  "activity.dock.copy": {
+    "label": "Copy the terminal",
+    "html": "Puts the lines the filter is drawing on the clipboard, under the environment header, so any command among them can be run as pasted. A browser with no clipboard access, most often one served over plain HTTP, copies nothing."
+  },
+  "activity.dock.save": {
+    "label": "Save the terminal",
+    "html": "Downloads the lines the filter is drawing as a text file stamped with the time. It covers every backup set rather than one, which is what makes it the file worth attaching to a report."
+  },
+  "activity.dock.resize": {
+    "label": "Resize the terminal",
+    "html": "Drag up or down to change how tall the terminal is. The page reserves exactly this much room beneath its content, so nothing ends up stranded behind the panel."
+  },
+  "activity.dock.preamble": {
+    "label": "Command environment",
+    "html": "The address this page was loaded from and the account reading it, written once as the environment every command below assumes. It carries a placeholder instead of a password, because a password on a command line is visible in the host's process list."
+  },
+  "activity.dock.dropped": {
+    "label": "Earlier lines dropped",
+    "html": "The buffer is bounded and older lines have fallen out of it. What they said is still on the Activity page, which is the durable record; this panel is scrollback."
+  },
+  "activity.dock.restart": {
+    "label": "Engine restarted",
+    "html": "Marks where the service process changed. Everything above the rule belongs to a process that has gone, and line numbering starts again beneath it, which is why the two halves are kept apart."
+  },
+  "quarantine.empty-unconfigured": {
+    "label": "Nothing in quarantine",
+    "html": "Nothing can be held back until something arrives, and an unconfigured instance has never ingested anything. Configure a backup set and whatever fails a check lands here instead of entering the catalog."
+  },
+  "quarantine.load-failed": {
+    "label": "Quarantine could not be read",
+    "html": "The list of held artifacts could not be fetched, so <strong>an absence here is not evidence of an empty quarantine</strong>. Whatever the service holds, it still holds, and the originals behind it are still untouched."
+  },
+  "quarantine.action-failed": {
+    "label": "Action failed",
+    "html": "The request for this artifact went unanswered, so <strong>nothing about it changed</strong>: it is held exactly as it was, with its remote original intact. Any correlation id shown came from the failing response itself."
+  },
+  "quarantine.outcome-refused": {
+    "label": "Not reinstated",
+    "html": "The checks ran and answered no, which is <em>a verdict about the backup</em> rather than a broken request: repeating it gives the same answer until the artifact itself changes. The artifact is held as before and its remote original is intact."
+  },
+  "quarantine.outcome-restored": {
+    "label": "Reinstated",
+    "html": "The artifact is in the catalog again, counts as known-good, and leaves this list on the next read. The forfeit that bought it is permanent and cannot be reversed."
+  },
+  "quarantine.empty": {
+    "label": "No quarantined backups",
+    "html": "Every artifact that has arrived satisfied its set's checks, so none is being held back. Rows appear here only where a check refuses one, and stay until an operator resolves it."
+  },
+  "quarantine.filename": {
+    "label": "Backup",
+    "html": "The artifact's file name on storage, as the backup that produced it wrote it. This is what identifies the artifact in the journal and in the service's command-line output."
+  },
+  "quarantine.set-name": {
+    "label": "Backup set",
+    "html": "The set this artifact arrived from, and whose validator decides whether returning it to service can succeed. Nothing done to this row affects that set's other backups."
+  },
+  "quarantine.reason": {
+    "label": "Quarantine reason",
+    "html": "Which class of check refused the artifact, out of the five the service distinguishes. The smaller line beneath is the sentence the journal recorded at the time, which is the specific finding rather than the class."
+  },
+  "quarantine.detected": {
+    "label": "Detected",
+    "html": "When the refusing check ran, read in this browser's time zone. The artifact has been held since that moment, and holding one indefinitely costs nothing but the space it occupies."
+  },
+  "quarantine.remote-source": {
+    "label": "Remote source",
+    "html": "The copy on the remote server stays exactly where it is while the artifact is held, and this column never says anything else. A backup the manager could not confirm is never grounds for destroying the other copy."
+  },
+  "quarantine.inspect": {
+    "label": "Inspect",
+    "html": "Looking at an artifact alters nothing about it, its remote original or the hold it is under."
+  },
+  "quarantine.revalidate": {
+    "label": "Revalidate",
+    "html": "Puts the held artifact through its set's checks once more and reloads the row with whatever they now find. Nothing is destroyed, and returning it to service remains a separate, explicit decision."
+  },
+  "quarantine.retry-ingestion": {
+    "label": "Retry ingestion",
+    "html": "Takes the artifact through ingestion again, which is the action for a hold caused by an interrupted transfer rather than by bad content. The copy on the remote server is left alone either way."
+  },
+  "quarantine.reinstate": {
+    "label": "Reinstate",
+    "html": "Runs a fresh check against the local copy and puts the artifact back into service only if that check carries it alone. A confirmation comes first, because the price is permanent: the manager thereafter refuses to delete the remote copy for the lifetime of this backup."
+  },
+  "quarantine.recovery.failure": {
+    "label": "Recovery failed",
+    "html": "The scan or the rebuild was refused, or went unanswered. <strong>Nothing was written</strong>: the catalog gained no entry, and no artifact on storage was touched."
+  },
+  "quarantine.recovery.no-storage": {
+    "label": "No storage location",
+    "html": "There is nowhere to look: where the backup files live is part of a configuration this instance has never been given. Adding a backup set is what supplies it."
+  },
+  "quarantine.recovery.add-set": {
+    "label": "Add backup set",
+    "html": "Opens the backup set wizard, where the storage location this page needs is configured. Nothing is scanned or rebuilt until a set exists."
+  },
+  "quarantine.recovery.detected": {
+    "label": "Existing backup data detected",
+    "html": "Artifacts exist on storage that the catalog has no record of, which is the state a lost or replaced catalog leaves behind. They are intact, and nothing on this page alters them."
+  },
+  "quarantine.recovery.scan-safety": {
+    "label": "Scan and rebuild safety",
+    "html": "A scan reads metadata and checksums; a rebuild only adds catalog entries. Neither writes over, relocates or destroys a single artifact, and neither reaches out to a remote server."
+  },
+  "quarantine.recovery.scan": {
+    "label": "Scan backup storage",
+    "html": "Reads what is in the configured storage location and reports what a rebuild would take in, leaving the catalog untouched. The result is a preview that still has to be confirmed."
+  },
+  "quarantine.recovery.preview": {
+    "label": "Catalog rebuild preview",
+    "html": "What the scan found, before anything is written. These figures describe the artifacts on storage; the catalog is still exactly as it was."
+  },
+  "quarantine.recovery.discovered": {
+    "label": "Backup artifacts discovered",
+    "html": "How many artifacts the scan read in the storage location. It is the total a rebuild would take in, the reviewable ones included."
+  },
+  "quarantine.recovery.valid": {
+    "label": "Valid",
+    "html": "Artifacts whose metadata and checksums held. These enter the catalog as known-good when the rebuild runs."
+  },
+  "quarantine.recovery.requires-review": {
+    "label": "Require review",
+    "html": "Artifacts that failed a check while being read. A rebuild holds these back for an operator to judge instead of adding them to the catalog, and destroys none of them."
+  },
+  "quarantine.recovery.review-notice": {
+    "label": "Artifacts requiring review",
+    "html": "Anything a check refuses is held back for review, where it can be re-checked or returned to service deliberately. A rebuild destroys nothing, so a refusal here costs only the review."
+  },
+  "quarantine.recovery.cancel": {
+    "label": "Cancel the rebuild",
+    "html": "Discards this preview and leaves the catalog as it is. The artifacts on storage are unaffected, and scanning again re-reads them."
+  },
+  "quarantine.recovery.rebuild": {
+    "label": "Rebuild catalog",
+    "html": "Writes catalog entries for what the scan found, after a confirmation. The operation only adds: nothing on storage is removed, and nothing off this machine is contacted."
+  },
+  "common.halt-banner": {
+    "label": "Halted backup set",
+    "html": "This set is stopped: no backup runs, and the manager deletes nothing remote, for as long as the halt stands. It offers no way out on purpose, because clearing the cause is an administrator action taken out of band."
+  },
+  "common.run-control-notice": {
+    "label": "Run control result",
+    "html": "The newest answer a run control on this page gave: accepted, declined, or unanswered. It repeats what the service said rather than re-wording it, and the activity strip keeps the earlier ones."
+  },
+  "common.run-command": {
+    "label": "Equivalent command",
+    "html": "The command this control stands in for, copy-pasteable exactly as printed. It is shown on a refusal too, where it is the one remaining way to start what was just declined."
+  },
+  "common.correlation-id": {
+    "label": "Correlation id",
+    "html": "The id the service's own log lines for this request carry, worth quoting in a support message. It appears only where the response carried one, because an id matching no log line is a false lead."
+  },
+  "common.error-copy-details": {
+    "label": "Copy details",
+    "html": "Puts the message, the remedy and the advanced detail on the clipboard as text, so none of it has to be retyped off the screen. Where the browser offers no clipboard at all, as on a plain unencrypted origin, it says so rather than appearing to have worked."
+  },
+  "common.error-retry": {
+    "label": "Try again",
+    "html": "Repeats the request that failed, and changes nothing else. A service that is still down answers identically, which the line beside this records so the unchanged words are not mistaken for an unresponsive control."
+  },
+  "common.error-retried-at": {
+    "label": "Retry result",
+    "html": "The clock time of the most recent attempt. It is on screen because an identical outcome otherwise looks like a control that did nothing at all."
+  },
+  "wizard.command-echo": {
+    "label": "Equivalent command",
+    "html": "The command-line invocation this control is equivalent to, printed before the control is pressed. Copying or running the line is safe: no flag on this surface takes a secret, and reading it changes nothing."
+  },
+  "wizard.configuration-saved": {
+    "label": "Configuration saved",
+    "html": "The configuration was written and is intact; only this running process could not begin serving it. Restarting the container or service picks it up, and none of it has to be entered again."
+  },
+  "wizard.configure.mark-stale": {
+    "label": "Stale check",
+    "html": "A pass belongs to the values it was obtained for, so editing one drops it. Saving stays blocked until this destination has been tested again as it now stands."
+  },
+  "wizard.configure.cancel": {
+    "label": "Cancel",
+    "html": "Closes these steps and writes nothing. The destination is left exactly as it stands, configured or not."
+  },
+  "wizard.configure.next-test": {
+    "label": "Next: test connection",
+    "html": "Moves to the check step and starts the check straight away, using the values on this form. Nothing is saved by checking."
+  },
+  "wizard.configure.back-fields": {
+    "label": "Back to the values",
+    "html": "Returns to the form with every value kept. A pass already obtained still counts while nothing is edited, and stops counting the moment something is."
+  },
+  "wizard.configure.retest": {
+    "label": "Test connection again",
+    "html": "Writes a real object to this destination, reads it back and removes it. A refusal leaves the destination exactly as unproven as it is now."
+  },
+  "wizard.configure.next-review": {
+    "label": "Next: review",
+    "html": "Moves to the last step, which shows what the save will write. Out of reach until a check has passed for the values on the form."
+  },
+  "wizard.configure.back-test": {
+    "label": "Back to the check",
+    "html": "Returns to the check step without saving. The pass already recorded is kept."
+  },
+  "wizard.configure.save": {
+    "label": "Save configuration",
+    "html": "Writes this destination in one request, after the check that proved it. A retention tier can select it from then on."
+  },
+  "wizard.destination.step": {
+    "label": "Step position",
+    "html": "Which of the three steps is showing. Choosing a backend and naming the instance are separate because several destinations can be instances of one backend, and none of these steps writes anything."
+  },
+  "wizard.destination.cancel": {
+    "label": "Cancel",
+    "html": "Abandons the new destination. Nothing has been written by this point, so nothing is left behind."
+  },
+  "wizard.destination.next-name": {
+    "label": "Next: name this instance",
+    "html": "Carries the chosen backend to the naming step. Unavailable while the selected row is a backend this build describes and cannot yet store."
+  },
+  "wizard.destination.back": {
+    "label": "Back",
+    "html": "Returns to the previous step with the answers already given kept. Still nothing is written."
+  },
+  "wizard.destination.next-confirm": {
+    "label": "Next: confirm",
+    "html": "Moves to the summary of what will be created. Unavailable while the name is one the engine itself would refuse."
+  },
+  "wizard.destination.existing-names": {
+    "label": "Names already taken",
+    "html": "The instances of this backend that already exist. A destination name is unique, so these are the names this one cannot have."
+  },
+  "wizard.destination.summary": {
+    "label": "What will be created",
+    "html": "The backend and the name this destination will be declared with. Its own settings are not asked for here: the configure step collects them and performs the single write."
+  },
+  "wizard.destination.next-configure": {
+    "label": "Next: configure it",
+    "html": "Hands the backend and the name to the configure step, which collects the settings, proves them and performs the one create. Nothing has been written yet."
+  },
+  "wizard.preflight.check": {
+    "label": "Check result",
+    "html": "One step of the connection test: what was tried, how it came out, the engine's category for a failure and its own sentence about it. A step after a failing one was never attempted rather than proven, which is why it is marked apart from a pass."
+  },
+  "wizard.s3.step": {
+    "label": "Step position",
+    "html": "Which of the four steps is showing. Nothing is saved before the last one, so leaving earlier costs only the answers typed."
+  },
+  "wizard.s3.provider-preset": {
+    "label": "Provider preset",
+    "html": "Fills the endpoint field with this provider's own address and changes nothing else. The value is handed to the transport unexamined, so it can still be edited."
+  },
+  "wizard.s3.cancel": {
+    "label": "Cancel",
+    "html": "Closes these steps without creating or changing a destination."
+  },
+  "wizard.s3.next-credentials": {
+    "label": "Next: credentials",
+    "html": "Moves to how the key is supplied. Unavailable until the destination id and the bucket are both filled in."
+  },
+  "wizard.s3.back": {
+    "label": "Back",
+    "html": "Returns to the previous step with what was typed kept. Nothing is written until the save on the last step."
+  },
+  "wizard.s3.next-from-credentials": {
+    "label": "Next",
+    "html": "Exchanges a pasted key for a stored reference, if one was pasted, and moves on: to the connection test, or straight to the save when this edit keeps the credential already configured."
+  },
+  "wizard.s3.retest": {
+    "label": "Test connection again",
+    "html": "Writes a real object to the bucket, reads it back and deletes it, using the values on the form. Nothing is saved by checking."
+  },
+  "wizard.s3.next-save": {
+    "label": "Next: save",
+    "html": "Moves to the final step. Available only while the check on this screen has passed."
+  },
+  "wizard.s3.yaml-preview": {
+    "label": "What gets written",
+    "html": "The configuration this save adds to the deployment's configuration file, shown before it is written. No key and no secret appears in it: a configuration file carrying either is a parse error before validation even runs."
+  },
+  "wizard.s3.save": {
+    "label": "Save destination",
+    "html": "Writes this destination in one request. Backups reach it only once a retention tier names it, which is a separate decision."
+  },
+  "wizard.set.step": {
+    "label": "Step",
+    "html": "One of the six steps this set is described in. Any of them can be reopened at any time and the answers already given are kept; nothing is written until the save on the review step."
+  },
+  "wizard.set.key-stored": {
+    "label": "Stored key",
+    "html": "A key this deployment already holds, with its fingerprint and the sets currently using it. One that needs a passphrase cannot be chosen, because nothing here could resolve it when a backup runs."
+  },
+  "wizard.set.key-replace": {
+    "label": "Replace",
+    "html": "Clears the imported key from this screen so another can be pasted. The key already written into the key store stays there."
+  },
+  "wizard.set.key-import": {
+    "label": "Import key",
+    "html": "Sends the pasted key once to the engine, which stores it and answers with a fingerprint. This screen keeps no copy and cannot show the material again."
+  },
+  "wizard.set.trust-host": {
+    "label": "Trust host",
+    "html": "Records the fingerprint above as the host key this set trusts. It settles which machine answers and nothing more: not that the key authenticates, and not that the folder can be read."
+  },
+  "wizard.set.refetch-fingerprint": {
+    "label": "Re-fetch fingerprint",
+    "html": "Asks the server for the host key it presents now, which is what a rebuilt source needs. It trusts nothing on its own."
+  },
+  "wizard.set.review.source": {
+    "label": "Source",
+    "html": "The server and the remote folder this set pulls from, as answered in the earlier steps. Changing either means the connection has to be tested again."
+  },
+  "wizard.set.review.destination": {
+    "label": "Destination",
+    "html": "The path on this NAS the transferred artifacts are written to. It has to be a mounted, writable location on the machine running the engine."
+  },
+  "wizard.set.review.validation": {
+    "label": "Validation",
+    "html": "What proves an artifact good: the transfer check always, the application validator if one was chosen, and how a finished upload is recognised. A validator that rejects an artifact quarantines it and leaves the remote copy in place."
+  },
+  "wizard.set.review.host-trust": {
+    "label": "Host trust",
+    "html": "Whether this set has a host key on record for its source. A host key that has since changed stops every backup operation for the set until the new fingerprint has been verified independently."
+  },
+  "wizard.set.test-connection": {
+    "label": "Test connection",
+    "html": "Resolves the host, connects, checks the host key, authenticates with the selected key and lists the remote folder. It writes nothing on either side, and saving is blocked until it passes."
+  },
+  "wizard.set.connection-checks": {
+    "label": "Connection test result",
+    "html": "Every step of the test with its own verdict, in the order they ran, so a mistyped hostname and an unauthorised key are told apart rather than collapsed into one failure. A step after a failing one was never attempted, which is not a quiet pass."
+  },
+  "wizard.set.remote-handling": {
+    "label": "Remote source handling",
+    "html": "Whether Backupd deletes the original artifact on the source once its own copy has been transferred, verified, committed and recorded as safe. A source protected from deletion keeps every remote original for good."
+  },
+  "wizard.set.go-to-sets": {
+    "label": "Go to backup sets",
+    "html": "Leaves these steps for the backup sets list. The set is already created and enabled; only the immediate run failed to start, and a run can be started from that list."
+  },
+  "wizard.set.create-anyway": {
+    "label": "Create anyway",
+    "html": "Creates the set on an id that already has backups recorded against it, which points this set at that history. Those records become this set's, so it is a deliberate choice rather than a retry."
+  },
+  "wizard.set.change-id": {
+    "label": "Go back and change it",
+    "html": "Dismisses the refusal and leaves the answers as they are so a different name can be given. Nothing was created."
+  },
+  "wizard.set.save-enable-run": {
+    "label": "Save, enable and run",
+    "html": "Creates the set, leaves it enabled and starts one backup immediately. The schedule is unaffected by that run."
+  },
+  "wizard.set.save-enable": {
+    "label": "Save and enable",
+    "html": "Creates the set and leaves it enabled, so it runs at its scheduled times. No backup starts now."
+  },
+  "wizard.set.save-disabled": {
+    "label": "Save without enabling",
+    "html": "Creates the set and leaves it switched off, so nothing runs until somebody enables it. This is how configuration gets written ahead of a source being ready."
+  },
+  "wizard.set.save-hint": {
+    "label": "Why saving is blocked",
+    "html": "The one thing still missing before this set can be saved, or the refusal the last attempt met. It names the real reason rather than a general one, so resolving what it says is enough."
+  },
+  "wizard.set.back": {
+    "label": "Back",
+    "html": "Moves to the previous step. Answers already given are kept and nothing is written."
+  },
+  "wizard.set.step-count": {
+    "label": "Step position",
+    "html": "Which of the six steps is showing. The rail at the top of the page moves between them in any order."
+  },
+  "wizard.set.continue": {
+    "label": "Continue",
+    "html": "Moves to the next step. It neither validates nor saves, so a step can be left half-answered and returned to."
+  },
+  "wizard.ssh.steps": {
+    "label": "Steps",
+    "html": "The four steps of replacing this set's authentication: choose a key, settle the server's identity, verify, apply. The set goes on using its current method until the last step is applied."
+  },
+  "wizard.ssh.close": {
+    "label": "Close",
+    "html": "Closes the wizard without changing this set's authentication. A key imported along the way stays in the key store."
+  },
+  "wizard.ssh.busy": {
+    "label": "Request in flight",
+    "html": "What this wizard is waiting on. Its controls stay disabled until the answer arrives, so one request cannot overtake another."
+  },
+  "wizard.ssh.back": {
+    "label": "Back",
+    "html": "Returns to the previous step with the selection and the probe kept. A verification counts only for the key and host key it was run against, so changing either asks for it again."
+  },
+  "wizard.ssh.next": {
+    "label": "Next",
+    "html": "Moves to the next step, and is unavailable until this one is settled: a key chosen, the server's identity resolved, or the verification passed."
+  },
+  "wizard.ssh.apply": {
+    "label": "Apply and close",
+    "html": "Sends one patch replacing this set's key and trusted host key, and nothing else about the set. Available only while the verification has passed for what is selected now."
+  },
+  "wizard.ssh.key-stored": {
+    "label": "Key in the store",
+    "html": "A key this deployment already holds, named by algorithm, import date and fingerprint, with the sets using it. One that needs a passphrase cannot be chosen, because nothing could resolve it when a backup runs."
+  },
+  "wizard.ssh.key-candidate": {
+    "label": "Key found on this machine",
+    "html": "A private key the engine can read at this path. Choosing it imports a copy into the key store and leaves the original file alone, so the material never crosses the network."
+  },
+  "wizard.ssh.import-key": {
+    "label": "Import and use this key",
+    "html": "Sends the pasted key once, validates it and writes it into the key store with owner-only permissions. It is never displayed again, and this screen drops its own copy as the import returns."
+  },
+  "wizard.ssh.on-record": {
+    "label": "Host key on record",
+    "html": "The host key this set trusts for its source at the moment. A deployment that cannot answer what that is has said something different from nothing being trusted."
+  },
+  "wizard.ssh.offered": {
+    "label": "Host key offered now",
+    "html": "The host key the server presented to the last probe. One that differs from the record has to be answered before anything can be applied, because a rebuilt server and an intercepted connection look identical from here."
+  },
+  "wizard.ssh.probe": {
+    "label": "Ask the server",
+    "html": "Asks the source which host key it offers right now and compares it against the record. It trusts nothing on your behalf."
+  },
+  "wizard.ssh.verify": {
+    "label": "Verify",
+    "html": "Runs the selected key against the settled host key and lists the folder this set pulls from. Nothing is written to the server and nothing is persisted here."
+  },
+  "wizard.ssh.checks": {
+    "label": "Verification result",
+    "html": "Every step of the run with its verdict and, where one was measured, how long it took. A step that was never attempted says so rather than passing quietly, and a step with no timing was decided by the same call as the one above it."
+  },
+  "wizard.ssh.ledger": {
+    "label": "What applying changes",
+    "html": "The key and host key this set uses now, beside the ones about to replace them. The rest of the set is left untouched by the patch."
+  }
+}

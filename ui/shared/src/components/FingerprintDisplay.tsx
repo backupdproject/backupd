@@ -1,5 +1,7 @@
 import { Fragment } from "react";
 import type { TrustedHostKey } from "@shared/types/backup";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 /**
  * The host keys a connection will actually check against, shown the way
@@ -52,7 +54,8 @@ export function FingerprintDisplay({
   host,
   keys,
   emptyNote = "Backupd could not read a host key for this set, so none is shown here.",
-  trustedAt
+  trustedAt,
+  tip
 }: {
   host: string;
   /** What is trusted for this host. Empty renders emptyNote instead. */
@@ -62,8 +65,14 @@ export function FingerprintDisplay({
    *  nothing back, and those are not the same sentence. */
   emptyNote?: string;
   trustedAt?: string | null;
+  /** What this panel is, in the tooltip registry (issue #834). The
+   *  caller's, because the same three values mean "what this set is
+   *  pinned to" on a set's own page and "what this host just offered"
+   *  in the wizard. Absent, the panel explains nothing, which is what
+   *  it did before. */
+  tip?: TooltipId;
 }) {
-  return (
+  const panel = (
     <dl
       style={{
         margin: 0, display: "grid", gridTemplateColumns: "132px 1fr",
@@ -99,4 +108,5 @@ export function FingerprintDisplay({
       </dd>
     </dl>
   );
+  return tip ? <InfoTooltip id={tip} block>{panel}</InfoTooltip> : panel;
 }

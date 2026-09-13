@@ -15,6 +15,12 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "isolatedModules": true,
+    // The tooltip registry (src/tooltips/tooltips.json, issue #834) is
+    // imported as a module so its keys ARE the `TooltipId` union: an
+    // element naming an id the registry does not define fails to compile,
+    // which is the only check that covers several hundred call sites no
+    // test run visits.
+    "resolveJsonModule": true,
     "noEmit": true,
     "baseUrl": ".",
     "paths": {

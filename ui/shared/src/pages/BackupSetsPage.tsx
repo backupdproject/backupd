@@ -36,6 +36,7 @@ import { useRunControls } from "@shared/hooks/useRunControls";
 import { useHoverTitle } from "@shared/hooks/useTooltips";
 import { isNotConfigured } from "@shared/api/failure";
 import { backupSetPath } from "@shared/utilities/routes";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 export function BackupSetsPage({
   sets,
@@ -114,13 +115,15 @@ export function BackupSetsPage({
   if (isNotConfigured(sets.error))
     return (
       <>
-        <PageHeader title="Backup sets" subtitle="No backup sets configured" />
+        <PageHeader title="Backup sets" subtitle="No backup sets configured" tip="sets.page" />
         <EmptyState
           title="No backup sets yet"
           action={
-            <button className="btn btn--primary" onClick={() => navigate("/sets/new")}>
-              Add backup set
-            </button>
+            <InfoTooltip id="sets.add">
+              <button className="btn btn--primary" onClick={() => navigate("/sets/new")}>
+                Add backup set
+              </button>
+            </InfoTooltip>
           }
         >
           This instance has no configuration yet. Adding your first backup set is what
@@ -148,13 +151,15 @@ export function BackupSetsPage({
   if (sets.data && data.length === 0) {
     return (
       <>
-        <PageHeader title="Backup sets" subtitle="No backup sets configured" />
+        <PageHeader title="Backup sets" subtitle="No backup sets configured" tip="sets.page" />
         <EmptyState
           title="No backup sets yet"
           action={
-            <button className="btn btn--primary" onClick={() => navigate("/sets/new")}>
-              Add backup set
-            </button>
+            <InfoTooltip id="sets.add">
+              <button className="btn btn--primary" onClick={() => navigate("/sets/new")}>
+                Add backup set
+              </button>
+            </InfoTooltip>
           }
         >
           Connect Backupd to your first server to begin collecting and
@@ -168,13 +173,18 @@ export function BackupSetsPage({
     <>
       <PageHeader
         title="Backup sets"
+        tip="sets.page"
         subtitle={
-          data.length +
-          " sets \u00b7 " + healthy + " healthy \u00b7 " + stale + " stale \u00b7 " + failing + " failing" +
-          // Only when there are any. A permanent "0 disabled" is a line
-          // an operator stops reading, and then stops seeing on the day
-          // it says 1.
-          (disabled === 0 ? "" : " \u00b7 " + disabled + " disabled")
+          <InfoTooltip id="sets.summary">
+            <span>
+              {data.length +
+                " sets \u00b7 " + healthy + " healthy \u00b7 " + stale + " stale \u00b7 " + failing + " failing" +
+                // Only when there are any. A permanent "0 disabled" is a line
+                // an operator stops reading, and then stops seeing on the day
+                // it says 1.
+                (disabled === 0 ? "" : " \u00b7 " + disabled + " disabled")}
+            </span>
+          </InfoTooltip>
         }
         actions={
           <>
@@ -196,9 +206,11 @@ export function BackupSetsPage({
             >
               Run all enabled sets
             </button>
-            <button className="btn btn--primary" disabled={readOnly} onClick={() => navigate("/sets/new")}>
-              Add backup set
-            </button>
+            <InfoTooltip id="sets.add" alignEnd>
+              <button className="btn btn--primary" disabled={readOnly} onClick={() => navigate("/sets/new")}>
+                Add backup set
+              </button>
+            </InfoTooltip>
           </>
         }
       />

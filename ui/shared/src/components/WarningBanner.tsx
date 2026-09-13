@@ -42,11 +42,13 @@
  * explicitly instead. Every banner here whose body is prose gets the
  * property for free.
  */
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { Banner } from "./Banner";
 import type { BannerTone } from "./Banner";
 import { Icon } from "@shared/design-system/icons";
 import type { IconName } from "@shared/design-system/icons";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 export type { BannerTone };
 
@@ -70,6 +72,25 @@ function scalarBody(children: ReactNode): string {
   return typeof children === "string" || typeof children === "number" ? String(children) : "";
 }
 
+/** The banner's own explanation, wrapped around the line it explains
+ *  rather than annotated into it (#834).
+ *
+ *  An icon host placed INSIDE the eyebrow or the title would become part
+ *  of that element's text and its accessible name, and those two lines are
+ *  what every other surface — and every locator — reads this banner by.
+ *  Wrapping leaves the element itself untouched and adds no ink at all,
+ *  and a banner whose caller named no entry is returned exactly as it was
+ *  written. */
+function Explained({ tip, children }: { tip?: TooltipId; children: ReactElement }) {
+  return tip ? (
+    <InfoTooltip id={tip} block>
+      {children}
+    </InfoTooltip>
+  ) : (
+    children
+  );
+}
+
 export function WarningBanner({
   tone = "warn",
   eyebrow,
@@ -77,7 +98,8 @@ export function WarningBanner({
   children,
   actions,
   dismissible = true,
-  dismissKey
+  dismissKey,
+  tip
 }: {
   tone?: BannerTone;
   eyebrow?: string;
@@ -93,6 +115,11 @@ export function WarningBanner({
    *  caller whose body is elements rather than prose gets the same
    *  property the derived key gives everyone else. */
   dismissKey?: string;
+  /** What this notice IS, from the registry (#834). It lands on the title,
+   *  or on the eyebrow when the banner has no title: a banner with neither
+   *  has no line of its own to explain, and its body is already the
+   *  explanation. */
+  tip?: TooltipId;
 }) {
   return (
     <Banner
@@ -109,14 +136,20 @@ export function WarningBanner({
       </span>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
         {eyebrow ? (
-          <div
-            className="eyebrow"
-            style={{ color: COLOR[tone], fontSize: "var(--text-xs)", letterSpacing: "0.09em" }}
-          >
-            {eyebrow}
-          </div>
+          <Explained tip={title ? undefined : tip}>
+            <div
+              className="eyebrow"
+              style={{ color: COLOR[tone], fontSize: "var(--text-xs)", letterSpacing: "0.09em" }}
+            >
+              {eyebrow}
+            </div>
+          </Explained>
         ) : null}
-        {title ? <div style={{ fontWeight: 600, fontSize: 13.5 }}>{title}</div> : null}
+        {title ? (
+          <Explained tip={tip}>
+            <div style={{ fontWeight: 600, fontSize: 13.5 }}>{title}</div>
+          </Explained>
+        ) : null}
         {children ? (
           <div style={{ fontSize: 13, color: "var(--text-2)", maxWidth: "76ch" }}>{children}</div>
         ) : null}

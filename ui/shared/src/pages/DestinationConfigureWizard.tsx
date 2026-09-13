@@ -68,6 +68,8 @@ import {
   importCredentialsCommand,
   testConnectionCommand
 } from "@shared/pages/destinationConfigureCommands";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
+import type { TooltipId } from "@shared/tooltips/tooltips";
 
 type Step = "fields" | "test" | "review";
 
@@ -329,20 +331,24 @@ export function DestinationConfigureWizard({
             // old pass" is worth saying where the change was made. It is
             // also what makes the rule observable, and therefore
             // testable, at the moment it applies.
-            <p
-              data-testid="configure-mark-stale"
-              style={{ margin: 0, fontSize: 12.5, color: "var(--text-2)", maxWidth: "74ch" }}
-            >
-              The check that passed was for different values. This destination has to be tested again
-              before the change can be saved.
-            </p>
+            <InfoTooltip id="wizard.configure.mark-stale" block>
+              <p
+                data-testid="configure-mark-stale"
+                style={{ margin: 0, fontSize: 12.5, color: "var(--text-2)", maxWidth: "74ch" }}
+              >
+                The check that passed was for different values. This destination has to be tested again
+                before the change can be saved.
+              </p>
+            </InfoTooltip>
           ) : null}
           {credentialDeclared ? (
             <CommandEcho label="the same thing from a terminal" commands={[importCredentialsCommand()]} />
           ) : null}
           <Buttons
             onCancel={onClose}
+            cancelTip="wizard.configure.cancel"
             primaryLabel="Next: test connection"
+            primaryTip="wizard.configure.next-test"
             primaryEnabled={describable}
             onPrimary={toTestStep}
           />
@@ -380,10 +386,13 @@ export function DestinationConfigureWizard({
           <Buttons
             onCancel={() => setStep("fields")}
             cancelLabel="Back"
+            cancelTip="wizard.configure.back-fields"
             secondaryLabel={busy ? "Testing…" : "Test connection again"}
             secondaryEnabled={!busy}
+            secondaryTip="wizard.configure.retest"
             onSecondary={() => void runProbe()}
             primaryLabel="Next: review"
+            primaryTip="wizard.configure.next-review"
             primaryEnabled={!busy && verified}
             onPrimary={() => setStep("review")}
           />
@@ -418,7 +427,9 @@ export function DestinationConfigureWizard({
           <Buttons
             onCancel={() => setStep("test")}
             cancelLabel="Back"
+            cancelTip="wizard.configure.back-test"
             primaryLabel={busy ? "Saving…" : "Save configuration"}
+            primaryTip="wizard.configure.save"
             primaryEnabled={!busy && verified}
             onPrimary={() => void save()}
           />
@@ -431,35 +442,51 @@ export function DestinationConfigureWizard({
 function Buttons({
   onCancel,
   cancelLabel = "Cancel",
+  cancelTip,
   secondaryLabel,
   secondaryEnabled,
+  secondaryTip,
   onSecondary,
   primaryLabel,
   primaryEnabled,
+  primaryTip,
   onPrimary
 }: {
   onCancel(): void;
   cancelLabel?: string;
+  /** The registry id for whichever control this row's left-hand button
+   *  is on this step. Passed in rather than derived from the label: the
+   *  same button is Cancel on the first step and Back on the other two,
+   *  and those are two different explanations (#834). */
+  cancelTip: TooltipId;
   secondaryLabel?: string;
   secondaryEnabled?: boolean;
+  secondaryTip?: TooltipId;
   onSecondary?(): void;
   primaryLabel: string;
   primaryEnabled: boolean;
+  primaryTip: TooltipId;
   onPrimary(): void;
 }) {
   return (
     <div style={{ display: "flex", gap: 8 }}>
-      <button className="btn" type="button" onClick={onCancel}>
-        {cancelLabel}
-      </button>
-      {secondaryLabel ? (
-        <button className="btn" type="button" disabled={!secondaryEnabled} onClick={onSecondary}>
-          {secondaryLabel}
+      <InfoTooltip id={cancelTip}>
+        <button className="btn" type="button" onClick={onCancel}>
+          {cancelLabel}
         </button>
+      </InfoTooltip>
+      {secondaryLabel && secondaryTip ? (
+        <InfoTooltip id={secondaryTip}>
+          <button className="btn" type="button" disabled={!secondaryEnabled} onClick={onSecondary}>
+            {secondaryLabel}
+          </button>
+        </InfoTooltip>
       ) : null}
-      <button className="btn btn--primary" type="button" disabled={!primaryEnabled} onClick={onPrimary}>
-        {primaryLabel}
-      </button>
+      <InfoTooltip id={primaryTip}>
+        <button className="btn btn--primary" type="button" disabled={!primaryEnabled} onClick={onPrimary}>
+          {primaryLabel}
+        </button>
+      </InfoTooltip>
     </div>
   );
 }

@@ -72,6 +72,7 @@ import {
   importCredentialsCommand,
   testConnectionCandidateCommand
 } from "@shared/pages/storageDestinationCommands";
+import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 /**
  * The providers the first pane offers, and the endpoint each one fills in.
@@ -272,9 +273,13 @@ export function S3DestinationWizard({
         <span style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
           {step === 4 ? "what gets written, shown before it is written" : "nothing is saved until step 4"}
         </span>
-        <span style={{ marginLeft: "auto", fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
-          Step {step} of 4
-        </span>
+        {/* The auto margin belongs to the host once the host is the flex
+            item; on the child it would push nothing. */}
+        <InfoTooltip id="wizard.s3.step" alignEnd style={{ marginLeft: "auto" }}>
+          <span style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+            {"Step " + step + " of 4"}
+          </span>
+        </InfoTooltip>
       </div>
 
       {failure ? (
@@ -369,15 +374,19 @@ function EndpointPane({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {/* One id for the whole row of presets: they do the same thing
+            with different endpoints, and a tooltip per provider would be
+            eight entries saying one sentence (#834). */}
         {PROVIDERS.map((p) => (
-          <button
-            key={p.id}
-            className="btn"
-            type="button"
-            onClick={() => set({ endpoint: p.endpoint ?? "" })}
-          >
-            {p.label}
-          </button>
+          <InfoTooltip key={p.id} id="wizard.s3.provider-preset">
+            <button
+              className="btn"
+              type="button"
+              onClick={() => set({ endpoint: p.endpoint ?? "" })}
+            >
+              {p.label}
+            </button>
+          </InfoTooltip>
         ))}
       </div>
       <p style={{ margin: 0, fontSize: 12.5, color: "var(--text-2)", maxWidth: "74ch" }}>
@@ -465,12 +474,16 @@ function EndpointPane({
       </Field>
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn" type="button" onClick={onCancel}>
-          Cancel
-        </button>
-        <button className="btn btn--primary" type="button" disabled={!ready} onClick={onNext}>
-          Next: credentials
-        </button>
+        <InfoTooltip id="wizard.s3.cancel">
+          <button className="btn" type="button" onClick={onCancel}>
+            Cancel
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="wizard.s3.next-credentials">
+          <button className="btn btn--primary" type="button" disabled={!ready} onClick={onNext}>
+            Next: credentials
+          </button>
+        </InfoTooltip>
       </div>
     </div>
   );
@@ -629,12 +642,16 @@ function CredentialsPane(props: {
       ) : null}
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn" type="button" onClick={props.onBack}>
-          Back
-        </button>
-        <button className="btn btn--primary" type="button" disabled={props.busy} onClick={props.onNext}>
-          {props.busy ? "Working…" : props.nextLabel}
-        </button>
+        <InfoTooltip id="wizard.s3.back">
+          <button className="btn" type="button" onClick={props.onBack}>
+            Back
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="wizard.s3.next-from-credentials">
+          <button className="btn btn--primary" type="button" disabled={props.busy} onClick={props.onNext}>
+            {props.busy ? "Working…" : props.nextLabel}
+          </button>
+        </InfoTooltip>
       </div>
     </div>
   );
@@ -692,20 +709,26 @@ function VerifyPane({
       <CommandEcho label="the same thing from a terminal" commands={[testConnectionCandidateCommand(spec)]} />
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn" type="button" onClick={onBack}>
-          Back
-        </button>
-        <button className="btn" type="button" disabled={busy} onClick={onVerifyAgain}>
-          Test connection again
-        </button>
-        <button
-          className="btn btn--primary"
-          type="button"
-          disabled={busy || report === null || !report.ok}
-          onClick={onNext}
-        >
-          Next: save
-        </button>
+        <InfoTooltip id="wizard.s3.back">
+          <button className="btn" type="button" onClick={onBack}>
+            Back
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="wizard.s3.retest">
+          <button className="btn" type="button" disabled={busy} onClick={onVerifyAgain}>
+            Test connection again
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="wizard.s3.next-save">
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={busy || report === null || !report.ok}
+            onClick={onNext}
+          >
+            Next: save
+          </button>
+        </InfoTooltip>
       </div>
     </div>
   );
@@ -766,20 +789,22 @@ function SavePane({
         </Banner>
       ) : null}
 
-      <pre
-        className="mono"
-        style={{
-          margin: 0,
-          fontSize: "var(--text-xs)",
-          background: "var(--surface-1)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius-md)",
-          padding: 10,
-          overflowX: "auto"
-        }}
-      >
-        {yamlPreview(spec)}
-      </pre>
+      <InfoTooltip id="wizard.s3.yaml-preview" block>
+        <pre
+          className="mono"
+          style={{
+            margin: 0,
+            fontSize: "var(--text-xs)",
+            background: "var(--surface-1)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-md)",
+            padding: 10,
+            overflowX: "auto"
+          }}
+        >
+          {yamlPreview(spec)}
+        </pre>
+      </InfoTooltip>
 
       <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)", maxWidth: "74ch" }}>
         There is no <span className="mono">access_key_id</span> key here and there is no{" "}
@@ -793,17 +818,21 @@ function SavePane({
       />
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn" type="button" onClick={onBack}>
-          Back
-        </button>
-        <button
-          className="btn btn--primary"
-          type="button"
-          disabled={busy || !saveEnabled}
-          onClick={onSave}
-        >
-          {busy ? "Saving…" : editing ? "Save changes" : "Save destination"}
-        </button>
+        <InfoTooltip id="wizard.s3.back">
+          <button className="btn" type="button" onClick={onBack}>
+            Back
+          </button>
+        </InfoTooltip>
+        <InfoTooltip id="wizard.s3.save">
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={busy || !saveEnabled}
+            onClick={onSave}
+          >
+            {busy ? "Saving…" : editing ? "Save changes" : "Save destination"}
+          </button>
+        </InfoTooltip>
       </div>
     </div>
   );
