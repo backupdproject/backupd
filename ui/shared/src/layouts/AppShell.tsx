@@ -46,11 +46,17 @@ export interface NavCounts {
   quarantine?: number;
 }
 
-/** The six section rows. Every one of these was a geometric character
+/** The seven section rows. Every one of these was a geometric character
  *  until #621, and this nav is where that hurt most: the dashboard was a
  *  hollow diamond, and backup sets and backups were a square hatched
  *  horizontally and a square hatched vertically, which at 13px is one
- *  shape twice. */
+ *  shape twice.
+ *
+ *  Repositories is EPIC K's (issue #788), and it is a section of its own
+ *  rather than a card under Settings because a repository domain is
+ *  operational: it has health, it has maintenance that falls due, and it
+ *  is where an operator goes when a backup set is fine and the store
+ *  under it is not. */
 const NAV: {
   to: string;
   label: string;
@@ -71,6 +77,7 @@ const NAV: {
     to: "/quarantine", label: "Quarantine", icon: "quarantine", count: "quarantine", alert: true,
     tip: "nav.quarantine"
   },
+  { to: "/repositories", label: "Repositories", icon: "repositories", tip: "nav.repositories" },
   { to: "/settings", label: "Settings", icon: "settings", tip: "nav.settings" }
 ];
 

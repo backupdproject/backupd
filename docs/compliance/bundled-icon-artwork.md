@@ -9,7 +9,7 @@ change that put them there.
 
 - **Creator**: Fonticons, Inc. (https://fontawesome.com)
 - **Copyright**: Copyright 2024 Fonticons, Inc.
-- **Material**: Font Awesome Free 6.7.2, the fourteen icons listed below
+- **Material**: Font Awesome Free 6.7.2, the fifteen icons listed below
 - **Licence**: CC BY 4.0, SPDX `CC-BY-4.0`, Creative Commons Attribution 4.0
   International
 - **Licence text**: https://creativecommons.org/licenses/by/4.0/
@@ -51,7 +51,7 @@ box there, and it fails silently.
 There is a bundle budget, and the release image size is gated at 1.05x its
 baseline. The Font Awesome React packages would spend a slice of that on
 an icon registry, a tree-shaking story and a runtime, in order to draw
-fourteen shapes. The shapes themselves are about 4.7 KB of path data.
+fifteen shapes. The shapes themselves are about 5 KB of path data.
 
 And a dependency would not have made the licensing simpler. Font Awesome
 Free's package declares `(CC-BY-4.0 AND OFL-1.1 AND MIT)`, which is a
@@ -63,7 +63,7 @@ what this file is.
 
 ## The icons this product ships
 
-Fourteen, each named by the Font Awesome style and name it came from, then
+Fifteen, each named by the Font Awesome style and name it came from, then
 by the role this product draws it in.
 
 - `solid/triangle-exclamation` drawn as `warning`: warnings, everywhere one is stated
@@ -78,6 +78,7 @@ by the role this product draws it in.
 - `solid/clock-rotate-left` drawn as `activity`: the Activity nav row
 - `solid/ban` drawn as `quarantine`: the Quarantine nav row
 - `solid/gear` drawn as `settings`: the Settings nav row
+- `solid/database` drawn as `repositories`: the Repositories nav row
 - `solid/arrow-left` drawn as `arrow-left`: the way back, in every page header that has one
 - `solid/arrow-right` drawn as `arrow-right`: the cancel-edit ledger's "becomes"
 

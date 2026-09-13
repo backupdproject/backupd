@@ -53,9 +53,11 @@ import { Choice, Toggle } from "@shared/components/Choice";
 import { Rows, Row } from "@shared/components/Definitions";
 import {
   CONSISTENCY_COPY,
+  DOMAIN_BOUNDARIES,
   ENGINE_COPY,
   VERIFICATION_COPY
 } from "@shared/components/EngineBadge";
+import { NEW_SET_DEFAULTS } from "@shared/pages/incrementalConfigFields";
 import type { BackupEngine, SourceConsistency, VerificationLevel } from "@shared/types/snapshot";
 
 /**
@@ -115,23 +117,6 @@ const VERIFICATION_ORDER: readonly VerificationLevel[] = [
   "content_sample",
   "content_full",
   "restore_drill"
-];
-
-/**
- * The six things backup sets sharing one repository domain share
- * (`model.RepositoryBoundaries`).
- *
- * Stated where the decision is made rather than in a help page, because
- * joining a shared domain is the one configuration choice in this product
- * whose consequences land on OTHER backup sets.
- */
-const DOMAIN_BOUNDARIES: readonly { title: string; detail: string }[] = [
-  { title: "One encryption key", detail: "whoever can open the store can read every set in it" },
-  { title: "One credential", detail: "a rotated passphrase changes access for all of them at once" },
-  { title: "One maintenance owner", detail: "compaction and reclamation run for the domain, not per set" },
-  { title: "One deduplication pool", detail: "content in common is stored once, which is the benefit" },
-  { title: "One corruption blast radius", detail: "damage to the store is damage to every set in it" },
-  { title: "One storage location", detail: "they fill the same disk or bucket, and its space is shared" }
 ];
 
 /** Shown only until the real probe (issue #146) resolves for the first
@@ -256,19 +241,21 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
    * repository they did not choose. The step argues for both engines and
    * Incremental is one click away.
    */
-  const [engine, setEngine] = useState<BackupEngine>("artifact");
+  const [engine, setEngine] = useState<BackupEngine>(NEW_SET_DEFAULTS.engine);
   const incremental = engine === "kopia";
   const [domainChoice, setDomainChoice] = useState("");
   const [newDomain, setNewDomain] = useState("");
-  const [consistency, setConsistency] = useState<SourceConsistency>("live_best_effort");
-  const [verificationLevel, setVerificationLevel] = useState<VerificationLevel>("content_sample");
+  const [consistency, setConsistency] = useState<SourceConsistency>(NEW_SET_DEFAULTS.sourceConsistency);
+  const [verificationLevel, setVerificationLevel] = useState<VerificationLevel>(
+    NEW_SET_DEFAULTS.verificationLevel
+  );
   // The verification budget as TEXT, because these three fields are
   // numbers an operator types and an empty one means "inherit the
   // deployment's own setting" — which a number-typed state cannot say
   // without inventing a sentinel. They are parsed once, at save.
-  const [samplePercent, setSamplePercent] = useState("5");
-  const [fullEveryDays, setFullEveryDays] = useState("7");
-  const [drillEveryDays, setDrillEveryDays] = useState("30");
+  const [samplePercent, setSamplePercent] = useState(NEW_SET_DEFAULTS.samplePercent);
+  const [fullEveryDays, setFullEveryDays] = useState(NEW_SET_DEFAULTS.fullEveryDays);
+  const [drillEveryDays, setDrillEveryDays] = useState(NEW_SET_DEFAULTS.drillEveryDays);
 
   // The domains this deployment declares, for step 4's picker. A failure
   // is reported as a failure rather than turned into an empty list: "you

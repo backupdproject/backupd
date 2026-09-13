@@ -47,6 +47,9 @@ import { BackupDetailPage } from "@shared/pages/BackupDetailPage";
 import { ActivityPage } from "@shared/pages/ActivityPage";
 import { QuarantinePage } from "@shared/pages/QuarantinePage";
 import { SettingsPage } from "@shared/pages/SettingsPage";
+import { RepositoryDomainsPage } from "@shared/pages/RepositoryDomainsPage";
+import { RepositoryDomainNewPage } from "@shared/pages/RepositoryDomainNewPage";
+import { BackupDefaultsPage } from "@shared/pages/BackupDefaultsPage";
 import { CatalogRecoveryPage } from "@shared/pages/CatalogRecoveryPage";
 import { ConfigurationSavedPage } from "@shared/pages/ConfigurationSavedPage";
 import { LoginPage } from "@shared/auth/LoginPage";
@@ -323,6 +326,13 @@ export function App() {
         <Route path="/activity" element={<ActivityPage />} />
         <Route path="/quarantine" element={<QuarantinePage readOnly={readOnly} quarantine={quarantine} />} />
         <Route path="/settings" element={<SettingsPage readOnly={readOnly} />} />
+        {/* EPIC K's deployment-level screens (issue #788). A repository
+            domain is a boundary several backup sets sit inside, so it is
+            routed beside Settings rather than under any one set: nothing
+            about it can be answered from inside a set that shares it. */}
+        <Route path="/repositories" element={<RepositoryDomainsPage readOnly={readOnly} />} />
+        <Route path="/repositories/new" element={<RepositoryDomainNewPage />} />
+        <Route path="/settings/backup-defaults" element={<BackupDefaultsPage readOnly={readOnly} />} />
         <Route path="/catalog-recovery" element={<CatalogRecoveryPage readOnly={readOnly} />} />
         {/* Issue #830 §8, and mounted on BOTH sides of the sign-in gate
             (the unauthenticated router above has it too). Without this

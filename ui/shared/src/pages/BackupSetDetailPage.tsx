@@ -63,6 +63,7 @@ import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 // unchanged, including the accessible-name gap this page's decision
 // recorded — see Definitions.tsx.
 import { Cell, Row } from "@shared/components/Definitions";
+import { BackupSetConfigurationCard } from "@shared/pages/BackupSetConfigurationCard";
 import type { TooltipId } from "@shared/tooltips/tooltips";
 import { RetentionPreviewDialog } from "./RetentionPreviewDialog";
 import { BackupSetRetentionCard } from "./BackupSetRetentionCard";
@@ -1006,6 +1007,18 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                 }
               />
             </dl>
+          </Section>
+
+          {/* EPIC K (issue #788). What this set is configured to DO,
+              drawn for the engine it runs: an incremental set's
+              repository domain, consistency declaration and verification
+              budget, or an artifact set's completion and validation. It
+              sits above the inline edit list rather than inside it
+              because two of its fields are create-only and the rest are
+              closed questions with consequences, which is a card of
+              radio choices and not a row of text boxes. */}
+          <Section title="Configuration" tip="sets.detail.configuration">
+            <BackupSetConfigurationCard set={s} readOnly={readOnly} onSaved={set.reload} />
           </Section>
 
           {editing && draft && baseline ? (
