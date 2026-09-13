@@ -44,7 +44,8 @@ func aDeploymentWithARepositoryDomain(t *testing.T) string {
 		"    isolation: shared\n" +
 		"    passphrase:\n" +
 		"      file: " + passphrase + "\n"
-	if err := os.WriteFile(configPath, []byte(strings.Replace(existing, anchor, domains+anchor, 1)), 0o644); err != nil {
+	withEngine := "incremental_engine:\n  enabled: true\n" + domains
+	if err := os.WriteFile(configPath, []byte(strings.Replace(existing, anchor, withEngine+anchor, 1)), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	return configPath
