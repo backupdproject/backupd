@@ -4,6 +4,101 @@
 
 ### Added
 
+- **A second backup engine: incremental snapshots, off by default** (EPIC K,
+  #779, issues #780-#789). A backup set can now run `engine: kopia` instead of
+  `artifact`: rather than pulling a producer's finished file whole, it
+  snapshots a source *tree* into an encrypted, content-addressed repository
+  and stores only content that repository does not already hold. A snapshot of
+  a 100 GB tree that changed by 1% is a manifest plus roughly the changed
+  content, not a second 100 GB copy.
+
+  It is **gated and off by default**: `incremental_engine.enabled: true` in
+  `config.yaml`, or `BACKUPD_INCREMENTAL_ENGINE=1` in the environment, which
+  overrides the file in both directions. With the gate off, a configuration
+  that declares incremental sets still loads and still backs up every artifact
+  set on schedule — the incremental ones refuse with one sentence naming both
+  ways to enable it (`409 INCREMENTAL_ENGINE_DISABLED`, CLI exit 1), and a
+  gated restore refuses rather than succeeding having written nothing.
+  **Existing artifact backup sets are unchanged in either position, and
+  nothing ever converts one engine into the other**: no auto-migration on
+  upgrade, on reload or as a convenience, and no `--engine` on
+  `backup-set patch`. Moving a source onto the incremental engine is a new
+  backup set created beside the old one, which is a documented procedure.
+
+  **Scanning is not incremental storage**, and the reports say so. Every run
+  walks the whole source tree — there is no incremental scan, no change
+  journal and no watcher — in bounded memory: a million entries in one flat
+  directory cost 4.2 MiB of peak heap streaming against 493.4 MiB for the
+  slice-shaped listing this product used to build, with the first entry
+  arriving in 12 ms rather than after 102 seconds. The whole tree is also
+  READ every run: content is reused, files are not, because skipping a file's
+  bytes because its size and modification time look familiar is how a
+  rewritten file silently keeps its old content in every later snapshot. What
+  is incremental is the STORAGE, so a run reports five separate measurements
+  and deliberately no total: entries scanned, logical size, read
+  from source, written to repository, reused. Only the fourth is storage
+  growth. Every counter is nullable and null prints `not measured`, never `0`.
+
+  What a run is allowed to claim about a source is declared per set and
+  recorded per run: `live_best_effort` (the default and the weakest claim),
+  `externally_quiesced`, or `external_snapshot`, and only the last is ever
+  rendered as "consistent". Under the stronger two, a mutation observed during
+  the run is reported as a contract violation rather than passing unnoticed.
+  Content reuse never becomes permanent trust: every path in every source is
+  re-read on a bounded cadence the policy names.
+
+  The operator surface is `backupd snapshot` (`list`, `show`, `holds`,
+  `retention`, `verify`, `restore`, `hold`, `unhold`), `backupd repository`
+  (`health`, `maintenance`), four
+  repository-domain screens and four per-set snapshot screens in the web
+  interface, and six new `GET` routes plus four actions on `POST /operations`
+  (`restore_snapshot`, `verify_snapshot`, `hold_snapshot`,
+  `release_snapshot_hold`) — no new mutating route, so the CLI and the browser
+  submit the same durable, idempotency-keyed operation. Snapshots are retained
+  under the deployment's existing GFS chain rather than a second policy, may
+  be protected by holds that require a reason, and are verified at four
+  depths with the level *achieved* reported separately from the level asked
+  for.
+
+  Three limits ship documented rather than discovered. An incremental set's
+  source must be a backend whose directory listing can be bounded —
+  `local_volume` or `s3`; **`sftp` cannot be**, and a `kopia` set pointed at
+  an SFTP source is refused at run time, because pulling a remote producer's
+  finished files over SSH is the `artifact` engine's job. Every repository
+  domain's storage is local, under the backup root, inside the reserved
+  `.backupd` namespace that artifact discovery, retention and prune may not
+  enter. And no verb or schedule runs repository maintenance yet: the
+  surfaces report its decision, its owner and what it has reclaimed.
+
+  New documentation: [`docs/incremental-engine.md`](docs/incremental-engine.md),
+  [`docs/incremental-runbooks.md`](docs/incremental-runbooks.md) and
+  [ADR 0018](docs/adr/0018-shipping-the-incremental-engine-behind-a-gate.md),
+  plus the command table, the nine new screens and the gate on the reference
+  page.
+
+- **The connection test proves write permission, and read-only is derived from
+  it** (#852). A seventh step, `write_probe`, creates a uniquely named dotfile
+  under the configured remote path, removes it, and confirms it is gone. Both
+  answers **pass** — a read-only source account is an ordinary, supported and
+  frequently recommended posture rather than a misconfiguration — so what the
+  answer decides is `writable`, not the verdict.
+
+  What that arms is deleting the remote original after a verified backup, and
+  until now the only proof was the first cycle that tried: an account that
+  could read every byte and unlink nothing looked identical to one that could
+  do both. Enabling delete-from-source against a source just proven
+  non-writable is now **refused rather than coerced** (`409
+  BACKUP_SET_SOURCE_NOT_WRITABLE`), from one place, covering create, first-run
+  create, a connection-changing edit and `backup-set read-only off`. A `200`
+  for "back up and delete the originals" that quietly did not delete is the
+  failure this ends. Turning read-only **on** is never gated: making a set
+  safer does not need the source's permission. `writable` is a required field
+  on the wire and never omitted, because absent and false must not be the same
+  thing to a client, and nothing may enable a delete on an absence of
+  evidence. The probe's errors are classified and then dropped for their own
+  text, so no remote path, chroot home or probe filename can reach a log, a
+  feed or an API response.
+
 - **How often a source is checked is a setting, at two scopes** (#845). Settings
   gains a **Service behaviour** card holding the deployment-wide polling
   interval, and a backup set's own Edit form can override it for that set alone;

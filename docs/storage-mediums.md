@@ -69,6 +69,41 @@ activity feed reads, in the FR-23 event stream under `op=move`, and in
 on stderr. A deployment that declares no storage medium attempts no moves, so
 none of that can fire for it.
 
+## Storage mediums and repository domains are different things
+
+EPIC K added a second named destination-shaped noun to `config.yaml`, and
+the two are not interchangeable. Getting them confused sends somebody
+looking for their snapshots in a bucket list.
+
+| | `storage_mediums` | `repository_domains` |
+| --- | --- | --- |
+| What it holds | **artifacts**: whole files, one per backup, as files | **snapshots**: manifests over encrypted, content-addressed blobs |
+| Which engine uses it | `artifact` | `kopia` (see [`docs/incremental-engine.md`](incremental-engine.md)) |
+| Chosen by | a retention **tier**, per tier | a backup **set**, once, at creation |
+| Names where the bytes are | yes: bucket, endpoint, prefix, region, storage class | **no.** A domain names a boundary, a passphrase and a sharing rule; its storage is local, under the backup root |
+| Encrypted by this product | no; the medium's own at-rest encryption applies | always, with the domain's declared passphrase |
+| Credential | `--credentials-id/-file/-env/-command`, per medium | a `passphrase` block naming `file`, `env` or `command`, per domain |
+| Declarable from the CLI or API | yes: `backupd medium add/edit/remove`, and a wizard | **no.** Edit `config.yaml` |
+| Verified by | `backupd medium test-connection` | `backupd repository health` |
+
+A deployment can run both, and they do not interact: an artifact set's
+monthly tier can live in `offsite_s3` while an incremental set's snapshots
+live in the `production` repository domain, and neither knows the other
+exists. The one place they meet is the disk: a local repository's bytes sit
+under `<backup_root>/.backupd/repositories/<domain>/`, inside the reserved
+namespace that artifact discovery, retention and prune are all forbidden to
+enter. If you exclude one path from a share or a scanner, exclude
+`.backupd`.
+
+Repository storage is not a storage medium and cannot be pointed at one.
+The repository adapter does speak S3 natively, and that path is exercised
+against a real object store in its own integration tests, but
+`repository_domains` has no location field in this build: every domain
+resolves to a local repository under the backup root. A deployment that
+wants its snapshots off-site today puts the backup root on storage that is
+itself off-site.
+
+
 ## The configuration
 
 Mediums are declared once at the top level, and referenced by name from the
