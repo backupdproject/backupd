@@ -1,0 +1,2185 @@
+{
+  "generated_from": [
+    "core/internal/config/config.go (every yaml struct tag, including nested)",
+    "core/internal/config/validate.go (defaults, required-ness, resolution rules)",
+    "core/cmd/backupd (every flag definition and the pinned usage block in main.go)",
+    "apps/generic/cmd/backupd-web/main.go (serve, serve-ui, auth create-admin, healthcheck flags and env)",
+    "apps/common/auth/local/store.go + apps/common/email/email.go (the #830 recovery-email/SMTP record)",
+    "ui/shared/src (SettingsPage, CapacityCard, RetentionPolicyCard, StorageDestinationsCard, S3/Destination wizards, BackupSetWizardPage, backupSetEditFields.ts, BackupSetRetentionCard, RecoveryFields)"
+  ],
+  "scope_values": [
+    "deployment",
+    "source",
+    "backup_set",
+    "medium",
+    "retention",
+    "capacity",
+    "auth_smtp",
+    "state"
+  ],
+  "what_is_in_here": "One entry per CONFIGURATION field: something that changes what this deployment is, and that persists. Purely operational CLI flags are deliberately excluded, because they select an action rather than configure anything: --dry-run, --json, --limit, --follow, --scope, --severity, --source/--backup-set filters, --note, --content, --days, --medium, --acknowledge, --acknowledge-repoint, --acknowledge-host-key-change, --acknowledge-medium-disclosure, --release, --run, --inherit, --candidate, --stdin, --policy-file and --tier/--tier-medium as a preview override. Where such a flag is the only way to write a persistent field (--no-verify writing connection_unverified, --policy-file and --tier writing a retention chain) it is listed on that field instead.",
+  "summary": {
+    "total": 119,
+    "ui_already": 47,
+    "ui_to_add": 29,
+    "file_only": 43,
+    "by_scope": {
+      "auth_smtp": 9,
+      "backup_set": 45,
+      "capacity": 5,
+      "deployment": 31,
+      "medium": 13,
+      "retention": 13,
+      "source": 2,
+      "state": 1
+    },
+    "to_add_by_scope": {
+      "backup_set": 19,
+      "capacity": 2,
+      "deployment": 7,
+      "source": 1
+    },
+    "yaml_fields": 93,
+    "cli_reachable": 70,
+    "env_reachable": 14
+  },
+  "known_asymmetries": [
+    "storage_mediums[].path (a local_volume's directory) is configurable in the web UI through the manifest-driven destination wizard and has NO CLI flag at all: `medium add`/`medium edit` parse --type, --region, --endpoint, --bucket, --prefix, --storage-class, --upload-verification and the four credential spellings, and nothing else. The gap is the CLI's, not the UI's.",
+    "poll_interval is a real, required config key with no CLI flag and no UI control. SettingsPage carries a comment where a fake 'poll interval' row used to be: it was removed rather than wired (#299).",
+    "A per-backup-set poll_interval override (#845) does not exist in the schema at all yet, so it is neither UI- nor CLI-configurable; it is a field to be added, not a gap to be closed."
+  ],
+  "fields": [
+    {
+      "field": "poll_interval",
+      "yaml_path": "poll_interval",
+      "cli_flags": [],
+      "env": [],
+      "type": "duration",
+      "default": null,
+      "required": true,
+      "scope": "deployment",
+      "description": "How often `backupd daemon` repeats the processing cycle. Validate refuses a non-positive value, so there is no default: every config states it.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Settings > Service behaviour"
+      }
+    },
+    {
+      "field": "state.database",
+      "yaml_path": "state.database",
+      "cli_flags": [
+        "backup-set create --state-database",
+        "backupd-web serve --state-database"
+      ],
+      "env": [],
+      "type": "string (path)",
+      "default": "service.StateDatabaseDefault() when a FIRST config is written",
+      "required": true,
+      "scope": "state",
+      "description": "Path to the SQLite lifecycle journal (FR-9). SQLite is mandatory, so this is a path and not a backend choice.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: bootstrap path; the journal must be open before any UI exists, and moving it is a data migration rather than a setting"
+      }
+    },
+    {
+      "field": "default_storage_medium",
+      "yaml_path": "default_storage_medium",
+      "cli_flags": [
+        "medium default <medium-id>"
+      ],
+      "env": [],
+      "type": "string (storage medium id)",
+      "default": "\"\" (empty = local backup root; \"local\" is refused as a synonym)",
+      "required": false,
+      "scope": "deployment",
+      "description": "The destination a NEWLY CREATED retention tier starts on. It never relocates an existing backup.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations (Make default / 'make this the default' in the destination wizard)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "max_moves_per_cycle",
+      "yaml_path": "max_moves_per_cycle",
+      "cli_flags": [],
+      "env": [],
+      "type": "*int",
+      "default": "4 (DefaultMaxMovesPerCycle) when a medium is declared; 0 when none is",
+      "required": false,
+      "scope": "deployment",
+      "description": "Bounds how many artifacts one retention cycle relocates between storage mediums (FR-30). An explicit 0 is refused; the key is refused outright when no medium is declared.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Settings > Storage destinations (advanced)"
+      }
+    },
+    {
+      "field": "alerts.enabled",
+      "yaml_path": "alerts.enabled",
+      "cli_flags": [],
+      "env": [],
+      "type": "bool",
+      "default": "false",
+      "required": false,
+      "scope": "deployment",
+      "description": "The single explicit opt-in for proactive alerting (stale backups, repeated failures, a changed host key, critical storage pressure). False, including by omission, delivers nothing.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Settings > Notifications (the card exists and currently carries only capability copy)"
+      }
+    },
+    {
+      "field": "alerts.repeated_failure_threshold",
+      "yaml_path": "alerts.repeated_failure_threshold",
+      "cli_flags": [],
+      "env": [],
+      "type": "int",
+      "default": "3 (DefaultRepeatedFailureThreshold)",
+      "required": false,
+      "scope": "deployment",
+      "description": "How many artifacts must be in FAILED for one backup set before that counts as a repeated failure worth alerting on.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Settings > Notifications (beside the enable toggle)"
+      }
+    },
+    {
+      "field": "key_encryption.file",
+      "yaml_path": "key_encryption.file",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (path)",
+      "default": "\"\" (no encryption key configured)",
+      "required": false,
+      "scope": "deployment",
+      "description": "File holding the key that encrypts secret material this manager persists beside config.yaml (#298). One of file/env/command.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: secret-source path that must live outside any exported share; naming it from a browser form would invite the exact placement mistake #298 exists to close"
+      }
+    },
+    {
+      "field": "key_encryption.env",
+      "yaml_path": "key_encryption.env",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (env var NAME)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "deployment",
+      "description": "Environment variable this process reads the key-store encryption key from.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: names a process-environment variable that only exists at service start"
+      }
+    },
+    {
+      "field": "key_encryption.command",
+      "yaml_path": "key_encryption.command",
+      "cli_flags": [],
+      "env": [],
+      "type": "[]string (argv)",
+      "default": "[] ",
+      "required": false,
+      "scope": "deployment",
+      "description": "argv whose stdout is the key-store encryption key; run directly, never through a shell.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: an executable this service runs; a browser-settable command line is arbitrary code execution on the host"
+      }
+    },
+    {
+      "field": "capacity.cap_bytes",
+      "yaml_path": "capacity.cap_bytes",
+      "cli_flags": [
+        "settings patch --cap-bytes"
+      ],
+      "env": [],
+      "type": "int64 (bytes)",
+      "default": "0 (sentinel: no cap, use the whole volume)",
+      "required": false,
+      "scope": "capacity",
+      "description": "Ceiling on how much space this manager may occupy under the backup root. Enforced by internal/capacity, not merely displayed.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Capacity (Storage cap)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "capacity.warning_free_bytes",
+      "yaml_path": "capacity.warning_free_bytes",
+      "cli_flags": [
+        "settings patch --warning-free-bytes"
+      ],
+      "env": [],
+      "type": "int64 (bytes)",
+      "default": "0 (no warning line)",
+      "required": false,
+      "scope": "capacity",
+      "description": "FR-21 warning level, measured against whichever headroom binds (disk free, or the cap's remaining allowance). Must be stated together with the critical floor.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Capacity (Storage warning threshold)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "capacity.critical_free_bytes",
+      "yaml_path": "capacity.critical_free_bytes",
+      "cli_flags": [
+        "settings patch --critical-free-bytes"
+      ],
+      "env": [],
+      "type": "int64 (bytes)",
+      "default": "0 (no critical line)",
+      "required": false,
+      "scope": "capacity",
+      "description": "FR-21 critical level. A critical floor above the warning line, or either one alone, is refused at load.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Capacity (Storage critical threshold)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "capacity.safety_margin_bytes",
+      "yaml_path": "capacity.safety_margin_bytes",
+      "cli_flags": [
+        "settings patch --safety-margin-bytes"
+      ],
+      "env": [],
+      "type": "int64 (bytes)",
+      "default": "0",
+      "required": false,
+      "scope": "capacity",
+      "description": "Headroom held back on top of every incoming artifact's own size before a transfer is admitted (listing drift, block rounding, other writers on the volume).",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Settings > Capacity (the card already edits the other three byte fields and reads this one in its dirty key)"
+      }
+    },
+    {
+      "field": "capacity.backup_root",
+      "yaml_path": "capacity.backup_root",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (path)",
+      "default": "derived: the deepest directory every backup set's local_path shares; \"\" when they share only \"/\"",
+      "required": false,
+      "scope": "capacity",
+      "description": "The one directory whose filesystem the manager-wide storage reading is taken from, AS THE CONTAINER SEES IT. Set it when backup sets sit on genuinely different volumes.",
+      "ui": {
+        "configurable": false,
+        "location": "Settings > Capacity (reported read-only, with whether it was configured or derived)",
+        "recommendation": "add: Settings > Capacity (advanced override beside the reading it already shows)"
+      }
+    },
+    {
+      "field": "repository_domains[].id",
+      "yaml_path": "repository_domains[].id",
+      "cli_flags": [],
+      "env": [],
+      "type": "string",
+      "default": null,
+      "required": true,
+      "scope": "deployment",
+      "description": "How a backup set names a repository security boundary (EPIC K, #780). Validated through model.NewRepositoryDomainID.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Settings > Repository domains (new card; blocked behind the incremental engine reaching the UI at all)"
+      }
+    },
+    {
+      "field": "repository_domains[].description",
+      "yaml_path": "repository_domains[].description",
+      "cli_flags": [],
+      "env": [],
+      "type": "string",
+      "default": "\"\"",
+      "required": false,
+      "scope": "deployment",
+      "description": "The operator's own sentence about what this domain holds. Never interpreted; it exists so a list of domain ids is reviewable.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Settings > Repository domains"
+      }
+    },
+    {
+      "field": "repository_domains[].isolation",
+      "yaml_path": "repository_domains[].isolation",
+      "cli_flags": [],
+      "env": [],
+      "type": "string enum: shared | isolated",
+      "default": null,
+      "required": true,
+      "scope": "deployment",
+      "description": "The co-tenancy rule for this repository. REQUIRED with no default in either direction: defaulting to shared makes isolation a belief, defaulting to isolated forgoes the deduplication that is the reason to run the engine.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Settings > Repository domains"
+      }
+    },
+    {
+      "field": "repository_domains[].passphrase.file",
+      "yaml_path": "repository_domains[].passphrase.file",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (path)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "deployment",
+      "description": "File holding the repository encryption passphrase. Required (in one of the three spellings) for a domain a backup set actually references.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: secret-source path; there is deliberately no field anywhere that a passphrase itself can be typed into"
+      }
+    },
+    {
+      "field": "repository_domains[].passphrase.env",
+      "yaml_path": "repository_domains[].passphrase.env",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (env var NAME)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "deployment",
+      "description": "Environment variable the repository passphrase is read from.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: names a process-environment variable that only exists at service start"
+      }
+    },
+    {
+      "field": "repository_domains[].passphrase.command",
+      "yaml_path": "repository_domains[].passphrase.command",
+      "cli_flags": [],
+      "env": [],
+      "type": "[]string (argv)",
+      "default": "[]",
+      "required": false,
+      "scope": "deployment",
+      "description": "argv whose stdout is the repository passphrase; the secrets-manager path (Vault, SOPS, 1Password) with no SDK dependency.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: an executable this service runs on the host"
+      }
+    },
+    {
+      "field": "sources[].id",
+      "yaml_path": "sources[].id",
+      "cli_flags": [
+        "backup-set create <source/backup-set>"
+      ],
+      "env": [],
+      "type": "string",
+      "default": null,
+      "required": true,
+      "scope": "source",
+      "description": "One origin of backup sets. Half of a backup set's identity (FR-7), so two sources may each carry a set of the same name.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard (source name; CreateBackupSetRequest.sourceName)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].read_only",
+      "yaml_path": "sources[].read_only",
+      "cli_flags": [],
+      "env": [],
+      "type": "bool",
+      "default": "false",
+      "required": false,
+      "scope": "source",
+      "description": "Source-level default for every set under it: pull from here, never delete here (#282). A set's own read_only overrides it.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set wizard / Backup sets page (a source-level control; today the UI can only set it per backup set)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].id",
+      "yaml_path": "sources[].backup_sets[].id",
+      "cli_flags": [
+        "backup-set create <source/backup-set>"
+      ],
+      "env": [],
+      "type": "string",
+      "default": null,
+      "required": true,
+      "scope": "backup_set",
+      "description": "The set's own name; with the source it forms the BackupSetID that keys every journal row and artifact id. Deliberately not editable after creation.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard (create only; rename is a migration, not a field)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].engine",
+      "yaml_path": "sources[].backup_sets[].engine",
+      "cli_flags": [],
+      "env": [],
+      "type": "string enum: artifact | kopia",
+      "default": "artifact (omission)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Which machinery produces this set's restore points (EPIC K, #780). An unrecognised value is refused rather than defaulted in either direction.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set wizard (engine choice at step 1)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].uuid",
+      "yaml_path": "sources[].backup_sets[].uuid",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (uuid)",
+      "default": null,
+      "required": false,
+      "scope": "backup_set",
+      "description": "Durable identifier the snapshot lineage hangs off. Required for an incremental set, refused for an artifact set.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: a durable lineage identifier, generated rather than typed; a hand-entered value that collided or changed would orphan every snapshot the set ever took"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].repository_domain",
+      "yaml_path": "sources[].backup_sets[].repository_domain",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (repository domain id)",
+      "default": null,
+      "required": false,
+      "scope": "backup_set",
+      "description": "Which declared repository boundary this set's snapshots are stored in. Required for an incremental set and deliberately has no default.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set wizard (picker over declared repository domains, beside the engine choice)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].source_consistency",
+      "yaml_path": "sources[].backup_sets[].source_consistency",
+      "cli_flags": [],
+      "env": [],
+      "type": "string enum: live_best_effort | externally_quiesced | external_snapshot",
+      "default": "live_best_effort",
+      "required": false,
+      "scope": "backup_set",
+      "description": "What the operator has arranged around this source while a run reads it (ADR 0009). Omission resolves to the weakest claim so nothing reports a point-in-time image that never existed.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Advanced"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].verification_level",
+      "yaml_path": "sources[].backup_sets[].verification_level",
+      "cli_flags": [],
+      "env": [],
+      "type": "string enum: structural | content_sample | content_full | restore_drill",
+      "default": "structural",
+      "required": false,
+      "scope": "backup_set",
+      "description": "How hard a snapshot in a repository is looked at before it counts as a restore point. Not FR-11 artifact validation.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Verification"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].verification_sample_percent",
+      "yaml_path": "sources[].backup_sets[].verification_sample_percent",
+      "cli_flags": [],
+      "env": [],
+      "type": "int (1-100)",
+      "default": "backupengine.DefaultVerifySamplePercent",
+      "required": false,
+      "scope": "backup_set",
+      "description": "How much of a snapshot's file content a SAMPLED verification reads. A percentage of files, taken as a fixed stride.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Verification"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].verification_full_every",
+      "yaml_path": "sources[].backup_sets[].verification_full_every",
+      "cli_flags": [],
+      "env": [],
+      "type": "duration",
+      "default": "unset = never",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Cadence at which a restore point gets a full content read regardless of the configured level. A cadence only ever raises what a run proves.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Verification"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].verification_restore_drill_every",
+      "yaml_path": "sources[].backup_sets[].verification_restore_drill_every",
+      "cli_flags": [],
+      "env": [],
+      "type": "duration",
+      "default": "unset = never",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Cadence at which a restore point gets an actual restore drill.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Verification"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].source_mount_prefix",
+      "yaml_path": "sources[].backup_sets[].source_mount_prefix",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (path prefix)",
+      "default": "\"\" (the whole remote_path is the source's own)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "The leading part of remote_path that is how THIS deployment reaches the source (a bind mount, an install prefix, a snapshot mount) rather than part of the source's identity, so moving it does not fork the snapshot lineage.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Advanced (incremental sets only)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.type",
+      "yaml_path": "sources[].backup_sets[].remote.type",
+      "cli_flags": [],
+      "env": [],
+      "type": "string enum: local | sftp",
+      "default": null,
+      "required": true,
+      "scope": "backup_set",
+      "description": "Which of FR-4's two source backends this set pulls through. A local remote carrying sftp fields is refused.",
+      "ui": {
+        "configurable": false,
+        "location": "Backup set wizard (always creates an sftp remote; the type is never asked)",
+        "recommendation": "add: Backup set wizard (an explicit source-backend step, so a local source is reachable without editing config.yaml)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.host",
+      "yaml_path": "sources[].backup_sets[].remote.host",
+      "cli_flags": [
+        "backup-set create --host",
+        "backup-set patch --host"
+      ],
+      "env": [],
+      "type": "string",
+      "default": null,
+      "required": true,
+      "scope": "backup_set",
+      "description": "The machine being backed up.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard; Backup set detail > Connection (Host)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.port",
+      "yaml_path": "sources[].backup_sets[].remote.port",
+      "cli_flags": [
+        "backup-set create --port",
+        "backup-set patch --port"
+      ],
+      "env": [],
+      "type": "int",
+      "default": "0 (the backend's default port)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "SSH port. 0 means the backend default; on a patch that 0 is a real value rather than an absent one.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard; Backup set detail > Connection (Port)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.user",
+      "yaml_path": "sources[].backup_sets[].remote.user",
+      "cli_flags": [
+        "backup-set create --user",
+        "backup-set patch --user"
+      ],
+      "env": [],
+      "type": "string",
+      "default": null,
+      "required": true,
+      "scope": "backup_set",
+      "description": "The account this set authenticates as on the source host.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard; Backup set detail > Connection (User)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.key_file",
+      "yaml_path": "sources[].backup_sets[].remote.key_file",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (path)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Deprecated alias of remote.key.file (#74). Treated as one more spelling of the file resolver; setting both is refused.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: deprecated spelling of a secret-source path, kept only so existing hand-written configs keep working"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.key.file",
+      "yaml_path": "sources[].backup_sets[].remote.key.file",
+      "cli_flags": [
+        "backup-set create --ssh-key-file",
+        "backup-set create --ssh-key-id",
+        "backup-set patch --ssh-key-file",
+        "backup-set patch --ssh-key-id"
+      ],
+      "env": [],
+      "type": "string (path)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Where this remote's SSH private key lives. The preferred source: rclone opens the file itself, so key material never enters this process.",
+      "ui": {
+        "configurable": false,
+        "location": "Backup set detail > Connection > SSH wizard (selects a key this deployment has already imported, which the service resolves to a managed path under its key store)",
+        "recommendation": "file-only: a raw key path is a secret-custody decision; the UI deliberately imports keys into the managed key store and names them by id instead"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.key.env",
+      "yaml_path": "sources[].backup_sets[].remote.key.env",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (env var NAME)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Environment variable this process reads the SSH key from at connection time.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: names a process-environment variable that only exists at service start"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.key.command",
+      "yaml_path": "sources[].backup_sets[].remote.key.command",
+      "cli_flags": [],
+      "env": [],
+      "type": "[]string (argv)",
+      "default": "[]",
+      "required": false,
+      "scope": "backup_set",
+      "description": "argv whose stdout is the SSH key; the secrets-manager adoption path.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: an executable this service runs on the host"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.key.passphrase.file",
+      "yaml_path": "sources[].backup_sets[].remote.key.passphrase.file",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (path)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "backup_set",
+      "description": "File holding the passphrase that decrypts a passphrase-protected SSH key (#269).",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: secret-source path"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.key.passphrase.env",
+      "yaml_path": "sources[].backup_sets[].remote.key.passphrase.env",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (env var NAME)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Environment variable the SSH key passphrase is read from.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: names a process-environment variable that only exists at service start"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.key.passphrase.command",
+      "yaml_path": "sources[].backup_sets[].remote.key.passphrase.command",
+      "cli_flags": [],
+      "env": [],
+      "type": "[]string (argv)",
+      "default": "[]",
+      "required": false,
+      "scope": "backup_set",
+      "description": "argv whose stdout is the SSH key passphrase.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: an executable this service runs on the host"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.known_hosts",
+      "yaml_path": "sources[].backup_sets[].remote.known_hosts",
+      "cli_flags": [
+        "backup-set create --known-hosts-line",
+        "backup-set create --trust-host-key",
+        "backup-set patch --known-hosts-line",
+        "backup-set patch --trust-host-key"
+      ],
+      "env": [],
+      "type": "string (path)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "backup_set",
+      "description": "The known_hosts file this set checks the source's host key against. The CLI and API take a known_hosts LINE and the service writes the file.",
+      "ui": {
+        "configurable": false,
+        "location": "Backup set detail > Connection > SSH wizard (probes and pins a host key line; the service owns the file path)",
+        "recommendation": "file-only: the path is service-managed; what an operator decides is which key to trust, and that is already in the UI"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.sensitive_endpoint",
+      "yaml_path": "sources[].backup_sets[].remote.sensitive_endpoint",
+      "cli_flags": [],
+      "env": [],
+      "type": "bool",
+      "default": "false",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Marks this remote's host, port and user as material that must never reach a log line or a journal detail (#295). Per remote, because two sets in one file may reasonably differ.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Connection (advanced)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote.max_connections",
+      "yaml_path": "sources[].backup_sets[].remote.max_connections",
+      "cli_flags": [],
+      "env": [],
+      "type": "int",
+      "default": "0 (unlimited, rclone's own default)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Caps how many simultaneous SFTP connections ONE operation against this remote may open (#264). Per remote, because whether a host caps connections is a fact about that host.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Connection (advanced)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].remote_path",
+      "yaml_path": "sources[].backup_sets[].remote_path",
+      "cli_flags": [
+        "backup-set create --remote-path",
+        "backup-set patch --remote-path"
+      ],
+      "env": [],
+      "type": "string (absolute path)",
+      "default": null,
+      "required": true,
+      "scope": "backup_set",
+      "description": "The directory on the source to pull from.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard; Backup set detail > Connection (Remote folder)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].local_path",
+      "yaml_path": "sources[].backup_sets[].local_path",
+      "cli_flags": [
+        "backup-set create --local-path",
+        "backup-set patch --local-path"
+      ],
+      "env": [],
+      "type": "string (absolute path)",
+      "default": null,
+      "required": true,
+      "scope": "backup_set",
+      "description": "Where this set's artifacts land on this machine.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard; Backup set detail > Connection (Destination)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].include",
+      "yaml_path": "sources[].backup_sets[].include",
+      "cli_flags": [
+        "backup-set create --include",
+        "backup-set patch --include"
+      ],
+      "env": [],
+      "type": "[]string (basename patterns)",
+      "default": "[] (matches everything)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "FR-5 include patterns, matched against a candidate's BASENAME wherever it turned up in the tree. A \"/\" in a pattern is refused.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard; Backup set detail > Connection (Include patterns)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].exclude_paths",
+      "yaml_path": "sources[].backup_sets[].exclude_paths",
+      "cli_flags": [],
+      "env": [],
+      "type": "[]string (paths, anchored under remote_path)",
+      "default": "[]",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Directories discovery must never walk into (#737). Literal root-anchored paths, not patterns: the walk is PRUNED rather than walked-then-discarded.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail (beside Include patterns) and the wizard"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].completion.strategy",
+      "yaml_path": "sources[].backup_sets[].completion.strategy",
+      "cli_flags": [
+        "backup-set create --completion-strategy",
+        "backup-set patch --completion-strategy"
+      ],
+      "env": [],
+      "type": "string enum: rename | marker | stable",
+      "default": null,
+      "required": true,
+      "scope": "backup_set",
+      "description": "How a backup set decides a remote artifact is finished being written rather than still in flight (FR-8).",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard; Backup set detail > Connection (Completion method)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].completion.stable_for",
+      "yaml_path": "sources[].backup_sets[].completion.stable_for",
+      "cli_flags": [
+        "backup-set create --stable-for",
+        "backup-set patch --stable-for"
+      ],
+      "env": [],
+      "type": "duration",
+      "default": null,
+      "required": false,
+      "scope": "backup_set",
+      "description": "How long size and mtime must hold still before the \"stable\" strategy starts work on an artifact. Required when that strategy is in effect.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard; Backup set detail > Connection (shown with the stable-size method)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].completion.delete_safety_delay",
+      "yaml_path": "sources[].backup_sets[].completion.delete_safety_delay",
+      "cli_flags": [],
+      "env": [],
+      "type": "duration",
+      "default": "1h (DefaultDeleteSafetyDelay); a zero is resolved, never read literally",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Extra time a \"stable\" artifact must have sat in a confirmed-good state before FR-15's remote delete will treat it as equivalent to one completed by rename or marker. A different question from stable_for, asked at a later and more dangerous point.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Connection (with the stable-size method, beside stable_for)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].completion.manifest_marker",
+      "yaml_path": "sources[].backup_sets[].completion.manifest_marker",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (bare filename)",
+      "default": "_SUCCESS (DefaultManifestMarker)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "The directory-level completion marker filename the \"marker\" strategy looks for (#291) - a producer that writes SHA256SUMS last cannot be reconfigured, so the manager has to recognise the name it already uses.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Connection (with the completion-marker method)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].stale_after",
+      "yaml_path": "sources[].backup_sets[].stale_after",
+      "cli_flags": [
+        "backup-set create --stale-after",
+        "backup-set patch --stale-after"
+      ],
+      "env": [],
+      "type": "duration",
+      "default": "the service's own default on create; a zero in the file is refused",
+      "required": true,
+      "scope": "backup_set",
+      "description": "FR-24's freshness budget: how long without a new backup before this set is reported stale.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail (the wire field stale_after_seconds already exists on both create and patch; only the form control is missing)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].disabled",
+      "yaml_path": "sources[].backup_sets[].disabled",
+      "cli_flags": [
+        "backup-set create --disabled"
+      ],
+      "env": [],
+      "type": "bool",
+      "default": "false (enabled)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Excludes this set from every run cycle without removing its configuration.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard (Save disabled); Backup set detail (enable/disable control)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].read_only",
+      "yaml_path": "sources[].backup_sets[].read_only",
+      "cli_flags": [
+        "backup-set create --read-only"
+      ],
+      "env": [],
+      "type": "*bool",
+      "default": "inherits the parent source's read_only, which itself defaults to false",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Per-set override of the source default: pull from here, never delete here (#282). A pointer, because \"inherit\", \"explicitly on\" and \"explicitly off\" have no honest two-value encoding.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard (read-only source checkbox); Backup set detail (setReadOnly control)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].connection_unverified",
+      "yaml_path": "sources[].backup_sets[].connection_unverified",
+      "cli_flags": [
+        "backup-set create --no-verify",
+        "backup-set patch --no-verify",
+        "backup-set test-connection (clears it)"
+      ],
+      "env": [],
+      "type": "bool",
+      "default": "absent (absent is NOT unverified)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Durable mark that this set was written without its connection ever being proven (#624). Written only by core/service, never taken from a request; cleared by a connection test that passes.",
+      "ui": {
+        "configurable": false,
+        "location": "Backup sets / detail page (reported as an unverified badge; the Test connection button clears it)",
+        "recommendation": "file-only: service-managed state rather than an operator setting - a mark a caller could set is a mark a caller could omit"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].retention",
+      "yaml_path": "sources[].backup_sets[].retention",
+      "cli_flags": [
+        "backup-set retention <id> --policy-file",
+        "backup-set retention <id> --tier...",
+        "backup-set retention <id> --inherit"
+      ],
+      "env": [],
+      "type": "*Retention (whole policy)",
+      "default": "nil = inherit the deployment's policy",
+      "required": false,
+      "scope": "retention",
+      "description": "Per-set retention override (#333). Whole-policy, never merged: it must name a tiers list, or all three of daily_days/weekly_months/monthly_months.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set detail > Retention (per-set chain, with Inherit)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].validation.hash",
+      "yaml_path": "sources[].backup_sets[].validation.hash",
+      "cli_flags": [],
+      "env": [],
+      "type": "string enum: \"\" | sha256",
+      "default": "\"\" (no hash verification)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "FR-13 hash verification of a transferred artifact against its source. Refused on an incremental (kopia) set, which verifies through the repository instead.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Verification (a checkbox, since the only value is sha256)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].validation.validator_id",
+      "yaml_path": "sources[].backup_sets[].validation.validator_id",
+      "cli_flags": [
+        "backup-set create --validator-id",
+        "backup-set patch --validator-id"
+      ],
+      "env": [],
+      "type": "string (catalog id)",
+      "default": "\"\" (no application validator)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Names one entry in core/service's registered validator catalog. The ONLY way the API/UI layer selects an application validator: that layer never names an executable.",
+      "ui": {
+        "configurable": true,
+        "location": "Backup set wizard (application validator picklist over listValidators)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].validation.command.executable",
+      "yaml_path": "sources[].backup_sets[].validation.command.executable",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (path)",
+      "default": "null (no validator configured)",
+      "required": false,
+      "scope": "backup_set",
+      "description": "The resolved validator executable. core/service resolves a validator_id into this at load time; a bare executable may also be written by hand.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: names an executable the service runs against artifacts; the UI selects a registered validator by id instead, deliberately (EPIC-B §26 Step 5)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].validation.command.timeout",
+      "yaml_path": "sources[].backup_sets[].validation.command.timeout",
+      "cli_flags": [],
+      "env": [],
+      "type": "duration",
+      "default": "null",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Bound on the validator subprocess; fail-closed when it expires.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: belongs to the validator command it bounds, which the UI never names"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].revalidation.interval",
+      "yaml_path": "sources[].backup_sets[].revalidation.interval",
+      "cli_flags": [],
+      "env": [],
+      "type": "duration",
+      "default": "0 = revalidation disabled",
+      "required": false,
+      "scope": "backup_set",
+      "description": "How long since an artifact's last check still counts as fresh. Only used when revalidation.hash or .command is set; required when either is.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Revalidation (new card)"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].revalidation.max_per_cycle",
+      "yaml_path": "sources[].backup_sets[].revalidation.max_per_cycle",
+      "cli_flags": [],
+      "env": [],
+      "type": "int",
+      "default": "0 = revalidation disabled",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Bounds how many due artifacts one revalidation pass checks, so a simultaneously-due backlog cannot become one unbounded read-and-hash sweep.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Revalidation"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].revalidation.hash",
+      "yaml_path": "sources[].backup_sets[].revalidation.hash",
+      "cli_flags": [],
+      "env": [],
+      "type": "bool",
+      "default": "false",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Recompute the durable local copy's SHA-256 and compare it against the hash recorded at VERIFIED. This is the bit-rot check.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "add: Backup set detail > Revalidation"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].revalidation.command.executable",
+      "yaml_path": "sources[].backup_sets[].revalidation.command.executable",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (path)",
+      "default": "null",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Optional restore-test hook: proves the artifact still actually restores rather than only that its bytes are unchanged. Same untrusted-subprocess contract as the FR-13 validator.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: names an executable the service runs; it has no catalog the way validation.validator_id does"
+      }
+    },
+    {
+      "field": "sources[].backup_sets[].revalidation.command.timeout",
+      "yaml_path": "sources[].backup_sets[].revalidation.command.timeout",
+      "cli_flags": [],
+      "env": [],
+      "type": "duration",
+      "default": "null",
+      "required": false,
+      "scope": "backup_set",
+      "description": "Bound on the restore-test subprocess.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: belongs to the revalidation command it bounds"
+      }
+    },
+    {
+      "field": "retention.timezone",
+      "yaml_path": "retention.timezone",
+      "cli_flags": [
+        "settings patch --timezone",
+        "retention --timezone (preview override)",
+        "backup-set retention --timezone"
+      ],
+      "env": [],
+      "type": "string (IANA name)",
+      "default": "UTC",
+      "required": false,
+      "scope": "retention",
+      "description": "The calendar retention is reckoned in. A per-set override that names none inherits the deployment's.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Retention policy (Timezone)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "retention.week_starts_on",
+      "yaml_path": "retention.week_starts_on",
+      "cli_flags": [
+        "settings patch --week-starts-on",
+        "retention --week-starts-on",
+        "backup-set retention --week-starts-on"
+      ],
+      "env": [],
+      "type": "string (weekday name)",
+      "default": "monday",
+      "required": false,
+      "scope": "retention",
+      "description": "Which day a weekly bucket starts on.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Retention policy (Week starts on)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "retention.daily_days",
+      "yaml_path": "retention.daily_days",
+      "cli_flags": [
+        "retention --daily-days",
+        "backup-set retention --daily-days"
+      ],
+      "env": [],
+      "type": "int",
+      "default": "7 (DefaultDailyDays)",
+      "required": false,
+      "scope": "retention",
+      "description": "Legacy three-scalar spelling of FR-18's default chain; sugar for exactly the chain DefaultTierChain builds. Mutually exclusive with tiers.",
+      "ui": {
+        "configurable": false,
+        "location": "Settings > Retention policy (edited as the equivalent tiers list)",
+        "recommendation": "file-only: legacy sugar for a three-tier chain; the UI edits the general tiers form, and offering both spellings is the combination Validate refuses"
+      }
+    },
+    {
+      "field": "retention.weekly_months",
+      "yaml_path": "retention.weekly_months",
+      "cli_flags": [
+        "retention --weekly-months",
+        "backup-set retention --weekly-months"
+      ],
+      "env": [],
+      "type": "int",
+      "default": "3 (DefaultWeeklyMonths)",
+      "required": false,
+      "scope": "retention",
+      "description": "Legacy scalar: weekly buckets looked back over this many calendar months.",
+      "ui": {
+        "configurable": false,
+        "location": "Settings > Retention policy (edited as the equivalent tiers list)",
+        "recommendation": "file-only: legacy sugar for a three-tier chain; see retention.daily_days"
+      }
+    },
+    {
+      "field": "retention.monthly_months",
+      "yaml_path": "retention.monthly_months",
+      "cli_flags": [
+        "retention --monthly-months",
+        "backup-set retention --monthly-months"
+      ],
+      "env": [],
+      "type": "int",
+      "default": "12 (DefaultMonthlyMonths)",
+      "required": false,
+      "scope": "retention",
+      "description": "Legacy scalar: monthly buckets looked back over this many months.",
+      "ui": {
+        "configurable": false,
+        "location": "Settings > Retention policy (edited as the equivalent tiers list)",
+        "recommendation": "file-only: legacy sugar for a three-tier chain; see retention.daily_days"
+      }
+    },
+    {
+      "field": "retention.protect_last_known_good",
+      "yaml_path": "retention.protect_last_known_good",
+      "cli_flags": [
+        "settings patch --protect-last-known-good",
+        "retention --protect-last-known-good",
+        "backup-set retention --protect-last-known-good"
+      ],
+      "env": [],
+      "type": "*bool",
+      "default": "true at the top level; nil in a per-set override means inherit",
+      "required": false,
+      "scope": "retention",
+      "description": "FR-19's protection of the newest known-good backup from deletion. A pointer so an explicit false survives a round trip.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Retention policy (with a confirmation when turning it off)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "retention.tiers[].name",
+      "yaml_path": "retention.tiers[].name",
+      "cli_flags": [
+        "retention --tier NAME:GRANULARITY:KEEP[:WINDOW_UNIT]",
+        "backup-set retention --policy-file",
+        "settings patch --policy-file"
+      ],
+      "env": [],
+      "type": "string (lower_snake_case)",
+      "default": null,
+      "required": true,
+      "scope": "retention",
+      "description": "Identifies the tier and is what surfaces in a KEEP verdict. Unique within the chain; \"last_known_good\" is reserved.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Retention policy (tier rows); Backup set detail > Retention",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "retention.tiers[].granularity",
+      "yaml_path": "retention.tiers[].granularity",
+      "cli_flags": [
+        "retention --tier",
+        "settings patch --policy-file"
+      ],
+      "env": [],
+      "type": "string enum: day | week | month | quarter | half_year | year | days",
+      "default": null,
+      "required": true,
+      "scope": "retention",
+      "description": "The calendar bucket this tier groups artifacts into. Each bucket contributes at most one artifact to KEEP.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Retention policy (tier granularity select); Backup set detail > Retention",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "retention.tiers[].period_days",
+      "yaml_path": "retention.tiers[].period_days",
+      "cli_flags": [
+        "retention --tier",
+        "settings patch --policy-file"
+      ],
+      "env": [],
+      "type": "int",
+      "default": "0 (absent on every tier whose granularity is not \"days\")",
+      "required": false,
+      "scope": "retention",
+      "description": "Length of a custom period in days. Required when granularity is \"days\" and must be zero otherwise.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Retention policy (tier rows, shown for the days granularity)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "retention.tiers[].keep",
+      "yaml_path": "retention.tiers[].keep",
+      "cli_flags": [
+        "retention --tier",
+        "settings patch --policy-file"
+      ],
+      "env": [],
+      "type": "int",
+      "default": null,
+      "required": true,
+      "scope": "retention",
+      "description": "How many look-back units this tier reaches back over, counting the current one.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Retention policy (tier rows); Backup set detail > Retention",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "retention.tiers[].window_unit",
+      "yaml_path": "retention.tiers[].window_unit",
+      "cli_flags": [
+        "retention --tier NAME:GRANULARITY:KEEP:WINDOW_UNIT",
+        "settings patch --policy-file"
+      ],
+      "env": [],
+      "type": "string enum: day | week | month | quarter | half_year | year",
+      "default": "the tier's own granularity",
+      "required": false,
+      "scope": "retention",
+      "description": "Measures the look-back window in a unit other than the tier's granularity - which is what lets the default weekly tier bucket by week and look back over months.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Retention policy (tier rows)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "retention.tiers[].medium",
+      "yaml_path": "retention.tiers[].medium",
+      "cli_flags": [
+        "settings patch --tier-medium NAME=MEDIUM_ID",
+        "retention --tier-medium NAME=MEDIUM_ID (preview)",
+        "backup-set retention --policy-file"
+      ],
+      "env": [],
+      "type": "string (storage medium id)",
+      "default": "\"\" (empty = local; \"local\" is refused as a synonym)",
+      "required": false,
+      "scope": "retention",
+      "description": "Which declared storage medium this tier's artifacts live on (FR-27). A medium no storage_mediums entry declares is a validation error, never a fall-back to local.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Retention policy (storage-medium picker under each tier, with the FR-27 disclosure acknowledgement)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].id",
+      "yaml_path": "storage_mediums[].id",
+      "cli_flags": [
+        "medium add <medium-id>",
+        "medium edit <medium-id>"
+      ],
+      "env": [],
+      "type": "string (lower_snake_case)",
+      "default": null,
+      "required": true,
+      "scope": "medium",
+      "description": "How a retention tier names this destination. Unique across the list, and \"local\" is reserved.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > Add a destination (Destination id)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].type",
+      "yaml_path": "storage_mediums[].type",
+      "cli_flags": [
+        "medium add --type",
+        "medium edit --type"
+      ],
+      "env": [],
+      "type": "string enum: s3 | local_volume",
+      "default": "s3 on the CLI flag; the key itself is required in YAML",
+      "required": true,
+      "scope": "medium",
+      "description": "Which backend this destination uses, out of the bundled registry filtered to the backends this struct can fully populate.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > Add a destination (backend picker over the registered backends)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].region",
+      "yaml_path": "storage_mediums[].region",
+      "cli_flags": [
+        "medium add --region",
+        "medium edit --region"
+      ],
+      "env": [],
+      "type": "string",
+      "default": "\"\"",
+      "required": false,
+      "scope": "medium",
+      "description": "Provider region, passed to the backend unexamined (a list here would be a staler second copy that refuses a region that works).",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > S3 destination wizard (Region)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].endpoint",
+      "yaml_path": "storage_mediums[].endpoint",
+      "cli_flags": [
+        "medium add --endpoint",
+        "medium edit --endpoint"
+      ],
+      "env": [],
+      "type": "string (URL)",
+      "default": "\"\" (the provider's own endpoint for the region)",
+      "required": false,
+      "scope": "medium",
+      "description": "Endpoint override for an S3-compatible service (MinIO, Ceph, Backblaze, a private gateway).",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > S3 destination wizard (Endpoint)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].bucket",
+      "yaml_path": "storage_mediums[].bucket",
+      "cli_flags": [
+        "medium add --bucket",
+        "medium edit --bucket"
+      ],
+      "env": [],
+      "type": "string",
+      "default": null,
+      "required": true,
+      "scope": "medium",
+      "description": "The bucket artifacts are written into. Required for an object store; a name carrying a \"/\" is refused as a bucket-and-prefix typed into one field.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > S3 destination wizard (Bucket)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].path",
+      "yaml_path": "storage_mediums[].path",
+      "cli_flags": [],
+      "env": [],
+      "type": "string (absolute path)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "medium",
+      "description": "The directory a local_volume destination writes into: absolute, clean, and mounted INSIDE this service's container. Required for local_volume and refused on any other type.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > Configure destination (manifest-driven field)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].prefix",
+      "yaml_path": "storage_mediums[].prefix",
+      "cli_flags": [
+        "medium add --prefix",
+        "medium edit --prefix"
+      ],
+      "env": [],
+      "type": "string (key namespace)",
+      "default": "\"\" (key layout at the root of the bucket)",
+      "required": false,
+      "scope": "medium",
+      "description": "Key namespace inside the bucket, so one bucket can hold more than this product's artifacts. No leading, trailing or doubled slash, and no \"..\" segment.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > S3 destination wizard (Prefix)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].storage_class",
+      "yaml_path": "storage_mediums[].storage_class",
+      "cli_flags": [
+        "medium add --storage-class",
+        "medium edit --storage-class"
+      ],
+      "env": [],
+      "type": "string enum: STANDARD | STANDARD_IA | ONEZONE_IA | INTELLIGENT_TIERING | GLACIER_IR | GLACIER | DEEP_ARCHIVE",
+      "default": "STANDARD (empty resolves through EffectiveStorageClass)",
+      "required": false,
+      "scope": "medium",
+      "description": "The S3 storage class objects are written with.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > S3 destination wizard (Storage class)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].upload_verification",
+      "yaml_path": "storage_mediums[].upload_verification",
+      "cli_flags": [
+        "medium add --upload-verification",
+        "medium edit --upload-verification"
+      ],
+      "env": [],
+      "type": "string enum: readback | attested",
+      "default": "readback (the expensive one, on purpose)",
+      "required": false,
+      "scope": "medium",
+      "description": "How an upload is proven before the local copy is deleted. A medium that said nothing must never be believed on its own word.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > S3 destination wizard (Upload verification)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].credentials.file",
+      "yaml_path": "storage_mediums[].credentials.file",
+      "cli_flags": [
+        "medium add --credentials-file",
+        "medium add --credentials-id",
+        "medium edit --credentials-file",
+        "medium import-credentials --stdin"
+      ],
+      "env": [],
+      "type": "string (path)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "medium",
+      "description": "Path to an AWS shared-credentials file rclone opens itself, so the secret never enters this process. Exactly one of file/env/command must be set.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > S3 destination wizard (credential source: pasted keys are imported via import-credentials and referenced by id, or a path is named)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].credentials.env",
+      "yaml_path": "storage_mediums[].credentials.env",
+      "cli_flags": [
+        "medium add --credentials-env",
+        "medium edit --credentials-env"
+      ],
+      "env": [],
+      "type": "string (env var NAME)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "medium",
+      "description": "The NAME of an environment variable the credentials are read from at connection time. Never a value.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > S3 destination wizard (Environment variable name)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].credentials.command",
+      "yaml_path": "storage_mediums[].credentials.command",
+      "cli_flags": [
+        "medium add --credentials-command",
+        "medium edit --credentials-command"
+      ],
+      "env": [],
+      "type": "[]string (argv)",
+      "default": "[]",
+      "required": false,
+      "scope": "medium",
+      "description": "argv whose stdout is the credentials, run directly and never through a shell.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Storage destinations > S3 destination wizard (Command)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "storage_mediums[].connection_unverified",
+      "yaml_path": "storage_mediums[].connection_unverified",
+      "cli_flags": [
+        "medium add --no-verify",
+        "medium edit --no-verify",
+        "medium test-connection (clears it)"
+      ],
+      "env": [],
+      "type": "bool",
+      "default": "absent (absent is NOT unverified)",
+      "required": false,
+      "scope": "medium",
+      "description": "Durable mark that this destination was written without ever being proven (#636). BackupSet.connection_unverified's twin; written only by core/service and cleared by a passing test.",
+      "ui": {
+        "configurable": false,
+        "location": "Settings > Storage destinations (reported as an unverified badge; Test connection clears it)",
+        "recommendation": "file-only: service-managed state rather than an operator setting"
+      }
+    },
+    {
+      "field": "admin.username",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web auth create-admin --username"
+      ],
+      "env": [],
+      "type": "string",
+      "default": null,
+      "required": true,
+      "scope": "auth_smtp",
+      "description": "The local-auth administrator record's username, written into the --auth-store JSON. Also created through the browser enrollment flow on first run. Stored in the --auth-store JSON record at `auth-store.admin.username`, not in config.yaml.",
+      "ui": {
+        "configurable": false,
+        "location": "First-run enrollment (created once, never renamed afterwards)",
+        "recommendation": "file-only: identity bootstrap - it is created before there is a session to authorise changing it, and renaming an administrator is not a supported edit"
+      }
+    },
+    {
+      "field": "admin.password_hash",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web auth create-admin --password-stdin"
+      ],
+      "env": [],
+      "type": "string (hash)",
+      "default": null,
+      "required": true,
+      "scope": "auth_smtp",
+      "description": "The administrator password, stored hashed. Never accepted as a flag value: it is read from stdin, so it stays out of ps output and shell history. Stored in the --auth-store JSON record at `auth-store.admin.password_hash`, not in config.yaml.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Administrator password (change, with re-authentication)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "admin.recovery_email",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web auth create-admin --recovery-email"
+      ],
+      "env": [],
+      "type": "string (email address)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "auth_smtp",
+      "description": "Where account-recovery mail is addressed (#830). Optional for the headless create, required by the browser enrollment flow; saving it sends a verification message and the address stays unconfirmed until one is delivered. Stored in the --auth-store JSON record at `auth-store.admin.recovery_email`, not in config.yaml.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Account recovery (Recovery email)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "smtp.host",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web auth create-admin --smtp-host"
+      ],
+      "env": [],
+      "type": "string",
+      "default": null,
+      "required": false,
+      "scope": "auth_smtp",
+      "description": "SMTP submission host for account-recovery mail. Required for any recovery mail to be sendable at all; a host with no recovery address is refused. Stored in the --auth-store JSON record at `auth-store.smtp.host`, not in config.yaml.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Account recovery (SMTP host)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "smtp.port",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web auth create-admin --smtp-port"
+      ],
+      "env": [],
+      "type": "int (1-65535)",
+      "default": "587",
+      "required": false,
+      "scope": "auth_smtp",
+      "description": "SMTP submission port. Stored in the --auth-store JSON record at `auth-store.smtp.port`, not in config.yaml.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Account recovery (Port)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "smtp.security",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web auth create-admin --smtp-security"
+      ],
+      "env": [],
+      "type": "string enum: starttls | tls | none",
+      "default": "starttls",
+      "required": false,
+      "scope": "auth_smtp",
+      "description": "Connection security for the SMTP submission. Stored in the --auth-store JSON record at `auth-store.smtp.security`, not in config.yaml.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Account recovery (Security)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "smtp.username",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web auth create-admin --smtp-username"
+      ],
+      "env": [],
+      "type": "string",
+      "default": "\"\" (a relay that needs no authentication)",
+      "required": false,
+      "scope": "auth_smtp",
+      "description": "SMTP username. Stored in the --auth-store JSON record at `auth-store.smtp.username`, not in config.yaml.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Account recovery (SMTP username)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "smtp.password_ref",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web auth create-admin --smtp-password-stdin"
+      ],
+      "env": [],
+      "type": "string (reference to stored secret)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "auth_smtp",
+      "description": "The SMTP password, held by reference rather than in the record. Taken from stdin on the CLI as a second line after the administrator password; the UI write is re-authenticated and a blank field keeps whatever is stored. Stored in the --auth-store JSON record at `auth-store.smtp.password_ref`, not in config.yaml.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Account recovery (SMTP password; blank keeps the stored one)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "smtp.from",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web auth create-admin --smtp-from"
+      ],
+      "env": [],
+      "type": "string (email address)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "auth_smtp",
+      "description": "The address recovery mail is sent from. Validated against the mail standard, and refused if it carries header-injecting control characters. Stored in the --auth-store JSON record at `auth-store.smtp.from`, not in config.yaml.",
+      "ui": {
+        "configurable": true,
+        "location": "Settings > Account recovery (From address)",
+        "recommendation": "already"
+      }
+    },
+    {
+      "field": "config path",
+      "yaml_path": null,
+      "cli_flags": [
+        "--config (every backupd command except version)",
+        "backupd-web serve --config"
+      ],
+      "env": [],
+      "type": "string (path to file or directory)",
+      "default": "/etc/backupd/config/config.yaml (a directory resolves to config.yaml inside it)",
+      "required": false,
+      "scope": "deployment",
+      "description": "Which YAML file this process reads its whole configuration from. The packaged mount is the DIRECTORY, because the engine creates and atomically replaces the file.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: it names the file every other setting lives in, and is fixed by the container's own mount"
+      }
+    },
+    {
+      "field": "listen address",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve --listen",
+        "backupd-web serve-ui --listen"
+      ],
+      "env": [
+        "LISTEN_ADDR"
+      ],
+      "type": "string (host:port)",
+      "default": "the binary's defaultListenAddr, or $LISTEN_ADDR",
+      "required": false,
+      "scope": "deployment",
+      "description": "Address the web host binds. compose.yaml sets LISTEN_ADDR; a bare `go run` falls back to the hardcoded default.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: the port the UI is served on cannot be changed from inside that UI without cutting off the session making the change"
+      }
+    },
+    {
+      "field": "runtime profile",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve --profile",
+        "backupd-web serve-ui --profile"
+      ],
+      "env": [
+        "RUNTIME_PROFILE"
+      ],
+      "type": "string (profile id: generic | ugos)",
+      "default": "the binary's defaultProfile",
+      "required": false,
+      "scope": "deployment",
+      "description": "Which runtime profile this container runs as, which decides how it authenticates and which UI bundle is served. An unrecognised profile stops the process before anything opens a file or a listener.",
+      "ui": {
+        "configurable": false,
+        "location": "Settings > Platform (reported read-only)",
+        "recommendation": "file-only: chosen by the packaging that built the container; changing it at runtime would change the authentication model out from under the live session"
+      }
+    },
+    {
+      "field": "trusted upstream CIDRs",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve --trusted-upstream"
+      ],
+      "env": [
+        "TRUSTED_UPSTREAM_CIDRS"
+      ],
+      "type": "string (comma-separated CIDR list)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "deployment",
+      "description": "CIDR ranges the ENGINE container may believe a provider-native identity header from - the reverse proxy directly in front of it. Required by a gateway profile, and a gateway profile whose boundary does not parse is refused rather than started.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: the trust boundary that decides whose identity header is believed; a UI that could widen it could be used to authorise the request widening it"
+      }
+    },
+    {
+      "field": "trusted gateway CIDRs",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve-ui --trusted-gateway"
+      ],
+      "env": [
+        "TRUSTED_GATEWAY_CIDRS"
+      ],
+      "type": "string (comma-separated CIDR list)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "deployment",
+      "description": "CIDR ranges the LAN-facing UI container may believe a provider-native identity header from: the platform gateway. `serve` accepts the flag only to refuse it by name, because the two hops trust different peers.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: the LAN-facing trust boundary, for the reason --trusted-upstream is"
+      }
+    },
+    {
+      "field": "auth store path",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve --auth-store",
+        "backupd-web auth create-admin --auth-store"
+      ],
+      "env": [],
+      "type": "string (path)",
+      "default": "the binary's defaultAuthStorePath",
+      "required": false,
+      "scope": "deployment",
+      "description": "Path to the local-auth administrator record (and the SMTP record beside it).",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: bootstrap path holding the credentials that gate the UI itself"
+      }
+    },
+    {
+      "field": "auth mode",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve --auth-mode"
+      ],
+      "env": [],
+      "type": "string enum: local | gateway",
+      "default": "follows the runtime profile when unset",
+      "required": false,
+      "scope": "deployment",
+      "description": "How this deployment authenticates. Checked against the profile before anything opens a listener.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: switching how the service authenticates cannot be authorised by a session that depends on the old answer"
+      }
+    },
+    {
+      "field": "trust forwarded headers",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve --trust-forwarded-headers"
+      ],
+      "env": [
+        "TRUST_FORWARDED_HEADERS"
+      ],
+      "type": "bool",
+      "default": "false",
+      "required": false,
+      "scope": "deployment",
+      "description": "Whether X-Forwarded-For/X-Forwarded-Proto from the immediate caller are believed. Only safe behind serve-ui's own reverse proxy over an isolated network; an unparsable env value falls back to the default rather than flipping it.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: a security-relevant default that must not be flippable from the surface it protects"
+      }
+    },
+    {
+      "field": "public base URL",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve --public-base-url",
+        "backupd-web auth create-admin --public-base-url"
+      ],
+      "env": [
+        "PUBLIC_BASE_URL"
+      ],
+      "type": "string (URL)",
+      "default": "\"\" (print/mail the bare token instead of a link)",
+      "required": false,
+      "scope": "deployment",
+      "description": "The externally-reachable base URL enrollment and recovery links point at, since this process's own --listen address is never externally reachable.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: it is needed to build the first-run enrollment link, which is what an operator uses before any UI session exists"
+      }
+    },
+    {
+      "field": "upstream engine address",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve-ui --upstream"
+      ],
+      "env": [
+        "UPSTREAM_ADDR"
+      ],
+      "type": "string (absolute URL)",
+      "default": "the binary's defaultUpstream",
+      "required": false,
+      "scope": "deployment",
+      "description": "The engine's base URL, reachable over the internal container network. Refused unless it is an absolute URL.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: the UI host reaches the engine through it, so a UI-side edit would be the change that severs the connection carrying it"
+      }
+    },
+    {
+      "field": "UI bundle root",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve-ui --ui-root"
+      ],
+      "env": [
+        "UI_ROOT"
+      ],
+      "type": "string (path)",
+      "default": "\"\" (the embedded bundle)",
+      "required": false,
+      "scope": "deployment",
+      "description": "A directory of per-profile UI bundles; the bundle served is <ui-root>/<profile>.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: it selects which UI build is served, so it cannot be edited from that build"
+      }
+    },
+    {
+      "field": "UI bundle directory",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web serve-ui --ui-dir"
+      ],
+      "env": [
+        "UI_DIR"
+      ],
+      "type": "string (path)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "deployment",
+      "description": "One explicit UI bundle directory, which wins over --ui-root.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: it selects which UI build is served, so it cannot be edited from that build"
+      }
+    },
+    {
+      "field": "healthcheck target URL",
+      "yaml_path": null,
+      "cli_flags": [
+        "backupd-web healthcheck --url"
+      ],
+      "env": [
+        "LISTEN_ADDR (derives the default)"
+      ],
+      "type": "string (URL)",
+      "default": "derived from LISTEN_ADDR, with a wildcard bind rewritten to 127.0.0.1",
+      "required": false,
+      "scope": "deployment",
+      "description": "What the UI host's own container HEALTHCHECK GETs, since distroless has no shell, curl or wget.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: consumed by the container runtime's HEALTHCHECK, not by an operator"
+      }
+    },
+    {
+      "field": "log level",
+      "yaml_path": null,
+      "cli_flags": [],
+      "env": [
+        "LOG_LEVEL",
+        "BACKUPD_DEBUG",
+        "RM_DEBUG (deprecated alias)"
+      ],
+      "type": "string level / bool shortcut",
+      "default": "INFO",
+      "required": false,
+      "scope": "deployment",
+      "description": "The FR-23 structured-log level every service surface and `backupd daemon` read from the environment, so the one engine an operator can run headless is not the one they cannot turn up.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: read once from the process environment at startup; there is no reload path for it"
+      }
+    },
+    {
+      "field": "engine API URL",
+      "yaml_path": null,
+      "cli_flags": [],
+      "env": [
+        "BACKUP_MANAGER_API_URL"
+      ],
+      "type": "string (URL)",
+      "default": "\"\" (no route: writes beside a serving engine are refused)",
+      "required": false,
+      "scope": "deployment",
+      "description": "Where the CLI on this host finds the serving engine, so a configuration write can be handed to it instead of refused. Deliberately not a flag.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: it configures the CLI's route to the engine, on the host running the CLI; it is not a property of the deployment the UI edits"
+      }
+    },
+    {
+      "field": "engine API username",
+      "yaml_path": null,
+      "cli_flags": [],
+      "env": [
+        "BACKUP_MANAGER_API_USERNAME"
+      ],
+      "type": "string",
+      "default": "\"\"",
+      "required": false,
+      "scope": "deployment",
+      "description": "Administrator username the CLI presents to the engine's API, held in memory for one invocation and written nowhere.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: a credential for the CLI's own route; not a flag, because a password on a command line is in every process listing on the host"
+      }
+    },
+    {
+      "field": "engine API password",
+      "yaml_path": null,
+      "cli_flags": [],
+      "env": [
+        "BACKUP_MANAGER_API_PASSWORD"
+      ],
+      "type": "string (secret)",
+      "default": "\"\"",
+      "required": false,
+      "scope": "deployment",
+      "description": "Administrator password the CLI presents to the engine's API.",
+      "ui": {
+        "configurable": false,
+        "location": null,
+        "recommendation": "file-only: a credential for the CLI's own route, deliberately env-only"
+      }
+    }
+  ]
+}
