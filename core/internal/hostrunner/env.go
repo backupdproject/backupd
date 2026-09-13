@@ -64,13 +64,45 @@ func CursedEnvNames() []string {
 	return []string{"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"}
 }
 
+// ContainerClientEnvPrefix is the second deletion rule, and it exists
+// because of HOW a hook's environment reaches its container (#865).
+//
+// The environment block this package builds becomes the DOCKER CLIENT's
+// own environment: the launch passes `--env NAME` and the client reads
+// each value out of its own block, which is what keeps a repository
+// passphrase off a command line that `ps` publishes to every account on
+// a NAS. The consequence is that a variable an operator wrote in
+// workflows.environment is, for the duration of one exec, a variable the
+// docker client can also see -- and docker honours DOCKER_HOST,
+// DOCKER_API_VERSION, DOCKER_CONTEXT and friends from its environment.
+//
+// A DOCKER_HOST in a hook's environment would therefore point this
+// runner's own client at a daemon of the operator's choosing, and
+// DOCKER_API_VERSION would silently renegotiate what the hardening flags
+// mean. So every DOCKER_-prefixed name is deleted, as a PREFIX rather
+// than a list: the list of client variables grows with each docker
+// release, and a rule that enumerated the ones known in 2026 would be a
+// rule with a hole in it by the next one.
+//
+// The runner's own client settings do not travel this way at all --
+// Container.clientArgs turns them into explicit flags, which beat the
+// environment in docker's own precedence. Either mechanism alone would
+// hold; both are here because one of them being removed by somebody who
+// could not see the other is exactly how this class of bug happens.
+//
+// Nothing legitimate is lost: a hook container has no docker access by
+// design -- there is no socket in it, and the network is `none` by
+// default -- so a DOCKER_ variable inside one could only ever be
+// decoration.
+const ContainerClientEnvPrefix = "DOCKER_"
+
 func isCursed(name string) bool {
 	for _, c := range CursedEnvNames() {
 		if name == c {
 			return true
 		}
 	}
-	return false
+	return strings.HasPrefix(name, ContainerClientEnvPrefix)
 }
 
 // DefaultPath is the PATH a hook gets if the environment it arrived with
@@ -230,8 +262,14 @@ func (s EnvSet) ProcessEnv(baseline []string) ([]string, error) {
 		add(v.Name, v.Value)
 	}
 
-	for _, cursed := range CursedEnvNames() {
-		delete(values, cursed)
+	// Both rules, in one pass over what survived the merge: the four
+	// names that make bash execute something the plan never captured,
+	// and every DOCKER_ name, which could redirect the client this
+	// block is about to become the environment of.
+	for name := range values {
+		if isCursed(name) {
+			delete(values, name)
+		}
 	}
 	if _, ok := values["PATH"]; !ok {
 		add("PATH", DefaultPath)

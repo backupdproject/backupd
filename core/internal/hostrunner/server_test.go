@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -22,7 +21,7 @@ import (
 // the kernel creates, and a service manager's umask is not this package's
 // to assume.
 func TestListen_PutsThePrivateSocketInAPrivateDirectory(t *testing.T) {
-	client, layout := serveTestRunner(t, nil)
+	client, layout, _ := serveTestRunner(t, nil)
 
 	info, err := os.Lstat(client.SocketPath)
 	if err != nil {
@@ -63,12 +62,12 @@ func TestListen_RefusesASocketPathTheKernelCannotHold(t *testing.T) {
 	deep := filepath.Join("/tmp", strings.Repeat("d", 40), strings.Repeat("e", 40), strings.Repeat("f", 40))
 
 	server, err := NewServer(Config{
-		Layout:   Layout{RuntimeDir: deep, WorkspaceDir: "/tmp/ws", SecretsDir: "/tmp"},
-		Version:  "test-1.2.3",
-		Token:    []byte(testToken),
-		Bash:     Bash{Path: "/bin/bash", Version: "test"},
-		EUID:     os.Geteuid() | 1,
-		Username: "test",
+		Layout:    Layout{RuntimeDir: deep, WorkspaceDir: "/tmp/ws", SecretsDir: "/tmp"},
+		Version:   "test-1.2.3",
+		Token:     []byte(testToken),
+		Container: stubContainer(),
+		EUID:      os.Geteuid() | 1,
+		Username:  "test",
 	})
 	if err != nil {
 		t.Fatalf("preparing the runner: %v", err)
@@ -94,7 +93,7 @@ func TestListen_RefusesASocketPathTheKernelCannotHold(t *testing.T) {
 // chmod'ed a parent directory to debug something else, a restore of /etc
 // with the wrong ownership. Any of those opens the first lock silently.
 func TestServer_RefusesAClientWithoutTheInstallationCredential(t *testing.T) {
-	client, _ := serveTestRunner(t, nil)
+	client, _, _ := serveTestRunner(t, nil)
 
 	for _, token := range []string{"", "wrong", strings.Repeat("f", len(testToken))} {
 		conn := rawConn(t, client.SocketPath)
@@ -117,7 +116,7 @@ func TestServer_RefusesAClientWithoutTheInstallationCredential(t *testing.T) {
 // versions -- which is a five-minute fix -- rather than a hook running
 // with an envelope the other half did not mean, which is not.
 func TestServer_RefusesAnEngineFromADifferentRelease(t *testing.T) {
-	client, _ := serveTestRunner(t, nil)
+	client, _, _ := serveTestRunner(t, nil)
 
 	conn := rawConn(t, client.SocketPath)
 	msg := hello(t, conn, Hello{Protocol: Protocol, Version: "test-9.9.9", Token: testToken})
@@ -142,7 +141,7 @@ func TestServer_RefusesAnEngineFromADifferentRelease(t *testing.T) {
 // legitimate engine of the wrong release still gets the specific sentence
 // it needs, because it has the credential.
 func TestServer_AuthenticatesBeforeItComparesVersions(t *testing.T) {
-	client, _ := serveTestRunner(t, nil)
+	client, _, _ := serveTestRunner(t, nil)
 
 	conn := rawConn(t, client.SocketPath)
 	msg := hello(t, conn, Hello{Protocol: Protocol, Version: "test-9.9.9", Token: "wrong"})
@@ -172,11 +171,11 @@ func TestRefuseRoot_IsNotConfigurable(t *testing.T) {
 	}
 
 	_, err := NewServer(Config{
-		Layout:  Layout{RuntimeDir: "/tmp/x", WorkspaceDir: "/tmp/w", SecretsDir: "/tmp/y"},
-		Version: "test-1.2.3",
-		Token:   []byte(testToken),
-		Bash:    Bash{Path: "/bin/bash"},
-		EUID:    0,
+		Layout:    Layout{RuntimeDir: "/tmp/x", WorkspaceDir: "/tmp/w", SecretsDir: "/tmp/y"},
+		Version:   "test-1.2.3",
+		Token:     []byte(testToken),
+		Container: stubContainer(),
+		EUID:      0,
 	})
 	if !errors.Is(err, ErrRunningAsRoot) {
 		t.Fatalf("a server was built for uid 0: %v", err)
@@ -226,7 +225,7 @@ func TestLoadToken_RefusesACredentialOtherAccountsCanRead(t *testing.T) {
 // protocol's central claim: not that the decoder is strict, but that a
 // client cannot reach execution with a path.
 func TestServer_RefusesARequestThatNamesAPath(t *testing.T) {
-	client, _ := serveTestRunner(t, nil)
+	client, _, _ := serveTestRunner(t, nil)
 
 	conn := rawConn(t, client.SocketPath)
 	if msg := hello(t, conn, Hello{Protocol: Protocol, Version: client.Version, Token: testToken}); msg.Kind != KindWelcome {
@@ -263,7 +262,7 @@ func TestServer_RefusesARequestThatNamesAPath(t *testing.T) {
 // only the process it started would leave the pipeline holding whatever
 // it held.
 func TestServer_LeaseExpiryKillsARunawayHook(t *testing.T) {
-	client, layout := serveTestRunner(t, nil)
+	client, layout, _ := serveTestRunner(t, nil)
 	evidence := t.TempDir()
 
 	conn := rawConn(t, client.SocketPath)
@@ -318,7 +317,7 @@ sleep 60
 // that needs to stop a step whose own connection has wedged needs a door
 // that is not that connection.
 func TestServer_CancelReachesAStepFromASecondConnection(t *testing.T) {
-	client, _ := serveTestRunner(t, nil)
+	client, _, _ := serveTestRunner(t, nil)
 	evidence := t.TempDir()
 
 	body := fmt.Sprintf("touch %s/started\nsleep 60\n", evidence)
@@ -366,7 +365,7 @@ func TestServer_CancelReachesAStepFromASecondConnection(t *testing.T) {
 // TestClient_StatusIsThePreflightAnswer covers the health surface #809
 // requires `.local.sh` validation to consult BEFORE a backup starts.
 func TestClient_StatusIsThePreflightAnswer(t *testing.T) {
-	client, layout := serveTestRunner(t, nil)
+	client, layout, _ := serveTestRunner(t, nil)
 
 	status, err := client.Status(context.Background())
 	if err != nil {
@@ -390,7 +389,7 @@ func TestClient_StatusIsThePreflightAnswer(t *testing.T) {
 // validating a hook must not execute it, or "validate before the backup
 // starts" would mean "run the hook before the backup starts".
 func TestClient_SyntaxCheckRunsNothing(t *testing.T) {
-	client, _ := serveTestRunner(t, nil)
+	client, _, _ := serveTestRunner(t, nil)
 	marker := filepath.Join(t.TempDir(), "ran")
 
 	if err := client.SyntaxCheck(context.Background(), "run-1", "step-1", []byte("touch "+marker+"\n")); err != nil {
@@ -414,7 +413,7 @@ func TestClient_SyntaxCheckRunsNothing(t *testing.T) {
 // the hook" would take away the one distinction a workflow engine cannot
 // do without.
 func TestClient_ExecuteStreamsOutputAndReportsTheHooksOwnExitStatus(t *testing.T) {
-	client, _ := serveTestRunner(t, nil)
+	client, _, _ := serveTestRunner(t, nil)
 	out := &collector{}
 
 	result, err := client.Execute(context.Background(), ExecuteRequest{
@@ -463,7 +462,7 @@ func TestClient_ExecuteStreamsOutputAndReportsTheHooksOwnExitStatus(t *testing.T
 // that only sometimes enters it is a test that only sometimes means
 // anything.
 func TestServer_ConcurrentExecutesOfOneStepLeaveTheWinnerAlone(t *testing.T) {
-	client, layout := serveTestRunner(t, nil)
+	client, layout, _ := serveTestRunner(t, nil)
 	evidence := t.TempDir()
 
 	// The hook proves its own working directory outlived it: a cleanup
@@ -551,22 +550,20 @@ echo survived
 // orphaned, with nothing left on the host that knows the process group
 // ids.
 func TestServe_ACancelledContextStopsTheRunnerAndTheHooksItOwns(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("this suite cannot run as root, because the runner refuses to: see RefuseRoot")
-	}
 	layout := testLayout(t)
 	if err := os.WriteFile(layout.TokenPath(), []byte(testToken), TokenFileMode); err != nil {
 		t.Fatalf("writing the credential: %v", err)
 	}
+	container, state := fakeCapability(t, fakeDocker{})
 
 	server, err := NewServer(Config{
-		Layout:   layout,
-		Version:  "test-1.2.3",
-		Token:    []byte(testToken),
-		Bash:     testBash(t),
-		Grace:    200 * time.Millisecond,
-		EUID:     os.Geteuid(),
-		Username: CurrentUsername(os.Geteuid()),
+		Layout:    layout,
+		Version:   "test-1.2.3",
+		Token:     []byte(testToken),
+		Container: container,
+		Grace:     200 * time.Millisecond,
+		EUID:      os.Geteuid(),
+		Username:  CurrentUsername(os.Geteuid()),
 	})
 	if err != nil {
 		t.Fatalf("preparing the runner: %v", err)
@@ -583,9 +580,8 @@ func TestServe_ACancelledContextStopsTheRunnerAndTheHooksItOwns(t *testing.T) {
 	client := Client{SocketPath: layout.SocketPath(), Version: "test-1.2.3", Token: testToken}
 	evidence := t.TempDir()
 
-	// A hook that would outlive any stop timeout, reporting the pid of
-	// the shell that leads its process group.
-	body := fmt.Sprintf("echo $$ > %[1]s/hook-pid\ntouch %[1]s/started\nsleep 300\n", evidence)
+	// A hook that would outlive any stop timeout.
+	body := fmt.Sprintf("touch %s/started\nsleep 300\n", evidence)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -597,8 +593,9 @@ func TestServe_ACancelledContextStopsTheRunnerAndTheHooksItOwns(t *testing.T) {
 		}, &collector{})
 	}()
 	waitForFile(t, filepath.Join(evidence, "started"), 15*time.Second)
-	hook := childPID(t, filepath.Join(evidence, "hook-pid"))
-	t.Cleanup(func() { _ = syscall.Kill(-hook, syscall.SIGKILL) })
+	if records := containerRecords(t, state); len(records) != 1 {
+		t.Fatalf("the hook is not running in a container this test can watch: %v", records)
+	}
 
 	// And a connection that says nothing at all, which is where the
 	// handshake read blocks forever.
@@ -612,19 +609,33 @@ func TestServe_ACancelledContextStopsTheRunnerAndTheHooksItOwns(t *testing.T) {
 			t.Errorf("a cancelled Serve returned an error: %v", err)
 		}
 	case <-time.After(20 * time.Second):
-		t.Fatal("Serve did not return twenty seconds after its context was cancelled. Under a service manager this is the window that ends in SIGKILL, and a SIGKILLed runner orphans every hook it was supervising")
+		t.Fatal("Serve did not return twenty seconds after its context was cancelled. Under a service manager this is the window that ends in SIGKILL, and a SIGKILLed runner leaves every hook container it was supervising running with nothing left on the host that knows their names")
 	}
 
-	// And the hook it owned went with it, rather than being orphaned.
-	deadline := time.Now().Add(10 * time.Second)
+	// And the container it owned went with it, rather than being left
+	// behind. This is the lease guarantee at the process level: a runner
+	// that stopped is a runner whose hooks stopped.
+	deadline := time.Now().Add(15 * time.Second)
 	for {
-		if err := syscall.Kill(-hook, 0); errors.Is(err, syscall.ESRCH) {
+		if len(containerRecords(t, state)) == 0 {
 			break
 		}
 		if !time.Now().Before(deadline) {
-			t.Fatalf("the hook's process group (%d) is still alive after the runner stopped: it is now an orphan nothing on this host can account for", hook)
+			t.Fatalf("a hook container is still there after the runner stopped: %v. It is now an orphan nothing on this host can account for", containerRecords(t, state))
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	<-done
+}
+
+// stubContainer is a capability with nothing behind it, for the tests
+// that are about the SERVER's own refusals -- a socket path the kernel
+// cannot hold, a uid of 0 -- and must get past NewServer's requirement
+// for one without starting anything.
+func stubContainer() Container {
+	return Container{
+		Docker: "/usr/bin/docker",
+		Image:  DefaultHookImage,
+		Bash:   Bash{Path: DefaultHookBash, Version: "stub"},
+	}
 }

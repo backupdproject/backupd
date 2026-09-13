@@ -6456,5 +6456,277 @@ class TestTheHostWorkflowRunner(unittest.TestCase):
                         "uninstall deleted an operator's hook script")
 
 
+class TestTheRunnerRunsHooksInContainers(unittest.TestCase):
+    """EPIC L (#865): every local hook runs in an ephemeral container, so
+    the RUNNER needs Docker access and the engine still must not have any.
+
+    That sentence is the whole of what the installer gained here, and both
+    halves of it are load-bearing: docker-group membership on the NAS host
+    is root-equivalent, so it belongs to the one small process that
+    launches hook containers and to nothing else.
+    """
+
+    def setUp(self):
+        self.old_umask = os.umask(0)
+        self.addCleanup(os.umask, self.old_umask)
+
+    def staged(self, *extra: str):
+        fx = Fixture(self)
+        args = fx.args(*extra, command="install")
+        with contextlib.redirect_stdout(io.StringIO()):
+            installer.stage_payload(args)
+        return args
+
+    def test_the_installer_and_the_runner_agree_on_the_default_hook_image(self):
+        """Two halves of one decision, in two languages.
+
+        The installer pre-fetches the image and writes it into the unit;
+        the runner refuses to start without it. A default that drifted
+        between them is a deployment whose installer fetched one image
+        and whose runner demanded another -- which fails at startup, on
+        the host, with a message about an image nobody asked for.
+        """
+        source = (REPO_ROOT / "core" / "internal" / "hostrunner" / "container.go").read_text()
+        match = re.search(r'DefaultHookImage = "([^"]+)"', source)
+        self.assertIsNotNone(match, "core/internal/hostrunner no longer declares DefaultHookImage")
+        self.assertEqual(installer.DEFAULT_HOOK_IMAGE, match.group(1),
+                         "the installer's default hook image and the runner's have drifted apart")
+
+    def test_the_unit_grants_docker_access_to_the_runner_and_names_the_image(self):
+        """The unit is where "only the runner holds docker access" becomes
+        true on the host.
+
+        SupplementaryGroups is what gives the service account the docker
+        socket, and the socket has to be in ReadWritePaths as well:
+        ProtectSystem=strict makes the whole filesystem read-only, and
+        connecting to a Unix socket is a write. Without both the runner
+        starts, proves no container capability and refuses every hook --
+        correctly, and for a reason an operator cannot see from here.
+        """
+        args = self.staged()
+        unit = installer.render_workflow_runner_unit(args)
+        socket_path = installer.docker_socket_path()
+
+        self.assertIn("SupplementaryGroups=", unit,
+                      "the unit gives the runner no docker group, so it cannot reach the daemon")
+        self.assertIn(f"ReadWritePaths={args.runtime_dir} {args.workspace_dir} {socket_path}", unit,
+                      "the docker socket is not writable under ProtectSystem=strict, so the runner "
+                      "cannot connect to the daemon it needs")
+        self.assertIn(f"--hook-image {installer.DEFAULT_HOOK_IMAGE}", unit,
+                      "the unit does not pin the image hooks run in")
+        self.assertNotIn("--privileged", unit)
+
+    def test_the_unit_carries_the_daemon_this_install_actually_used(self):
+        """Install against daemon A, serve hooks against daemon A.
+
+        This installer honours DOCKER_HOST, DOCKER_CONTEXT and
+        DOCKER_CONFIG: the daemon probe, the hook image pull and the
+        socket group all go through them. systemd inherits none of it, so
+        a unit that did not carry the connection produced the worst kind
+        of success -- install, preflight and pull pass against the daemon
+        the operator named, then the runner probes the DEFAULT daemon,
+        finds no hook image and refuses every local hook while naming an
+        image that was fetched.
+        """
+        args = self.staged()
+        env = {
+            "DOCKER_HOST": "tcp://10.4.0.9:2376",
+            "DOCKER_CONFIG": "/srv/nas config/.docker",
+        }
+        with unittest.mock.patch.dict(os.environ, env, clear=False):
+            unit = installer.render_workflow_runner_unit(args)
+
+        self.assertIn('Environment="DOCKER_HOST=tcp://10.4.0.9:2376"', unit,
+                      "the unit does not carry the daemon the install used, so the runner will probe "
+                      "the default one and refuse to serve")
+        self.assertIn('Environment="DOCKER_CONFIG=/srv/nas config/.docker"', unit,
+                      "the unit does not carry the docker config directory the install used, so the "
+                      "runner has neither its contexts nor its credentials")
+
+    def test_a_docker_context_travels_and_loses_to_an_explicit_host(self):
+        """docker's own precedence, settled by the installer rather than
+        left for the client.
+
+        A unit that set both would leave the two able to disagree after
+        somebody edited one of them, which is a deployment whose daemon
+        depends on which line a later hand-edit touched.
+        """
+        args = self.staged()
+        with unittest.mock.patch.dict(os.environ, {"DOCKER_CONTEXT": "nas-remote"}, clear=False):
+            os.environ.pop("DOCKER_HOST", None)
+            unit = installer.render_workflow_runner_unit(args)
+        self.assertIn('Environment="DOCKER_CONTEXT=nas-remote"', unit,
+                      "the docker context the install used is not in the unit")
+
+        with unittest.mock.patch.dict(os.environ,
+                                      {"DOCKER_CONTEXT": "nas-remote", "DOCKER_HOST": "tcp://10.4.0.9:2376"},
+                                      clear=False):
+            both = installer.render_workflow_runner_unit(args)
+        self.assertIn('Environment="DOCKER_HOST=tcp://10.4.0.9:2376"', both)
+        self.assertNotIn('Environment="DOCKER_CONTEXT', both,
+                         "the unit carries both a host and a context, so the client is left resolving "
+                         "a conflict this installer had already resolved")
+
+    def test_a_moved_socket_is_the_one_the_unit_allows_and_reads_the_group_from(self):
+        """Rootless Docker puts the socket under XDG_RUNTIME_DIR.
+
+        A unit that allowed writes to /var/run/docker.sock there would
+        give the service account the group of a socket it never uses and
+        deny it writes to the one it does -- and the error names the
+        socket and blames the group.
+        """
+        args = self.staged()
+        moved = Path(self.enterContext(tempfile.TemporaryDirectory())) / "docker.sock"
+        moved.parent.mkdir(parents=True, exist_ok=True)
+        with unittest.mock.patch.dict(os.environ, {"DOCKER_HOST": f"unix://{moved}"}, clear=False):
+            unit = installer.render_workflow_runner_unit(args)
+            self.assertEqual(installer.docker_connection().socket, str(moved))
+        self.assertIn(f"ReadWritePaths={args.runtime_dir} {args.workspace_dir} {moved}", unit,
+                      "the unit allows writes to a socket this deployment's daemon is not on")
+        self.assertIn(f'Environment="DOCKER_HOST=unix://{moved}"', unit)
+
+    def test_the_unit_names_the_docker_client_the_install_proved(self):
+        """#875: check_docker accepts any `docker` on PATH, and the runner
+        searches a fixed candidate list instead -- deliberately, because
+        it will not take a container runtime from a PATH a service manager
+        set. A client at /snap/bin/docker therefore passed the install and
+        was invisible to the runner, which then refused every hook for
+        want of a docker it had just been proved to have.
+        """
+        args = self.staged()
+        with unittest.mock.patch.object(installer.shutil, "which", lambda name: "/snap/bin/docker"):
+            unit = installer.render_workflow_runner_unit(args)
+        self.assertIn("--docker /snap/bin/docker", unit,
+                      "the unit does not name the client the install used, so the runner falls back to "
+                      "searching paths this host may not have")
+
+    def test_the_engine_container_still_gets_no_docker_access_at_all(self):
+        """The acceptance criterion #865 shares with #809, and the one
+        this change could most easily have broken.
+
+        Containerising hooks is worth nothing if the way it was done
+        handed the distroless engine the docker socket or the docker
+        group: that is arbitrary root on the host for whatever reaches
+        the engine, which is strictly worse than the shell this whole
+        design exists to avoid.
+        """
+        canonical = CANONICAL_COMPOSE.read_text()
+        for forbidden in ("docker.sock", "group_add", "privileged: true", "cap_add",
+                          "/var/run/docker", "DOCKER_HOST"):
+            self.assertNotIn(forbidden, canonical,
+                             f"the canonical runtime now declares {forbidden!r}, so the engine has a "
+                             "route to the Docker daemon")
+
+    def test_a_deployment_with_local_hooks_and_no_docker_access_is_refused_with_the_remedy(self):
+        """"A deployment with local hooks configured but no Docker must
+        fail preflight with a clear message" (#865).
+
+        Clear means naming the remedy: on the deployments this product
+        targets the fault is almost never a missing daemon -- it is the
+        service account not being in the docker group, which is a
+        one-line fix and an unguessable one.
+        """
+        args = self.staged()
+        (args.workflows_dir / "hook.local.sh").write_text("#!/bin/bash\n")
+
+        flight = installer.Preflight(args)
+        with unittest.mock.patch.object(installer, "account_can_reach_docker", lambda uid: False):
+            with self.assertRaises(installer.Refusal) as caught:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    flight.check_workflow_runner_containers()
+        self.assertEqual(caught.exception.code, installer.EXIT_PREREQ_DOCKER)
+        self.assertIn("docker group", caught.exception.remedy)
+        self.assertIn(str(args.puid), caught.exception.remedy + caught.exception.message,
+                      "the refusal does not say which account needs the group")
+
+    def test_a_deployment_with_no_local_hooks_is_not_held_to_the_requirement(self):
+        """The requirement is about hooks, not about deployments.
+
+        Most deployments have no `.local.sh` at all, and failing their
+        install over a container runtime they will never launch would be
+        the installer inventing a prerequisite for a feature nobody
+        switched on.
+        """
+        args = self.staged()
+        flight = installer.Preflight(args)
+        with unittest.mock.patch.object(installer, "account_can_reach_docker", lambda uid: False):
+            with contextlib.redirect_stdout(io.StringIO()):
+                flight.check_workflow_runner_containers()
+
+    def test_the_hook_image_is_fetched_before_the_runner_needs_it(self):
+        """The runner refuses to pull, on purpose: a preflight that
+        reached for the network would hang on a NAS with no route out.
+
+        So the fetching happens HERE, once, where an operator is already
+        watching an installer download things -- and a pull that fails is
+        a refusal naming the image rather than a runner that starts and
+        rejects every hook.
+        """
+        args = self.staged()
+        calls = []
+
+        def fake_run(argv, **kw):
+            calls.append(list(argv))
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return subprocess.CompletedProcess(argv, 1, "", "No such image")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with unittest.mock.patch.object(installer, "run", fake_run):
+            with contextlib.redirect_stdout(io.StringIO()):
+                installer.ensure_hook_image(args)
+        self.assertTrue(any(c[:2] == ["docker", "pull"] for c in calls),
+                        f"the missing hook image was never pulled: {calls}")
+
+        calls.clear()
+
+        def present(argv, **kw):
+            calls.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, "linux/arm64\n", "")
+
+        with unittest.mock.patch.object(installer, "run", present):
+            with contextlib.redirect_stdout(io.StringIO()):
+                installer.ensure_hook_image(args)
+        self.assertFalse(any(c[:2] == ["docker", "pull"] for c in calls),
+                         f"an image already on the host was pulled again: {calls}")
+
+    def test_a_hook_image_that_cannot_be_obtained_is_a_refusal_not_a_warning(self):
+        """The failure this must not have: an install that finished, a
+        runner that starts, and every local hook refused at backup time
+        for a reason nobody was told about at install time.
+        """
+        args = self.staged()
+
+        def fake_run(argv, **kw):
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return subprocess.CompletedProcess(argv, 1, "", "No such image")
+            if argv[:2] == ["docker", "pull"]:
+                return subprocess.CompletedProcess(argv, 1, "", "no route to host")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with unittest.mock.patch.object(installer, "run", fake_run):
+            with self.assertRaises(installer.Refusal) as caught:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    installer.ensure_hook_image(args)
+        self.assertEqual(caught.exception.code, installer.EXIT_PREREQ_IMAGE)
+        self.assertIn(installer.DEFAULT_HOOK_IMAGE, caught.exception.message)
+
+    def test_the_env_records_the_hook_image_so_an_operator_can_change_it(self):
+        """It is in .env for WORKFLOW_RUNNER's reason: the answer has to
+        survive an upgrade. An operator whose hooks need pg_dump builds an
+        image and names it once, not on every install."""
+        args = self.staged()
+        rendered = (args.prefix / ".env").read_text()
+        self.assertIn(f"{installer.WORKFLOW_RUNNER_HOOK_IMAGE_ENV_KEY}={installer.DEFAULT_HOOK_IMAGE}",
+                      rendered)
+
+        fx = Fixture(self)
+        upgraded = fx.args(command="install")
+        with contextlib.redirect_stdout(io.StringIO()):
+            installer.adopt_installed_shape(
+                upgraded, {installer.WORKFLOW_RUNNER_HOOK_IMAGE_ENV_KEY: "registry.example/hooks:3"})
+        self.assertEqual(installer.hook_image(upgraded), "registry.example/hooks:3",
+                         "an operator's own hook image did not survive the upgrade")
+
+
 if __name__ == "__main__":
     unittest.main()
