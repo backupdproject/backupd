@@ -130,12 +130,19 @@ func validateOperationRequest(req OperationRequest) error {
 // same IdempotencyKey resolve to exactly one row rather than a
 // check-then-insert race creating two.
 //
-// If IdempotencyKey was already used for a request whose Actor, Action or
-// ConfigRevision differs from req, this returns ErrOperationIdempotencyKeyReused:
-// an idempotency key is a promise about one specific logical request from
-// one specific caller, and silently serving one actor's operation (which
-// may include its Result/Error) back to a request presenting a different
-// Actor would be an information leak across callers, not a convenience.
+// If IdempotencyKey was already used for a request whose Actor, Action,
+// ConfigRevision or Parameters differ from req, this returns
+// ErrOperationIdempotencyKeyReused: an idempotency key is a promise
+// about one specific logical request from one specific caller, and
+// silently serving one actor's operation (which may include its
+// Result/Error) back to a request presenting a different Actor would be
+// an information leak across callers, not a convenience.
+//
+// Parameters is in that list because for the snapshot actions it is the
+// ONLY field that differs between two genuinely different requests: hold
+// this snapshot and hold that one are the same actor, action and
+// configuration revision, and replaying the first told the caller the
+// second had happened.
 func (j *Journal) CreateOperation(ctx context.Context, req OperationRequest) (OperationOutcome, error) {
 	if err := validateOperationRequest(req); err != nil {
 		return OperationOutcome{}, err
@@ -200,7 +207,8 @@ func (j *Journal) CreateOperation(ctx context.Context, req OperationRequest) (Op
 // operation would mean telling a caller "your request is already in
 // flight" about a request it never actually made.
 func commitIdempotentReplay(tx *sql.Tx, req OperationRequest, existing Operation) (OperationOutcome, error) {
-	if existing.Actor != req.Actor || existing.Action != req.Action || existing.ConfigRevision != req.ConfigRevision {
+	if existing.Actor != req.Actor || existing.Action != req.Action ||
+		existing.ConfigRevision != req.ConfigRevision || existing.Parameters != req.Parameters {
 		return OperationOutcome{}, fmt.Errorf("%w: key %q", ErrOperationIdempotencyKeyReused, req.IdempotencyKey)
 	}
 	if err := tx.Commit(); err != nil {

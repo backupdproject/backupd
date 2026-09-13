@@ -53,8 +53,14 @@ type snapshotVerifyOperationRequest struct {
 // snapshotHoldOperationRequest is the hold_snapshot action's.
 type snapshotHoldOperationRequest struct {
 	BackupSetID string `json:"backup_set_id"`
-	RunID       string `json:"run_id"`
-	Reason      string `json:"reason"`
+
+	// RunID is optional, and absent means this backup set's last known
+	// good snapshot: the one an operator protecting "the current restore
+	// point" means and the one they would otherwise have to look up
+	// first. core/service and `backupd snapshot hold` have always read an
+	// unnamed run that way; the contract now says so too.
+	RunID  string `json:"run_id,omitempty"`
+	Reason string `json:"reason"`
 }
 
 // snapshotHoldReleaseOperationRequest is the release_snapshot_hold
@@ -199,6 +205,15 @@ func (h *handlers) writeSnapshotActionError(w http.ResponseWriter, r *http.Reque
 	case errors.Is(err, service.ErrSnapshotHoldNotFound):
 		h.logRefusal(r, http.StatusNotFound, "SNAPSHOT_HOLD_NOT_FOUND",
 			writeError(w, http.StatusNotFound, "SNAPSHOT_HOLD_NOT_FOUND", err.Error()), err)
+	case errors.Is(err, service.ErrSnapshotNotHoldable):
+		// A conflict rather than a validation failure: the body is well
+		// formed and the snapshot is the thing that has moved on, so
+		// nothing a client could change about the request would make it
+		// work. Logged like the other typed refusals because it is
+		// reached by a control that was on screen a moment ago, which
+		// makes a run of them worth seeing.
+		h.logRefusal(r, http.StatusConflict, "SNAPSHOT_NOT_HOLDABLE",
+			writeError(w, http.StatusConflict, "SNAPSHOT_NOT_HOLDABLE", err.Error()), err)
 	case errors.Is(err, service.ErrSnapshotRestoreUnsupported):
 		h.logRefusal(r, http.StatusBadRequest, "BACKUP_SET_NOT_INCREMENTAL",
 			writeError(w, http.StatusBadRequest, "BACKUP_SET_NOT_INCREMENTAL", err.Error()), err)
@@ -228,6 +243,17 @@ func refuseForeignParameters(w http.ResponseWriter, body submitOperationRequest)
 		owner string
 		set   bool
 	}{
+		// The flat one, and it belongs in this list for exactly the
+		// reason the nested objects do. backup_set_id is
+		// run_backup_set's parameter; every other action either names
+		// its set inside its own object (the four incremental ones, the
+		// restore) or acts deployment-wide (run_cycle). It used to be
+		// refused for run_cycle alone, so a hold_snapshot carrying a
+		// top-level backup_set_id was served with the field ignored --
+		// and the two sets in that body could be DIFFERENT, which is a
+		// caller holding a snapshot in one set while believing it held
+		// one in another.
+		{"backup_set_id", service.ActionRunBackupSet, body.BackupSetID != ""},
 		{"restore", service.ActionRestorePlacement, body.Restore != nil},
 		{"snapshot_restore", service.ActionRestoreSnapshot, body.SnapshotRestore != nil},
 		{"snapshot_verify", service.ActionVerifySnapshot, body.SnapshotVerify != nil},

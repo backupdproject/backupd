@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "95371c7fe0e492a261b5eb107a8d0483d0738f47475cb973f13f0788a91d5ef9"
+const ContractSHA256 = "5ddd083e2383a85344d918f360c78b349f2f0e83643f8a45f838b72c968a9ea1"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -107,6 +107,7 @@ const (
 	ErrorCodeMediumConnectionNotProven              ErrorCode = "MEDIUM_CONNECTION_NOT_PROVEN"
 	ErrorCodeSnapshotNotFound                       ErrorCode = "SNAPSHOT_NOT_FOUND"
 	ErrorCodeSnapshotHoldNotFound                   ErrorCode = "SNAPSHOT_HOLD_NOT_FOUND"
+	ErrorCodeSnapshotNotHoldable                    ErrorCode = "SNAPSHOT_NOT_HOLDABLE"
 	ErrorCodeRepositoryDomainNotFound               ErrorCode = "REPOSITORY_DOMAIN_NOT_FOUND"
 	ErrorCodeBackupSetNotIncremental                ErrorCode = "BACKUP_SET_NOT_INCREMENTAL"
 )
@@ -163,6 +164,7 @@ var WireErrorCodes = []ErrorCode{
 	ErrorCodeMediumConnectionNotProven,
 	ErrorCodeSnapshotNotFound,
 	ErrorCodeSnapshotHoldNotFound,
+	ErrorCodeSnapshotNotHoldable,
 	ErrorCodeRepositoryDomainNotFound,
 	ErrorCodeBackupSetNotIncremental,
 }
@@ -243,6 +245,7 @@ var ErrorCodes = []ErrorCode{
 	ErrorCodeMediumConnectionNotProven,
 	ErrorCodeSnapshotNotFound,
 	ErrorCodeSnapshotHoldNotFound,
+	ErrorCodeSnapshotNotHoldable,
 	ErrorCodeRepositoryDomainNotFound,
 	ErrorCodeBackupSetNotIncremental,
 }
@@ -252,7 +255,7 @@ var ErrorCodes = []ErrorCode{
 var ErrorClasses = map[string][]ErrorCode{
 	"authentication": {ErrorCodeUnauthenticated, ErrorCodeBootstrapTokenInvalid, ErrorCodeResetTokenInvalid, ErrorCodeVerifyTokenInvalid},
 	"authorization":  {ErrorCodeEnrollmentClosed, ErrorCodeDestructiveOperationsDisabled, ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
-	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven},
+	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven, ErrorCodeSnapshotNotHoldable},
 	"internal":       {ErrorCodeInternal, ErrorCodeInternalError},
 	"not-found":      {ErrorCodeBackupSetNotFound, ErrorCodeOperationNotFound, ErrorCodeRetentionPlanNotFound, ErrorCodeArtifactNotFound, ErrorCodeMediumNotFound, ErrorCodeSnapshotNotFound, ErrorCodeSnapshotHoldNotFound, ErrorCodeRepositoryDomainNotFound},
 	"throttling":     {ErrorCodeRateLimited},
@@ -752,7 +755,7 @@ var Endpoints = []Endpoint{
 			401: {ErrorCodeUnauthenticated},
 			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch, ErrorCodeDestructiveOperationsDisabled},
 			404: {ErrorCodeBackupSetNotFound, ErrorCodeArtifactNotFound, ErrorCodeCopyNotFound, ErrorCodeSnapshotNotFound, ErrorCodeSnapshotHoldNotFound},
-			409: {ErrorCodeConfigRevisionStale, ErrorCodeIdempotencyKeyConflict, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeRestoreRefused},
+			409: {ErrorCodeConfigRevisionStale, ErrorCodeIdempotencyKeyConflict, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeRestoreRefused, ErrorCodeSnapshotNotHoldable},
 			500: {ErrorCodeInternal},
 			503: {ErrorCodeRestoreUnavailable},
 		},
@@ -2190,7 +2193,6 @@ type RepositoryMaintenance struct {
 	LastQuickAt    string `json:"last_quick_at,omitempty"`
 	NextEligibleAt string `json:"next_eligible_at,omitempty"`
 	Overdue        bool   `json:"overdue"`
-	OwnedUntil     string `json:"owned_until,omitempty"`
 	Owner          string `json:"owner"`
 	ReclaimedBytes int64  `json:"reclaimed_bytes"`
 	Runs           int64  `json:"runs"`
@@ -2568,7 +2570,7 @@ type SnapshotHoldReleaseRequest struct {
 type SnapshotHoldRequest struct {
 	BackupSetID string `json:"backup_set_id"`
 	Reason      string `json:"reason"`
-	RunID       string `json:"run_id"`
+	RunID       string `json:"run_id,omitempty"`
 }
 
 // SnapshotResponse is GET /backup-sets/{source}/{set}/snapshots/{run}: one run, plus the

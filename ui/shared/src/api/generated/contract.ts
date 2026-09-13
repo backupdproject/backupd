@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "95371c7fe0e492a261b5eb107a8d0483d0738f47475cb973f13f0788a91d5ef9";
+export const CONTRACT_SHA256 = "5ddd083e2383a85344d918f360c78b349f2f0e83643f8a45f838b72c968a9ea1";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -70,6 +70,7 @@ export const WIRE_ERROR_CODES = [
   "MEDIUM_CONNECTION_NOT_PROVEN",
   "SNAPSHOT_NOT_FOUND",
   "SNAPSHOT_HOLD_NOT_FOUND",
+  "SNAPSHOT_NOT_HOLDABLE",
   "REPOSITORY_DOMAIN_NOT_FOUND",
   "BACKUP_SET_NOT_INCREMENTAL",
 ] as const;
@@ -154,6 +155,7 @@ export const API_ERROR_CODES = [
   "MEDIUM_CONNECTION_NOT_PROVEN",
   "SNAPSHOT_NOT_FOUND",
   "SNAPSHOT_HOLD_NOT_FOUND",
+  "SNAPSHOT_NOT_HOLDABLE",
   "REPOSITORY_DOMAIN_NOT_FOUND",
   "BACKUP_SET_NOT_INCREMENTAL",
 ] as const;
@@ -165,7 +167,7 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 export const API_ERROR_CLASSES = {
   "authentication": ["UNAUTHENTICATED", "BOOTSTRAP_TOKEN_INVALID", "RESET_TOKEN_INVALID", "VERIFY_TOKEN_INVALID"],
   "authorization": ["ENROLLMENT_CLOSED", "DESTRUCTIVE_OPERATIONS_DISABLED", "CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
-  "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN"],
+  "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN", "SNAPSHOT_NOT_HOLDABLE"],
   "internal": ["INTERNAL", "INTERNAL_ERROR"],
   "not-found": ["BACKUP_SET_NOT_FOUND", "OPERATION_NOT_FOUND", "RETENTION_PLAN_NOT_FOUND", "ARTIFACT_NOT_FOUND", "MEDIUM_NOT_FOUND", "SNAPSHOT_NOT_FOUND", "SNAPSHOT_HOLD_NOT_FOUND", "REPOSITORY_DOMAIN_NOT_FOUND"],
   "throttling": ["RATE_LIMITED"],
@@ -1010,7 +1012,7 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
       401: ["UNAUTHENTICATED"],
       403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH", "DESTRUCTIVE_OPERATIONS_DISABLED"],
       404: ["BACKUP_SET_NOT_FOUND", "ARTIFACT_NOT_FOUND", "COPY_NOT_FOUND", "SNAPSHOT_NOT_FOUND", "SNAPSHOT_HOLD_NOT_FOUND"],
-      409: ["CONFIG_REVISION_STALE", "IDEMPOTENCY_KEY_CONFLICT", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "RESTORE_REFUSED"],
+      409: ["CONFIG_REVISION_STALE", "IDEMPOTENCY_KEY_CONFLICT", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "RESTORE_REFUSED", "SNAPSHOT_NOT_HOLDABLE"],
       500: ["INTERNAL"],
       503: ["RESTORE_UNAVAILABLE"],
     }
@@ -2671,7 +2673,7 @@ export interface WireRecoverySettingsUpdate {
 export interface WireRepositoryHealth {
   backup_sets?: string[];
   clock_sane: boolean;
-  clock_skew_seconds?: number | null;
+  clock_skew_seconds: number | null;
   credentials_valid: boolean;
   detail?: string;
   domain: string;
@@ -2707,7 +2709,6 @@ export interface WireRepositoryMaintenance {
   last_quick_at?: string;
   next_eligible_at?: string;
   overdue: boolean;
-  owned_until?: string;
   owner: string;
   reclaimed_bytes: number;
   runs: number;
@@ -3027,28 +3028,28 @@ export interface WireSmtpSettingsView {
 export interface WireSnapshot {
   backup_set_id: string;
   completed_at?: string;
-  consistency_mode?: string;
-  content_reused_bytes?: number | null;
+  consistency_mode: string;
+  content_reused_bytes: number | null;
   delete_requested_at?: string;
-  directories?: number | null;
-  duration_seconds?: number | null;
+  directories: number | null;
+  duration_seconds: number | null;
   engine: string;
-  entries_scanned?: number | null;
-  files?: number | null;
+  entries_scanned: number | null;
+  files: number | null;
   holds?: WireSnapshotHold[];
   last_known_good: boolean;
-  logical_bytes?: number | null;
+  logical_bytes: number | null;
   operation_id?: string;
   phase: string;
   reason?: string;
-  repository_bytes_written?: number | null;
-  repository_domain?: string;
+  repository_bytes_written: number | null;
+  repository_domain: string;
   run_id: string;
   snapshot_id?: string;
-  source_bytes_read?: number | null;
-  source_complete?: boolean | null;
+  source_bytes_read: number | null;
+  source_complete: boolean | null;
   started_at: string;
-  verification_level?: string;
+  verification_level: string;
   verification_level_achieved?: string;
   verification_status?: string;
 }
@@ -3085,7 +3086,7 @@ export interface WireSnapshotHoldReleaseRequest {
 export interface WireSnapshotHoldRequest {
   backup_set_id: string;
   reason: string;
-  run_id: string;
+  run_id?: string;
 }
 
 /** GET /backup-sets/{source}/{set}/snapshots/{run}: one run, plus the

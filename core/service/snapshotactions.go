@@ -497,6 +497,13 @@ func snapshotHoldFailure(err error) string {
 		return "that snapshot is not in this backup set's history"
 	case errors.Is(err, app.ErrSetHasNoSnapshots):
 		return "this backup set has no restore point to hold"
+	case errors.Is(err, app.ErrSnapshotNotHoldable):
+		// The app layer's own sentence, for snapshotSurfaceError's
+		// reason: it is composed there from the run's phase alone, so it
+		// carries no path, and which of the four states this was is the
+		// only part an operator reading the operation row later can do
+		// anything with.
+		return notHoldableSentence(err)
 	default:
 		return "that snapshot could not be held"
 	}

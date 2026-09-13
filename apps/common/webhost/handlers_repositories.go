@@ -65,7 +65,6 @@ type listRepositoriesResponse struct {
 type repositoryMaintenanceResponse struct {
 	Domain         string `json:"domain"`
 	Owner          string `json:"owner"`
-	OwnedUntil     string `json:"owned_until,omitempty"`
 	LastQuickAt    string `json:"last_quick_at,omitempty"`
 	LastFullAt     string `json:"last_full_at,omitempty"`
 	NextEligibleAt string `json:"next_eligible_at,omitempty"`
@@ -148,7 +147,6 @@ func (h *handlers) getRepositoryMaintenance(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, repositoryMaintenanceResponse{
 		Domain:         state.Domain,
 		Owner:          state.Owner,
-		OwnedUntil:     formatTime(state.OwnedUntil),
 		LastQuickAt:    formatTime(state.LastQuickAt),
 		LastFullAt:     formatTime(state.LastFullAt),
 		NextEligibleAt: formatTime(state.NextEligibleAt),

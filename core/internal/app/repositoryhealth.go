@@ -14,7 +14,6 @@ import (
 	"github.com/backupdproject/backupd/core/internal/health"
 	"github.com/backupdproject/backupd/core/internal/model"
 	"github.com/backupdproject/backupd/core/internal/repomaintenance"
-	"github.com/backupdproject/backupd/core/internal/state"
 )
 
 // EPIC K's repository health (#788): the six questions an operator has
@@ -32,8 +31,12 @@ import (
 // So the probe is its own call, reached by the two surfaces that mean it
 // -- GET /api/v1/repositories and `backupd repository health` -- and by
 // the alerting pass, which runs on the poll cadence rather than on a page
-// load. Callers that want the verdict inside a health.Report assign it
-// there (health.Report.Repositories); nothing does it behind their back.
+// load. A caller that wants the verdict inside a health.Report has to
+// hold it itself: health.Report carries a process and its backup sets
+// and no repository field at all, deliberately, because a repository
+// does not go stale and a backup set's freshness verdict must not move
+// because a NAS was asleep when somebody loaded a page (health.Report's
+// own doc).
 //
 // # Why the probes are three questions and not one
 //
@@ -65,6 +68,21 @@ const clockSkewTolerance = 5 * time.Minute
 // long enough that every reasonable schedule has had many chances and
 // short enough that the storage growth is still worth catching.
 const maintenanceOverdueAfter = 14 * 24 * time.Hour
+
+// repositoryProbeTimeout bounds one domain's storage probe.
+//
+// It exists because the failure this surface is FOR is the one that
+// hangs. An unplugged NAS, a stale NFS mount and a bucket behind a
+// dropped route do not refuse a connection; they accept one and never
+// answer, and GET /repositories walks every declared domain in turn. So
+// the read an operator opens to find out which repository is broken is
+// exactly the read one broken repository would hold open forever.
+//
+// Thirty seconds rather than a few: opening a repository reads a format
+// blob and can warm an index cache over a link somebody's backups
+// travel, so a tight budget would report a working remote repository as
+// unreachable, which is the same wrong answer in the other direction.
+const repositoryProbeTimeout = 30 * time.Second
 
 // RepositoryHealth probes every repository domain this configuration
 // declares and reports each one's verdict, in declaration order.
@@ -178,12 +196,21 @@ func maintenanceOverdue(record backupengine.MaintenanceOwnership, now time.Time)
 	if last.IsZero() {
 		// Nothing has ever reclaimed anything here. That is overdue only
 		// once the repository has existed long enough for it to matter,
-		// and the newest evidence of that is the last quick run.
+		// and the newest evidence of that is the last quick run: a quick
+		// cadence that has been running for longer than the budget is a
+		// repository that has had every chance at a full window and has
+		// not taken one.
+		//
+		// The comparison is deliberately this way round. Reading it as
+		// "the last quick run is RECENT" would report a repository whose
+		// maintenance is working perfectly as overdue, and a repository
+		// nobody has touched for a month as fine, which is the one
+		// reading that is wrong in both directions at once.
 		if record.LastQuick.IsZero() {
 			return false
 		}
 
-		return now.Sub(record.LastQuick) >= 0 && now.Sub(record.LastQuick) < maintenanceOverdueAfter
+		return now.Sub(record.LastQuick) >= maintenanceOverdueAfter
 	}
 
 	return now.Sub(last) >= maintenanceOverdueAfter
@@ -195,6 +222,18 @@ func (s *Service) repositoryHealthOf(
 	declared config.RepositoryDomainConfig,
 	sets []config.BackupSet,
 ) health.RepositoryHealth {
+	// One bounded window per domain, because the probe below opens real
+	// storage and GET /repositories walks every declared domain in
+	// sequence. A mount that has gone away does not refuse a connection,
+	// it hangs: without this, one asleep NAS holds the whole response
+	// open, and the surface an operator loads to find out WHICH
+	// repository is broken is the one surface that never answers. The
+	// deadline is per domain rather than over the whole walk so that a
+	// slow first domain cannot consume every later domain's budget and
+	// report a shelf of healthy repositories as unreachable.
+	ctx, cancel := context.WithTimeout(ctx, repositoryProbeTimeout)
+	defer cancel()
+
 	out := health.RepositoryHealth{
 		Domain:   declared.Domain.ID.String(),
 		MayShare: declared.Domain.Isolation != model.RepositoryIsolated,
@@ -318,7 +357,7 @@ func (s *Service) probeRepository(
 			// readable are both true of a repository whose format blob
 			// was read and whose key was refused, and reporting them as
 			// false would send an operator to check a mount that is fine.
-			out.Reachable, out.Readable = true, false
+			out.Reachable, out.Readable = true, true
 			out.Detail = appendDetail(out.Detail, "this repository's declared passphrase does not open it, so no snapshot here can be read or written until the secret it references is corrected")
 		case errors.Is(err, backupengine.ErrRepositoryNotFound):
 			out.Reachable = true
@@ -348,13 +387,43 @@ func (s *Service) probeRepository(
 		switch w.Kind {
 		case backupengine.HealthWarningClockSkew:
 			out.ClockSane = false
-			out.Detail = appendDetail(out.Detail, w.Detail)
 		case backupengine.HealthWarningUnreachable:
 			out.Reachable = false
-			out.Detail = appendDetail(out.Detail, w.Detail)
-		default:
-			out.Detail = appendDetail(out.Detail, w.Detail)
 		}
+
+		out.Detail = appendDetail(out.Detail, repositoryWarningSentence(w.Kind))
+	}
+}
+
+// repositoryWarningSentence is this product's own sentence for one engine
+// warning kind.
+//
+// The engine's own Detail is deliberately NOT carried through, and that
+// is the whole point of this function rather than a stylistic
+// preference. backupengine.HealthWarning.Detail is composed by an
+// adapter, and one of the three kinds passes the underlying error's text
+// straight through (kopia's repository.go hands over
+// r.engineRetention.Error()), which names the repository's own
+// filesystem path. health.RepositoryHealth.Detail is rendered on a
+// dashboard and pasted into support conversations, and its own doc
+// promises it carries no path, endpoint or credential -- a promise
+// nothing kept while the engine's string was echoed.
+//
+// A kind with no sentence here still says something rather than nothing:
+// dropping a condition the engine went to the trouble of reporting would
+// be worse than naming it generically, and the closed kind set means a
+// new kind arriving without a sentence is a one-line change rather than a
+// silent leak.
+func repositoryWarningSentence(kind backupengine.HealthWarningKind) string {
+	switch kind {
+	case backupengine.HealthWarningClockSkew:
+		return "this machine's clock and this repository's storage disagree by more than a repository tolerates, so maintenance locks and content-retention windows are being reasoned about with two different ideas of the time; fix time synchronisation on this host"
+	case backupengine.HealthWarningUnreachable:
+		return "this repository's storage stopped answering while it was being checked, so nothing here has been proven readable or writable"
+	case backupengine.HealthWarningEngineRetention:
+		return "this repository's own stored retention policy still expires snapshots and this deployment could not correct it, which is what a read-only mount, an object lock or a legal hold looks like. Every snapshot this product writes here is pinned and safe; one written into the same repository by other software is not"
+	default:
+		return "this repository reported a condition this build has no sentence for, which is worth an operator's attention and is recorded in this deployment's log"
 	}
 }
 
@@ -487,26 +556,6 @@ func (s *Service) RepositoryAlertConditions(ctx context.Context) []alert.Conditi
 		}
 
 		out = append(out, repomaintenance.AlertConditions(*record)...)
-	}
-
-	return out
-}
-
-// snapshotRunsForDomain is every run this deployment recorded against one
-// domain, newest first, bounded per set.
-//
-// Unused by the health probe itself, which walks sets directly; it is
-// here because the metrics renderer and the CLI both want the same bound
-// and a second spelling of it would drift.
-func snapshotRunsForDomain(ctx context.Context, catalog snapshotCatalog, sets []config.BackupSet) []state.SnapshotRun {
-	var out []state.SnapshotRun
-	for _, bs := range sets {
-		runs, err := catalog.ListSnapshotRuns(ctx, snapshotLineage(bs), maxSnapshotListing)
-		if err != nil {
-			continue
-		}
-
-		out = append(out, runs...)
 	}
 
 	return out

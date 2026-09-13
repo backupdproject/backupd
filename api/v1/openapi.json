@@ -115,6 +115,7 @@
           "MEDIUM_CONNECTION_NOT_PROVEN",
           "SNAPSHOT_NOT_FOUND",
           "SNAPSHOT_HOLD_NOT_FOUND",
+          "SNAPSHOT_NOT_HOLDABLE",
           "REPOSITORY_DOMAIN_NOT_FOUND",
           "BACKUP_SET_NOT_INCREMENTAL"
         ],
@@ -179,6 +180,7 @@
           "VERIFY_TOKEN_INVALID": "wire",
           "SNAPSHOT_NOT_FOUND": "wire",
           "SNAPSHOT_HOLD_NOT_FOUND": "wire",
+          "SNAPSHOT_NOT_HOLDABLE": "wire",
           "REPOSITORY_DOMAIN_NOT_FOUND": "wire",
           "BACKUP_SET_NOT_INCREMENTAL": "wire"
         },
@@ -221,7 +223,8 @@
             "BACKUP_SET_CONNECTION_NOT_PROVEN",
             "BACKUP_SET_SOURCE_NOT_WRITABLE",
             "MEDIUM_IS_DEFAULT",
-            "MEDIUM_CONNECTION_NOT_PROVEN"
+            "MEDIUM_CONNECTION_NOT_PROVEN",
+            "SNAPSHOT_NOT_HOLDABLE"
           ],
           "not-found": [
             "BACKUP_SET_NOT_FOUND",
@@ -4746,9 +4749,21 @@
           "run_id",
           "backup_set_id",
           "engine",
+          "repository_domain",
           "phase",
+          "consistency_mode",
+          "verification_level",
+          "entries_scanned",
+          "files",
+          "directories",
+          "logical_bytes",
+          "source_bytes_read",
+          "repository_bytes_written",
+          "content_reused_bytes",
+          "source_complete",
           "last_known_good",
-          "started_at"
+          "started_at",
+          "duration_seconds"
         ]
       },
       "SnapshotHold": {
@@ -5089,7 +5104,8 @@
           "writable",
           "credentials_valid",
           "clock_sane",
-          "maintenance_overdue"
+          "maintenance_overdue",
+          "clock_skew_seconds"
         ]
       },
       "ListRepositoriesResponse": {
@@ -5124,13 +5140,7 @@
           },
           "owner": {
             "type": "string",
-            "description": "The deployment that currently owns maintenance for this repository, empty when nobody does."
-          },
-          "owned_until": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the current ownership claim lapses, after which another deployment may take it. Absent when nobody owns it.",
-            "x-go-omitempty": true
+            "description": "The deployment that currently owns maintenance for this repository, empty when nobody does. Ownership does not lapse on a clock: it moves when an owner hands it over or when another instance claims a repository nobody owns, so there is deliberately no companion field saying when this claim expires."
           },
           "last_quick_at": {
             "type": "string",
@@ -5278,7 +5288,8 @@
           },
           "run_id": {
             "type": "string",
-            "description": "The snapshot run to hold."
+            "description": "The snapshot run to hold. Absent means this backup set's last known good snapshot, which is the one an operator protecting \"the current restore point\" means and the one they would otherwise have to look up first. Both the service layer and `backupd snapshot hold` already read an unnamed run that way, so this is optional rather than required.",
+            "x-go-omitempty": true
           },
           "reason": {
             "type": "string",
@@ -5287,7 +5298,6 @@
         },
         "required": [
           "backup_set_id",
-          "run_id",
           "reason"
         ]
       },
@@ -5572,7 +5582,7 @@
             ]
           },
           "409": {
-            "description": "Refused: CONFIG_REVISION_STALE, IDEMPOTENCY_KEY_CONFLICT, OPERATION_ALREADY_RUNNING, BACKUP_SET_HELD_FOR_EDITING, RESTORE_REFUSED. The body is one of two shapes and the code decides which: CONFIG_REVISION_STALE carries the structured config_revision a client retries against, the others are the plain error envelope. oneOf rather than one schema with an optional config_revision, so a client reading .config_revision after a CONFIG_REVISION_STALE still gets a field the type system guarantees is there.",
+            "description": "Refused: CONFIG_REVISION_STALE, IDEMPOTENCY_KEY_CONFLICT, OPERATION_ALREADY_RUNNING, BACKUP_SET_HELD_FOR_EDITING, RESTORE_REFUSED, SNAPSHOT_NOT_HOLDABLE. The body is one of two shapes and the code decides which: CONFIG_REVISION_STALE carries the structured config_revision a client retries against, the others are the plain error envelope. oneOf rather than one schema with an optional config_revision, so a client reading .config_revision after a CONFIG_REVISION_STALE still gets a field the type system guarantees is there. SNAPSHOT_NOT_HOLDABLE is the state of the snapshot rather than of the request: the run committed no manifest, or its snapshot is already gone, already being deleted, or not in the repository at all, so a hold accepted now would protect nothing. Nothing about the body would make it work, which is why it is not an INVALID_REQUEST.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5592,7 +5602,8 @@
               "IDEMPOTENCY_KEY_CONFLICT",
               "OPERATION_ALREADY_RUNNING",
               "BACKUP_SET_HELD_FOR_EDITING",
-              "RESTORE_REFUSED"
+              "RESTORE_REFUSED",
+              "SNAPSHOT_NOT_HOLDABLE"
             ]
           },
           "500": {

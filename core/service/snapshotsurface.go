@@ -293,9 +293,11 @@ type RepositoryMaintenance struct {
 	// empty when nobody does. Ownership is the load-bearing part: several
 	// deployments may share one repository and exactly one of them may
 	// maintain it, so "not being maintained" has two very different
-	// causes and an operator needs to know which.
+	// causes and an operator needs to know which. There is deliberately
+	// no companion "owned until": ownership does not lapse on a clock,
+	// it moves when an owner hands it over or when another instance
+	// claims a repository nobody owns.
 	Owner       string
-	OwnedUntil  time.Time
 	LastQuickAt time.Time
 
 	// LastFullAt is when a full maintenance last completed. Full
@@ -329,6 +331,20 @@ var ErrSnapshotNotFound = errors.New("service: no snapshot of that id belongs to
 // ErrSnapshotHoldNotFound is what a release reports for a hold id this
 // backup set is not holding.
 var ErrSnapshotHoldNotFound = errors.New("service: this backup set holds no active hold of that id")
+
+// ErrSnapshotNotHoldable is what a hold reports for a snapshot that has
+// nothing for a hold to protect: a run that committed no manifest, one
+// already deleted or being deleted, and one at LOST.
+//
+// It is its own sentinel rather than ErrInvalidRequest for
+// ErrConnectionNotProven's reason: the request is not malformed. It is a
+// well-formed request whose one problem is the state of the snapshot it
+// names, and a client reading INVALID_REQUEST would tell an operator to
+// fix a body that is already correct. It is not ErrSnapshotNotFound
+// either: the run is right there in the list they clicked it from, which
+// is exactly why a not-found would read as this product losing track of
+// it.
+var ErrSnapshotNotHoldable = errors.New("service: this snapshot cannot be held")
 
 // ErrRepositoryDomainNotFound is what a repository read reports for a
 // domain this configuration does not declare.
@@ -461,11 +477,35 @@ func snapshotSurfaceError(id string, err error) error {
 		return fmt.Errorf("%w: %s", ErrSnapshotNotFound, id)
 	case errors.Is(err, state.ErrSnapshotHoldNotFound):
 		return fmt.Errorf("%w: %s", ErrSnapshotHoldNotFound, id)
+	case errors.Is(err, app.ErrSnapshotNotHoldable):
+		// The app layer's sentence is carried through, which every arm
+		// above deliberately does not do. It is safe here and it is the
+		// whole value of the refusal: app composes it itself, from the
+		// run's own phase and nothing else (see app.notHoldableReason),
+		// so it carries no path and no storage-layer text, and WHICH of
+		// the four states this snapshot is in is the one thing an
+		// operator can act on.
+		return fmt.Errorf("%w: %s: %s", ErrSnapshotNotHoldable, id, notHoldableSentence(err))
 	case errors.Is(err, app.ErrSetHasNoSnapshots):
 		return fmt.Errorf("%w: %s has no restore point", ErrSnapshotNotFound, id)
 	default:
 		return fmt.Errorf("service: reading %s's snapshots: an internal error occurred", id)
 	}
+}
+
+// notHoldableSentence is the app layer's own reason for a hold it
+// refused, read out of the typed error rather than out of its message.
+//
+// The fallback is not dead code: errors.Is matches anything wrapping the
+// sentinel, so a future caller wrapping it without the type still gets a
+// true sentence rather than an empty one.
+func notHoldableSentence(err error) string {
+	var typed *app.SnapshotNotHoldable
+	if errors.As(err, &typed) && typed.Reason != "" {
+		return typed.Reason
+	}
+
+	return "this run has no snapshot for a hold to protect"
 }
 
 // toSnapshot projects one catalog row onto the wire's own vocabulary.
@@ -589,7 +629,6 @@ func toRepositoryMaintenance(domain string, st app.RepositoryMaintenanceState) R
 	return RepositoryMaintenance{
 		Domain:         domain,
 		Owner:          m.Owner.String(),
-		OwnedUntil:     m.NextEligible,
 		LastQuickAt:    m.LastQuick,
 		LastFullAt:     m.LastFull,
 		NextEligibleAt: m.NextEligible,

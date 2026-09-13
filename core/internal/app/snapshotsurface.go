@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -53,6 +54,48 @@ const maxSnapshotListing = 200
 // backup set. Answering the second with the row would let a caller read,
 // and hold, another set's snapshot through a path that named their own.
 var ErrSnapshotNotFound = errors.New("app: no snapshot of that id belongs to this backup set")
+
+// ErrSnapshotNotHoldable is what a hold reports for a run that has no
+// snapshot to protect: one that committed no manifest, one whose
+// snapshot this product already deleted, one already being deleted, and
+// one at LOST.
+//
+// It exists because the journal's four refusals used to arrive here
+// unclassified, and an unclassified error is what core/service turns
+// into "an internal error occurred" and the API into a 500. Holding a
+// FAILED run is not a malfunction; it is a button on a screen that has
+// moved on, and 500 is the one answer that tells an operator to report a
+// bug instead of refreshing the page.
+//
+// The sentence this carries is composed HERE rather than passed through,
+// because the journal's own wording names the run id and the durable
+// phase and is written for a log rather than for a caller. The rule is
+// the one every refusal crossing this boundary follows: a message the
+// layers above may echo carries no path and no storage-layer text.
+var ErrSnapshotNotHoldable = errors.New("app: this snapshot cannot be held")
+
+// SnapshotNotHoldable is ErrSnapshotNotHoldable with the reason attached,
+// so the layer above reads WHICH state this is out of a field rather
+// than out of a sentence.
+//
+// A type rather than four sentinels, and a field rather than prose
+// parsing, because core/service has to put this reason in front of an
+// operator and must not be re-deriving it: a reason recovered by
+// splitting a message on a colon is a reason that changes the first time
+// somebody rewords the message.
+type SnapshotNotHoldable struct {
+	// Reason is the operator-facing sentence, composed by
+	// notHoldableReason. It carries no path and no storage-layer text.
+	Reason string
+}
+
+func (e *SnapshotNotHoldable) Error() string {
+	return ErrSnapshotNotHoldable.Error() + ": " + e.Reason
+}
+
+// Unwrap is what makes errors.Is(err, ErrSnapshotNotHoldable) true, so a
+// caller that only needs the class never has to know this type exists.
+func (e *SnapshotNotHoldable) Unwrap() error { return ErrSnapshotNotHoldable }
 
 // snapshotCatalog is the durable surface this file reads and writes.
 //
@@ -200,11 +243,21 @@ type PlaceSnapshotHoldRequest struct {
 
 // PlaceSnapshotHold records that one snapshot must not be deleted.
 //
-// Every refusal is the journal's: a run with no committed manifest, one
-// already deleted, one whose delete intent is durable and one at LOST are
-// all refused there, in the words that say why (state.PlaceSnapshotHold).
-// Nothing is re-decided here, because a second opinion about what a hold
-// can protect is a second answer.
+// Every refusal is DECIDED by the journal: a run with no committed
+// manifest, one already deleted, one whose delete intent is durable and
+// one at LOST are all refused there, inside the same transaction that
+// would otherwise insert the row (state.PlaceSnapshotHold). Nothing is
+// re-decided here, because a second opinion about what a hold can
+// protect is a second answer, and a check made outside that transaction
+// would be a check a concurrent delete can walk past.
+//
+// What IS done here is classifying that decision. The journal's four
+// refusals are one class -- there is no snapshot here to protect -- and
+// they used to leave this layer as unclassified errors, which
+// core/service reads as "an internal error occurred" and the API answers
+// 500 for. The sentence is composed from the run this call already
+// holds, so what crosses the boundary names the state rather than a run
+// id and a durable phase.
 func (s *Service) PlaceSnapshotHold(ctx context.Context, req PlaceSnapshotHoldRequest) (state.SnapshotHold, error) {
 	bs, catalog, err := s.snapshotSurface(req.SourceName, req.SetName)
 	if err != nil {
@@ -221,13 +274,47 @@ func (s *Service) PlaceSnapshotHold(ctx context.Context, req PlaceSnapshotHoldRe
 		at = s.now()
 	}
 
-	return catalog.PlaceSnapshotHold(ctx, state.SnapshotHoldRequest{
+	hold, err := catalog.PlaceSnapshotHold(ctx, state.SnapshotHoldRequest{
 		HoldID:   req.HoldID,
 		RunID:    run.RunID,
 		Reason:   req.Reason,
 		PlacedBy: req.PlacedBy,
 		At:       at,
 	})
+	if errors.Is(err, state.ErrSnapshotNotHoldable) {
+		return state.SnapshotHold{}, &SnapshotNotHoldable{Reason: notHoldableReason(run)}
+	}
+
+	return hold, err
+}
+
+// notHoldableReason says which of the four states this run is in, in
+// words a caller may put in front of an operator.
+//
+// The order is state.PlaceSnapshotHold's own, so the sentence names the
+// same fact that transaction refused on. It is read off the run this
+// call already fetched rather than parsed out of the journal's message:
+// a reason derived from prose is a reason that changes when somebody
+// rewords a log line.
+//
+// The default arm is not dead code and is not a guess either. The
+// journal decides inside its own transaction, so a delete that lands
+// between this call's read and that decision is refused on a fact this
+// run copy does not show -- and "somebody is deleting it right now" is
+// exactly what an operator should be told in that case.
+func notHoldableReason(run state.SnapshotRun) string {
+	switch {
+	case run.SnapshotID == "":
+		return "this run committed no manifest, so there is no snapshot for a hold to protect. Hold a run that reached SUCCESS instead"
+	case run.Phase == state.PhaseDeleted:
+		return "this snapshot has already been removed from the repository, and a hold cannot bring one back"
+	case run.Phase == state.PhaseLost:
+		return "this snapshot is not in the repository, so a hold on it would protect nothing; reconciliation records this when a manifest has gone without a delete ever being recorded"
+	case run.DeleteRequestedAt != nil:
+		return "this snapshot is already being deleted, so a hold accepted now would protect nothing"
+	default:
+		return "this snapshot stopped being holdable while the request was in flight, which is what a delete landing at the same moment looks like; re-read this set's snapshots and hold one that is still a restore point"
+	}
 }
 
 // ReleaseSnapshotHold ends one hold.
@@ -385,7 +472,11 @@ func (s *Service) VerifySnapshot(ctx context.Context, req VerifySnapshotRequest)
 		if opts.DrillDir == "" {
 			return VerifySnapshotResult{}, ErrRepositoryStorageUnsupported
 		}
-		target = drillDirectoryFor(opts.DrillDir, run.RunID)
+
+		target, err = drillDirectoryFor(opts.DrillDir, run.RunID)
+		if err != nil {
+			return VerifySnapshotResult{}, fmt.Errorf("preparing a directory for this drill to restore into: %w", err)
+		}
 	}
 
 	repo, closeRepo, err := s.openSetRepository(ctx, bs)
@@ -400,6 +491,21 @@ func (s *Service) VerifySnapshot(ctx context.Context, req VerifySnapshotRequest)
 		SamplePercent: sample,
 		RestoreTarget: target,
 	})
+
+	// The restored tree goes, and only on success. Both halves are
+	// snapshotlifecycle.discardDrillOutput's reasoning applied to the
+	// on-demand drill: a passing drill has proved what it was for and
+	// what is left is a full second copy of somebody's backup on storage
+	// they pay for, while a FAILING one has left the only available
+	// evidence of what restoring this snapshot actually produces.
+	//
+	// The removal's own failure is not returned. The verification is
+	// already decided by this point, and failing a proven backup over a
+	// directory that would not unlink would send an operator to
+	// investigate a restore point that is fine.
+	if verr == nil && target != "" {
+		_ = os.RemoveAll(target) //nolint:errcheck // see above.
+	}
 
 	result = VerifySnapshotResult{
 		RunID:      run.RunID,
@@ -417,14 +523,34 @@ func (s *Service) VerifySnapshot(ctx context.Context, req VerifySnapshotRequest)
 	return result, nil
 }
 
-// drillDirectoryFor is where one on-demand restore drill writes.
+// drillDirectoryFor reserves the directory ONE on-demand restore drill
+// writes into: a fresh one per attempt, inside the reserved namespace.
 //
-// Inside the reserved namespace, for the reason that namespace exists: a
-// drill restores a whole tree of somebody's data, and an unreserved
-// scratch directory would present it to artifact discovery, retention and
-// prune as a few thousand unrecognised artifacts.
-func drillDirectoryFor(dir, runID string) string {
-	return dir + "/verify-" + runID
+// Inside that namespace for the reason it exists: a drill restores a
+// whole tree of somebody's data, and an unreserved scratch directory
+// would present it to artifact discovery, retention and prune as a few
+// thousand unrecognised artifacts.
+//
+// Fresh per attempt for snapshotlifecycle.drillTarget's reason, which
+// this path used to ignore. A drill restores under ConflictRefuse -- a
+// verification that can overwrite is a verification that can destroy
+// data -- so a fixed directory per run means the FIRST drill's output is
+// what the second drill collides with. A second check of an unchanged,
+// healthy snapshot then came back failed, which is this product calling
+// a good restore point damaged over its own leftovers.
+//
+// MkdirTemp rather than an attempt counter: the counter exists in the
+// lifecycle so that a crashed run's abandoned attempts stay
+// distinguishable and in order for somebody reading them, and this path
+// removes its own output as soon as it has passed, so there is nothing
+// to order. What it needs is a name nothing else holds, including
+// another operator asking the same question at the same moment.
+func drillDirectoryFor(dir, runID string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+
+	return os.MkdirTemp(dir, "verify-"+runID+"-")
 }
 
 // snapshotSurface resolves one incremental backup set and the catalog its

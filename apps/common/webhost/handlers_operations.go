@@ -330,17 +330,11 @@ func (h *handlers) submitOperation(w http.ResponseWriter, r *http.Request) {
 		h.submitRunBackupSet(w, r, idempotencyKey, body)
 		return
 	case service.ActionRunCycle:
-		if body.BackupSetID != "" {
-			// A run_cycle is deployment-wide by definition, so a body
-			// naming one set is asking for the other action. Refused
-			// rather than ignored: a server that drops the field teaches
-			// a client it is decorative, and the operator who sent it
-			// believes one set ran when every set did.
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-				fmt.Sprintf("a %q submission named a backup set; %q is the action that runs one set",
-					service.ActionRunCycle, service.ActionRunBackupSet))
-			return
-		}
+		// Nothing to check here any more: refuseForeignParameters above
+		// already refuses a run_cycle carrying a backup_set_id, together
+		// with every other action that does not own the field. The check
+		// used to live here and covered run_cycle alone, which is how a
+		// snapshot action carrying one was served with it ignored.
 	case service.ActionRestorePlacement:
 		h.submitRestore(w, r, idempotencyKey, body)
 		return

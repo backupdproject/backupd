@@ -261,6 +261,147 @@ func TestRepositoryHealth_AWorkingRepositoryIsHealthy(t *testing.T) {
 	}
 }
 
+// TestMaintenanceOverdue_NeverFullIsOverdueOnlyOnceTheRepositoryIsOld is
+// the polarity of the one branch that reads backwards.
+//
+// A repository with recent quick runs and no full one is the case the
+// state exists for: quick maintenance never reclaims, so the storage
+// grows forever. The comparison has to say "the quick evidence is OLD
+// enough that a full window should have happened by now", and the
+// opposite reading -- overdue precisely because the last quick run was
+// minutes ago -- reports every healthily-maintained repository as
+// degraded and every genuinely neglected one as fine.
+func TestMaintenanceOverdue_NeverFullIsOverdueOnlyOnceTheRepositoryIsOld(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name   string
+		record backupengine.MaintenanceOwnership
+		want   bool
+	}{
+		{
+			name:   "a quick run an hour ago and no full run yet",
+			record: backupengine.MaintenanceOwnership{LastQuick: now.Add(-time.Hour)},
+			want:   false,
+		},
+		{
+			name:   "quick runs for a month and no full run at all",
+			record: backupengine.MaintenanceOwnership{LastQuick: now.Add(-30 * 24 * time.Hour)},
+			want:   true,
+		},
+		{
+			name:   "nothing has ever run",
+			record: backupengine.MaintenanceOwnership{},
+			want:   false,
+		},
+		{
+			name:   "a full run an hour ago",
+			record: backupengine.MaintenanceOwnership{LastFull: now.Add(-time.Hour), LastQuick: now.Add(-time.Hour)},
+			want:   false,
+		},
+		{
+			name:   "a full run a month ago",
+			record: backupengine.MaintenanceOwnership{LastFull: now.Add(-30 * 24 * time.Hour), LastQuick: now.Add(-time.Hour)},
+			want:   true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := maintenanceOverdue(tc.record, now); got != tc.want {
+				t.Errorf("maintenanceOverdue = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDecideRepositoryState_OverdueMaintenanceIsDegradedAndSaysWhy is the
+// branch that turns the state above into something an operator reads.
+//
+// Degraded rather than Failing, because the snapshots are fine: what is
+// wrong is that storage freed by deleted ones is still occupied, which is
+// a bill rather than a lost restore point. A verdict with no sentence
+// beside it would be a coloured row nobody can act on.
+func TestDecideRepositoryState_OverdueMaintenanceIsDegradedAndSaysWhy(t *testing.T) {
+	t.Parallel()
+
+	out := health.RepositoryHealth{
+		Reachable: true, Readable: true, Writable: true,
+		CredentialsValid: true, ClockSane: true,
+		MaintenanceOverdue: true,
+	}
+	decideRepositoryState(&out)
+
+	if out.State != health.Degraded {
+		t.Errorf("a repository whose only fault is overdue maintenance is %s, want %s: it still takes backups and still restores", out.State, health.Degraded)
+	}
+	if out.Detail == "" {
+		t.Error("overdue maintenance produced no detail, so a surface colours a row and names nothing to do")
+	}
+}
+
+// TestRepositoryHealth_AnEngineWarningNeverReachesTheDetailVerbatim is
+// the guard the engine's own warning type asks for and this package had
+// only claimed.
+//
+// backupengine.HealthWarning.Detail is composed by the engine adapter,
+// and one of the three kinds carries the underlying error's own text
+// (kopia's repository.go passes r.engineRetention.Error() straight
+// through), which can name the repository's filesystem path. This
+// detail string is rendered on a dashboard and pasted into support
+// conversations, so every kind gets a product sentence here and none is
+// echoed.
+func TestRepositoryHealth_AnEngineWarningNeverReachesTheDetailVerbatim(t *testing.T) {
+	t.Parallel()
+
+	leak := "unable to set retention policy at /srv/vault/kopia/production-vault: read-only file system"
+	svc := probeService(t, probeEngine{health: backupengine.HealthReport{
+		Reachable: true,
+		Warnings: []backupengine.HealthWarning{{
+			Kind:   backupengine.HealthWarningEngineRetention,
+			Detail: leak,
+		}},
+	}}, time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC))
+
+	got := onlyRepository(t, svc)
+
+	if contains(got.Detail, "/srv/vault") || contains(got.Detail, leak) {
+		t.Errorf("the detail echoes the engine's own warning text, which carries this deployment's filesystem layout: %q", got.Detail)
+	}
+	if got.Detail == "" {
+		t.Error("an engine warning produced no detail at all; dropping it hides a condition the engine went to the trouble of reporting")
+	}
+}
+
+// TestRepositoryHealth_APassphraseRefusalIsReadableStorage pins what the
+// three access probes mean when the secret is the only thing wrong.
+//
+// The storage answered and this deployment read the repository's format
+// blob; what failed was the key. Reporting readable=false would send an
+// operator to check a mount that is fine, which is the exact sentence the
+// code's own comment and the contract's credentials_valid description
+// both already give.
+func TestRepositoryHealth_APassphraseRefusalIsReadableStorage(t *testing.T) {
+	t.Parallel()
+
+	svc := probeService(t, probeEngine{openErr: backupengine.ErrPassphrase}, time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC))
+
+	got := onlyRepository(t, svc)
+
+	if !got.Reachable || !got.Readable {
+		t.Errorf("a repository whose format blob was read and whose key was refused reported reachable=%v readable=%v; both are true of it",
+			got.Reachable, got.Readable)
+	}
+	if got.CredentialsValid {
+		t.Error("a refused passphrase reported credentials_valid=true")
+	}
+	if got.State != health.Failing {
+		t.Errorf("a repository nothing can open is %s, want %s", got.State, health.Failing)
+	}
+}
+
 func contains(haystack, needle string) bool {
 	return len(needle) > 0 && len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0
 }
