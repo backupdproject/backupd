@@ -608,9 +608,10 @@ func (l *Logger) StaleBackup(ctx context.Context, backupSet string, age, thresho
 
 // Alert logs EventAlert: one proactive notification that internal/alert
 // just delivered. kind is the alert's own typed kind (STALE_BACKUP,
-// REPEATED_FAILURE, HOST_KEY_CHANGED, CRITICAL_STORAGE_PRESSURE),
-// backupSet is what it was about, and detail is the operator-facing text
-// that actually went out.
+// REPEATED_FAILURE, HOST_KEY_CHANGED, CRITICAL_STORAGE_PRESSURE,
+// MAINTENANCE_FAILED), backupSet is what it was about -- a repository
+// domain for the maintenance kind -- and detail is the operator-facing
+// text that actually went out.
 //
 // This always logs at LevelWarn: every condition §71 alerts on is, by
 // definition, something already wrong. It is deliberately not LevelError,

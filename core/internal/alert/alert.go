@@ -18,9 +18,12 @@
 //     internal/transport/rclone/ssh.go's refusal already produces (FR-6,
 //     FR-22).
 //
-// conditions.go is the whole of that translation, and it is three small
-// functions with no state. If a fifth signal ever needs alerting, the
-// place to compute it is the package that owns the fact, not here.
+// conditions.go is the whole of that translation for the backup-set
+// conditions, and it is three small functions with no state. A signal
+// this package did not already know about is computed by the package
+// that owns the fact, not here: EPIC K's repository maintenance failure
+// (Kind MaintenanceFailed) is built by internal/repomaintenance out of
+// the ownership record it writes, and arrives as an ordinary Condition.
 //
 // # An alert is a notification and nothing else
 //
@@ -101,11 +104,15 @@ import (
 	"github.com/backupdproject/backupd/core/internal/obs"
 )
 
-// Kind is one of the four conditions §71's Work Package 3.5 names. There
-// are exactly four, and mechanism_test.go pins that: a fifth kind is how
-// "one proactive mechanism for four conditions" quietly becomes the
-// framework §71 rules out, so adding one is a deliberate edit with a test
-// to update, not something that can drift in.
+// Kind is one alertable condition. Four of them are the ones §71's Work
+// Package 3.5 names; the fifth is EPIC K's repository maintenance
+// failure, added by issue #786.
+//
+// mechanism_test.go pins the whole list, and that pin is the point: a new
+// kind is how "one proactive mechanism for a few specific conditions"
+// quietly becomes the notification framework §71 rules out, so adding one
+// is a deliberate edit with a test to update rather than something that
+// drifts in. What justified the fifth is in MaintenanceFailed's own doc.
 type Kind string
 
 const (
@@ -133,12 +140,43 @@ const (
 	// internal/capacity's own Thresholds doc for why that level is worth
 	// surfacing but is never a refusal.
 	CriticalStoragePressure Kind = "CRITICAL_STORAGE_PRESSURE"
+
+	// MaintenanceFailed is EPIC K's repository maintenance failure
+	// (#786): the repository domain this product owns maintenance for
+	// could not be maintained, as recorded in its own ownership record.
+	//
+	// # Why this is a condition and the four above were the whole list
+	//
+	// It is about a REPOSITORY DOMAIN rather than a backup set, which is
+	// the first reason none of the four fit: Scope here is a
+	// model.RepositoryDomainID, and reporting it as a failing backup set
+	// would name the wrong thing to fix and would collide with that
+	// set's own conditions in the de-duplication key.
+	//
+	// It also behaves the way this package's model needs a condition to
+	// behave, which is what ruled the reinstated-remote signal out in
+	// conditions.go: it is true while maintenance keeps failing, it
+	// resolves the moment a maintenance window succeeds, and a genuine
+	// recurrence alerts again.
+	//
+	// And it needs a human. Maintenance is the only thing that reclaims
+	// storage from deleted snapshots, so a repository whose maintenance
+	// is failing grows until it fills the volume it lives on -- and the
+	// condition that eventually fires then, CriticalStoragePressure, is
+	// about the destination filesystem and arrives far too late to be
+	// the first notice.
+	//
+	// What it must never suggest is that the repository is damaged. A
+	// failed maintenance changes no manifest and deletes no snapshot;
+	// see internal/repomaintenance.AlertConditions, which is where the
+	// sentence an operator reads is composed.
+	MaintenanceFailed Kind = "MAINTENANCE_FAILED"
 )
 
-// Kinds is every Kind this package can produce, in the order §71 lists
-// them. It exists so a test (and a reader) can see the whole vocabulary
-// in one place.
-var Kinds = []Kind{StaleBackup, RepeatedFailure, HostKeyChanged, CriticalStoragePressure}
+// Kinds is every Kind this package can produce: §71's four in the order
+// it lists them, then EPIC K's. It exists so a test (and a reader) can
+// see the whole vocabulary in one place.
+var Kinds = []Kind{StaleBackup, RepeatedFailure, HostKeyChanged, CriticalStoragePressure, MaintenanceFailed}
 
 func (k Kind) String() string { return string(k) }
 
@@ -154,24 +192,31 @@ func (k Kind) title() string {
 		return "SSH host key changed"
 	case CriticalStoragePressure:
 		return "Storage is critically low"
+	case MaintenanceFailed:
+		return "Repository maintenance is failing"
 	default:
 		return "Backup manager alert"
 	}
 }
 
-// Condition is one currently-true, alertable fact about one backup set.
-// It is a plain value with no behaviour: conditions.go builds them from
-// signals other packages computed, and Dispatcher decides which of them
-// are new.
+// Condition is one currently-true, alertable fact about one backup set or
+// one repository domain. It is a plain value with no behaviour:
+// conditions.go builds the backup-set ones from signals other packages
+// computed, the package that owns a fact builds its own (see
+// MaintenanceFailed), and Dispatcher decides which of them are new.
 type Condition struct {
-	// Kind is which of §71's four conditions this is.
+	// Kind is which condition this is.
 	Kind Kind
 
-	// Scope is what the condition is about: the backup set's
-	// model.BackupSetID rendered as a string, in every case this package
-	// produces today. It is half of the de-duplication key, so two backup
-	// sets in the same condition are two separate alerts rather than one
-	// suppressing the other.
+	// Scope is what the condition is about, rendered as a string: a
+	// model.BackupSetID for every condition conditions.go builds, and a
+	// model.RepositoryDomainID for MaintenanceFailed. It is half of the
+	// de-duplication key, so two subjects in the same condition are two
+	// separate alerts rather than one suppressing the other.
+	//
+	// The two namespaces share one key space, and that is safe rather
+	// than lucky: the Kind is the other half of the key, and no Kind is
+	// produced for both a backup set and a repository domain.
 	Scope string
 
 	// Detail is the human-readable explanation delivered as the alert's
@@ -187,11 +232,11 @@ type Condition struct {
 // Dispatcher "I could not evaluate this condition on this pass", which is
 // neither observing it nor resolving it (see Observe).
 type Subject struct {
-	// Kind is which of §71's four conditions this is about.
+	// Kind is which condition this is about.
 	Kind Kind
 
-	// Scope is the backup set it is about, exactly as Condition.Scope
-	// renders it.
+	// Scope is the backup set, or the repository domain, it is about,
+	// exactly as Condition.Scope renders it.
 	Scope string
 }
 

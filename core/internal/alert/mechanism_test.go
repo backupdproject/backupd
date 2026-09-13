@@ -150,21 +150,26 @@ func exportedNames(decl ast.Decl) []string {
 	return out
 }
 
-// TestKindsAreExactlyTheFourWorkPackage35Names pins the alert vocabulary
-// to §71's own list: stale backup, repeated failure, changed SSH host
-// key, critical storage pressure. A fifth kind is how "one proactive
-// mechanism for four conditions" quietly becomes the framework §71 rules
-// out, so it takes an edit here to add one.
-func TestKindsAreExactlyTheFourWorkPackage35Names(t *testing.T) {
+// TestKindsAreExactlyTheDeliberatelyChosenConditions pins the alert
+// vocabulary: §71's own list -- stale backup, repeated failure, changed
+// SSH host key, critical storage pressure -- plus EPIC K's repository
+// maintenance failure (#786), and nothing else.
+//
+// A new kind is how "one proactive mechanism for a few specific
+// conditions" quietly becomes the framework §71 rules out, so it takes an
+// edit here to add one, and the justification belongs beside the constant
+// (see alert.MaintenanceFailed's doc for what that looks like).
+func TestKindsAreExactlyTheDeliberatelyChosenConditions(t *testing.T) {
 	want := []alert.Kind{
 		alert.StaleBackup,
 		alert.RepeatedFailure,
 		alert.HostKeyChanged,
 		alert.CriticalStoragePressure,
+		alert.MaintenanceFailed,
 	}
 
 	if len(alert.Kinds) != len(want) {
-		t.Fatalf("Kinds = %v, want exactly the four §71 conditions %v", alert.Kinds, want)
+		t.Fatalf("Kinds = %v, want exactly the chosen conditions %v", alert.Kinds, want)
 	}
 	for i := range want {
 		if alert.Kinds[i] != want[i] {

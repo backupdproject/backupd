@@ -39,12 +39,15 @@ import (
 // to name every field of this struct, and it cannot name a type from
 // core/internal.
 type Alert struct {
-	// Kind is one of STALE_BACKUP, REPEATED_FAILURE, HOST_KEY_CHANGED or
-	// CRITICAL_STORAGE_PRESSURE: §71's four conditions, and only those.
+	// Kind is one of STALE_BACKUP, REPEATED_FAILURE, HOST_KEY_CHANGED,
+	// CRITICAL_STORAGE_PRESSURE (§71's four conditions) or
+	// MAINTENANCE_FAILED (EPIC K's repository maintenance failure), and
+	// only those.
 	Kind string
 
-	// Scope is the backup set the alert is about, as its
-	// source/backup-set identifier.
+	// Scope is what the alert is about: the backup set, as its
+	// source/backup-set identifier, or -- for MAINTENANCE_FAILED -- the
+	// repository domain.
 	Scope string
 
 	// Title is the short headline for the notification.
