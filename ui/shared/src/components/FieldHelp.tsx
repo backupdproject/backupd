@@ -128,27 +128,14 @@ export interface FieldHelpProps {
 export function FieldHelp({ label, help, children, style }: FieldHelpProps) {
   const helpId = useId();
 
-  // The four-state hover interaction, which lived here until issue #834
-  // put the same pop-up on buttons, badges and metrics and made it two
-  // callers' behaviour rather than this component's. Nothing about the
-  // rules changed; they are argued in tooltips/useHoverPopover.ts now, and
-  // what stays here is the part that is specific to a labelled input.
-  const { ref: wrapper, shown, hostProps, pin, dismiss } = useHoverPopover<HTMLDivElement>({
-    onDismiss: () => {
-      // Put the operator back on the control they were describing rather
-      // than dropping focus to the document, which is where a keyboard
-      // user would otherwise have to Tab back from. The pop-up does not
-      // re-open: this focus never leaves the wrapper, so `dismissed` is
-      // not cleared.
-      wrapper.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
-    }
-  });
-
-  // Issue #829: a fifth input, and the only one that is not this field's
-  // own. It gates the four states rather than joining them, because it
-  // answers a question asked before any of them: may a pop-up appear here
-  // at all. Off, or on the sign-in screen, and nothing hover or focus does
-  // opens one.
+  // Issue #829: the input that is not this field's own. It answers a
+  // question asked before any of the hook's four states — may a pop-up
+  // appear here at all — and it is passed INTO the hook rather than
+  // applied to its answer, because #839 gave one caller (#834's icon
+  // trigger) a way in that the preference does not gate and this one no
+  // such thing: off, or on the sign-in screen, nothing a field does opens
+  // a pop-up. It also keeps the opt-out question from being asked about a
+  // preference that already says no.
   //
   // The copy itself stays mounted and stays referenced by the control's
   // aria-describedby. That is not a loophole in "no tooltips": a screen
@@ -159,7 +146,24 @@ export function FieldHelp({ label, help, children, style }: FieldHelpProps) {
   // what the preference removes.
   const tooltipsVisible = useTooltipsVisible();
 
-  const open = tooltipsVisible && shown;
+  // The four-state hover interaction, which lived here until issue #834
+  // put the same pop-up on buttons, badges and metrics and made it two
+  // callers' behaviour rather than this component's. Nothing about the
+  // rules changed; they are argued in tooltips/useHoverPopover.ts now, and
+  // what stays here is the part that is specific to a labelled input.
+  const { ref: wrapper, shown, hostProps, pin, dismiss } = useHoverPopover<HTMLDivElement>({
+    enabled: tooltipsVisible,
+    onDismiss: () => {
+      // Put the operator back on the control they were describing rather
+      // than dropping focus to the document, which is where a keyboard
+      // user would otherwise have to Tab back from. The pop-up does not
+      // re-open: this focus never leaves the wrapper, so `dismissed` is
+      // not cleared.
+      wrapper.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+    }
+  });
+
+  const open = shown;
 
   return (
     <div

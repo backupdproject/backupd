@@ -58,24 +58,40 @@
  * which is why the registry's copy has to read as a sentence with its tags
  * removed.
  *
- * # The preference (issue #829) gates it, and gates only the pop-up
+ * # The preference (issue #829) gates hover, and since #839 only hover
  *
  * `useTooltipsVisible()` answers both halves of "may a tooltip appear
- * here": the operator's stored preference, and whether this subtree is one
- * that carries no hover help at all whatever the preference says — the
- * sign-in screen. Off, and nothing hover, focus or touch does opens
- * anything. The described copy stays in the DOM and stays referenced: an
- * operator who turned off pop-ups they can see has not asked for the
- * explanation to be withheld from somebody who cannot see them.
+ * here on its own": the operator's stored preference, and whether this
+ * subtree is one that carries no hover help at all whatever the
+ * preference says — the sign-in screen. Off, and nothing a pointer
+ * RESTING on the host, focus arriving or a touch tap does opens anything.
+ *
+ * The icon host is the exception, because it is not hover help. It is a
+ * control whose whole reason to exist is "press this to read the
+ * explanation", and an operator who presses it has asked a direct
+ * question about one thing rather than opted back in to pop-ups
+ * following their pointer around the page. So it always renders and its
+ * press always opens (issue #839); with tooltips off it is the only way
+ * in, and a second press takes it back.
+ *
+ * A surface that suppresses tooltips entirely draws no icon at all. That
+ * is what "the sign-in screen carries none" has to mean once a press
+ * outranks the preference: a trigger there would be a way in that nothing
+ * could close off. The copy still stays in the DOM and stays referenced
+ * wherever a control was wrapped: an operator who turned off pop-ups they
+ * can see has not asked for the explanation to be withheld from somebody
+ * who cannot see them.
  *
  * Closing a pop-up with its own "x" offers the global opt-out, once, the
- * same way a field's pop-up does — both go through the same hook, so #829's
- * one-question promise holds however many tooltips #834 adds.
+ * same way a field's pop-up does — both go through the same hook, so
+ * #829's one-question promise holds however many tooltips #834 adds. Not
+ * when tooltips are already off, which since #839 is a state a pop-up on
+ * screen can be in: see `useHoverPopover`.
  */
 import { cloneElement, isValidElement, useId } from "react";
 import type { CSSProperties, ReactElement, ReactNode } from "react";
 import { Icon } from "@shared/design-system/icons";
-import { useTooltipsVisible } from "@shared/hooks/useTooltips";
+import { useTooltipsSuppressed, useTooltipsVisible } from "@shared/hooks/useTooltips";
 import { lookupTooltip } from "@shared/tooltips/tooltips";
 import type { TooltipId } from "@shared/tooltips/tooltips";
 import { useHoverPopover } from "@shared/tooltips/useHoverPopover";
@@ -110,7 +126,10 @@ export function InfoTooltip({ id, children, block, alignEnd, style }: InfoToolti
   // addressable by everything that looks for it.
   const bodyId = "tip" + useId().replace(/:/g, "");
   const visible = useTooltipsVisible();
-  const { ref: host, shown, hostProps, pin, dismiss } = useHoverPopover<HTMLSpanElement>();
+  const suppressed = useTooltipsSuppressed();
+  const { ref: host, shown, hostProps, pin, toggle, dismiss } = useHoverPopover<HTMLSpanElement>({
+    enabled: visible
+  });
   const entry = lookupTooltip(id);
 
   // An id with no entry renders the thing it was wrapping and no host at
@@ -122,7 +141,14 @@ export function InfoTooltip({ id, children, block, alignEnd, style }: InfoToolti
   if (!entry) return <>{children}</>;
 
   const label = entry.label ?? id;
-  const open = visible && shown;
+  // The hook is the gate now: with the preference off it opens for a press
+  // of the icon and for nothing else (#839), so there is no second gate
+  // here to disagree with it.
+  const open = shown;
+  // No icon on a surface that carries none — the sign-in screen. Its press
+  // outranks the preference, so not drawing it is the only thing that
+  // still closes that surface off.
+  const trigger = children === undefined && !suppressed;
 
   // Exactly one element child is the common case, and the one where the
   // description can land on the control itself rather than on a wrapper a
@@ -144,7 +170,7 @@ export function InfoTooltip({ id, children, block, alignEnd, style }: InfoToolti
       aria-describedby={single ? undefined : bodyId}
       {...hostProps}
     >
-      {children === undefined ? (
+      {trigger ? (
         <button
           type="button"
           className="tooltip__trigger"
@@ -154,12 +180,13 @@ export function InfoTooltip({ id, children, block, alignEnd, style }: InfoToolti
           // second element reading it.
           aria-label={"Explain " + label}
           aria-describedby={bodyId}
-          // A click pins, rather than dismissing the way a click on a
+          // A press opens, rather than dismissing the way a click on a
           // wrapped control does: this button exists for no other purpose
           // than to show this pop-up, so the click that reaches it is a
-          // request to keep it up. `pinned` beats the wrapper's own
-          // dismissal, which is what makes that hold.
-          onClick={pin}
+          // request to keep it up, and `pinned` beating the wrapper's own
+          // dismissal is what makes that hold. It opens whatever the
+          // preference says (#839) and a second press takes it back.
+          onClick={toggle}
         >
           <Icon name="info" size={13} />
         </button>

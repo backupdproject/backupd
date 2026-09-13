@@ -14,9 +14,13 @@
  * nothing has to.
  *
  * A tooltip host therefore reads `useTooltipsVisible()` and not the node.
- * The Settings toggle is the exception and reads `useTooltipsEnabled()`,
- * because a checkbox has to show the stored preference rather than
- * whatever is true in the subtree it happens to sit in.
+ * Two hosts read the halves apart, and both have a reason: the Settings
+ * toggle reads `useTooltipsEnabled()` because a checkbox has to show the
+ * stored preference rather than whatever is true in the subtree it
+ * happens to sit in, and #834's icon host reads
+ * `useTooltipsSuppressed()` because since #839 a press on it opens its
+ * pop-up whatever the preference says — so "this surface carries none"
+ * is the one half that still has to reach it.
  */
 import { createContext, useContext } from "react";
 import { useCausl } from "@shared/state/graph";
@@ -38,6 +42,14 @@ export function useTooltipsVisible(): boolean {
   const enabled = useCausl(tooltipsEnabledNode);
   const suppressed = useContext(TooltipsSuppressed);
   return enabled && !suppressed;
+}
+
+/** Whether this surface carries no tooltips at all whatever the
+ *  preference says. For a host that can be opened without the preference:
+ *  #834's icon trigger, which #839 made a press rather than hover help.
+ *  Everything else wants `useTooltipsVisible`. */
+export function useTooltipsSuppressed(): boolean {
+  return useContext(TooltipsSuppressed);
 }
 
 /**
