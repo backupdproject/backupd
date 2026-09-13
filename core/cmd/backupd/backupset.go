@@ -303,6 +303,24 @@ type backupSetFlags struct {
 	staleAfter         *time.Duration
 	validatorID        *string
 
+	// Shared by create and patch, and EPIC K's verification budget
+	// (#788). Each is a field of the backup set, and each is optional on
+	// both verbs: config.Validate resolves an unset one to the same
+	// default a hand-edited config.yaml gets, so a create that leaves
+	// them alone writes the defaults and a patch that leaves them alone
+	// changes nothing.
+	//
+	// They are shared rather than create-only because a verification
+	// budget is exactly the setting an operator revises: a level that
+	// turned out too expensive, or a restore drill nobody was running,
+	// is a thing to change on the set that exists rather than a reason
+	// to remove it and make it again.
+	sourceConsistency             *string
+	verificationLevel             *string
+	verificationSamplePercent     *int
+	verificationFullEvery         *time.Duration
+	verificationRestoreDrillEvery *time.Duration
+
 	// Shared by create and patch since issue #572. Each settles one of
 	// the two SSH-facing things a backup set has: which key it
 	// authenticates with, and which host key it trusts. Within each pair
@@ -317,6 +335,16 @@ type backupSetFlags struct {
 	readOnly      *bool
 	runNow        *bool
 	stateDatabase *string
+
+	// create only, and both for the same reason --read-only is: they are
+	// the two decisions that fix what a set IS rather than how it
+	// behaves. The engine decides whether a run copies files or writes
+	// snapshots, and the repository domain is the declared boundary a
+	// lineage's snapshots live in; changing either on a set that already
+	// has history would fork that history rather than edit it, which is
+	// why service.UpdateBackupSetRequest carries neither.
+	engine           *string
+	repositoryDomain *string
 
 	// Shared by create and patch, and not a field of the backup set: it
 	// says what this invocation is allowed to skip (issue #624). Spelled
@@ -353,7 +381,7 @@ var (
 	// sense while a set is being brought into existence: its initial
 	// posture, whether to run it straight away, and the journal path a
 	// FIRST configuration names.
-	backupSetCreateOnlyFlags = []string{"disabled", "read-only", "run", "state-database"}
+	backupSetCreateOnlyFlags = []string{"disabled", "engine", "read-only", "repository-domain", "run", "state-database"}
 
 	// Not empty since issue #572. The guard was kept through #411 with
 	// nothing in it precisely so that the next patch-only flag would
@@ -386,6 +414,21 @@ func declareBackupSetFlags() *backupSetFlags {
 	f.runNow = fs.Bool("run", false, "create: submit a run cycle immediately after the set is persisted")
 	f.stateDatabase = fs.String("state-database", service.StateDatabaseDefault(),
 		"create: the SQLite journal path a FIRST configuration names, and the deployment this command asks about when there is no config.yaml to read one out of. Defaults to $STATE_DATABASE, or the packaged /data/state/state.db, which is the same default the web host serves under. Used only when there is no config.yaml yet; ignored, never applied, against an instance that already has one")
+
+	// EPIC K (#788). --engine is what makes a set incremental at all,
+	// and --repository-domain is the boundary its snapshots are stored
+	// in, which is required for one and refused for the other. Both are
+	// settled by config.Validate rather than here: a CLI that had its
+	// own opinion about which engines exist would be a second list to
+	// keep in step with the one that decides.
+	f.engine = fs.String("engine", "", `create: which engine this set runs on, "artifact" (the default: whole files copied as they appear) or "kopia" (incremental snapshots of a source tree)`)
+	f.repositoryDomain = fs.String("repository-domain", "", "create: the declared storage boundary this set's snapshots live in. Required for an incremental set and refused for an artifact one; it has no default, because which boundary a source's history is kept in is exactly the decision that has to be intentional")
+
+	f.sourceConsistency = fs.String("source-consistency", "", `create, patch: what the operator has arranged around this source while a run reads it, one of "live_best_effort" (the default and the weakest claim), "externally_quiesced" or "external_snapshot"`)
+	f.verificationLevel = fs.String("verification-level", "", `create, patch: how far this set's restore points are proven, one of "structural" (the default), "content_sample", "content_full" or "restore_drill"`)
+	f.verificationSamplePercent = fs.Int("verification-sample-percent", 0, `create, patch: what percentage of a snapshot's files a "content_sample" verification reads back, 1 to 100; unset takes the engine's own default`)
+	f.verificationFullEvery = fs.Duration("verification-full-every", 0, "create, patch: how often a FULL read-back is performed regardless of the level above; 0 is never, which is the default")
+	f.verificationRestoreDrillEvery = fs.Duration("verification-restore-drill-every", 0, "create, patch: how often a real restore of this set is performed and compared; 0 is never, which is the default. A drill reads the whole snapshot back, so this is a budget rather than a preference")
 
 	f.acknowledgeRepoint = fs.Bool("acknowledge-repoint", false,
 		"create, patch: confirm pointing this set at different data. On patch, needed only when --host, --remote-path or --local-path actually change on a set that already has artifacts on record; on create, only when this id already has artifacts on record and the set is being created somewhere other than where they came from. The refusal without it says what it costs")
@@ -495,6 +538,21 @@ func backupSetCreate(f *backupSetFlags, sourceName, name string) int {
 		// had done, which the service could not check and any other client
 		// could omit (PR #628 review).
 		SkipConnectionCheck: *f.noVerify,
+
+		// EPIC K's engine seam (#788). Engine and RepositoryDomain are
+		// what make the set incremental; the five below are its
+		// verification budget. Every one is passed through as typed and
+		// settled by config.Validate, which is the same validator the
+		// API route's body reaches, so a word this CLI does not
+		// recognise is refused by the rule rather than by a second copy
+		// of it.
+		Engine:                        *f.engine,
+		RepositoryDomain:              *f.repositoryDomain,
+		SourceConsistency:             *f.sourceConsistency,
+		VerificationLevel:             *f.verificationLevel,
+		VerificationSamplePercent:     *f.verificationSamplePercent,
+		VerificationFullEvery:         *f.verificationFullEvery,
+		VerificationRestoreDrillEvery: *f.verificationRestoreDrillEvery,
 	}
 
 	ctx := context.Background()
@@ -1032,6 +1090,25 @@ func buildBackupSetPatch(f *backupSetFlags) (service.UpdateBackupSetRequest, boo
 		case "validator-id":
 			v := service.ValidatorID(*f.validatorID)
 			req.ValidatorID = &v
+		// EPIC K's editable verification budget (#788), read through
+		// fs.Visit like everything else here: an explicit
+		// --verification-full-every 0 is "stop doing full reads", which
+		// is a request rather than an omission.
+		case "source-consistency":
+			v := *f.sourceConsistency
+			req.SourceConsistency = &v
+		case "verification-level":
+			v := *f.verificationLevel
+			req.VerificationLevel = &v
+		case "verification-sample-percent":
+			v := *f.verificationSamplePercent
+			req.VerificationSamplePercent = &v
+		case "verification-full-every":
+			v := *f.verificationFullEvery
+			req.VerificationFullEvery = &v
+		case "verification-restore-drill-every":
+			v := *f.verificationRestoreDrillEvery
+			req.VerificationRestoreDrillEvery = &v
 		case "ssh-key-id":
 			v := *f.keyID
 			req.SSHKeyID = &v

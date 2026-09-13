@@ -58,8 +58,8 @@ var toggleWords = map[string]bool{"on": true, "off": false}
 // one's.
 func cmdBackupSetEnabled(args []string) int {
 	return backupSetToggle(args, "enabled",
-		func(ctx context.Context, svc *service.BackupService, id string, on bool) (service.BackupSet, error) {
-			return svc.SetBackupSetEnabled(ctx, id, on)
+		func(ctx context.Context, route backupSetRoute, id string, on bool) (service.BackupSet, error) {
+			return route.SetBackupSetEnabled(ctx, id, on)
 		},
 		func(set service.BackupSet) string {
 			if set.Disabled {
@@ -81,8 +81,8 @@ func cmdBackupSetEnabled(args []string) int {
 // a second answer.
 func cmdBackupSetReadOnly(args []string) int {
 	return backupSetToggle(args, "read-only",
-		func(ctx context.Context, svc *service.BackupService, id string, on bool) (service.BackupSet, error) {
-			return svc.SetBackupSetReadOnly(ctx, id, on)
+		func(ctx context.Context, route backupSetRoute, id string, on bool) (service.BackupSet, error) {
+			return route.SetBackupSetReadOnly(ctx, id, on)
 		},
 		func(set service.BackupSet) string {
 			if set.ReadOnly {
@@ -103,7 +103,7 @@ func cmdBackupSetReadOnly(args []string) int {
 func backupSetToggle(
 	args []string,
 	verb string,
-	write func(context.Context, *service.BackupService, string, bool) (service.BackupSet, error),
+	write func(context.Context, backupSetRoute, string, bool) (service.BackupSet, error),
 	describe func(service.BackupSet) string,
 ) int {
 	fs, cfgPath := newFlagSet("backup-set " + verb)
@@ -130,17 +130,26 @@ func backupSetToggle(
 	}
 
 	ctx := context.Background()
-	// writesConfig, not readsConfig: both toggles rewrite config.yaml and
-	// hot-reload, exactly as `backup-set patch` does, so they go through
-	// the same door and get the same refusal beside an engine this
-	// command has no route to.
-	svc, cleanup, err := openBackupService(ctx, *cfgPath, writesConfig)
+	// openConfigWriteRoute, not openBackupService: both toggles rewrite
+	// config.yaml and hot-reload, exactly as `backup-set patch` does, so
+	// they go through the same door and get the same three outcomes.
+	// With nothing serving this deployment the write happens here; with
+	// a serving engine this command has a route to, it IS POST
+	// /api/v1/backup-sets/{source}/{set}/enabled (or .../read-only)
+	// against the process that will act on it; with a serving engine and
+	// no route it is refused and the file is untouched.
+	//
+	// They came through the direct door until #788, which made them the
+	// last configuration writes in this binary that COULD be routed and
+	// were not: an operator running a real engine could disable a set in
+	// a browser and never from a terminal.
+	route, cleanup, err := openConfigWriteRoute(ctx, *cfgPath)
 	if err != nil {
 		return fail(err)
 	}
 	defer cleanup()
 
-	set, err := write(ctx, svc, id, on)
+	set, err := write(ctx, route, id, on)
 	if err != nil {
 		return fail(err)
 	}

@@ -255,10 +255,19 @@ type SourceWriteProbe interface {
 // ProbeObjectPrefix is the fixed name prefix every object written by
 // SourceWriteProbe carries.
 //
-// It is exported because it is the one thing an operator needs when a
-// probe could not be removed: a name to look for. It is a dotfile so that
-// an FR-8 include pattern cannot match it and a directory listing does
-// not show it, and it says what it is so that whoever finds one knows
+// It is exported because two things need it. An operator whose probe
+// could not be removed needs a name to look for, and this repository's own
+// discovery needs to recognise its own litter: internal/discovery skips a
+// basename carrying this prefix (isOwnWriteProbe), which is what keeps a
+// leftover probe from being taken for an artifact.
+//
+// That skip is the rule, and the dotfile is not. This comment used to say
+// the leading dot meant an FR-8 include pattern could not match it, and
+// that is false twice over: a backup set that configures no include
+// patterns matches everything, and path.Match gives a dot no special
+// meaning, so "*" matches one too. What the dot does buy is the smaller
+// thing it is kept for -- an operator's plain directory listing does not
+// show one -- and the name says what it is, so whoever finds one knows
 // immediately that deleting it is safe. internal/mediumcheck's probePrefix
 // is the same decision on the medium side.
 const ProbeObjectPrefix = ".backupd-write-probe-"

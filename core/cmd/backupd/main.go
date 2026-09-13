@@ -141,6 +141,9 @@ commands:
                     --ssh-key-file K|--ssh-key-id ID --known-hosts-line L|--trust-host-key
                     --completion-strategy rename|marker|stable [--include A,B] [--stable-for D]
                     [--stale-after D] [--validator-id V] [--disabled] [--read-only] [--run]
+                    [--engine artifact|kopia] [--repository-domain D] [--source-consistency S]
+                    [--verification-level L] [--verification-sample-percent N]
+                    [--verification-full-every D] [--verification-restore-drill-every D]
                     [--no-verify]
                                                   create a backup set. Beside a serving engine this command has a
                                                   route to, that is POST /api/v1/backup-sets against the engine
@@ -156,6 +159,8 @@ commands:
   backup-set patch <source/backup-set> [--host H] [--port N] [--user U] [--remote-path P] [--local-path P]
                     [--include "A,B"] [--completion-strategy S] [--stable-for D] [--stale-after D] [--validator-id ID]
                     [--ssh-key-file K|--ssh-key-id ID] [--known-hosts-line L|--trust-host-key]
+                    [--source-consistency S] [--verification-level L] [--verification-sample-percent N]
+                    [--verification-full-every D] [--verification-restore-drill-every D]
                     [--acknowledge-repoint] [--acknowledge-host-key-change]
                     [--no-verify]
                                                   change one configured backup set in place; only the flags you pass are

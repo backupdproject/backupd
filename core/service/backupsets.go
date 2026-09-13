@@ -986,8 +986,26 @@ func validateCreateRequest(req CreateBackupSetRequest) error {
 		problems = append(problems, "known_hosts_line is required (probe and trust the host key first)")
 	}
 	problems = appendProblem(problems, requiredFieldProblem("remote_path", req.RemotePath))
-	problems = appendProblem(problems, requiredFieldProblem("local_path", req.LocalPath))
-	problems = append(problems, completionProblems(req.CompletionStrategy, req.StableFor)...)
+	// EPIC K (#788). local_path and a completion strategy are the
+	// ARTIFACT pipeline's own fields: one names where a finished file is
+	// copied to, the other names the rule that decides a file is
+	// finished, and an incremental set has neither because there is no
+	// file to recognise or copy. config.Validate REFUSES both on a
+	// kopia set, so requiring them here is not a stricter version of the
+	// same rule, it is the opposite one: every incremental create was
+	// refused for omitting exactly what it would then have been refused
+	// for carrying, which made an incremental set impossible to create
+	// through this service at all.
+	//
+	// Anything that is not the incremental engine is checked as an
+	// artifact create, a misspelled engine included: that request is
+	// refused by name a moment later, by the one parser that decides
+	// what an engine is (model.ResolveBackupEngine, through
+	// config.Validate), rather than by a second opinion here.
+	if engine, _ := model.ResolveBackupEngine(req.Engine); engine != model.EngineKopia {
+		problems = appendProblem(problems, requiredFieldProblem("local_path", req.LocalPath))
+		problems = append(problems, completionProblems(req.CompletionStrategy, req.StableFor)...)
+	}
 	problems = appendProblem(problems, validatorIDProblem(req.ValidatorID))
 	return joinProblems(problems)
 }

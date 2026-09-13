@@ -718,6 +718,20 @@ func TestContract_TypedRefusalsAreDistinguishable(t *testing.T) {
 		// what the duplicate check below asserts.
 		{"reused idempotency key", allowingPlatform("alice"), alwaysPassGate{}, service.ErrIdempotencyKeyConflict, `{"action":"run_cycle","config_revision":"rev-1"}`, true, "idem-5", http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT"},
 		{"another run already in flight", allowingPlatform("alice"), alwaysPassGate{}, service.ErrOperationAlreadyRunning, `{"action":"run_cycle","config_revision":"rev-1"}`, true, "idem-6", http.StatusConflict, "OPERATION_ALREADY_RUNNING"},
+		// EPIC K's third 409 on this route (#788). A snapshot that
+		// cannot be held is the state an operator reaches by clicking a
+		// hold on a screen listing a restore point that has since been
+		// pruned or failed, which is exactly the shape of the two rows
+		// above: same status, different code, and a client that could
+		// not tell it from a reused key would offer "retry with a new
+		// key" for a snapshot that is never going to be holdable.
+		//
+		// It is driven through the action that produces it rather than
+		// through run_cycle, because the arm that maps it belongs to the
+		// four snapshot submissions and nothing else reaches it.
+		{"the snapshot cannot be held", allowingPlatform("alice"), alwaysPassGate{}, service.ErrSnapshotNotHoldable,
+			`{"action":"hold_snapshot","config_revision":"rev-1","snapshot_hold":{"backup_set_id":"production/uploads-tree","reason":"incident 4711"}}`,
+			true, "idem-7", http.StatusConflict, "SNAPSHOT_NOT_HOLDABLE"},
 	}
 
 	seen := map[string]string{}
@@ -725,6 +739,10 @@ func TestContract_TypedRefusalsAreDistinguishable(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			backend := newSyncFakeBackend()
 			backend.errOnSubmit = tc.backendErr
+			// The snapshot submissions read their refusal out of the
+			// fixture beside this one, so a row driving one of the four
+			// arms arms both rather than looking like a success.
+			snapshotsOf(backend).errOnSubmit = tc.backendErr
 			router := NewRouter(RouterConfig{
 				Platform: tc.platform, Backend: backend, Gate: tc.gate,
 				BinaryVersion: "test", Commit: "test",

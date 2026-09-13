@@ -183,6 +183,19 @@ var flagsThatEchoWhatTheRequestSaid = map[string]string{
 	"--snapshot": "the engine's opaque manifest id, which is neither a path nor a secret",
 	"--path":     "one path INSIDE the snapshot, which is a path in the operator's own source tree and is what they asked to get back",
 	"--conflict": "one of three words deciding what happens to a file already at the destination",
+
+	// EPIC K's incremental sets (#788). Each of these is a word from a
+	// closed vocabulary or a name the operator declared themselves, and
+	// a set reproduced without them is a different set: --engine decides
+	// whether a run copies files or writes snapshots, and
+	// --repository-domain names the storage boundary the operator chose
+	// for that history. None of them can carry a credential, because
+	// none of them is a free string the operator fills with anything but
+	// a name they already published to their own team.
+	"--engine":             "which engine the set runs on, one of two words config.Validate takes",
+	"--repository-domain":  "the storage boundary the operator declared for this set's snapshots, which they named and have to name again",
+	"--source-consistency": "what the source promises about files changing under a snapshot, one of three words",
+	"--verification-level": "how much of each snapshot is read back afterwards, one of four words",
 }
 
 // operandsThatNameTheSubject is the same list for the positional argument

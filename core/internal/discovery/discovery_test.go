@@ -662,3 +662,62 @@ func pathSet(recs []state.Record) map[string]bool {
 	}
 	return m
 }
+
+// TestDiscover_ALeftoverWriteProbeIsNeverAnArtifact is the defect the two
+// comments beside transport.ProbeObjectPrefix used to deny.
+//
+// Both said a dotfile "cannot be matched by an FR-8 include pattern", and
+// neither is true of this package. A backup set that configures NO include
+// patterns matches everything (includeMatches' own first branch), and
+// path.Match, unlike a shell, gives a leading dot no special meaning at
+// all, so "*" matches one too. A write probe whose removal failed --
+// which is precisely the case ProbeObjectPrefix is exported for, because
+// something is left behind -- was therefore discovered as an artifact,
+// given an id, and carried into the lifecycle as a backup of 16 random
+// bytes.
+func TestDiscover_ALeftoverWriteProbeIsNeverAnArtifact(t *testing.T) {
+	for _, include := range [][]string{nil, {"*"}, {"*.dump", ".backupd-*"}} {
+		root := t.TempDir()
+		probe := transport.ProbeObjectPrefix + "6f1d2b7a1c4e4f8b"
+		mustWrite(t, filepath.Join(root, "backup.dump"), "a real payload")
+		mustWrite(t, filepath.Join(root, probe), "left behind by a probe whose removal failed")
+
+		source := transport.Source{ID: "probe-leftover", Type: "local", Root: root}
+		set := backupSet(t, config.Completion{Strategy: "rename"}, include)
+		deps := Deps{Transport: rclone.New(), Journal: openJournal(t), Now: fixedNow(epoch)}
+
+		res, err := Discover(context.Background(), deps, source, set)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+
+		for _, rec := range res.Discovered {
+			if rec.RemotePath == probe {
+				t.Errorf("include=%v: a leftover write probe was discovered as an artifact: %+v", include, rec)
+			}
+		}
+		for _, p := range res.Pending {
+			if p.RemotePath == probe {
+				t.Errorf("include=%v: a leftover write probe was reported Pending; it is this deployment's own litter, not a candidate: %+v", include, p)
+			}
+		}
+		for _, r := range res.Rejected {
+			if r.RemotePath == probe {
+				t.Errorf("include=%v: a leftover write probe was reported Rejected; every pass would repeat that forever: %+v", include, r)
+			}
+		}
+
+		// The control: the real payload beside it still discovers, so
+		// this is a skip of one name rather than a filter that stopped
+		// the pass.
+		found := false
+		for _, rec := range res.Discovered {
+			if rec.RemotePath == "backup.dump" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("include=%v: the payload beside the probe was not discovered: %+v", include, res)
+		}
+	}
+}

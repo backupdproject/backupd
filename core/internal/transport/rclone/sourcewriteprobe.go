@@ -150,9 +150,13 @@ func (a *Adapter) ProbeSourceWrite(ctx context.Context, src transport.Source) er
 // run that was killed must never be mistaken for this one's, because the
 // confirmation step's whole verdict is "the thing I wrote is gone".
 //
-// transport.ProbeObjectPrefix is a dotfile prefix, so a leftover cannot be
-// matched by an FR-8 include pattern and picked up as an artifact, and an
-// operator reading a plain directory listing is not shown one.
+// A leftover is kept out of the artifact pipeline by internal/discovery,
+// which skips any basename carrying transport.ProbeObjectPrefix, and not
+// by the prefix being a dotfile: this comment used to claim an FR-8
+// include pattern could not match a dotfile, and it can (no patterns at
+// all matches everything, and path.Match gives a dot no special meaning).
+// The dot buys only that an operator reading a plain directory listing is
+// not shown one.
 func probeObjectName() (string, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {

@@ -62,6 +62,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/backupdproject/backupd/core/internal/model"
 )
 
 // UpdateBackupSetRequest is a sparse edit of one already-persisted backup
@@ -696,7 +697,21 @@ func validateUpdatedBackupSet(bs config.BackupSet, req UpdateBackupSetRequest) e
 	if req.KnownHostsLine != nil {
 		problems = appendProblem(problems, knownHostsLineProblem(*req.KnownHostsLine))
 	}
-	problems = append(problems, completionProblems(bs.Completion.Strategy, bs.Completion.StableFor.Duration())...)
+	// The completion rule belongs to the artifact pipeline, so it is
+	// asked of an artifact set only (#788). An incremental set has no
+	// completion block at all -- config.Validate refuses one -- and
+	// checking it here would refuse every edit to every incremental set
+	// for a field it must not have.
+	//
+	// The DECLARED key, through the one parser that reads it: this set
+	// came out of config.Load, which parses without validating, so the
+	// resolved Engine field is still empty here. An engine nobody can
+	// spell is read as the artifact one and refused by name when the
+	// edited configuration is validated, which is where that sentence
+	// already lives.
+	if engine, _ := model.ResolveBackupEngine(bs.EngineConfig); engine != model.EngineKopia {
+		problems = append(problems, completionProblems(bs.Completion.Strategy, bs.Completion.StableFor.Duration())...)
+	}
 	// A window the resulting configuration would not keep is refused
 	// rather than quietly dropped.
 	//

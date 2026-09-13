@@ -46,15 +46,6 @@ const (
 
 	gapRunBackupSet = "`" + Binary + " fetch --backup-set <source/backup-set>` runs that set's cycle in your own shell, not in this engine, so it is a different act against a different process"
 
-	// EPIC K, #787. There is no verb that restores a snapshot to a local
-	// directory, and this is deliberately a gap rather than a wrong
-	// answer: `restore` is the archived-copy retrieval, an entirely
-	// different act against a storage provider, and printing it here
-	// would tell somebody trying to get a file back out of a restore
-	// point to start paying for a retrieval of something else. The verb
-	// lands with the rest of the restore surface in #788.
-	gapRestoreSnapshot = "there is no verb that restores a snapshot to a local directory; `" + Binary + " restore` asks a storage provider to make an ARCHIVED COPY readable again, which is a different act against a different store"
-
 	gapDeploymentScope = "there is no flag that narrows `activity --follow` to the deployment's own events: --backup-set names one set, and naming none already means every set"
 
 	// Issue #624. The candidate half of the connection check has no verb
@@ -282,6 +273,12 @@ var routes = map[string]entry{
 		why: "there is no verb that creates a backup set from a request body",
 		examples: []Action{
 			{Body: []byte(`{"source_name":"api-server","name":"var-backups","host":"10.0.0.14","user":"backups","remote_path":"/var/backups","local_path":"/data/backups","ssh_key_id":"key_1","known_hosts_line":"10.0.0.14 ssh-ed25519 AAAAC3Nz","completion_strategy":"stable","stable_for_seconds":300,"run_immediately":true,"acknowledge_repoint":true}`)},
+			// The incremental shape (#788), which is the one the line
+			// used to get WRONG rather than incomplete: every flag below
+			// was dropped, so a kopia set into a declared repository
+			// domain printed a command that makes a whole-file artifact
+			// set under the same id.
+			{Body: []byte(`{"source_name":"api-server","name":"var-backups","host":"10.0.0.14","user":"backups","remote_path":"/var/backups","local_path":"/data/backups","ssh_key_id":"key_1","known_hosts_line":"10.0.0.14 ssh-ed25519 AAAAC3Nz","completion_strategy":"rename","engine":"kopia","repository_domain":"production-vault","source_consistency":"quiesced","verification_level":"sample","verification_sample_percent":10,"verification_full_every_seconds":604800,"verification_restore_drill_every_seconds":2592000}`)},
 		},
 	},
 	key("POST", "/backup-sets/test-connection"): {
@@ -350,13 +347,34 @@ var routes = map[string]entry{
 				c.flag("completion-strategy", *req.CompletionStrategy)
 			}
 			if req.StableForSeconds != nil {
-				c.flag("stable-for", seconds(*req.StableForSeconds))
+				c.flag("stable-for", seconds(int64(*req.StableForSeconds)))
 			}
 			if req.StaleAfterSeconds != nil {
-				c.flag("stale-after", seconds(*req.StaleAfterSeconds))
+				c.flag("stale-after", seconds(int64(*req.StaleAfterSeconds)))
 			}
 			if req.ValidatorID != nil {
 				c.flag("validator-id", *req.ValidatorID)
+			}
+			// EPIC K's editable verification budget (#788), with the
+			// nil/non-nil rule every pointer on this body keeps. An
+			// explicit zero cadence is "stop doing this", which is a
+			// request an operator makes when a nightly drill turns out
+			// to cost more than it is worth, so it is printed rather
+			// than skipped as if nothing had been said.
+			if req.SourceConsistency != nil {
+				c.flag("source-consistency", *req.SourceConsistency)
+			}
+			if req.VerificationLevel != nil {
+				c.flag("verification-level", *req.VerificationLevel)
+			}
+			if req.VerificationSamplePercent != nil {
+				c.flag("verification-sample-percent", itoa(*req.VerificationSamplePercent))
+			}
+			if req.VerificationFullEverySeconds != nil {
+				c.flag("verification-full-every", seconds(*req.VerificationFullEverySeconds))
+			}
+			if req.VerificationRestoreDrillEverySeconds != nil {
+				c.flag("verification-restore-drill-every", seconds(*req.VerificationRestoreDrillEverySeconds))
 			}
 			if req.SSHKeyID != nil {
 				c.flag("ssh-key-id", *req.SSHKeyID)
@@ -391,6 +409,13 @@ var routes = map[string]entry{
 				Body: []byte(`{"stale_after_seconds":3610,"stable_for_seconds":90}`)},
 			{Params: map[string]string{"source": "api-server", "set": "var-backups"},
 				Body: []byte(`{"host":"10.0.0.15","port":2222,"user":"backups","remote_path":"/var/backups","local_path":"/data/backups","include":["*.gz","*.sql"],"completion_strategy":"stable","stable_for_seconds":300,"validator_id":"gzip","ssh_key_id":"key_2","known_hosts_line":"10.0.0.15 ssh-ed25519 AAAAC3Nz","acknowledge_repoint":true,"acknowledge_host_key_change":true}`)},
+			// EPIC K's verification budget (#788), in the corpus rather
+			// than only in a unit test for the reason the duration
+			// shapes above are: this is what core/cmd/backupd's
+			// dispatcher parses end to end, so a flag no example carries
+			// is a flag nothing proves the binary takes back.
+			{Params: map[string]string{"source": "api-server", "set": "var-backups"},
+				Body: []byte(`{"source_consistency":"quiesced","verification_level":"sample","verification_sample_percent":10,"verification_full_every_seconds":604800,"verification_restore_drill_every_seconds":2592000}`)},
 		},
 	},
 	key("DELETE", "/backup-sets/{source}/{set}"): {
@@ -1080,13 +1105,39 @@ func backupSetCreateCommand(spec apicontract.BackupSetSpec, runNow, acknowledgeR
 		c.flag("include", strings.Join(spec.Include, ","))
 	}
 	if spec.StableForSeconds > 0 {
-		c.flag("stable-for", seconds(spec.StableForSeconds))
+		c.flag("stable-for", seconds(int64(spec.StableForSeconds)))
 	}
 	if spec.StaleAfterSeconds > 0 {
-		c.flag("stale-after", seconds(spec.StaleAfterSeconds))
+		c.flag("stale-after", seconds(int64(spec.StaleAfterSeconds)))
 	}
 	if spec.ValidatorID != "" {
 		c.flag("validator-id", spec.ValidatorID)
+	}
+	// EPIC K (#788). What makes the set incremental, and then what it
+	// costs to prove. These are echoed for the reason every flag here
+	// is, with one extra edge: a line that dropped --engine would not be
+	// an incomplete reproduction of this set, it would be a working
+	// command that makes a DIFFERENT kind of set under the same id.
+	//
+	// The uuid is deliberately not echoed. It is the durable key a
+	// snapshot lineage hangs off, `backup-set create` has no flag for
+	// it, and it is minted by the service precisely so that nobody has
+	// to type one.
+	c.flagIfSet("engine", spec.Engine)
+	c.flagIfSet("repository-domain", spec.RepositoryDomain)
+	c.flagIfSet("source-consistency", spec.SourceConsistency)
+	c.flagIfSet("verification-level", spec.VerificationLevel)
+	if spec.VerificationSamplePercent > 0 {
+		c.flag("verification-sample-percent", itoa(spec.VerificationSamplePercent))
+	}
+	// Zero is this cadence's own default (never), so an absent field and
+	// a zero one are the same request and neither is worth a flag: the
+	// create verb's flags default to 0 too.
+	if spec.VerificationFullEverySeconds > 0 {
+		c.flag("verification-full-every", seconds(spec.VerificationFullEverySeconds))
+	}
+	if spec.VerificationRestoreDrillEverySeconds > 0 {
+		c.flag("verification-restore-drill-every", seconds(spec.VerificationRestoreDrillEverySeconds))
 	}
 	if spec.Disabled {
 		c.bare("disabled")

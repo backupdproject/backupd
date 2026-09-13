@@ -286,6 +286,14 @@ func (e *fakeEngine) api(w http.ResponseWriter, r *http.Request, path, token str
 		e.updateBackupSet(w, r, strings.TrimPrefix(path, "/backup-sets/"))
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/backup-sets/"):
 		e.removeBackupSet(w, r, strings.TrimPrefix(path, "/backup-sets/"))
+	// The two post-creation toggles (#788), served off the real service
+	// for the reason everything else here is: a fake that flipped a
+	// boolean of its own would let a route that never reached the engine
+	// look correct.
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/enabled"):
+		e.setEnabled(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/backup-sets/"), "/enabled"))
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/read-only"):
+		e.setReadOnly(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/backup-sets/"), "/read-only"))
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/edit-hold"):
 		e.getEditHold(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/backup-sets/"), "/edit-hold"))
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/edit-hold/release"):
@@ -392,6 +400,22 @@ func (e *fakeEngine) createBackupSet(w http.ResponseWriter, r *http.Request) {
 		Actor:               e.username,
 		AcknowledgeRepoint:  body.AcknowledgeRepoint,
 		SkipConnectionCheck: body.SkipConnectionCheck,
+
+		// EPIC K's engine seam (#788), carried for the reason the poll
+		// interval below is: a fake that silently dropped these would
+		// make a route that never sent them look correct, and the shape
+		// it would look correct in is the worst one available -- an
+		// ARTIFACT set written on the engine for a command line that
+		// asked for snapshots.
+		Engine:                        body.Engine,
+		UUID:                          body.Uuid,
+		RepositoryDomain:              body.RepositoryDomain,
+		SourceMountPrefix:             body.SourceMountPrefix,
+		SourceConsistency:             body.SourceConsistency,
+		VerificationLevel:             body.VerificationLevel,
+		VerificationSamplePercent:     body.VerificationSamplePercent,
+		VerificationFullEvery:         time.Duration(body.VerificationFullEverySeconds) * time.Second,
+		VerificationRestoreDrillEvery: time.Duration(body.VerificationRestoreDrillEverySeconds) * time.Second,
 	}
 	result, err := e.svc.CreateBackupSet(r.Context(), req)
 	if err != nil {
@@ -437,6 +461,19 @@ func (e *fakeEngine) updateBackupSet(w http.ResponseWriter, r *http.Request, id 
 	if body.ValidatorID != nil {
 		v := service.ValidatorID(*body.ValidatorID)
 		req.ValidatorID = &v
+	}
+	// EPIC K's editable verification budget (#788), with the same
+	// nil/non-nil meaning the fields above keep.
+	req.SourceConsistency = body.SourceConsistency
+	req.VerificationLevel = body.VerificationLevel
+	req.VerificationSamplePercent = body.VerificationSamplePercent
+	if body.VerificationFullEverySeconds != nil {
+		d := time.Duration(*body.VerificationFullEverySeconds) * time.Second
+		req.VerificationFullEvery = &d
+	}
+	if body.VerificationRestoreDrillEverySeconds != nil {
+		d := time.Duration(*body.VerificationRestoreDrillEverySeconds) * time.Second
+		req.VerificationRestoreDrillEvery = &d
 	}
 	updated, err := e.svc.UpdateBackupSet(r.Context(), id, req)
 	if err != nil {
@@ -921,4 +958,32 @@ func (e *fakeEngine) releaseEditHold(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (e *fakeEngine) setEnabled(w http.ResponseWriter, r *http.Request, id string) {
+	var body apicontract.SetEnabledRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		refuse(w, http.StatusBadRequest, apicontract.ErrorCodeInvalidRequest, err.Error())
+		return
+	}
+	set, err := e.svc.SetBackupSetEnabled(r.Context(), id, body.Enabled)
+	if err != nil {
+		refuseServiceError(w, "setBackupSetEnabled", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toContractBackupSet(set))
+}
+
+func (e *fakeEngine) setReadOnly(w http.ResponseWriter, r *http.Request, id string) {
+	var body apicontract.SetReadOnlyRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		refuse(w, http.StatusBadRequest, apicontract.ErrorCodeInvalidRequest, err.Error())
+		return
+	}
+	set, err := e.svc.SetBackupSetReadOnly(r.Context(), id, body.ReadOnly)
+	if err != nil {
+		refuseServiceError(w, "setBackupSetReadOnly", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toContractBackupSet(set))
 }

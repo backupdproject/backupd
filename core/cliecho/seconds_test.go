@@ -23,7 +23,7 @@ func TestSecondsAlwaysParsesBackToTheSameDuration(t *testing.T) {
 	// The named cases, so a regression says which shape broke rather than
 	// only naming the first integer that failed.
 	for _, tc := range []struct {
-		in   int
+		in   int64
 		want string
 	}{
 		{0, "0s"},
@@ -51,7 +51,7 @@ func TestSecondsAlwaysParsesBackToTheSameDuration(t *testing.T) {
 	// refuses is a command an operator pastes and gets exit 2 from, and
 	// one it accepts as a DIFFERENT duration is worse: it is a command
 	// that runs and does something else.
-	check := func(v int) {
+	check := func(v int64) {
 		t.Helper()
 		got := seconds(v)
 		d, err := time.ParseDuration(got)
@@ -69,10 +69,10 @@ func TestSecondsAlwaysParsesBackToTheSameDuration(t *testing.T) {
 			}
 		}
 	}
-	for v := 0; v <= 90000; v++ {
+	for v := int64(0); v <= 90000; v++ {
 		check(v)
 	}
-	for _, v := range []int{100000, 604800, 2592000, 31536000, 315360000} {
+	for _, v := range []int64{100000, 604800, 2592000, 31536000, 315360000} {
 		check(v)
 	}
 }

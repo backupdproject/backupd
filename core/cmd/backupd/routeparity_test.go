@@ -62,7 +62,12 @@ type refusingInput struct {
 // CLI could decide on its own. The stable-without-a-window case is refused
 // by request validation before any configuration is consulted. The patch
 // and remove cases name a set that is not there, which is the refusal a
-// script most often meets. Between them every routed verb is covered.
+// script most often meets. The incremental create is refused for a
+// declaration only config.Validate can settle (#788), which is the half
+// an adapter that dropped a field would silently turn into a SUCCESS on
+// one route: an artifact set written where the operator asked for
+// snapshots is refused by neither validator. The two toggles name a set
+// that is not there, which is every routed verb covered.
 var refusingInputs = []refusingInput{
 	{
 		name: "create over an id the deployment already has",
@@ -92,6 +97,31 @@ var refusingInputs = []refusingInput{
 		name: "patch the settings with a timezone that is not one",
 		args: func(configPath, _ string) []string {
 			return []string{"settings", "--config", configPath, "patch", "--timezone", "Definitely/NotAZone"}
+		},
+	},
+	{
+		// EPIC K (#788). A repository domain is required for an
+		// incremental set and has no default, so a create that names an
+		// engine and no domain is refused by config.Validate. It is
+		// worth a row of its own because the failure it guards is not a
+		// mismatched refusal: a route that dropped --engine would make
+		// this input SUCCEED on one side, writing an artifact set under
+		// an id the operator meant for snapshots.
+		name: "create an incremental set with no repository domain",
+		args: func(configPath, keyPath string) []string {
+			return createArgs(configPath, keyPath, "api/postgres", "--engine", "kopia")
+		},
+	},
+	{
+		name: "enable a set this deployment does not have",
+		args: func(configPath, _ string) []string {
+			return []string{"backup-set", "--config", configPath, "enabled", "nosuch/set", "on"}
+		},
+	},
+	{
+		name: "make a set this deployment does not have read-only",
+		args: func(configPath, _ string) []string {
+			return []string{"backup-set", "--config", configPath, "read-only", "nosuch/set", "on"}
 		},
 	},
 }

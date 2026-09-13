@@ -108,6 +108,29 @@ func isProducerTempName(base string) bool {
 	return false
 }
 
+// isOwnWriteProbe reports whether base names an object this deployment
+// wrote itself while proving it may write to the source
+// (transport.ProbeObjectPrefix).
+//
+// It exists because such an object can legitimately be there: the probe
+// removes what it wrote, and the one failure the prefix is exported for
+// is the removal failing, which leaves a file behind for an operator to
+// delete. Until this check, that file was a CANDIDATE: it has a clean
+// relative path, it is no marker and no producer temp name, and the
+// include filter does not stop it -- a set that configures no patterns
+// matches everything, and path.Match gives a leading dot no special
+// meaning, so "*" matches a dotfile too. So a probe nobody could remove
+// was discovered, given an artifact id and carried into the lifecycle as
+// a backup of sixteen random bytes.
+//
+// Skipped rather than Rejected, exactly as a marker and a temp name are:
+// it is this deployment's own litter, so reporting it would be a line in
+// every discovery report forever about a file the operator is already
+// being told about by the connection check that left it.
+func isOwnWriteProbe(base string) bool {
+	return strings.HasPrefix(base, transport.ProbeObjectPrefix)
+}
+
 // includeMatches reports whether base matches at least one of patterns.
 // An empty patterns list matches everything: config.Validate does not
 // require a backup set to configure include, and the minimal documented

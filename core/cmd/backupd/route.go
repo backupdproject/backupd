@@ -133,6 +133,20 @@ type backupSetRoute interface {
 	CreateBackupSet(ctx context.Context, req service.CreateBackupSetRequest) (service.CreateBackupSetResult, error)
 	UpdateBackupSet(ctx context.Context, id string, req service.UpdateBackupSetRequest) (service.BackupSet, error)
 
+	// The two post-creation toggles (#788). They are here rather than
+	// left on the direct door for mediumRoute's reason restated for a
+	// switch rather than a destination: both rewrite config.yaml, so
+	// beside a serving engine a toggle written into the file is a change
+	// that process never reads, and the next thing it wrote would put
+	// the old posture back from a stale copy. Read-only is the one where
+	// that matters most, because the stale copy is the one that decides
+	// whether a source's originals may be deleted.
+	//
+	// *service.BackupService satisfies both as it already stands, which
+	// is the property this interface's own doc asks to preserve.
+	SetBackupSetEnabled(ctx context.Context, id string, enabled bool) (service.BackupSet, error)
+	SetBackupSetReadOnly(ctx context.Context, id string, readOnly bool) (service.BackupSet, error)
+
 	// The two modes of the connection check (issue #624). They are here
 	// beside the writes, and not left to the local service, for exactly
 	// mediumRoute's reason: `backup-set create` verifies before it
