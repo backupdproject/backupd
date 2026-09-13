@@ -15,6 +15,7 @@ import type {
   ManagerStorage,
   MediumPreflight,
   MediumPreflightCheck,
+  RecoverySettings,
   StorageMedium,
   StorageMediumConfiguration,
   StorageMediumSpec,
@@ -1680,6 +1681,18 @@ const SERVED_WHILE_UNCONFIGURED: ReadonlySet<keyof BackupdApi> = new Set([
   "login",
   "enrollAdministrator",
   "rotatePassword",
+  // Issue #830's recovery routes sit in the same package as the sign-in
+  // routes around them and are mounted by it, so they are not gated on
+  // configuration either: somebody has to be able to ask for a reset link, and to
+  // fix the SMTP endpoint that link goes out over, on an instance that
+  // has never been configured at all.
+  "requestPasswordReset",
+  "resetPassword",
+  "verifyRecoveryEmail",
+  "resendRecoveryEmailVerification",
+  "getRecoverySettings",
+  "updateRecoverySettings",
+  "sendRecoveryTestEmail",
   "logout"
 ]);
 
@@ -1797,6 +1810,36 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
   // fixture that stored it would be the one place in this codebase where
   // an S3 secret sits at rest.
   let importedCredentialCount = 0;
+  // Issue #830: the recovery block this instance currently holds. Held
+  // per mock instance, like `settings` above, so a PATCH is visible to the
+  // next GET and a write in one test cannot be seen by the next.
+  //
+  // Configured and confirmed, because that is the state nearly every
+  // screen is rendered against and the one a dev server should start in.
+  // The unconfigured-endpoint state (`smtp: null`, which a headlessly
+  // provisioned administrator really is in) is reachable by writing null
+  // here from a test's own spy rather than by a scenario, since no page
+  // navigates INTO it.
+  const recovery: RecoverySettings = {
+    recoveryEmail: "backup-admin@example.com",
+    recoveryEmailConfirmed: true,
+    // Verified, for the reason the block above is confirmed: it is the
+    // state nearly every screen is rendered against. The PROVISIONAL
+    // state (#830 §§8-9) is reached the way the real service reaches it,
+    // by verifyRecoveryEmail below flipping it, or by a test writing
+    // false here through its own spy - no scenario navigates into it,
+    // because no page can put an account back into it.
+    recoveryEmailVerified: true,
+    verificationDeadline: "",
+    smtp: {
+      host: "smtp.example.net",
+      port: 587,
+      security: "starttls",
+      username: "backup-admin@example.com",
+      from: "backupd@example.net",
+      passwordSet: true
+    }
+  };
 
   const api: BackupdApi = {
     getVersion: () =>
@@ -2569,7 +2612,100 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
     rebuildCatalog: () => delay(undefined, 600),
 
     login: () => delay(undefined),
+    // Issue #830: enrolment now also proves a mail endpoint, and this
+    // fixture accepts whatever it is handed. The refusal an operator
+    // actually hits, SMTP_SEND_FAILED, is reachable through a spy in the
+    // suites that exercise it: a fixture that guessed which endpoints are
+    // reachable would be inventing a mail server.
     enrollAdministrator: () => delay(undefined),
+
+    // Answers for every username, at the same speed, as the real endpoint
+    // does: it is the one operation in this contract whose entire point is
+    // that the answer carries no information (see requestPasswordReset's
+    // own doc). A fixture that rejected for an unknown username would be
+    // modelling the enumeration this endpoint exists to prevent.
+    requestPasswordReset: () => delay(undefined),
+    resetPassword: (token) =>
+      // One sentinel token is dead here, the same shape the rotation
+      // fixture below uses for a wrong current password: without it the
+      // expired-link path has nothing to exercise against a fixture that
+      // has never issued a real token.
+      token === "expired-reset-token"
+        ? Promise.reject(new BackupdError({
+            code: "RESET_TOKEN_INVALID",
+            message: "this reset link has expired or has already been used",
+            correlationId: "cid_mockreset401"
+          }))
+        : delay(undefined),
+
+    // Mirrors apps/common/auth/local's handleVerifyEmail: one sentinel
+    // token is "expired" (the same shape resetPassword above uses for
+    // its own dead link, and for the same reason - a fixture that never
+    // issued a real token has nothing else for that path to exercise),
+    // everything else verifies the address and clears the deadline.
+    verifyRecoveryEmail: (token) =>
+      token === "expired-verify-token"
+        ? Promise.reject(new BackupdError({
+            code: "VERIFY_TOKEN_INVALID",
+            message: "this verification link has expired or has already been used",
+            correlationId: "cid_mockverify401"
+          }))
+        : delay(undefined).then(() => {
+            recovery.recoveryEmailVerified = true;
+            recovery.verificationDeadline = "";
+          }),
+
+    // The resend changes nothing but the link that is outstanding, which
+    // this fixture has no way to hold: what a caller can observe is that
+    // it resolves, and the real service's own tests are what prove the
+    // previous link stops working.
+    resendRecoveryEmailVerification: () => delay(undefined, 400),
+
+    getRecoverySettings: () => delay(structuredClone(recovery)),
+    updateRecoverySettings: (update) => {
+      // Mirrors apps/common/auth/local's handleUpdateRecovery, which
+      // re-checks the administrator's password before it resolves,
+      // sends or writes anything (#830 security review): one sentinel
+      // value is "wrong" here, the same shape rotatePassword below
+      // uses, so the refused-re-authentication path has something to
+      // exercise against a fixture with no real stored password.
+      if (update.currentPassword === "wrong-current-password") {
+        return Promise.reject(new BackupdError({
+          code: "UNAUTHENTICATED",
+          message: "current password is incorrect",
+          correlationId: "cid_mockrecovery401"
+        }));
+      }
+      if (update.smtp) {
+        recovery.smtp = {
+          host: update.smtp.host,
+          port: update.smtp.port,
+          security: update.smtp.security,
+          username: update.smtp.username,
+          from: update.smtp.from,
+          // The write-only rule, modelled rather than described: a blank
+          // password keeps whatever is stored, so this flag can only ever
+          // go from false to true here, and never back to false because
+          // somebody saved a port change.
+          passwordSet: update.smtp.password !== "" || (recovery.smtp?.passwordSet ?? false)
+        };
+      }
+      if (update.recoveryEmail !== undefined && update.recoveryEmail !== recovery.recoveryEmail) {
+        recovery.recoveryEmail = update.recoveryEmail;
+        // The real handler mails the verification link as part of the
+        // update and refuses the whole request if it cannot, so an
+        // address that comes back from a SUCCESSFUL update has been sent
+        // to - and is NOT yet verified, because nobody has opened that
+        // link (#830 §8). The deadline stays empty: an established
+        // administrator editing its address is never given a lapse
+        // window, only a nudge.
+        recovery.recoveryEmailConfirmed = true;
+        recovery.recoveryEmailVerified = false;
+      }
+      return delay(structuredClone(recovery), 400);
+    },
+    sendRecoveryTestEmail: () => delay(undefined, 500),
+
     rotatePassword: (currentPassword) =>
       // Mirrors apps/common/auth/local's handleRotatePassword: only this
       // one sentinel current-password value is ever "wrong" here, so the

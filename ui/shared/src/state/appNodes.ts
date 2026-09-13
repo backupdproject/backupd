@@ -17,6 +17,7 @@
  * it is a constant false. Its own doc says so at length rather than
  * letting the shape imply a guard that is not armed.
  */
+import type { RecoverySettings } from "@shared/api/contracts";
 import type { BackupArtifact, BackupSet, RetentionPlan } from "@shared/types/backup";
 import type { Operation, SystemHealth, VersionInfo } from "@shared/types/operation";
 import { graph, registerInput } from "./graph";
@@ -64,6 +65,60 @@ export const operationsNode = createResourceNode<Operation[]>("app.operations");
  * different call.
  */
 export const configuredNode = registerInput<boolean | null>("app.configured", null);
+
+/**
+ * The recovery block the signed-in console currently believes (issue
+ * #830 §§8-9), or null before the first read answers.
+ *
+ * It earns a place here by this file's own bar - read somewhere other
+ * than where it is fetched - and the two readers are a banner and a page
+ * that must not contradict each other. RecoveryVerificationBanner (above
+ * every route, mounted once for the session) fetches it and draws "this
+ * account will be removed by <deadline>"; VerifyEmailPage redeems the
+ * link that makes that sentence false. Without one shared value, an
+ * operator who opens the link in the tab the console is already signed
+ * in on reads "verified" on the page and "will be removed" in the banner
+ * directly above it at the same time, because nothing unmounts a banner
+ * that sits above the router.
+ *
+ * App.tsx is deliberately NOT the fetch owner, unlike the four resources
+ * above: this is authenticated auth state rather than backup state, no
+ * page but Settings has any other use for it, and adding it to App's
+ * fan-out would make every page wait on a read only the banner needs.
+ */
+export const recoveryVerificationNode = registerInput<RecoverySettings | null>("app.recovery-verification", null);
+
+/**
+ * The one way anything publishes a recovery block, and the one rule that
+ * makes three writers safe: VERIFICATION DOES NOT GO BACKWARDS for the
+ * same address.
+ *
+ * Three surfaces write here - the banner's own read, the verification
+ * page (optimistically from its 204, then again from a fresh read), and
+ * a successful save on the Settings page - and two of them are issued in
+ * the same instant when a verification link is opened in a tab that is
+ * already signed in. The service may well answer the banner's GET first,
+ * with the state as it was BEFORE the click, so a plain last-write-wins
+ * would put "this account will be removed" straight back over the page
+ * that has just said it will not be.
+ *
+ * A snapshot claiming unverified for an address this console has already
+ * seen verified is therefore discarded as stale, and that is sound
+ * rather than convenient: the service only ever clears the verified flag
+ * by CHANGING the address (apps/common/auth/local's handleUpdateRecovery),
+ * which changes the key this rule compares, so a genuine
+ * verified-to-unverified transition is never the case being dropped.
+ */
+export function publishRecoverySettings(next: RecoverySettings): void {
+  const current = graph.read(recoveryVerificationNode);
+  const stale =
+    current !== null &&
+    current.recoveryEmailVerified &&
+    !next.recoveryEmailVerified &&
+    current.recoveryEmail === next.recoveryEmail;
+  if (stale) return;
+  graph.commit("auth/recovery-settings", (tx) => tx.set(recoveryVerificationNode, next));
+}
 
 /** The three badge numbers the nav draws. Every field is `undefined`
  *  until its source resolves, and that is not the same as zero: a badge

@@ -48,6 +48,8 @@ import (
 	"time"
 
 	"github.com/backupdproject/backupd/core/internal/alert"
+	"github.com/backupdproject/backupd/core/internal/backupengine"
+	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
 	"github.com/backupdproject/backupd/core/internal/capacity"
 	"github.com/backupdproject/backupd/core/internal/config"
 	"github.com/backupdproject/backupd/core/internal/lifecycle"
@@ -272,6 +274,23 @@ type Service struct {
 	// wrong once.
 	MediumStore transport.MediumStore
 
+	// Repositories is EPIC K's backup-engine boundary: how this manager
+	// opens the repository an incremental backup set's snapshots live in
+	// (internal/backupengine, adapter in backupengine/kopia).
+	//
+	// Nil means no incremental engine is wired, and a set configured for
+	// one is then REFUSED rather than skipped (ErrNoIncrementalEngine).
+	// That direction is the whole reason this is a field with a nil case
+	// rather than a required constructor argument: every read-only use
+	// case in this package, and every test double of a Service, is built
+	// without one, and none of them may become a path that silently does
+	// nothing to an incremental set.
+	//
+	// New assigns it for every Service it builds; a Service constructed
+	// as a struct literal (which is every test double in this package)
+	// leaves it nil and gets the refusal.
+	Repositories backupengine.Engine
+
 	// The only mutable state on a Service, and the only reason it needs a
 	// lock at all.
 	//
@@ -340,6 +359,20 @@ func New(cfg *config.Config, journal Journal, tr transport.Transport, logger *ob
 	if ms, ok := tr.(transport.MediumStore); ok {
 		s.MediumStore = ms
 	}
+	// EPIC K's engine, wired for every Service this constructor builds
+	// (#783). The adapter holds nothing but a clock and touches no
+	// storage until a repository is opened, so there is no cost to a
+	// process that never runs an incremental set -- and the alternative,
+	// assigning it at each call site, is a call site that forgets: a
+	// configuration reload that dropped it would turn every incremental
+	// set into a refusal until the next restart.
+	//
+	// It is wired HERE rather than in core/service because the adapter
+	// package may not be imported from there: core/service is one of the
+	// product surfaces the embedded engine's shape is kept out of, and
+	// backupengine/boundary_test.go enforces it.
+	s.Repositories = kopia.New()
+
 	return s
 }
 

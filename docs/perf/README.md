@@ -468,6 +468,17 @@ enrolls with is generated per run and never leaves memory either. No harness
 output carries anything but measurements, which is why the records are safe to
 commit.
 
+Enrollment needs a working mail path since #830 — the engine sends a confirmation
+message to the account's recovery address before it writes the record, and refuses
+the enrollment if that send fails — so the harness starts an in-process SMTP sink
+(`apps/common/email/emailtest`) on `127.0.0.1`, enrolls with a recovery address at
+that sink, and lets it capture the message. It is a listener in the test process,
+not a service and not a container: nothing is installed, no port is published, no
+mail leaves the machine, and a run needs no credential of any kind for it. That
+matters here for the same reason the rest of this section does, and for one more:
+a benchmark that depended on a mail service would be measuring that service's
+latency inside its own numbers.
+
 ## If a number moves
 
 Moving files should not move any of these numbers. If one does, that is a

@@ -21,7 +21,11 @@ than a diff.
   nothing.
 - A web interface covering configuration and monitoring without a terminal, served from a
   container separate from the engine, with local account authentication and one-time
-  enrollment.
+  enrollment. Enrollment also takes a recovery email address and the SMTP details to
+  reach it, and proves both by sending a confirmation message before the account is
+  created, so a forgotten password is a reset link rather than a reinstall. Both are
+  editable in Settings, and the SMTP password is held as a secret reference rather than
+  a stored value.
 - Proactive alerting on stale backups, repeated failures, a changed SSH host key, and
   critical storage pressure.
 - One canonical multi-architecture image on amd64 and arm64, wrapped by every provider

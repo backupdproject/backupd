@@ -134,6 +134,9 @@ certified, so the claim and its evidence never live apart.
 ## Credentials
 
 No procedure in this directory ever asks anyone to commit a credential. Where a
-step produces one (the one-time enrollment token, the administrator password, an
+step produces or consumes one (the one-time enrollment token, the administrator
+password, the SMTP password the account's recovery mail is sent with, an
 SSH private key), the procedure says so and says to keep it off the repository.
-Paste command transcripts with those values redacted.
+Paste command transcripts with those values redacted. The administrator's
+recovery email address is a credential for this purpose too: it is a real mailbox
+belonging to whoever ran the procedure.

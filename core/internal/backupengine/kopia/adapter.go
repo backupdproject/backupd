@@ -50,18 +50,6 @@ import (
 	"github.com/backupdproject/backupd/core/internal/backupengine"
 )
 
-// verifyErrorBudget caps how many per-object findings one Verify collects
-// before it stops walking.
-//
-// Kopia's tree walker treats this as "abort after N errors", and its default
-// is 1, which turns a verification report into "the first thing that is
-// wrong". For a tool whose operator question is "how bad is it", the first
-// error is the least useful possible answer, so this is deliberately high
-// enough to describe real damage and still bounded, because a repository that
-// is wrong in ten thousand places does not need the ten thousand and first
-// finding to justify a restore from elsewhere.
-const verifyErrorBudget = 1000
-
 // Adapter implements backupengine.Engine over embedded Kopia packages.
 //
 // It holds no repository state, and like the rclone adapter that is
@@ -210,63 +198,6 @@ func (r *repository) ListSnapshots(ctx context.Context, src backupengine.Source)
 	}
 
 	return out, nil
-}
-
-// Verify implements backupengine.Repository.
-func (r *repository) Verify(ctx context.Context, id backupengine.SnapshotID) (backupengine.VerifyReport, error) {
-	man, err := r.load(ctx, id)
-	if err != nil {
-		return backupengine.VerifyReport{}, err
-	}
-
-	root, err := snapshotfs.SnapshotRoot(r.rep, man)
-	if err != nil {
-		return backupengine.VerifyReport{}, fmt.Errorf("resolving snapshot root: %w", err)
-	}
-
-	v := snapshotfs.NewVerifier(ctx, r.rep, snapshotfs.VerifierOptions{
-		// 100 means every file's bytes are read back and decrypted, not
-		// just its index entry checked. Anything less is sampling, and a
-		// backup that is "probably" restorable is the failure mode this
-		// product exists to avoid; callers who want sampling can get it by
-		// verifying fewer snapshots, not by half-verifying one.
-		VerifyFilesPercent: 100,
-		MaxErrors:          verifyErrorBudget,
-	})
-
-	result, verifyErr := v.InParallel(ctx, func(tw *snapshotfs.TreeWalker) error {
-		return tw.Process(ctx, root, "")
-	})
-
-	report := backupengine.VerifyReport{
-		ObjectsVerified: result.Stats.ProcessedObjectCount,
-		FilesVerified:   result.Stats.ReadFileCount,
-		BytesVerified:   result.Stats.ReadBytes,
-		Errors:          result.ErrorStrings,
-	}
-
-	// A walk that found damage and a walk that was torn down both come back
-	// with partial stats, a populated error list and a non-nil error, and
-	// they are not the same outcome: the first is an answer, the second is
-	// an absence of one. Deciding between them by counting findings is what
-	// this code used to do, and a cancelled verification then looked like a
-	// completed one that found two problems -- the two problems being the
-	// cancellation, reported once per object the walker abandoned.
-	//
-	// So the error is passed through whenever the walk did not complete,
-	// alongside the report of what it did manage to read. ctx.Err() takes
-	// precedence when it is set, because a torn-down read reports whatever
-	// the layer below felt like reporting and the caller who cancelled
-	// needs errors.Is(err, context.Canceled) to hold.
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return report, fmt.Errorf("verifying snapshot %s: %w", id, ctxErr)
-	}
-
-	if verifyErr != nil {
-		return report, fmt.Errorf("verifying snapshot %s: %w", id, verifyErr)
-	}
-
-	return report, nil
 }
 
 // Restore implements backupengine.Repository.
@@ -503,6 +434,26 @@ func snapshotInfo(man *snapshot.Manifest) backupengine.SnapshotInfo {
 		info.Directories = man.RootEntry.DirSummary.TotalDirCount
 		info.Files = man.RootEntry.DirSummary.TotalFileCount
 		info.Bytes = man.RootEntry.DirSummary.TotalFileSize
+	}
+
+	// The attribution tags, copied rather than aliased.
+	//
+	// A manifest loaded from the repository is the vendor's own struct,
+	// and handing its map out across this boundary would make every
+	// caller of ListSnapshots a writer of the engine's in-memory state:
+	// one caller deleting a key it did not recognise would be editing a
+	// snapshot manifest the adapter still holds. The copy costs a few
+	// entries per snapshot and removes the whole class.
+	//
+	// A manifest with no tags reports nil rather than an empty map,
+	// because "carries no attribution" is a thing reconciliation has to
+	// be able to see, and an empty map that ranges zero times reads the
+	// same as one nobody filled in.
+	if len(man.Tags) > 0 {
+		info.Tags = make(map[string]string, len(man.Tags))
+		for k, v := range man.Tags {
+			info.Tags[k] = v
+		}
 	}
 
 	return info

@@ -68,6 +68,14 @@ func skipUnlessHelper(t *testing.T) {
 // over this process's own, and reports what the child printed and how it
 // exited. Go's exec keeps the LAST of duplicated keys, so a caller can both
 // set and clear a variable the parent already has.
+//
+// Every variable that decides skip-or-refuse is cleared FIRST, so each
+// case states its own environment completely. Without that, this file's
+// skip cases would measure the parent's environment instead of the one
+// they set: a run of this package inside GitHub Actions inherits CI=true,
+// which is now one of the environments that makes a missing daemon a
+// refusal, and every "still skips" control here would fail for a reason
+// that has nothing to do with the branch it is about.
 func runHelper(t *testing.T, name string, env ...string) (out string, code int) {
 	t.Helper()
 
@@ -75,7 +83,7 @@ func runHelper(t *testing.T, name string, env ...string) (out string, code int) 
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+name+"$", "-test.v=true", "-test.timeout=90s")
-	cmd.Env = append(os.Environ(), helperEnv+"=1")
+	cmd.Env = append(os.Environ(), helperEnv+"=1", "CI=", "CI_LOCAL=", "CI_LOCAL_SKIP_DOCKER=")
 	cmd.Env = append(cmd.Env, env...)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -181,6 +189,60 @@ func TestStartRefusesAnUnreachableDaemonInsideTheGate(t *testing.T) {
 	}
 	if err := refusalVerdict(out, code); err != nil {
 		t.Fatalf("Start did not refuse an unreachable daemon under CI_LOCAL=1: %v.\nThis is #456: a Docker VM that dies mid-run is 'not reachable', Start skips, and the gate goes on printing ok with the machine tier silently empty.\nhelper output:\n%s", err, out)
+	}
+}
+
+// TestStartRefusesAnUnavailableDockerInAutomatedCI is #456 on the REMOTE
+// gate, which is where it was still open.
+//
+// The hard gate used to key on CI_LOCAL=1, which only scripts/ci-local.sh
+// exports. The GitHub job core-build-vet-test runs `go test -race ./...`
+// without it, so every suite that comes through Start -- the MinIO S3
+// verification ladder, the content-reuse proof, the corruption fixtures --
+// could skip there while the job printed ok. That is the same silent
+// hole this file was written about, in the run that decides whether a
+// pull request is mergeable.
+//
+// Both unavailable-docker paths are asserted, because answering them
+// differently would just move the hole: a runner whose daemon is
+// unreachable and one with no docker installed are equally broken as far
+// as a CI job that declared docker a prerequisite is concerned.
+func TestStartRefusesAnUnavailableDockerInAutomatedCI(t *testing.T) {
+	requireDockerBinary(t)
+	requireTheDaemonIsUnreachable(t)
+
+	out, code := runHelper(t, "TestHelperStartAgainstAnUnavailableDocker",
+		"CI=true", "DOCKER_HOST="+deadDockerHost)
+	if strings.Contains(out, startReturnedMarker) {
+		t.Fatalf("Start RETURNED against a daemon it cannot reach in automated CI.\nhelper output:\n%s", out)
+	}
+
+	if err := refusalVerdict(out, code); err != nil {
+		t.Fatalf("Start did not refuse an unreachable daemon under CI=true: %v.\nThe remote job runs `go test -race ./...` with no CI_LOCAL, so a skip here empties the machine tier while the job that gates merging prints ok.\nhelper output:\n%s", err, out)
+	}
+
+	missing, missingCode := runHelper(t, "TestHelperStartAgainstAnUnavailableDocker",
+		"CI=true", "PATH="+t.TempDir())
+	if err := refusalVerdict(missing, missingCode); err != nil {
+		t.Fatalf("Start did not refuse a missing docker binary under CI=true: %v.\nhelper output:\n%s", err, missing)
+	}
+}
+
+// TestAutomatedCIStillHonoursTheDocumentedOptOut keeps the one escape
+// hatch working on the remote side too.
+//
+// A run that says out loud it is proceeding without a daemon already
+// ledgers itself as incomplete, and a fixture that refused anyway would
+// make that flag a lie -- which is the same argument the local gate's
+// opt-out rests on, so it gets the same answer.
+func TestAutomatedCIStillHonoursTheDocumentedOptOut(t *testing.T) {
+	requireDockerBinary(t)
+	requireTheDaemonIsUnreachable(t)
+
+	out, code := runHelper(t, "TestHelperStartAgainstAnUnavailableDocker",
+		"CI=true", "CI_LOCAL_SKIP_DOCKER=1", "DOCKER_HOST="+deadDockerHost)
+	if err := skipVerdict(out, code); err != nil {
+		t.Fatalf("CI_LOCAL_SKIP_DOCKER=1 no longer gets past Start under CI=true: %v.\nhelper output:\n%s", err, out)
 	}
 }
 

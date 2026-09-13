@@ -261,8 +261,23 @@ type SnapshotID string
 // which set put it there: the engine's own source identity is a
 // host/user/path triple, and a streaming set writes one of those PER
 // OBJECT, so counting them answers a different question from the one the
-// isolation rule asks. These two tags are how a snapshot carries the
-// answer, and RepositoryStats.Sources is counted from the first of them.
+// isolation rule asks. The first two tags below are how a snapshot
+// carries that answer, and RepositoryStats.Sources is counted from
+// TagKeyBackupSet.
+//
+// # Why a snapshot also has to say which RUN wrote it
+//
+// A daemon that dies mid-run leaves behind a manifest its own catalog
+// never recorded, and the next start has to decide whether that orphan
+// is the dead run's restore point or somebody else's. Without a run tag
+// the only evidence available is TIME -- "it appeared after this run
+// started" -- and time does not tell a co-tenant set's snapshot, a
+// second daemon's, or an operator's own manual one taken with the
+// vendor's CLI against the same bucket, apart from this run's. Adopting
+// one of those records a restore point holding somebody else's data
+// under this set's name, which is worse than adopting nothing at all.
+// TagKeyRun turns that judgement into an equality: a manifest belongs to
+// a run if, and only if, it says so.
 //
 // # Why the literal strings are here and not at the caller
 //
@@ -287,6 +302,23 @@ const (
 	// holding it is a snapshot written somewhere it does not belong, and
 	// the tag is the only evidence that would survive to say so.
 	TagKeyDomain = "backupd.domain"
+
+	// TagKeyRun is the manager's own snapshot-run id, as the catalog
+	// recorded it before the run touched storage.
+	//
+	// It is the one tag an adapter writes rather than the caller (see
+	// TreeSnapshotRequest.RunID), because it is the one piece of
+	// attribution a caller must not be able to forget: a manifest
+	// without it can only be matched to a run by timestamp, and matching
+	// by timestamp is how somebody else's snapshot becomes this set's
+	// restore point.
+	//
+	// Reconciliation matches it EXACTLY, and together with TagKeyDomain
+	// and TagKeyBackupSet rather than alone. A run id is unique inside
+	// this product's own catalog and therefore proves nothing by itself
+	// about which set or which domain the run was for; an orphan is
+	// adopted only when all three agree.
+	TagKeyRun = "backupd.run"
 )
 
 // SnapshotRequest asks for one snapshot of one source.
@@ -335,6 +367,93 @@ type SnapshotInfo struct {
 	// not represent the whole source, which is a thing retention and restore
 	// must be able to see rather than infer.
 	Incomplete string
+
+	// Tags are the tags stored with the snapshot, read back as the engine
+	// holds them. It is nil when the manifest carries none.
+	//
+	// This is the READ side of the attribution contract the TagKey
+	// constants above define, and it is here rather than left to the
+	// adapter because the question it answers -- "whose snapshot is
+	// this" -- is asked by code that has no business knowing the
+	// engine's name. Crash reconciliation matches run, domain and set
+	// exactly against these; a snapshot that cannot be attributed is one
+	// it leaves alone.
+	Tags map[string]string
+}
+
+// DefaultVerifySamplePercent is how much of a snapshot's file content a
+// sampled verification reads when the caller names no percentage.
+//
+// Five percent is a deliberate compromise and not a measurement: it is
+// enough that a repository losing content at random is found within a
+// handful of runs, and small enough that a set can afford it every night
+// on a tree whose full read would not fit in the backup window. A
+// deployment that wants a different trade makes it explicitly, which is
+// what VerifyRequest.SamplePercent is for.
+const DefaultVerifySamplePercent = 5
+
+// ErrRestoreTargetRequired is returned when a restore drill is asked for
+// without a directory to restore into.
+//
+// It is a refusal rather than a scratch directory the adapter invents,
+// because a drill writes a whole snapshot to a disk somebody owns: which
+// disk, with how much room on it, is the caller's decision, and an engine
+// that picked one would fill an operator's /tmp with a restore nobody
+// asked for. It is also, crucially, not a downgrade -- a drill that
+// cannot run must never come back as a content verification wearing the
+// drill's name.
+var ErrRestoreTargetRequired = errors.New("backupengine: a restore drill needs a directory to restore into")
+
+// VerifyRequest asks for verification at a stated depth.
+//
+// # Why the level is a parameter
+//
+// Because the four rungs of model.VerificationLevel cost four different
+// amounts and prove four different things, and a port offering only the
+// deepest one forces every caller to pay for a full content read to learn
+// that a manifest resolves. Worse, it makes the CLAIM unavailable: a set
+// configured for structural verification whose runs all performed a full
+// read has a catalog full of rows that overstate nothing and understate
+// everything, and the day somebody configures restore_drill the rows look
+// exactly the same.
+//
+// So the level travels in, and what was actually performed travels back
+// out on VerifyReport.Level. The two are never assumed equal by the
+// caller: an adapter that could not do what was asked says so by
+// returning an error, never by returning a shallower level quietly, and a
+// caller comparing the two is comparing a request with a result rather
+// than reading its own request back.
+type VerifyRequest struct {
+	// Level is the depth asked for. An empty level is refused rather
+	// than defaulted: silence here would be a verification claim nobody
+	// made, exactly as model.ParseVerificationLevel argues.
+	Level model.VerificationLevel
+
+	// SamplePercent is how much of the snapshot's file content
+	// LevelContentSample reads, 1 to 100. Zero means
+	// DefaultVerifySamplePercent, and values above 100 are clamped to it.
+	//
+	// It is a percentage of FILES rather than of bytes because the unit a
+	// sample has to spread over is the unit damage arrives in: a
+	// repository that has lost one pack blob has lost some files
+	// entirely, and a byte-proportional sample would spend the whole
+	// budget inside the largest file and never look at the others.
+	//
+	// The sample is a COUNT over the files the walk finds, not a coin
+	// flip per file and not a stride: a run asked for 10% of 30 files
+	// reads exactly 3 of them, and one asked for 51% reads 16 of 31
+	// rather than "every second one". A verification whose achieved
+	// level depends on a random number is a verification that
+	// occasionally proves less than the row says it did, and a stride
+	// answers 51% and 99% identically, which is a configured increase in
+	// assurance that buys nothing and says nothing.
+	SamplePercent int
+
+	// RestoreTarget is the directory LevelRestoreDrill restores into. It
+	// is created if it does not exist and must be empty; the caller owns
+	// removing it afterwards, because a drill that tidied up after itself
+	// would also destroy the evidence of a drill that failed.
+	RestoreTarget string
 }
 
 // VerifyReport reports what a verification actually read.
@@ -358,10 +477,42 @@ type SnapshotInfo struct {
 // reports damage to an operator who has a healthy repository, or worse,
 // retries later and calls the second cancellation the same thing.
 type VerifyReport struct {
+	// Level is what this verification ACTUALLY performed, which is the
+	// only value a catalog may record as proven. It is never higher than
+	// the depth the walk reached: a sampled run that found no file to
+	// read reports what it did, and a drill that restored nothing is not
+	// a drill.
+	Level model.VerificationLevel
+
+	// ObjectsVerified is how many entries -- files and directories -- had
+	// their stored structure resolved: the manifest's tree walked and
+	// every content identifier it names looked up.
 	ObjectsVerified int64
-	FilesVerified   int64
-	BytesVerified   int64
-	Errors          []string
+
+	// FilesVerified and BytesVerified are the CONTENT half: files whose
+	// stored bytes were actually read back, decrypted, decompressed and
+	// hash-checked, and how many bytes that was. Both are zero for a
+	// structural verification, which is the point of reporting them
+	// separately from ObjectsVerified.
+	FilesVerified int64
+	BytesVerified int64
+
+	// BlobsChecked is how many distinct backing blobs were proven to
+	// exist in the repository's storage, which is the repository-integrity
+	// half of a sampled verification: an index can happily reference a
+	// pack file that is no longer in the bucket, and no amount of reading
+	// the files that happen to be sampled will find the ones that are not.
+	BlobsChecked int64
+
+	// FilesRestored and HashesMatched are the restore drill's own
+	// evidence: how many files were written to a real filesystem by the
+	// real restore path, and how many of those matched the hash of what
+	// the repository holds. They are zero at every level below
+	// LevelRestoreDrill, because nothing below it restores anything.
+	FilesRestored int64
+	HashesMatched int64
+
+	Errors []string
 }
 
 // RestoreRequest asks for one snapshot to be written to a local directory.
@@ -568,11 +719,17 @@ type Repository interface {
 	// whose identity has since changed.
 	LookupSnapshot(ctx context.Context, id SnapshotID) (SnapshotInfo, error)
 
-	// Verify reads a snapshot's content back and reports damage. A nil
-	// error means it completed and found nothing; anything else is an
-	// error plus a report of what it managed to read. See VerifyReport,
-	// which is where that contract is argued.
-	Verify(ctx context.Context, id SnapshotID) (VerifyReport, error)
+	// Verify checks a snapshot to the depth req names and reports what it
+	// actually did. A nil error means the verification completed and
+	// found nothing wrong; anything else is an error plus a report of
+	// what it managed to check. See VerifyReport and VerifyRequest, which
+	// is where that contract is argued.
+	//
+	// An implementation that cannot perform the level asked for returns
+	// an error. It never returns a shallower level and a nil error,
+	// because the whole value of the ladder is that a row saying
+	// restore_drill means a restore happened.
+	Verify(ctx context.Context, id SnapshotID, req VerifyRequest) (VerifyReport, error)
 
 	// Restore writes a snapshot to a local directory.
 	Restore(ctx context.Context, id SnapshotID, req RestoreRequest) (RestoreReport, error)
@@ -739,4 +896,250 @@ type StreamingRepository interface {
 	// reader is over the repository, not over the original source, and the
 	// caller closes it.
 	OpenSnapshotStream(ctx context.Context, id SnapshotID) (io.ReadCloser, error)
+}
+
+// --- the set-scoped tree snapshot (#783) ---------------------------------
+
+// SourceDir is one directory of a backup source, seen the way a
+// pull-based engine needs to see it: something that can be ASKED for its
+// children, one at a time, when the engine gets to it.
+//
+// # Why the control flow is this way round
+//
+// StreamingRepository above is push-shaped -- a caller reads an object
+// and hands the bytes over -- and that shape is what forces one snapshot
+// per object, because the caller is the one deciding when a snapshot
+// starts and ends. A snapshot that spans a whole backup set has to be
+// the other way round: the engine walks, decides what it already holds,
+// and only asks for the bytes it actually needs. So the source is
+// expressed here as a tree that can be iterated rather than as a
+// sequence of stores, and the run's errors travel back up through
+// SourceDirIterator.Next and StreamSource.Open while the engine is
+// pulling.
+//
+// Iteration is one-shot and stated as such: Open starts a pass, and a
+// source whose directory listing is a forward cursor over a remote
+// (transport.DirReader, and every backend that declares bounded_listing)
+// cannot rewind. An engine that needs a second pass opens a second
+// iterator, and an implementation that cannot serve one says so by
+// failing Open rather than by silently replaying a buffer it would have
+// had to keep.
+type SourceDir interface {
+	// Open begins one pass over this directory's children. The caller
+	// closes the iterator.
+	Open(ctx context.Context) (SourceDirIterator, error)
+}
+
+// SourceDirIterator is one pass over one directory's children.
+//
+// The three-value Next is deliberate: "no more entries" and "this walk
+// failed" are different answers, and an iterator that reported the end
+// of a directory as an error, or a failed listing as the end of one,
+// would turn an unreadable source into a snapshot that claims the
+// directory was empty. That is the one failure mode a backup must never
+// have, so it is spelled out in the signature rather than left to a
+// sentinel comparison.
+type SourceDirIterator interface {
+	// Next returns the next entry. ok is false, with a nil error, at the
+	// end of the directory. A non-nil error ends the whole snapshot: no
+	// manifest is written for a tree whose listing could not be
+	// completed.
+	Next(ctx context.Context) (entry SourceEntry, ok bool, err error)
+
+	// Close releases the pass. It is called exactly once, including on
+	// the paths where iteration stopped early.
+	Close() error
+}
+
+// SourceEntry is one child of a source directory.
+//
+// Exactly one of Dir and Stream is set, and which one it is IS the
+// entry's kind: there is no Kind field to disagree with them. An entry
+// with neither is refused by the engine rather than stored as an empty
+// file, because an entry nothing can be read from is a hole in a backup
+// and a zero-byte file is how a hole gets hidden.
+//
+// A symbolic link that a source is configured to preserve arrives here
+// as a Stream over its target string, which is what
+// backupengine/source's reading path already produces; nothing in this
+// boundary follows a link.
+type SourceEntry struct {
+	// Name is a single path element -- no slashes, never "." or ".." --
+	// in the source's own namespace. The engine joins it onto the path
+	// it is already walking, so a name carrying a separator would let a
+	// source's own directory listing decide where in the snapshot its
+	// content lands.
+	Name string
+
+	// ModTime is what the source said, at scan time. It is recorded with
+	// the entry and is not evidence about content: see SnapshotTree on
+	// why a tree snapshot does not reuse a file on the strength of it.
+	ModTime time.Time
+
+	// Size is what the listing reported, for progress and for the
+	// scanned-bytes accounting. A negative value means the source does
+	// not report one, which a streaming source legitimately does not,
+	// and nothing derives "unchanged" from this number.
+	Size int64
+
+	// Dir is the child directory, for a directory entry.
+	Dir SourceDir
+
+	// Stream is the child's content, for a file entry. It is opened by
+	// the engine, at most once, when the engine reaches it.
+	Stream StreamSource
+}
+
+// IsDir reports whether this entry is a directory, which is the same
+// question as "is Dir set".
+func (e SourceEntry) IsDir() bool { return e.Dir != nil }
+
+// TreeSnapshotRequest asks for ONE snapshot of one backup set's whole
+// source tree.
+//
+// One request is one run of one backup set, and Source is the set's own
+// identity (model.SourceIdentity), not an object's path. That is the
+// difference from StreamSnapshotRequest that the whole type exists for: a
+// run produces one manifest, under one source, so the repository's own
+// accounting -- how many sources share this domain, which snapshots
+// belong to this set, what the previous restore point was -- answers the
+// question an operator actually asked.
+type TreeSnapshotRequest struct {
+	// Source is the backup set's source identity in the repository's
+	// namespace: host, user and the set's root path.
+	Source Source
+
+	// Root is the tree to store. A nil Root is refused rather than
+	// stored as an empty snapshot.
+	Root SourceDir
+
+	// RunID is the manager's own snapshot-run id for this run, as the
+	// catalog recorded it before anything was stored.
+	//
+	// It is REQUIRED: SnapshotTree refuses an empty one before it
+	// touches storage, because a snapshot that cannot say which run
+	// wrote it is a snapshot crash reconciliation can only match by
+	// timestamp. TagKeyRun is what that costs, argued in full.
+	//
+	// The adapter writes it as the TagKeyRun tag itself rather than
+	// leaving it to Tags below. Attribution a caller can forget is
+	// attribution that goes missing on the one path nobody exercises by
+	// hand -- the crash path -- which is the only path this field exists
+	// to survive.
+	RunID string
+
+	// Description is operator-facing text stored with the snapshot.
+	Description string
+
+	// Tags are stored with the snapshot, alongside the TagKeyRun the
+	// adapter adds. Every snapshot this product writes carries
+	// TagKeyBackupSet and TagKeyDomain, and the engine synthesises
+	// neither: the caller owns set and domain attribution, because the
+	// caller is the only thing that knows which backup set is running.
+	//
+	// A TagKeyRun entry here does not win. RunID is authoritative,
+	// because two sources for one fact are one fact and one bug.
+	Tags map[string]string
+}
+
+// TreeSnapshotInfo reports one stored tree snapshot.
+//
+// The four byte counts are four different numbers and a surface must
+// never present one as another (#783's metrics requirement):
+//
+//   - SnapshotInfo.Bytes is what was SCANNED: the logical size of the
+//     tree as the source described it.
+//   - SourceBytesRead is what this run actually pulled off the source.
+//   - RepositoryBytesWritten is what this run actually pushed into the
+//     repository's storage, after deduplication and compression.
+//   - ContentReusedBytes is how much of what the run offered the
+//     repository was content it already held, and so did not store
+//     again.
+//
+// On a second run over a mostly-unchanged tree the first two are the
+// whole tree and the third is nearly nothing, and that gap is the only
+// honest evidence that content was reused. Reporting Bytes as "uploaded"
+// would report a deduplicated repository as growing by the size of the
+// source every night, which is the specific lie this type is shaped to
+// prevent.
+//
+// # Why reuse is MEASURED and not derived
+//
+// The arithmetic that suggests itself -- SourceBytesRead minus
+// RepositoryBytesWritten -- is not deduplication. That difference also
+// contains compression, and the pack and index overhead of storing
+// anything at all, so a FIRST snapshot of highly compressible data,
+// which by definition reused nothing, would report most of itself as
+// reused and tell an operator their brand new backup was mostly free.
+// ContentReusedBytes therefore comes from the engine's own
+// content-level accounting or it does not come at all: when the engine
+// cannot supply it, ContentReuseMeasured is false, because "not
+// measured" and "measured zero" are different facts and a catalog that
+// stored them as the same number would be reporting the first as the
+// second.
+//
+// Compression savings are deliberately NOT reported here and are not
+// folded into reuse. They are a different economy -- the same bytes
+// stored more cheaply, rather than bytes not stored twice -- and one
+// number covering both would answer neither "is incremental backup
+// working" nor "is compression earning its CPU".
+type TreeSnapshotInfo struct {
+	SnapshotInfo
+
+	// SourceBytesRead is how many bytes the run read from the source.
+	SourceBytesRead int64
+
+	// RepositoryBytesWritten is how many bytes the run wrote to the
+	// repository's storage.
+	RepositoryBytesWritten int64
+
+	// ContentReusedBytes is how many bytes of content this run handed to
+	// the repository that it already held. It is THIS run's reuse, not
+	// the repository's lifetime total, and a first snapshot's is zero.
+	//
+	// It means nothing unless ContentReuseMeasured is true.
+	ContentReusedBytes int64
+
+	// ContentReuseMeasured says whether ContentReusedBytes is a
+	// measurement at all.
+	//
+	// False means the engine could not account for reuse on this run. It
+	// does not mean nothing was reused, and the two must not be reported
+	// alike: a zero presented as a measurement is a claim that the run
+	// deduplicated nothing, which sends an operator looking for a broken
+	// incremental backup that is working perfectly well.
+	ContentReuseMeasured bool
+}
+
+// TreeRepository is the capability a Repository advertises when it can
+// store a whole source tree as one snapshot.
+//
+// It is a capability interface for the same reason StreamingRepository
+// is: a caller type-asserts, and an engine that cannot do this says so by
+// not satisfying it. It is not an implementation of StreamingRepository
+// and does not replace it as an interface; what it replaces is the SHAPE
+// a backup set is stored in, which is why the per-object port's own doc
+// points here.
+type TreeRepository interface {
+	Repository
+
+	// SnapshotTree walks req.Root and stores everything under it as one
+	// snapshot of req.Source, or stores nothing at all.
+	//
+	// Nothing at all is the load-bearing half. A tree whose listing
+	// failed, whose stream broke, or whose read was found to have been
+	// torn is not a snapshot with a gap in it: it is a run that produced
+	// no manifest, so no restore point is advertised and no later pass
+	// has to work out which parts of it to trust.
+	//
+	// Content is reused, files are not. Deduplication happens below this
+	// boundary, on content that has already been read, and every run
+	// reads every byte the source offers: a source's size and
+	// modification time are scan-time metadata from a live directory
+	// somebody else is writing to, and skipping a file's content on the
+	// strength of them is how a rewritten file silently stays at its old
+	// content for ever. TreeSnapshotInfo is where the resulting
+	// arithmetic is reported, and RepositoryBytesWritten is what shows
+	// the reuse actually happened.
+	SnapshotTree(ctx context.Context, req TreeSnapshotRequest) (TreeSnapshotInfo, error)
 }

@@ -89,6 +89,23 @@ jobs:
         working-directory: core
         run: go vet ./...
 
+      # Docker is a PREREQUISITE of this job, not an optional extra, and
+      # this step is where that is declared. core/'s ./tests/... hold the
+      # Docker-backed suites -- the MinIO S3 verification ladder, the SFTP
+      # source fixtures, the crash matrix -- and every one of them reaches
+      # its container through core/tests/machines, which fails rather than
+      # skips when a run has declared a daemon (machines.dockerIsRequired,
+      # keyed on the CI=true that this runner sets).
+      #
+      # Without this step the same job would still fail, one suite at a
+      # time and several minutes in, with a message about a daemon rather
+      # than about the runner. Probing here costs a second and names the
+      # cause. What must NEVER come back is the third option: those suites
+      # skipping while this job prints ok, which is #456 and is what the
+      # #784 review found still open on the remote side.
+      - name: Docker preflight
+        run: docker info
+
       - name: Test
         working-directory: core
         # -race, the same as scripts/ci-local.sh's own step for this

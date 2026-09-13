@@ -47,9 +47,14 @@ prove the check can actually see it go.
 ### The two mounts that must never contain one another
 
 `/data/state` holds the lifecycle journal, the local-authentication
-administrator record and nothing an operator would ever hand to somebody else.
+administrator record — with the account's recovery email address, whether that
+address has been verified, the deadline an unverified one lapses at, the hash
+(never the value) of the outstanding verification token, its SMTP settings and
+the reference standing in for the SMTP password — and nothing an operator would
+ever hand to somebody else.
 `/data/backups` is a share people are given access to. Putting either inside
-the other puts the state database and the Argon2id password hash into a
+the other puts the state database, the Argon2id password hash and the
+administrator's own contact details into a
 directory whose whole purpose is to be shared, so
 `TestPrivateStateAndBackupDataAreSeparateMounts` checks containment both ways,
 and checks that its own containment helper is not vacuous.

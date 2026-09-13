@@ -116,11 +116,12 @@
 
   <section>
     <h2 id="before">Before you open a browser</h2>
-    <p>Three things have to be true, and none of them is checked for you in a way that produces a useful message if it is not.</p>
+    <p>Four things have to be true, and none of them is checked for you in a way that produces a useful message if it is not.</p>
     <ol>
       <li><strong>The host directories exist and the container can write them.</strong> The runtime image is distroless with no root step, and a bind mount does not chown its source, so create the state, backup and config directories on the NAS and chown them to the container's uid and gid yourself. The config directory is mounted as a writable <em>directory</em>, not a read-only file, which is exactly what lets setup write <code>config.yaml</code> into it.</li>
       <li><strong>The config directory is empty.</strong> Setup is a one-time door. If anything is already at <code>/etc/backupd/config/config.yaml</code>, however it got there, the first-run write refuses rather than overwriting it, and the instance serves the ordinary application instead of the setup flow.</li>
       <li><strong>The remote server has an account to pull from.</strong> A dedicated, shell-less, chrooted SFTP account is what the project's own <a href="https://github.com/backupdproject/backupd/blob/main/docs/ssh-setup.md">SSH setup guide</a> recommends, and it has a consequence worth knowing before you get to step 5: against that account shape a remote checksum cannot be computed at all, so verification is transfer verification, not a remote-versus-local hash comparison.</li>
+      <li><strong>You have working SMTP details in front of you.</strong> Enrolment asks for a recovery email address and for the mail server to reach it through, and it proves both by sending a confirmation message before it will create the account. Server, port, transport security, the sender address the server will accept, and a username and password if it wants them. A provider's app-password page is the usual place to get them; whatever you use, it has to work from the NAS, because that is where the connection is made from.</li>
     </ol>
   </section>
 
@@ -139,6 +140,8 @@
         <li><a href="#step6">Step 6: Review, and Finish setup</a></li>
         <li><a href="#after">What you get next</a></li>
         <li><a href="#again">Coming back later</a></li>
+        <li><a href="#forgot">Forgetting the password</a></li>
+        <li><a href="#verify-email">Verifying the recovery address</a></li>
         <li><a href="#second-vps">Adding the second VPS</a></li>
         <li><a href="#gaps">Screens not pictured here</a></li>
       </ol>
@@ -189,7 +192,8 @@
   <section>
     <span class="step-eyebrow">Screen 1</span>
     <h2 id="enrol">Create the administrator</h2>
-    <p>Open the link. This account manages Backupd and nothing else. It is not your NAS operating-system account, and it is stored on the NAS as an Argon2id hash in <code>/data/state/local-auth.json</code>, in the same volume as the lifecycle journal, so it survives a container restart without a second volume.</p>
+    <p>Open the link. This account manages Backupd and nothing else. It is not your NAS operating-system account, and it is stored on the NAS as an Argon2id hash in <code>/data/state/local-auth.json</code>, in the same volume as the lifecycle journal, so it survives a container restart without a second volume. The recovery address and the mail settings below land in that same record, and the mail password lands there as a reference to a secret rather than as the secret.</p>
+    <p>The form asks for more than a password, and the reason is the sentence above: this is the only account, and enrolment is the only time it is created. Beside the username and password it takes a <strong>recovery email address</strong> and the <strong>mail server</strong> to reach it through, and before it writes the record it sends a confirmation message to that address over exactly those details. If the send fails, the enrolment fails and no account is created. An address nobody has ever delivered to is worth nothing on the day it is needed, and the day it is needed is the day nobody can sign in to fix it.</p>
 
 
     <div class="note ok">
@@ -209,8 +213,13 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
 
     <figure>
       <img src="screens/01-enrolment-empty.png" alt="The Create Backupd administrator form, empty, with Username, Password and Confirm password fields and a disabled Create administrator button" loading="lazy">
-      <figcaption>The enrolment form as the link lands on it. The Create administrator button stays disabled until all three fields are valid, so there is no way to submit a half-filled form.</figcaption>
+      <figcaption>The enrolment form as the link lands on it. The Create administrator button stays disabled until every field is valid, so there is no way to submit a half-filled form.</figcaption>
     </figure>
+
+    <div class="note">
+      <span class="note-label">The banner on the form is not decoration</span>
+      <p>Above the mail fields the page carries a warning headed <strong>ATTENTION</strong>, with links to <strong>SMTP2go</strong> and <strong>Gmail SMTP setup</strong>. It is there because this is the one part of setup that needs a credential from somewhere else, and the two links go to the two ways most deployments get one: a transactional-mail provider's free tier, or an app password on an existing mailbox. Neither is required and neither is endorsed &mdash; any server that will accept a submission works &mdash; but an operator who has never configured SMTP should not have to guess where to start while holding a 30-minute token.</p>
+    </div>
 
     <table class="fields">
       <thead><tr><th>Field</th><th>Example</th><th>What the entry does</th></tr></thead>
@@ -218,7 +227,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
         <tr>
           <td><strong>Username</strong></td>
           <td>nas-admin</td>
-          <td>Becomes the single administrator record for this instance. <span class="does">Enrolment is one-shot and irreversible: once this record exists, the enrolment route is closed for good and there is no second account and no self-service way back.</span> Pick something you will recognise in a log line.</td>
+          <td>Becomes the single administrator record for this instance. <span class="does">Enrolment is one-shot and irreversible: once this record exists, the enrolment route is closed for good and there is no second account.</span> What there is instead is a way back into this one, which is what the recovery address below buys. Pick something you will recognise in a log line.</td>
         </tr>
         <tr>
           <td><strong>Password</strong></td>
@@ -228,7 +237,32 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
         <tr>
           <td><strong>Confirm password</strong></td>
           <td>the same again</td>
-          <td>Client-side only. You can change this password later from Settings, but that asks for the current one: <span class="does">there is no reset for a password nobody knows</span>, so a typo you confirm twice is a reinstall. That is the reason this field exists at all.</td>
+          <td>Client-side only. You can change this password later from Settings, which asks for the current one, and <span class="does">a password nobody knows is now recoverable through the recovery address below</span> rather than through a reinstall. This field is still the cheapest place to catch a typo, because the alternative costs you a working mail path.</td>
+        </tr>
+        <tr>
+          <td><strong>Recovery email</strong></td>
+          <td>nas-admin@example.com</td>
+          <td>Stored on the administrator record beside the username, and the only address a password reset will ever be sent to. <span class="does">It is not a second login: the username stays what you sign in with.</span> Anything that is not an address is refused as <code>INVALID_EMAIL</code> before a connection is attempted, and the account is not created until a confirmation message has actually been accepted for this address.</td>
+        </tr>
+        <tr>
+          <td><strong>SMTP host</strong> and <strong>Port</strong></td>
+          <td>smtp.example.com, 587</td>
+          <td>Where that confirmation, and every later reset, is submitted. <span class="does">The connection is made from the engine container, not from your browser</span>, so a server only the laptop you are sitting at can reach fails here, and so does one behind a firewall the NAS is on the wrong side of.</td>
+        </tr>
+        <tr>
+          <td><strong>Security</strong></td>
+          <td>STARTTLS</td>
+          <td>One of STARTTLS, TLS or none, and it defaults to STARTTLS. Port 587 is usually the first and 465 the second. <span class="does">None sends the credential below in the clear</span>, so it is for a relay on the same host and for nothing else.</td>
+        </tr>
+        <tr>
+          <td><strong>SMTP username</strong> and <strong>SMTP password</strong></td>
+          <td>an app password, not the password to your mailbox</td>
+          <td>Authenticates the submission. The password is the one field here that is neither hashed nor stored: <span class="does">the record keeps a reference to it in the same form the product uses for every other secret</span>, and no API response and no log line ever carries it back. Leave both empty for a relay that asks for no credential.</td>
+        </tr>
+        <tr>
+          <td><strong>From address</strong></td>
+          <td>backupd@example.com</td>
+          <td>The sender the messages are submitted as. It has to be one this server accepts from this account, which is the most common reason a first attempt comes back <code>SMTP_SEND_FAILED</code>: providers reject a sender they do not own long before they reject a password.</td>
         </tr>
       </tbody>
     </table>
@@ -240,13 +274,29 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
 
     <figure>
       <img src="screens/03-enrolment-ready.png" alt="The enrolment form with all three fields filled and the Create administrator button enabled" loading="lazy">
-      <figcaption>All three valid. Pressing Create administrator sends the username, the password and the token from the URL, and on success signs you straight in.</figcaption>
+      <figcaption>Every field valid. Pressing Create administrator sends the username, the password, the recovery address, the mail settings and the token from the URL; the server sends the confirmation message, and only then writes the record and signs you in.</figcaption>
     </figure>
+
+    <div class="note">
+      <span class="note-label">What these three pictures do not show</span>
+      <p>They were taken before <a href="https://github.com/backupdproject/backupd/issues/830">#830</a> added the recovery address and the mail settings, so the form in them is the three-field one and the table above is longer than the screenshots. The fields are described rather than pictured because a screenshot of this page is re-shot from the product's own fixtures, and a picture is the one thing this page will not invent. Everything else on the screen is unchanged: same card, same disabled-until-valid button, same inline messages.</p>
+    </div>
+
+    <div class="note ok">
+      <span class="note-label">What arrives in the mailbox</span>
+      <p>A message titled &ldquo;backupd: recovery email confirmed&rdquo;, sent the moment before the account is written. It is the receipt for the whole arrangement: it proves the address is real, that the server accepts mail from this deployment, and that a reset link would arrive if you ever needed one. Read it as the only part of setup that is verified rather than merely entered, and if it does not appear, treat the enrolment as unfinished even if the browser says otherwise.</p>
+    </div>
+
+    <div class="note danger">
+      <span class="note-label">If the mail cannot be sent</span>
+      <p>The API answers <code>SMTP_SEND_FAILED</code>, the enrolment is refused, and <strong>no administrator is created</strong> &mdash; which is the point: an account whose recovery path has never worked is an account that cannot be recovered. The message carries the server's own refusal, sanitised, and it is usually one of three things: a <em>From</em> address the provider will not let this account send as, a password that is your mailbox password where the provider wanted an app password, or a port and security setting that disagree (587 with implicit TLS, 465 with STARTTLS).</p>
+      <p><strong>The link is not spent by a failure.</strong> Only a successful enrolment consumes the token, so fix the field and press the button again on the same page. That covers a rejected password, an address refused as <code>INVALID_EMAIL</code>, and every SMTP failure. It is also a change: before #830 a too-short password burned the token and left you restarting the engine for a fresh link.</p>
+    </div>
 
     <div class="note danger">
       <span class="note-label">If it says the account could not be created</span>
       <p>Read that message as <em>the token</em>, not the password. When the enrolment secret is missing, expired or already used, the API answers <code>BOOTSTRAP_TOKEN_INVALID</code> with &ldquo;missing, expired or already-used bootstrap token&rdquo;, and the page currently discards that and shows &ldquo;The administrator account could not be created&rdquo; instead. Trying a different password cannot help.</p>
-      <p>The fix is a fresh token: restart the engine container, read the new link out of the log, and open that one. If the token was already <em>used</em>, an administrator exists and you should sign in instead.</p>
+      <p>The fix is a fresh token, and this is the one failure on this screen that needs one: restart the engine container, read the new link out of the log, and open that one. If the token was already <em>used</em>, an administrator exists and you should sign in instead.</p>
       <p>The correlation id shown on that error, <code>cid_enroll</code>, is a hardcoded literal and does not match the one in the response, so it will not find anything in a log. This is <a href="https://github.com/backupdproject/backupd/issues/274">#274</a> and it is being fixed.</p>
     </div>
 
@@ -666,6 +716,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
       <li><strong>Check the port.</strong> Open Settings or read <code>config.yaml</code> and confirm <code>remote.port</code> is the number you meant, given that a non-numeric entry became 22.</li>
       <li><strong>Run one cycle by hand</strong> before trusting the schedule, and watch it reach the end. The default poll interval a wizard-written configuration gets is one hour.</li>
       <li><strong>Watch the first artifact all the way through</strong> to remote deletion. That is the first moment the whole rule is exercised, and it is the cheapest time to find out that the include pattern matched nothing.</li>
+      <li><strong>Send yourself a test email</strong> from Settings' <strong>Account recovery</strong> card, and check it arrives. The enrolment confirmation already proved the mail path once, and <strong>Send test email</strong> is the control that proves it still works &mdash; app passwords get rotated and providers change their submission rules, and the failure is silent until the day you need a reset link.</li>
     </ol>
   </section>
 
@@ -680,6 +731,34 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
     </figure>
 
     <p>The &ldquo;First time here? Create the administrator account&rdquo; link at the bottom goes to the enrolment page without a token. That is the right destination on a genuinely fresh install reached without the printed link, and on an instance that already has an administrator it will fail, correctly, with the message discussed <a href="#enrol">above</a>.</p>
+    <p>This page also carries <strong>Forgot password?</strong>, which the picture above predates; <a href="#forgot">the next screen</a> is what it does.</p>
+  </section>
+
+  <section>
+    <span class="step-eyebrow">Screen 11</span>
+    <h2 id="forgot">Forgetting the password</h2>
+    <p>Enrolment is still a one-time door, and it is still not reopened by losing the password. The way back in is the recovery address, and it starts with <strong>Forgot password?</strong> on the sign-in page. Two screens, both reached without being signed in: <strong>Reset your password</strong> at <code>/forgot-password</code>, which asks for the <strong>Username</strong> and has one button, <strong>Email a reset link</strong>; and <strong>Choose a new password</strong> at <code>/reset-password</code>, reached only from the link in the mail, with <strong>New password</strong>, <strong>Confirm new password</strong> and <strong>Set password</strong>.</p>
+    <p>The first of them asks for the username and nothing else, and it answers the same way whatever you type &mdash; a confirmation that a message has been sent, if one was due &mdash; because an endpoint that answered differently would tell anyone who can reach the port what the account is called. The page is not where you find out whether you got the name right. The mailbox is.</p>
+    <ol>
+      <li><strong>A message titled &ldquo;backupd: password reset&rdquo; arrives</strong> at the recovery address, carrying a link of the form <code>http://10.0.0.10:8080/reset-password?token=&lt;a long random string&gt;</code>. It is built from the same <code>PUBLIC_BASE_URL</code> as the enrolment notice, so a deployment still on the shipped default of <code>localhost</code> mails a link that only resolves on the NAS itself. Unlike the enrolment notice, nobody is watching a log to notice that, which makes it worth setting properly at install time.</li>
+      <li><strong>The link works once, and for 30 minutes.</strong> Same shape as the enrolment token, and for the same reason. It lives in the engine process, so restarting the container invalidates any outstanding link, and asking again mints a new one.</li>
+      <li><strong>Set password signs everything out.</strong> Every live session is revoked, including the browser that asked for the reset and any other still open elsewhere, so what a successful reset hands you is the sign-in page rather than a dashboard. That is deliberate: a reset is also what you do when you think somebody else has a session, and one that left existing sessions running would not be a recovery at all.</li>
+    </ol>
+    <p>Nothing arrives? Then the address or the mail path is the problem, not the password, and the browser cannot tell you which. If you are still signed in somewhere, fix it in <strong>Settings</strong>, in the <strong>Account recovery</strong> card: the recovery address and the SMTP details are both editable there, <strong>Send test email</strong> proves the path without changing anything, <strong>Save recovery settings</strong> writes it, and changing the address sends a fresh confirmation to the new one rather than trusting it. If you are not signed in anywhere and no mail arrives, you are down to a factory reset, which archives the administrator record, the catalog and the configuration, reopens enrolment, and leaves every retained backup on disk &mdash; <code>install --mode factory-reset</code>, and it is the last resort rather than the procedure.</p>
+    <p>While we are here: the password can also simply be <em>changed</em> from Settings, which asks for the current one. That is the ordinary rotation and it has nothing to do with the mail path.</p>
+  </section>
+
+  <section>
+    <span class="step-eyebrow">Screen 12</span>
+    <h2 id="verify-email">Verifying the recovery address</h2>
+    <p>The message enrolment sends is not a receipt. It is a <strong>verification link</strong>, and the account it belongs to is provisional until somebody opens it: <code>/verify-email?token=&lt;a long random string&gt;</code>, one page, no fields, reached from whatever device holds the mailbox &mdash; a phone that has never signed into this deployment opens it just as well as the browser you enrolled from, because the token in the link is the credential and nothing else is asked for.</p>
+    <p>Three facts about it, in the order they matter:</p>
+    <ol>
+      <li><strong>The link works once, and for 30 minutes.</strong> Opening it a second time says the link has expired or has already been used, which is also what an unknown token, a link for an account that no longer exists and an address that is already verified all say &mdash; one answer, so that nothing about the account can be probed with it. If the window closed, sign in and use <strong>Resend verification email</strong> in the banner or in <strong>Settings</strong>; a resend mints a fresh link and invalidates the previous one.</li>
+      <li><strong>Nobody opening it deletes the administrator.</strong> That is the point of it, rather than a harsh edge: an address that was mistyped is an account that is already lost, and the loss is only discovered months later at the one moment it cannot be fixed. So an unverified account lapses at a deadline fixed when it was created &mdash; at least 30 minutes &mdash; and when it does, the record, its sessions and its SMTP settings go, enrolment reopens, and <strong>a fresh enrolment notice is printed to the engine's log exactly like the one on <a href="#log">screen 0</a></strong>. Re-running a 30-second enrolment with the address spelled right is the whole of the recovery.</li>
+      <li><strong>Verifying is permanent.</strong> The deadline is cleared for good, so an established administrator who later edits the address in <strong>Settings</strong> gets an unverified address and a banner asking them to confirm it &mdash; never a deleted account.</li>
+    </ol>
+    <p>While the address is unverified, every signed-in screen carries an undismissable banner naming the address, the deadline and a <strong>Resend</strong> action. It is deliberately not dismissable: the thing it is warning about is the account disappearing.</p>
   </section>
 
   <section>
@@ -696,11 +775,13 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
 
   <section>
     <h2 id="gaps">Screens not pictured here</h2>
-    <p>Three states on this path exist in the product and are not on this page, because the development mock cannot produce them. They are described rather than quietly omitted.</p>
+    <p>Five states on this path exist in the product and are not on this page, because the development mock cannot produce them. They are described rather than quietly omitted.</p>
     <ul>
       <li><strong>A failed enrolment.</strong> The fixture's enrolment call always succeeds, so the error banner cannot be reached locally. Since <a href="https://github.com/backupdproject/backupd/issues/274">#274</a> it distinguishes a token that has expired or been used from a password the server would not accept, rather than blaming your password for a problem with the link.</li>
       <li><strong>&ldquo;Configuration saved&rdquo;, the restart-required screen.</strong> Reached when the configuration is written but the instance cannot start serving it in the same process. It reads: &ldquo;Your configuration has been written and is safe. This instance could not start serving it without a restart, so restart the Backupd container or service and open this page again. You do not need to enter any of it a second time.&rdquo; The fixture always reports that activation succeeded, so this state is unreachable locally. If you see it, restart the container and sign back in; do not run the wizard again.</li>
       <li><strong>The real post-setup backup sets list.</strong> One backup set, no artifacts, nothing in the activity feed. See the warning on <a href="#after">screen 9</a>.</li>
+      <li><strong>&ldquo;Choose a new password&rdquo;, the page the reset link lands on.</strong> Reached only from a link in a real email, which is the one thing a fixture cannot produce: the development mock has no mail server and mints no reset token for a page to honour. The token travels in the URL exactly as the enrolment one does, and pressing <strong>Set password</strong> lands you on the sign-in page rather than in the application, because a reset revokes every session including the one that asked. <a href="#forgot">Screen 11</a> walks both halves.</li>
+      <li><strong>The Account recovery card in Settings.</strong> Where the recovery address and the SMTP details are changed afterwards, with <strong>Send test email</strong> beside them. This page walks first run and stops at the dashboard, so Settings is not on it at all; <a href="reference.html#web-settings">the reference page</a> enumerates the card's controls, and its own Settings capture predates the card.</li>
     </ul>
     <div class="note">
       <span class="note-label">This page moved under itself once already</span>

@@ -2,14 +2,19 @@ package local
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/backupdproject/backupd/apps/common/email"
 )
 
 // End-to-end tests over a real httptest server with a real cookie jar,
@@ -29,16 +34,127 @@ import (
 // harness that skipped it would 403 on every mutating route, which is the
 // tell that the wrapping is load-bearing rather than decorative.
 
+// mailRecorder is the email.Sender every Service in this file is built
+// with: it captures what was sent and can be told to refuse, so the
+// handlers' own behaviour around a send - enrollment refusing outright, a
+// settings update refusing before it persists anything, forgot-password
+// answering 204 regardless - is testable without any SMTP server at all.
+//
+// The real net/smtp path is proved elsewhere and deliberately not here:
+// apps/common/email's own tests drive an in-process server through all
+// three security modes, and recovery_container_test.go drives THIS
+// package's enrollment against an ephemeral mail-sink container. What is
+// left for this seam is the branching, which is what it covers.
+type mailRecorder struct {
+	mu    sync.Mutex
+	sent  []recordedMail
+	fail  error
+	calls int
+}
+
+type recordedMail struct {
+	cfg email.Config
+	msg email.Message
+}
+
+func (m *mailRecorder) send(_ context.Context, cfg email.Config, msg email.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	if m.fail != nil {
+		return m.fail
+	}
+	m.sent = append(m.sent, recordedMail{cfg: cfg, msg: msg})
+	return nil
+}
+
+func (m *mailRecorder) refuseWith(err error) {
+	m.mu.Lock()
+	m.fail = err
+	m.mu.Unlock()
+}
+
+func (m *mailRecorder) delivered() []recordedMail {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]recordedMail(nil), m.sent...)
+}
+
+func (m *mailRecorder) attempts() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
+// testSMTP is the SMTP block every enrollment and settings update in this
+// file carries. It names a host nothing resolves, deliberately: the
+// recorder above is what answers, so a test that somehow reached a real
+// network would fail rather than send.
+func testSMTP() smtpSettingsRequest {
+	return smtpSettingsRequest{
+		Host:     "smtp.invalid.test",
+		Port:     587,
+		Security: "starttls",
+		Username: "apikey",
+		Password: testSMTPPassword,
+		From:     "backupd@example.test",
+	}
+}
+
+// testSMTPPassword is the canary this package's leak assertions look for.
+// It is a distinctive literal so that "does this response or this file
+// contain the SMTP password" is a question a test can answer by searching
+// for one string.
+const testSMTPPassword = "smtp-canary-pa55word"
+
+const testRecoveryEmail = "admin@example.test"
+
+// testAdminPassword is what enrollDefaultAdmin sets, and therefore what
+// every re-authenticated route (POST /password, PATCH /recovery) has to
+// be given to get past its password check.
+const testAdminPassword = "correct-horse-battery"
+
+func enrollBody(username, password string) enrollRequest {
+	return enrollRequest{
+		Username:      username,
+		Password:      password,
+		RecoveryEmail: testRecoveryEmail,
+		SMTP:          testSMTP(),
+	}
+}
+
 // testServer wires a fresh Service's Handler behind EnsureCSRFCookie,
 // exactly as apps/generic's own composed handler does, and returns an
 // httptest.Server plus a *http.Client carrying a cookie jar (so the
 // session and CSRF cookies a real browser would keep are kept here too).
 func testServer(t *testing.T) (*Service, *httptest.Server, *http.Client) {
+	svc, server, client, _ := testServerWithMail(t)
+	return svc, server, client
+}
+
+// testServerWithMail is testServer with the mail recorder exposed, for
+// the tests that assert on what was sent or make a send fail.
+func testServerWithMail(t *testing.T) (*Service, *httptest.Server, *http.Client, *mailRecorder) {
 	t.Helper()
-	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json")})
+	mail := &mailRecorder{}
+	svc, err := New(Config{
+		StorePath: filepath.Join(t.TempDir(), "auth.json"),
+		SendMail:  mail.send,
+		BaseURL:   "https://nas.example.test:8080",
+		// Discarded rather than left on stderr: the forgot-password
+		// branches log deliberately, and a passing test should not print.
+		Log:    io.Discard,
+		Notice: io.Discard,
+	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// Every Service runs a background reaper for its whole life
+	// (verify.go), which a real process wants and a test binary building
+	// dozens of Services does not: without this, each test leaves one
+	// live goroutine ticking against a temp directory that is about to
+	// be deleted.
+	t.Cleanup(svc.stopReaping)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/auth/", http.StripPrefix("/api/v1/auth", svc.Handler()))
@@ -49,7 +165,7 @@ func testServer(t *testing.T) (*Service, *httptest.Server, *http.Client) {
 	if err != nil {
 		t.Fatalf("cookiejar.New: %v", err)
 	}
-	return svc, server, &http.Client{Jar: jar}
+	return svc, server, &http.Client{Jar: jar}, mail
 }
 
 // seedCSRFCookie makes a harmless GET so the client's cookie jar picks up
@@ -130,7 +246,7 @@ func TestHandler_EnrollWithoutBootstrapTokenIsRefused(t *testing.T) {
 	csrf := csrfTokenFromJar(t, client, server)
 
 	resp := postJSON(t, client, server.URL+"/api/v1/auth/enroll",
-		credentialsRequest{Username: "bm-admin", Password: "correct-horse-battery"},
+		enrollBody("bm-admin", "correct-horse-battery"),
 		map[string]string{CSRFHeaderName: csrf})
 	defer resp.Body.Close()
 
@@ -146,7 +262,7 @@ func TestHandler_EnrollThenLoginThenSessionThenLogout(t *testing.T) {
 	token := currentBootstrapToken(t, svc)
 
 	enrollResp := postJSON(t, client, server.URL+"/api/v1/auth/enroll",
-		credentialsRequest{Username: "bm-admin", Password: "correct-horse-battery"},
+		enrollBody("bm-admin", "correct-horse-battery"),
 		map[string]string{CSRFHeaderName: csrf, BootstrapTokenHeader: token})
 	enrollResp.Body.Close()
 	if enrollResp.StatusCode != http.StatusNoContent {
@@ -202,7 +318,7 @@ func TestHandler_EnrollmentIsSingleShot(t *testing.T) {
 	token := currentBootstrapToken(t, svc)
 
 	first := postJSON(t, client, server.URL+"/api/v1/auth/enroll",
-		credentialsRequest{Username: "bm-admin", Password: "correct-horse-battery"},
+		enrollBody("bm-admin", "correct-horse-battery"),
 		map[string]string{CSRFHeaderName: csrf, BootstrapTokenHeader: token})
 	first.Body.Close()
 	if first.StatusCode != http.StatusNoContent {
@@ -213,7 +329,7 @@ func TestHandler_EnrollmentIsSingleShot(t *testing.T) {
 	// token, must be refused: enrollment is permanently closed the moment
 	// an administrator exists (§49.1).
 	second := postJSON(t, client, server.URL+"/api/v1/auth/enroll",
-		credentialsRequest{Username: "someone-else", Password: "another-long-password"},
+		enrollBody("someone-else", "another-long-password"),
 		map[string]string{CSRFHeaderName: csrf, BootstrapTokenHeader: token})
 	second.Body.Close()
 	if second.StatusCode != http.StatusForbidden {
@@ -228,7 +344,7 @@ func TestHandler_LoginRejectsWrongPassword(t *testing.T) {
 	token := currentBootstrapToken(t, svc)
 
 	enrollResp := postJSON(t, client, server.URL+"/api/v1/auth/enroll",
-		credentialsRequest{Username: "bm-admin", Password: "correct-horse-battery"},
+		enrollBody("bm-admin", "correct-horse-battery"),
 		map[string]string{CSRFHeaderName: csrf, BootstrapTokenHeader: token})
 	enrollResp.Body.Close()
 
@@ -347,7 +463,7 @@ func TestHandler_TrustedForwardedForKeepsRateLimitBucketsPerClient(t *testing.T)
 // apps/common/webhost/serve.NewUI's reverse proxy) whose X-Forwarded-Proto says
 // "https" must still get a Secure session cookie.
 func TestHandler_SessionCookieIsSecureWhenForwardedProtoIsTrustedAndHTTPS(t *testing.T) {
-	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json"), TrustForwardedHeaders: true})
+	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json"), TrustForwardedHeaders: true, SendMail: (&mailRecorder{}).send, Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -376,7 +492,7 @@ func TestHandler_SessionCookieIsSecureWhenForwardedProtoIsTrustedAndHTTPS(t *tes
 	}
 
 	token := currentBootstrapToken(t, svc)
-	body, err := json.Marshal(credentialsRequest{Username: "bm-admin", Password: "correct-horse-battery"})
+	body, err := json.Marshal(enrollBody("bm-admin", "correct-horse-battery"))
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
@@ -422,7 +538,7 @@ func enrollDefaultAdmin(t *testing.T, svc *Service, server *httptest.Server, cli
 	t.Helper()
 	bootstrapToken := currentBootstrapToken(t, svc)
 	resp := postJSON(t, client, server.URL+"/api/v1/auth/enroll",
-		credentialsRequest{Username: "bm-admin", Password: "correct-horse-battery"},
+		enrollBody("bm-admin", "correct-horse-battery"),
 		map[string]string{CSRFHeaderName: csrfToken, BootstrapTokenHeader: bootstrapToken})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
@@ -548,7 +664,7 @@ func TestHandler_RotatePasswordRequiresMatchingCSRFHeader(t *testing.T) {
 }
 
 func TestHandler_RotatePasswordIsRateLimitedPerIP(t *testing.T) {
-	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json"), PasswordRateLimit: 2})
+	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json"), PasswordRateLimit: 2, SendMail: (&mailRecorder{}).send, Log: io.Discard, Notice: io.Discard})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -662,7 +778,7 @@ func TestHandler_SessionCookieReadAcceptsTheLegacyNameButNeverWritesIt(t *testin
 	bootstrap := currentBootstrapToken(t, svc)
 
 	enrollResp := postJSON(t, client, server.URL+"/api/v1/auth/enroll",
-		credentialsRequest{Username: "bm-admin", Password: "correct-horse-battery"},
+		enrollBody("bm-admin", "correct-horse-battery"),
 		map[string]string{CSRFHeaderName: csrf, BootstrapTokenHeader: bootstrap})
 	enrollResp.Body.Close()
 	if enrollResp.StatusCode != http.StatusNoContent {

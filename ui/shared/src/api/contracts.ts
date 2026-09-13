@@ -20,7 +20,15 @@
  * alone cannot say "the server rejects this combination".
  */
 import { API_ERROR_CODES as GENERATED_API_ERROR_CODES } from "./generated/contract";
-import type { ApiErrorCode, WireConnectionCheck, WireMediumPreflightCheck } from "./generated/contract";
+import type {
+  ApiErrorCode,
+  WireConnectionCheck,
+  WireMediumPreflightCheck,
+  WireRecoverySettingsResponse,
+  WireRecoverySettingsUpdate,
+  WireSmtpSettings,
+  WireSmtpSettingsView
+} from "./generated/contract";
 import type { BackupArtifact, BackupSet, CompletionMethod, RetentionPlan } from "@shared/types/backup";
 import type {
   ActivityEvent,
@@ -1631,6 +1639,92 @@ export interface ActivityFeedPage {
 }
 
 /**
+ * Issue #830: how an administrator gets back in, and the mail endpoint
+ * that is the only thing able to carry them there.
+ *
+ * Every shape below is DERIVED from the generated wire schema rather than
+ * restated beside it, because the three of them differ in exactly one
+ * field each and a hand-written copy would let those differences drift:
+ * a write carries the SMTP password, a read never does and reports only
+ * whether one is stored, and an update carries whichever half is being
+ * changed. That asymmetry is the whole security property of the block
+ * (the runtime keeps the password in a mode-0600 file of its own and has
+ * no response schema anywhere that could serialise it back), so it is
+ * expressed in the types rather than left to a comment.
+ */
+/** Which protection the submission connection runs under. Closed in the
+ *  contract, so a picker over it cannot offer a value the server refuses. */
+export type SmtpSecurity = WireSmtpSettings["security"];
+
+/** An SMTP endpoint as an operator TYPED it, password included.
+ *
+ *  `password` is required here and optional on the wire, which is the one
+ *  difference worth having: a form always holds a string for it, and ""
+ *  is a real value with a defined meaning — "keep whatever is stored" on
+ *  an update. client.ts is where that meaning is applied (it omits the
+ *  field entirely rather than sending an empty one, which would read as a
+ *  request to authenticate with no password). */
+export type SmtpSettingsInput = Required<WireSmtpSettings>;
+
+/** The same endpoint as a READ answers it. The password is absent
+ *  structurally, not blanked, and `passwordSet` is the only thing said
+ *  about it — which is what a settings form has to render instead of a
+ *  masked value it could never round-trip. */
+export type SmtpSettingsView = WireSmtpSettingsView;
+
+/** What GET /auth/recovery answers, and what a PATCH answers with once it
+ *  has applied.
+ *
+ *  Two members are NORMALISED out of the wire shape, where both are
+ *  optional members that the contract simply omits when the fact does
+ *  not exist. `smtp` is null on a deployment whose administrator was
+ *  provisioned headlessly (`auth create-admin` leaves recovery
+ *  optional). That is a state a settings page must REPORT rather than
+ *  hide: an account with no endpoint configured has no way back at all,
+ *  and rendering an empty form over it would look like one that is
+ *  simply not filled in yet. `verificationDeadline` is "" when this
+ *  account cannot lapse. Both are total here so that every surface tests
+ *  one thing instead of each inventing its own handling of `undefined`.
+ *
+ *  `recoveryEmailConfirmed` is separate from the address for the same
+ *  reason: an address that has been typed and an address a message has
+ *  actually reached are different facts, and only the second one means
+ *  recovery works.
+ *
+ *  `recoveryEmailVerified` is a THIRD fact and the strongest one (#830
+ *  §8): a mail server accepting a message proves the endpoint works, and
+ *  a redeemed link proves somebody can READ the mailbox. Until it is
+ *  true, `verificationDeadline` is the RFC3339 instant at which a
+ *  provisional administrator is DELETED and enrollment reopens. */
+export type RecoverySettings = Omit<WireRecoverySettingsResponse, "smtp" | "verificationDeadline"> & {
+  smtp: SmtpSettingsView | null;
+  verificationDeadline: string;
+};
+
+/** A PARTIAL recovery update: only the halves named here are touched.
+ *  Sending neither is refused by the service, since a request that
+ *  changes nothing is a request that has lost its subject.
+ *
+ *  `currentPassword` is REQUIRED and is not a formality. The recovery
+ *  address and the SMTP endpoint decide where a password reset link is
+ *  delivered, so a caller who holds a live session but does not know the
+ *  password must not be able to repoint them - that is a stolen cookie
+ *  turning into a permanent account takeover through forgot-password.
+ *  The service re-checks it before it resolves, sends or writes
+ *  anything, and refuses with UNAUTHENTICATED exactly as POST
+ *  /auth/password does.
+ *
+ *  A changed address, and a changed ENDPOINT, are each proven by sending
+ *  over the endpoint the SAME request establishes, and the whole update
+ *  is refused with SMTP_SEND_FAILED when that send fails - so this call
+ *  cannot leave an account holding a recovery address nothing has ever
+ *  been delivered to, nor an endpoint nothing has ever been delivered
+ *  through. */
+export type RecoverySettingsUpdate = Omit<WireRecoverySettingsUpdate, "smtp"> & {
+  smtp?: SmtpSettingsInput;
+};
+
+/**
  * Everything this frontend can ask a backend to do.
  *
  * Two implementations satisfy it and both are real: httpApi talks to a
@@ -2139,7 +2233,100 @@ export interface BackupdApi {
   rebuildCatalog(): Promise<void>;
 
   login(username: string, password: string): Promise<void>;
-  enrollAdministrator(username: string, password: string): Promise<void>;
+  /**
+   * Issue #830: creating the administrator, which now also establishes
+   * the only way back into it.
+   *
+   * The recovery address and the SMTP endpoint are parameters rather than
+   * an optional block because the service requires both: an
+   * administrator with no proven way to reach its owner is an account
+   * that is permanently lost the first time a password is forgotten, and
+   * enrolment is the last moment at which somebody who can still sign in
+   * is present to fix the mail configuration.
+   *
+   * The runtime SENDS a confirmation message before it writes anything
+   * and refuses the whole enrolment with SMTP_SEND_FAILED if that send
+   * does not succeed. Nothing is created in that case and the single-use
+   * enrolment token is NOT spent, so the same link works again once the
+   * fields are corrected — which is what the page has to say, because
+   * "the account could not be created" over a dead link and over a
+   * typo'd SMTP port are the same sentence with opposite next steps.
+   */
+  enrollAdministrator(
+    username: string,
+    password: string,
+    recoveryEmail: string,
+    smtp: SmtpSettingsInput
+  ): Promise<void>;
+
+  /**
+   * Ask for a reset link, by username (issue #830).
+   *
+   * Resolves for every input. An unenrolled deployment, a username that
+   * is not the administrator's, an administrator with no recovery
+   * address and an SMTP endpoint that refused the message all answer 204,
+   * and the service answers BEFORE any mail is attempted so the response
+   * time does not vary either. A caller therefore cannot report whether
+   * anything was sent, and must not imply that it can: the invariant is
+   * that this endpoint enumerates nothing.
+   */
+  requestPasswordReset(username: string): Promise<void>;
+
+  /**
+   * Redeem a reset token and set the password (issue #830).
+   *
+   * The token is single-use and expires, and redeeming it revokes every
+   * live session and issues no new one. So a successful call leaves this
+   * browser signed OUT, whatever it was before, and the only honest place
+   * to send the operator afterwards is the sign-in screen.
+   *
+   * RESET_TOKEN_INVALID covers expired, already-used and never-issued
+   * alike, deliberately: all three are recovered by asking for another
+   * link.
+   */
+  resetPassword(token: string, newPassword: string): Promise<void>;
+
+  /**
+   * Redeem the single-use link mailed to the recovery address (issue
+   * #830 §8), which is what makes a PROVISIONAL administrator permanent.
+   *
+   * Unauthenticated, like the two reset calls above and for the same
+   * reason: the link is opened from a mail client that may never have
+   * signed into this deployment.
+   *
+   * VERIFY_TOKEN_INVALID covers expired, already-used, never-issued and
+   * "there is no administrator any more" alike, deliberately: they are
+   * all recovered the same way, by signing in and asking for another
+   * link (or by enrolling again), and distinguishing them would let an
+   * unauthenticated caller probe the account's state.
+   */
+  verifyRecoveryEmail(token: string): Promise<void>;
+
+  /** Mail a FRESH verification link to the stored recovery address
+   *  (issue #830 §9's re-send option). Authenticated, because it makes
+   *  the service send to an address the caller does not choose, and it
+   *  never moves the verification deadline - the new link carries the
+   *  same one the old link did. Refusing with SMTP_SEND_FAILED is the
+   *  honest answer when the mail server is the thing that is broken. */
+  resendRecoveryEmailVerification(): Promise<void>;
+
+  /** The recovery block as it stands (issue #830). Authenticated, and
+   *  never carries the SMTP password: see SmtpSettingsView. */
+  getRecoverySettings(): Promise<RecoverySettings>;
+
+  /** Change the recovery address, the SMTP endpoint, or both. Answers
+   *  with the block as it now stands, so a caller re-renders from the
+   *  service's own answer rather than from what it hoped it wrote —
+   *  which matters here because `recoveryEmailConfirmed` is decided by a
+   *  message actually being delivered, not by the request succeeding. */
+  updateRecoverySettings(update: RecoverySettingsUpdate): Promise<RecoverySettings>;
+
+  /** Send a message to the stored recovery address over the stored
+   *  endpoint, changing nothing (issue #830). It exists because the only
+   *  way to know a mail configuration works is to use it, and the moment
+   *  an operator needs it to work is the one moment they cannot find out
+   *  by trying. A refusal carries the server's own SMTP error. */
+  sendRecoveryTestEmail(): Promise<void>;
   /** apps/common/auth/local's POST /password (issue #128). Requires an
    *  already-authenticated session; rotates the stored password hash and
    *  revokes every other live session for this administrator. */

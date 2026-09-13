@@ -31,6 +31,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/backupdproject/backupd/core/internal/secretref"
 )
 
 // Config is the manager's whole runtime configuration (FR-5).
@@ -444,6 +445,41 @@ type RepositoryDomainConfig struct {
 	// to run this engine. See model.ParseRepositoryIsolation.
 	Isolation string `yaml:"isolation"`
 
+	// Passphrase names where this repository's encryption passphrase
+	// comes from: a file, an environment variable, or a command whose
+	// stdout is the secret. It is REQUIRED for a domain a backup set
+	// actually references, and its three sources are the ones
+	// KeyEncryption and Key.Passphrase already offer, spelled the same
+	// way, because "how does a secret reach this process" is one
+	// question this file answers once.
+	//
+	// There is no field to paste a passphrase into, and there will not
+	// be. A repository's passphrase is the only thing standing between
+	// its storage and everything this product holds; a key that could be
+	// typed into config.yaml would be a key sitting in the clear beside
+	// the hostnames it protects, which is the exposure #298 exists to
+	// close for the SSH key.
+	//
+	// It is declared per DOMAIN rather than per backup set on purpose. A
+	// domain IS the encryption boundary (model.RepositoryDomain), so two
+	// sets sharing a domain necessarily share its passphrase, and a
+	// per-set key would be a per-set promise the storage cannot keep.
+	//
+	// A domain no set references may omit it: declaring the boundary
+	// before pointing anything at it is how an operator builds one up,
+	// and a passphrase for a repository nothing will open is a secret
+	// with no purpose yet. The requirement is enforced where the
+	// reference is (validateEngineReferences).
+	Passphrase Passphrase `yaml:"passphrase,omitempty"`
+
+	// PassphraseRef is the resolved, engine-facing form of Passphrase:
+	// the reference the repository adapter takes
+	// (backupengine.RepositoryLocation.Passphrase). It is filled in by
+	// Validate, on the same before/after-Validate discipline the fields
+	// above follow, so nothing outside this package rebuilds a secret
+	// reference out of three strings.
+	PassphraseRef secretref.Ref `yaml:"-"`
+
 	// Domain is the fully-resolved boundary, filled in by Validate on the
 	// same before/after-Validate discipline BackupSet.ID follows. It stays
 	// the zero value until Validate succeeds, and every consumer reads it
@@ -567,6 +603,36 @@ type BackupSet struct {
 	// durable COPY of one file. This is a statement about how hard a
 	// snapshot in a repository has been looked at.
 	VerificationLevelConfig string `yaml:"verification_level,omitempty"`
+
+	// VerificationSamplePercentConfig is how much of a snapshot's file
+	// content a SAMPLED verification reads, 1 to 100. Omission resolves
+	// to backupengine.DefaultVerifySamplePercent.
+	//
+	// It is a percentage of files rather than of bytes because damage
+	// arrives per file: a byte-proportional sample spends its whole
+	// budget inside the largest file and never looks at the others. The
+	// sample is a fixed stride, so a stated percentage is read every
+	// time rather than on average.
+	VerificationSamplePercentConfig int `yaml:"verification_sample_percent,omitempty"`
+
+	// VerificationFullEvery is how often this set's restore points get a
+	// FULL content read regardless of the level above, and
+	// VerificationRestoreDrillEvery is how often one gets an actual
+	// restore drill.
+	//
+	// They are cadences rather than levels because the deep rungs cost
+	// a deployment's I/O budget and its backup window, and the honest
+	// shape of "prove it properly sometimes" is a period, not a level
+	// somebody sets and then turns off again when the nightly window
+	// overruns. Omission means never, which is the only safe default:
+	// nobody should acquire a nightly full read, or a nightly restore of
+	// their entire source, by leaving a key out.
+	//
+	// A cadence only ever raises what a run proves. It cannot lower the
+	// configured level, and a run still has to prove that level to
+	// become a restore point.
+	VerificationFullEvery         Duration `yaml:"verification_full_every,omitempty"`
+	VerificationRestoreDrillEvery Duration `yaml:"verification_restore_drill_every,omitempty"`
 
 	// SourceMountPrefix is the leading part of RemotePath that is how
 	// THIS DEPLOYMENT reaches the source rather than part of the source's
@@ -1006,6 +1072,24 @@ type Passphrase struct {
 // predates #269.
 func (p Passphrase) isZero() bool {
 	return p.File == "" && p.Env == "" && len(p.Command) == 0
+}
+
+// secretRef is this passphrase as the engine-facing reference
+// (secretref.Ref): the same three sources, in the vocabulary the packages
+// that actually resolve a secret speak.
+//
+// It is a conversion and not a second declaration. The reason it exists
+// at all is that internal/secretref must not import this package (it is
+// below config, and is used by the repository adapter, which is below it
+// too), so the translation has to happen on this side -- once, here,
+// rather than at each caller assembling three fields and getting the
+// Command case wrong.
+//
+// It does not validate. Exactly-one-source is secretref.Ref.Validate's
+// rule and the validator reports it with the config path in the sentence,
+// which a conversion returning an error here could not do.
+func (p Passphrase) secretRef() secretref.Ref {
+	return secretref.Ref{File: p.File, Env: p.Env, Command: p.Command}
 }
 
 // Completion selects how a backup set decides a remote artifact is finished

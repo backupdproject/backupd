@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,47 +48,91 @@ func withStdin(t *testing.T, content string) {
 	}()
 }
 
-func TestReadPasswordFromStdin_StripsExactlyOneTrailingNewline(t *testing.T) {
-	got, err := readPasswordFromStdin(strings.NewReader("correct-horse-battery\n"))
+// passwordFromStdin drives readSecretsFromStdin in the one-secret mode
+// every invocation without --smtp-password-stdin uses, and asserts that
+// mode really does read nothing else: the four cases below are about the
+// administrator password's own byte-for-byte handling, and they would say
+// nothing if a second secret were being consumed behind them.
+func passwordFromStdin(t *testing.T, r io.Reader) (string, error) {
+	t.Helper()
+	password, smtpPassword, err := readSecretsFromStdin(r, false)
+	if smtpPassword != "" {
+		t.Fatalf("readSecretsFromStdin read an SMTP password (%q) without being asked for one", smtpPassword)
+	}
+	return password, err
+}
+
+// The two-secret mode #830 adds: the administrator password and the SMTP
+// password as two lines of one pipe, in the order the flags name them.
+// The ordering is the part worth pinning - getting it backwards would
+// store the account password as an SMTP credential and vice versa, and
+// nothing downstream could tell.
+func TestReadSecretsFromStdin_ReadsTheAdminPasswordThenTheSMTPPassword(t *testing.T) {
+	password, smtpPassword, err := readSecretsFromStdin(strings.NewReader("correct-horse-battery\nsmtp-api-key\n"), true)
 	if err != nil {
-		t.Fatalf("readPasswordFromStdin: %v", err)
+		t.Fatalf("readSecretsFromStdin: %v", err)
+	}
+	if password != "correct-horse-battery" {
+		t.Errorf("administrator password = %q, want the FIRST line", password)
+	}
+	if smtpPassword != "smtp-api-key" {
+		t.Errorf("SMTP password = %q, want the SECOND line", smtpPassword)
+	}
+}
+
+func TestReadSecretsFromStdin_RefusesAMissingOrEmptySecondLine(t *testing.T) {
+	if _, _, err := readSecretsFromStdin(strings.NewReader("correct-horse-battery\n"), true); err == nil {
+		t.Error("one line with --smtp-password-stdin was accepted; want a refusal naming the two-line order")
+	}
+	if _, _, err := readSecretsFromStdin(strings.NewReader("correct-horse-battery"), true); err == nil {
+		t.Error("one unterminated line with --smtp-password-stdin was accepted; want a refusal")
+	}
+	if _, _, err := readSecretsFromStdin(strings.NewReader("correct-horse-battery\n\n"), true); err == nil {
+		t.Error("an empty second line was accepted as an SMTP password; want a refusal")
+	}
+}
+
+func TestReadPasswordFromStdin_StripsExactlyOneTrailingNewline(t *testing.T) {
+	got, err := passwordFromStdin(t, strings.NewReader("correct-horse-battery\n"))
+	if err != nil {
+		t.Fatalf("passwordFromStdin: %v", err)
 	}
 	if got != "correct-horse-battery" {
-		t.Errorf("readPasswordFromStdin(%q) = %q, want %q", "correct-horse-battery\n", got, "correct-horse-battery")
+		t.Errorf("passwordFromStdin(t, %q) = %q, want %q", "correct-horse-battery\n", got, "correct-horse-battery")
 	}
 }
 
 func TestReadPasswordFromStdin_StripsATrailingCRLF(t *testing.T) {
-	got, err := readPasswordFromStdin(strings.NewReader("correct-horse-battery\r\n"))
+	got, err := passwordFromStdin(t, strings.NewReader("correct-horse-battery\r\n"))
 	if err != nil {
-		t.Fatalf("readPasswordFromStdin: %v", err)
+		t.Fatalf("passwordFromStdin: %v", err)
 	}
 	if got != "correct-horse-battery" {
-		t.Errorf("readPasswordFromStdin(CRLF) = %q, want %q", got, "correct-horse-battery")
+		t.Errorf("passwordFromStdin(t, CRLF) = %q, want %q", got, "correct-horse-battery")
 	}
 }
 
 func TestReadPasswordFromStdin_NoTrailingNewlineIsUnchanged(t *testing.T) {
 	// printf '%s' (no trailing newline) must round-trip untouched -
 	// there is no newline here for TrimSuffix to have anything to strip.
-	got, err := readPasswordFromStdin(strings.NewReader("correct-horse-battery"))
+	got, err := passwordFromStdin(t, strings.NewReader("correct-horse-battery"))
 	if err != nil {
-		t.Fatalf("readPasswordFromStdin: %v", err)
+		t.Fatalf("passwordFromStdin: %v", err)
 	}
 	if got != "correct-horse-battery" {
-		t.Errorf("readPasswordFromStdin(no newline) = %q, want %q", got, "correct-horse-battery")
+		t.Errorf("passwordFromStdin(t, no newline) = %q, want %q", got, "correct-horse-battery")
 	}
 }
 
 func TestReadPasswordFromStdin_RefusesEmptyInput(t *testing.T) {
-	if _, err := readPasswordFromStdin(strings.NewReader("")); err == nil {
-		t.Fatal("readPasswordFromStdin(\"\") = nil error, want a refusal")
+	if _, err := passwordFromStdin(t, strings.NewReader("")); err == nil {
+		t.Fatal("passwordFromStdin(t, \"\") = nil error, want a refusal")
 	}
 	// A lone newline (an empty line piped in) is the same mistake as no
 	// input at all once the trailing newline is stripped, and must be
 	// refused the same way.
-	if _, err := readPasswordFromStdin(strings.NewReader("\n")); err == nil {
-		t.Fatal("readPasswordFromStdin(\"\\n\") = nil error, want a refusal")
+	if _, err := passwordFromStdin(t, strings.NewReader("\n")); err == nil {
+		t.Fatal("passwordFromStdin(t, \"\\n\") = nil error, want a refusal")
 	}
 }
 

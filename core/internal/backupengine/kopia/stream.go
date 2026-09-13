@@ -364,7 +364,7 @@ func (e *streamingEntry) GetReader(ctx context.Context) (io.ReadCloser, error) {
 		return nil, err
 	}
 
-	g := &guardedReader{ctx: ctx, rc: rc}
+	g := &guardedReader{ctx: ctx, rc: rc, track: e.track}
 	if e.track != nil {
 		e.track.add(g)
 	}
@@ -391,6 +391,12 @@ type guardedReader struct {
 	ctx context.Context
 	rc  io.ReadCloser
 
+	// track is the run's tracker, so that closing removes this reader
+	// from it. See openStreams: a tracker that only ever grows is a
+	// tracker that retains every reader, and every buffer behind it, for
+	// the length of a run.
+	track *openStreams
+
 	once     sync.Once
 	closeErr error
 }
@@ -414,35 +420,70 @@ func (g *guardedReader) Read(p []byte) (int, error) {
 }
 
 func (g *guardedReader) Close() error {
-	g.once.Do(func() { g.closeErr = g.rc.Close() })
+	g.once.Do(func() {
+		g.closeErr = g.rc.Close()
+
+		if g.track != nil {
+			g.track.remove(g)
+		}
+	})
 
 	//nolint:wrapcheck // the reader below is the source's; its errors are its own.
 	return g.closeErr
 }
 
-// openStreams tracks the readers handed to Kopia during one attempt.
+// openStreams tracks the readers that are OPEN RIGHT NOW during one run.
 //
-// Kopia closes the streaming reader itself, in a defer, and in the ordinary
-// case that is the only Close that happens -- guardedReader.Close is
-// idempotent precisely so the adapter's own belt-and-braces closeAll is free.
-// What the tracker buys is the case Kopia cannot cover: a reader blocked in
-// Read when the context is cancelled, which nothing inside the uploader can
-// reach.
+// Kopia closes the streaming reader itself, in a defer, and in the
+// ordinary case that is the only Close that happens -- guardedReader.Close
+// is idempotent precisely so the adapter's own belt-and-braces closeAll is
+// free. What the tracker buys is the case Kopia cannot cover: a reader
+// blocked in Read when the context is cancelled, which nothing inside the
+// uploader can reach.
+//
+// # Why it removes
+//
+// Because the set this needs is the IN-FLIGHT one, and a tree run walks
+// an entire source through it. An append-only slice retains every reader
+// a run ever opened -- and, through each reader, the transport buffers
+// behind it -- so the memory a run holds grows with the number of files
+// in the source rather than with the one file being read. #784's
+// large-namespace measurement found 24% of a 200,000-entry run's live
+// heap here, for readers that had been closed long before. Removing on
+// Close costs a map delete per file and makes the tracker mean what its
+// name says.
 type openStreams struct {
 	mu      sync.Mutex
-	readers []io.Closer
+	readers map[io.Closer]struct{}
 }
 
 func (o *openStreams) add(c io.Closer) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	o.readers = append(o.readers, c)
+	if o.readers == nil {
+		o.readers = map[io.Closer]struct{}{}
+	}
+
+	o.readers[c] = struct{}{}
 }
 
+func (o *openStreams) remove(c io.Closer) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	delete(o.readers, c)
+}
+
+// closeAll closes whatever is still open. It takes a copy under the lock
+// and closes outside it, because each Close calls back into remove.
 func (o *openStreams) closeAll() {
 	o.mu.Lock()
-	readers := o.readers
+	readers := make([]io.Closer, 0, len(o.readers))
+
+	for r := range o.readers {
+		readers = append(readers, r)
+	}
 	o.mu.Unlock()
 
 	for _, r := range readers {

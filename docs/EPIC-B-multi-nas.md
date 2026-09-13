@@ -401,7 +401,18 @@ Local authentication SHALL use:
 - CSRF protection;
 - rate limiting;
 - one-time bootstrap/enrollment flow;
-- no plaintext password persistence.
+- no plaintext password persistence;
+- a recovery email address, captured during enrollment beside the username and
+  password and verified by a confirmation message sent to it before enrollment
+  is allowed to succeed;
+- SMTP submission details for that message, supplied by the operator at the same
+  time, with the SMTP password held as a secret reference and never persisted,
+  logged or returned in plaintext;
+- self-service password recovery: a single-use, expiring reset link mailed to the
+  recovery address, whose use SHALL invalidate every live session.
+
+The recovery address is an additional field, not a replacement identity: the
+username remains the login credential.
 
 Provider-native authentication may replace local auth only after its trust boundary passes provider-specific security tests.
 
@@ -1496,16 +1507,24 @@ Synology DSM (until native DSM auth is implemented)
 
 Requirements:
 
-- first-run administrator enrollment;
+- first-run administrator enrollment, capturing a recovery email address and the
+  SMTP details used to reach it;
+- a confirmation email to that address, sent over those SMTP details, which must
+  succeed for enrollment to succeed;
 - Argon2id or equivalent password hashing;
 - HTTP-only secure session cookie;
 - CSRF protection;
 - brute-force/rate-limit protection;
 - session invalidation;
 - password rotation;
-- no plaintext password persistence;
+- password recovery by single-use, expiring link mailed to the recovery address,
+  answering identically whether or not the account named exists;
+- recovery address and SMTP details editable after enrollment, with a test send
+  and re-confirmation of a changed address;
+- no plaintext password persistence, for the account password or the SMTP one;
 - no default/static password;
-- provider packaging must not bake credentials into images.
+- provider packaging must not bake credentials into images, which includes SMTP
+  credentials.
 
 A provider MAY later replace local auth with a native provider adapter without changing core application logic.
 
@@ -2932,6 +2951,7 @@ On first open:
 
 ```text
 Administrator account creation   (local-auth only; skipped under platform-auth)
+  username, password, recovery email, SMTP details, confirmation email
   ↓
 Welcome / product purpose
   ↓
@@ -2976,8 +2996,19 @@ as one:
 - Password handling follows section 3.6: Argon2id or equivalent, no plaintext
   persistence, HTTP-only session cookies, CSRF protection, and rate limiting on
   both enrollment and login.
+- **The account SHALL be recoverable, and enrollment is where that is
+  arranged.** The same form SHALL capture a recovery email address and the SMTP
+  submission details used to reach it. Before the administrator record is
+  written, a confirmation message SHALL be sent to that address over those
+  details; a send that fails SHALL fail the enrollment, leaving no account
+  behind and enrollment still open. An unverifiable address is worth nothing on
+  the day it is needed, so it is verified on the day it is given.
 - Enrollment SHALL be rate-limited and SHALL log every attempt, successful or
   not, to the audit trail (section 58).
+
+The recovery address does not become the login identity. The username stays what
+an operator signs in with, and the address is an additional field on the same
+record.
 
 Backup setup remains skippable, per below. Account creation does not.
 
@@ -2993,6 +3024,28 @@ The welcome screen SHALL make clear that Backupd:
 - deletes the remote backup artifact only after the predecessor lifecycle has safely committed the NAS copy.
 
 No remote data may be deleted during first-run connection tests.
+
+## 49.2 Losing the password
+
+Because enrollment is single-shot and irreversible, the product SHALL offer a
+recovery path that does not require reopening it:
+
+- Sign-in SHALL offer a forgot-password route taking the username alone.
+- That route SHALL answer identically whether or not the name matches the
+  administrator, so it cannot be used to discover the account's name.
+- Where it does match, and a confirmed recovery address exists, a single-use,
+  expiring reset link SHALL be mailed to that address over the stored SMTP
+  details.
+- Completing a reset SHALL set the new password and invalidate every live
+  session, including the one that asked, so a stolen session cookie does not
+  survive the reset it triggered.
+- The recovery address and the SMTP details SHALL be editable afterwards, with a
+  test send available, and changing the address SHALL re-verify it by
+  confirmation message rather than trusting the new value.
+
+A factory reset remains the answer only where recovery was never configured or
+the mail path is gone, and it is what it always was: destructive, deliberate,
+and indistinguishable from a fresh install.
 
 ---
 
