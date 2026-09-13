@@ -3,7 +3,7 @@ import { Icon } from "@shared/design-system/icons";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import type { TooltipId } from "@shared/tooltips/tooltips";
 import { HEALTH_PRESENTATION, StatusBadge } from "./StatusBadge";
-import { bytes, relativeAge } from "@shared/utilities/format";
+import { relativeAge } from "@shared/utilities/format";
 
 /** One explanation per verdict this headline can state (issue #834).
  *  Four entries rather than one "what this word means" entry, because the
@@ -137,7 +137,12 @@ export function HealthSummary({ health }: { health: SystemHealth }) {
                 : undefined
             }
           />
-          <Row tip="dashboard.health.free-space" label="Free space" value={bytes(health.storageFreeBytes)} />
+          {/* No free-space row here (issue #842). The per-set readings
+              this panel is built from carry no filesystem key, so summing
+              them adds a shared volume in once per set — this row showed
+              21.6 TB free on a 13.9 TB disk. Free space is the Storage
+              card's, off GET /api/v1/system/storage, which measures each
+              volume once. */}
           {health.storageReadingsUnavailable > 0 ? (
             <Row
               tip="dashboard.health.capacity-unreadable"

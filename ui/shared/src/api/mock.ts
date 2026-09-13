@@ -769,7 +769,6 @@ const HEALTH: SystemHealth = {
   // so this is not a permanently-resting zero the way it is for most
   // deployments (BackupSet.readOnlyRetainedCount's own doc).
   readOnlyRetainedCount: 3,
-  storageFreeBytes: 1.8 * TB, storageTotalBytes: 6.2 * TB,
   storageState: "nominal",
   storageReadingsUnavailable: 0
 };
@@ -782,8 +781,11 @@ const HEALTH: SystemHealth = {
  * exists to stop), so nothing here is computed FROM the other.
  *
  * "default" reports the disk itself (no cap configured, this product's
- * default): 6.2 TB total, 1.8 TB free, matching HEALTH's own numbers so
- * the two readings agree where they overlap. "empty" reports known:false
+ * default): 6.2 TB total, 1.8 TB free. It is the ONLY free-space reading
+ * in the app now (issue #842): HEALTH carries no byte counts at all,
+ * because every set in this fixture lives under /data/backups and a sum
+ * of their per-set readings would report that one disk four times over.
+ * "empty" reports known:false
  * with no_backup_root, which is the honest answer a configuration with no
  * backup sets actually gives — not a fabricated zero. "storage-critical"
  * keeps the disk denominator (a critically full volume, not a spent cap)
@@ -1888,7 +1890,7 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
         empty
           ? { ...HEALTH, backupHealth: "healthy", backupHealthReason: "No backup sets configured yet.", setsHealthy: 0, setsStale: 0, setsFailing: 0, retainedCount: 0, retainedBytes: 0, quarantinedCount: 0, readOnlyRetainedCount: 0 }
           : scenario === "storage-critical"
-            ? { ...HEALTH, storageState: "critical", storageFreeBytes: 0.28 * TB, backupHealth: "failing", backupHealthReason: "Storage is critically low; ingestion has been paused to protect existing backups." }
+            ? { ...HEALTH, storageState: "critical", backupHealth: "failing", backupHealthReason: "Storage is critically low; ingestion has been paused to protect existing backups." }
             : HEALTH
       ),
 

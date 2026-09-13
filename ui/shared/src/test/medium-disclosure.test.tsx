@@ -402,7 +402,6 @@ const HEALTH: SystemHealth = {
   oldestSetFreshnessHours: 4,
   setsHealthy: 1, setsDegraded: 0, setsStale: 0, setsFailing: 0,
   quarantinedCount: 0, readOnlyRetainedCount: 0,
-  storageFreeBytes: 1e12, storageTotalBytes: 4e12,
   storageState: "nominal", storageReadingsUnavailable: 0
 };
 

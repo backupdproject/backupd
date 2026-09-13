@@ -314,10 +314,20 @@ export interface SystemHealth {
    * sums, and for what turning read-only off does and does not undo).
    */
   readOnlyRetainedCount: number;
-  /** Summed across the destinations whose capacity could be read.
-   *  storageReadingsUnavailable says how many could not be. */
-  storageFreeBytes: number;
-  storageTotalBytes: number;
+  /**
+   * The WORST per-set storage verdict, and how many sets could not be
+   * measured at all. A max and a count, which is the whole of what the
+   * per-set list can honestly be reduced to.
+   *
+   * There is deliberately no free or total byte count here (issue #842).
+   * The per-set health list carries no filesystem discriminator, so two
+   * sets on one volume each report that volume's capacity and a sum adds
+   * the same disk in twice — the NAS this was reported from was told it
+   * had 21.6 TB free on a 13.9 TB disk. Free space comes from GET
+   * /api/v1/system/storage, which measures each volume once (see
+   * ManagerStorage, and core/service/managerstorage.go for the same rule
+   * on the service's side).
+   */
   storageState: "nominal" | "warning" | "critical";
   storageReadingsUnavailable: number;
 }
