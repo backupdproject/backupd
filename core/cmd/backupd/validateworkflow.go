@@ -246,6 +246,16 @@ func printWorkflowValidatedScripts(stages []service.WorkflowStage, scripts []ser
 	if len(scripts) == 0 {
 		fmt.Println("  scripts: none discovered, so a run of this set would execute no hook")
 
+		// The summary and the no-execution line are printed here as
+		// well, and that is not symmetry for its own sake: this branch
+		// used to return before both, so a deployment whose stage
+		// directories exist and hold nothing got a report that never
+		// said what the verification would have refused on and never
+		// said that nothing had been executed. Those are exactly the
+		// two sentences an operator is reading this command to see.
+		printWorkflowVerificationSummary(scripts)
+		printWorkflowNothingExecuted()
+
 		return
 	}
 
@@ -262,6 +272,14 @@ func printWorkflowValidatedScripts(stages []service.WorkflowStage, scripts []ser
 	}
 
 	printWorkflowVerificationSummary(scripts)
+	printWorkflowNothingExecuted()
+}
+
+// printWorkflowNothingExecuted is the rule this whole command is built
+// on, said once at the end of every report -- including the report for a
+// set with no scripts, which is the one an operator reads while they are
+// still setting hooks up.
+func printWorkflowNothingExecuted() {
 	fmt.Printf("  nothing above was executed: `%s validate workflow` parses scripts, walks each parse tree against this product's own shell rules -- the BSH codes above, which are %s's rules and not ShellCheck's -- and probes reachability, and never runs a hook body\n", cliecho.Binary, cliecho.Binary)
 }
 

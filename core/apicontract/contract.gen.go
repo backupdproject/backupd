@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "b31a3870d790d5e13968d21a3d4d03f091516794cee853dd96ac6baf8adc2a30"
+const ContractSHA256 = "9dfdc396f506580848de03fa90c5d36e80961a923e6d6d5e7d513133aa15723c"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -3387,11 +3387,12 @@ type WorkflowFinding struct {
 // else's tool. The set is deliberately small and conservative; an
 // operator who wants a general shell linter should run one.
 type WorkflowLintFinding struct {
-	Code     string `json:"code"`
-	Col      int    `json:"col"`
-	Line     int    `json:"line"`
-	Message  string `json:"message"`
-	Severity string `json:"severity"`
+	Code     string                `json:"code"`
+	Col      int                   `json:"col"`
+	Excerpt  WorkflowSourceExcerpt `json:"excerpt"`
+	Line     int                   `json:"line"`
+	Message  string                `json:"message"`
+	Severity string                `json:"severity"`
 }
 
 // WorkflowRecoveryHold is one reason a backup set is refusing to run: a workflow run whose
@@ -3417,14 +3418,16 @@ type WorkflowRecoveryResponse struct {
 // error-severity findings -- because a refusal that also listed the
 // warnings would read as though they had refused it.
 type WorkflowRefusedScript struct {
-	Dir            string                `json:"dir"`
-	Findings       []WorkflowLintFinding `json:"findings"`
-	ParseError     string                `json:"parse_error"`
-	ParseErrorCol  int                   `json:"parse_error_col"`
-	ParseErrorLine int                   `json:"parse_error_line"`
-	Phase          string                `json:"phase"`
-	Scope          string                `json:"scope"`
-	ScriptName     string                `json:"script_name"`
+	BackupSetID       string                `json:"backup_set_id"`
+	Dir               string                `json:"dir"`
+	Findings          []WorkflowLintFinding `json:"findings"`
+	ParseError        string                `json:"parse_error"`
+	ParseErrorCol     int                   `json:"parse_error_col"`
+	ParseErrorExcerpt WorkflowSourceExcerpt `json:"parse_error_excerpt"`
+	ParseErrorLine    int                   `json:"parse_error_line"`
+	Phase             string                `json:"phase"`
+	Scope             string                `json:"scope"`
+	ScriptName        string                `json:"script_name"`
 }
 
 // WorkflowRun is one workflow run: one backup set's pass, wrapped in the five-stage
@@ -3479,6 +3482,7 @@ type WorkflowScriptLint struct {
 	NotExaminedReason string                `json:"not_examined_reason"`
 	ParseError        string                `json:"parse_error"`
 	ParseErrorCol     int                   `json:"parse_error_col"`
+	ParseErrorExcerpt WorkflowSourceExcerpt `json:"parse_error_excerpt"`
 	ParseErrorLine    int                   `json:"parse_error_line"`
 	Parsed            bool                  `json:"parsed"`
 }
@@ -3533,6 +3537,30 @@ type WorkflowSettingsResponse struct {
 	Runner                  WorkflowRunnerSettings        `json:"runner"`
 	ScriptTimeoutConfigured bool                          `json:"script_timeout_configured"`
 	ScriptTimeoutSeconds    int64                         `json:"script_timeout_seconds"`
+}
+
+// WorkflowSourceExcerpt is A few of a hook script's own lines, carried beside a position that
+// names one of them: the reported line with one line either side. It
+// exists because a position on its own is a lookup somebody has to
+// perform on a machine they may not be on -- "BSH003 at 24:10" sends
+// an operator to a NAS over SSH to read one line. The lines come
+// from the bytes this validation READ AND HASHED rather than from a
+// later re-read, so they cannot disagree with the position beside
+// them. They are the script's own text and never a resolved secret:
+// nothing on the path that produces them resolves one.
+type WorkflowSourceExcerpt struct {
+	Lines []WorkflowSourceLine `json:"lines"`
+}
+
+// WorkflowSourceLine is one line of a hook script, as an editor would number it. The text
+// arrives with control characters removed and its length bounded, at
+// the point it is produced rather than at each surface that draws
+// it: a hook is arbitrary text and this text reaches a browser and a
+// terminal.
+type WorkflowSourceLine struct {
+	Number    int    `json:"number"`
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated"`
 }
 
 // WorkflowStage is one scope-and-phase pair that has a directory. A run executes five
@@ -3792,6 +3820,8 @@ var SchemaTypes = map[string]any{
 	"WorkflowScriptRejectedResponse":     WorkflowScriptRejectedResponse{},
 	"WorkflowSecretReference":            WorkflowSecretReference{},
 	"WorkflowSettingsResponse":           WorkflowSettingsResponse{},
+	"WorkflowSourceExcerpt":              WorkflowSourceExcerpt{},
+	"WorkflowSourceLine":                 WorkflowSourceLine{},
 	"WorkflowStage":                      WorkflowStage{},
 	"WorkflowStep":                       WorkflowStep{},
 	"WorkflowStepLogPage":                WorkflowStepLogPage{},

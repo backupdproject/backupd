@@ -409,3 +409,35 @@ func TestValidateStillValidatesAnArtifact(t *testing.T) {
 		t.Fatalf("validating an artifact this deployment does not hold = %d, want 1 (an ordinary failure about the deployment); stderr:\n%s", code, out)
 	}
 }
+
+// A set whose stage directories exist and hold nothing still gets the
+// two sentences an operator is reading this command for: what the
+// verification would refuse on, and that nothing was executed.
+//
+// This branch used to return before both (review minor), which made the
+// report for a deployment part-way through being set up the one report
+// that said neither.
+func TestValidateWorkflowSummarisesASetWithNoScripts(t *testing.T) {
+	report := service.WorkflowValidation{
+		BackupSetID:    "production/postgres-primary",
+		ValidForBackup: true,
+		WorkflowValid:  true,
+		Configured:     true,
+		Stages: []service.WorkflowStage{
+			{Scope: "global", Phase: "before", Dir: "/srv/backupd/workflows/global-before"},
+		},
+	}
+
+	out := captureStdout(t, func() { printWorkflowValidation(report) })
+
+	for _, want := range []string{
+		"none discovered",
+		"shell verification:",
+		"a parse error or an error-severity finding is what would refuse a workflow save",
+		"nothing above was executed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("a set with no scripts does not report %q:\n%s", want, out)
+		}
+	}
+}

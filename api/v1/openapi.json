@@ -2199,6 +2199,13 @@
               "$ref": "#/components/schemas/WorkflowLintFinding"
             },
             "description": "The error-severity findings that refused the save, each with its position."
+          },
+          "parse_error_excerpt": {
+            "$ref": "#/components/schemas/WorkflowSourceExcerpt"
+          },
+          "backup_set_id": {
+            "type": "string",
+            "description": "The set whose stage this is, empty for a deployment-wide one. It is here because of what a ROOT change does: a deployment-wide write that moves workflows.root re-resolves every set's stage directories underneath the new root, so the write verifies those too, and a refusal naming a directory without saying whose set it is would send an operator through every backup set they have."
           }
         }
       },
@@ -5833,6 +5840,39 @@
           }
         }
       },
+      "WorkflowSourceLine": {
+        "type": "object",
+        "description": "One line of a hook script, as an editor would number it. The text arrives with control characters removed and its length bounded, at the point it is produced rather than at each surface that draws it: a hook is arbitrary text and this text reaches a browser and a terminal.",
+        "additionalProperties": false,
+        "properties": {
+          "number": {
+            "type": "integer",
+            "description": "The 1-based line number, so it is the number in the gutter of whatever the operator opens the file with."
+          },
+          "text": {
+            "type": "string",
+            "description": "The line itself, inert. A tab is rendered as one space rather than dropped, so the reported column still points at the same character."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether the line was longer than an excerpt carries, so a reader can tell the script from what they are being shown."
+          }
+        }
+      },
+      "WorkflowSourceExcerpt": {
+        "type": "object",
+        "description": "A few of a hook script's own lines, carried beside a position that names one of them: the reported line with one line either side. It exists because a position on its own is a lookup somebody has to perform on a machine they may not be on -- \"BSH003 at 24:10\" sends an operator to a NAS over SSH to read one line. The lines come from the bytes this validation READ AND HASHED rather than from a later re-read, so they cannot disagree with the position beside them. They are the script's own text and never a resolved secret: nothing on the path that produces them resolves one.",
+        "additionalProperties": false,
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowSourceLine"
+            },
+            "description": "The lines, in order, or empty when the position names no line of this script."
+          }
+        }
+      },
       "WorkflowLintFinding": {
         "type": "object",
         "description": "One thing backupd's own shell rules reported about one hook script. These are this product's own checks, carrying its own BSH codes, and they are NOT ShellCheck: ShellCheck is GPL-3.0 and this product is Apache-2.0, so the analysis is implemented here against a Go shell parser's syntax tree rather than shipped as somebody else's tool. The set is deliberately small and conservative; an operator who wants a general shell linter should run one.",
@@ -5863,6 +5903,9 @@
           "message": {
             "type": "string",
             "description": "The rule's sentence: what is wrong, what it does when it goes wrong, and what to write instead. It may quote a variable NAME or a literal from the script -- the script's own text -- and never a resolved secret, because nothing on the path that produces it resolves one."
+          },
+          "excerpt": {
+            "$ref": "#/components/schemas/WorkflowSourceExcerpt"
           }
         }
       },
@@ -5901,6 +5944,9 @@
               "$ref": "#/components/schemas/WorkflowLintFinding"
             },
             "description": "Every finding, in position order, at every severity -- including the ones that do not block a save. A client that was only given the blocking ones could not show an operator the warning they are about to introduce."
+          },
+          "parse_error_excerpt": {
+            "$ref": "#/components/schemas/WorkflowSourceExcerpt"
           }
         }
       },

@@ -463,3 +463,204 @@ func writeGlobalBeforeDir(t *testing.T, svc *BackupService, root string) {
 		t.Fatalf("persistConfig: %v", err)
 	}
 }
+
+// Review BLOCKER 2: a deployment-wide patch that moves workflows.root
+// re-resolves every set's stage directories underneath the NEW root, so
+// it has to verify those too.
+//
+// Without it, moving the root re-points every backup set's hooks at
+// scripts nobody verified, and the gate reports nothing because it only
+// ever looked at the global stages. This drives the exact shape: the set
+// keeps its own before_dir, and the patch moves the root so that name
+// now resolves to a directory holding an unsafe script.
+func TestARootChangeIsRefusedByAPerSetScriptUnderTheNewRoot(t *testing.T) {
+	t.Parallel()
+
+	svc, configPath, root := openWorkflowSaveService(t)
+
+	// The set's own stage, clean under the current root, so configuring
+	// it is allowed.
+	writeHook(t, root, "alpha-before", "dump.remote.sh", "#!/bin/bash", "echo fine")
+	if _, err := svc.UpdateBackupSetWorkflow(context.Background(), "production/alpha", UpdateBackupSetWorkflowRequest{
+		BeforeDir: new("alpha-before"),
+	}); err != nil {
+		t.Fatalf("configuring a clean per-set stage: %v", err)
+	}
+
+	// A second tree, where the SAME relative name holds a script that
+	// must never be saved. Nothing about the set's own block changes.
+	moved := filepath.Join(filepath.Dir(root), "workflows-moved")
+	if err := os.MkdirAll(moved, 0o700); err != nil {
+		t.Fatalf("MkdirAll(moved root): %v", err)
+	}
+	writeHook(t, moved, "alpha-before", "dump.remote.sh", "#!/bin/bash", "rm -rf $STAGING/")
+
+	_, err := svc.UpdateWorkflowSettings(context.Background(), UpdateWorkflowSettingsRequest{
+		Root: new(moved),
+	})
+
+	if !errors.Is(err, ErrWorkflowScriptRefused) {
+		t.Fatalf("moving the root onto a tree holding an unsafe per-set hook = %v, want ErrWorkflowScriptRefused", err)
+	}
+
+	var refusal *WorkflowScriptRefusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("the refusal carries no findings: %T", err)
+	}
+	if len(refusal.Scripts) != 1 {
+		t.Fatalf("refusal covers %d script(s), want the one per-set script: %+v", len(refusal.Scripts), refusal.Scripts)
+	}
+	if got := refusal.Scripts[0]; got.BackupSetID != "production/alpha" || got.Scope != "set" {
+		t.Errorf("refusal names %+v, want production/alpha's own set-scoped stage", got)
+	}
+	if !strings.Contains(err.Error(), "production/alpha") {
+		t.Errorf("the message does not say whose set it is: %v", err)
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if reloaded.Workflows.Root == moved {
+		t.Error("a refused root change was written to disk")
+	}
+}
+
+// And the same patch is not refused when the new tree is sound, so the
+// test above is exercising the gate rather than a root change that
+// always fails.
+func TestARootChangeSucceedsWhenEverySetsHooksAreSoundUnderTheNewRoot(t *testing.T) {
+	t.Parallel()
+
+	svc, configPath, root := openWorkflowSaveService(t)
+	writeHook(t, root, "alpha-before", "dump.remote.sh", "#!/bin/bash", "echo fine")
+	if _, err := svc.UpdateBackupSetWorkflow(context.Background(), "production/alpha", UpdateBackupSetWorkflowRequest{
+		BeforeDir: new("alpha-before"),
+	}); err != nil {
+		t.Fatalf("configuring a clean per-set stage: %v", err)
+	}
+
+	moved := filepath.Join(filepath.Dir(root), "workflows-sound")
+	if err := os.MkdirAll(moved, 0o700); err != nil {
+		t.Fatalf("MkdirAll(moved root): %v", err)
+	}
+	writeHook(t, moved, "alpha-before", "dump.remote.sh", "#!/usr/bin/env bash", "set -euo pipefail", "echo moved")
+
+	if _, err := svc.UpdateWorkflowSettings(context.Background(), UpdateWorkflowSettingsRequest{
+		Root: new(moved),
+	}); err != nil {
+		t.Fatalf("moving the root onto a sound tree was refused: %v", err)
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if reloaded.Workflows.Root != moved {
+		t.Errorf("root = %q on disk, want %q", reloaded.Workflows.Root, moved)
+	}
+}
+
+// Review MAJOR 1: the two things that observe a script's syntax -- this
+// product's parser, in process, and the executor's `bash -n` -- report
+// under the same two check ids, and the report must carry ONE row per
+// script at the worst severity rather than a pass beside a refusal.
+func TestTheSyntaxChecksCarryOneRowPerScriptAtTheWorstSeverity(t *testing.T) {
+	t.Parallel()
+
+	svc, _, root := openWorkflowSaveService(t)
+	writeHook(t, root, "global-before", "clean.local.sh", "#!/bin/bash", "rm -rf $STAGING/tmp")
+	writeHook(t, root, "global-before", "fine.local.sh", "#!/usr/bin/env bash", "set -euo pipefail", "echo ok")
+	writeGlobalBeforeDir(t, svc, root)
+
+	report, err := svc.ValidateWorkflow(context.Background(), "production/alpha")
+	if err != nil {
+		t.Fatalf("ValidateWorkflow: %v", err)
+	}
+
+	seen := map[string][]WorkflowFinding{}
+	for _, f := range report.Findings {
+		if f.Check != WorkflowCheckLocalBashSyntax && f.Check != WorkflowCheckRemoteBashSyntax {
+			continue
+		}
+		seen[f.Check+"|"+f.Script] = append(seen[f.Check+"|"+f.Script], f)
+	}
+
+	for key, findings := range seen {
+		if len(findings) != 1 {
+			t.Errorf("%s carries %d rows, want exactly one at the worst severity: %+v", key, len(findings), findings)
+		}
+	}
+
+	// And the worst severity is the one that survives: the script with
+	// the blocking finding must not also be reported as passing.
+	var broken []WorkflowFinding
+	for _, f := range report.Findings {
+		if f.Check == WorkflowCheckLocalBashSyntax && f.Script == "clean.local.sh" {
+			broken = append(broken, f)
+		}
+	}
+	if len(broken) != 1 || broken[0].Severity != WorkflowSeverityError {
+		t.Errorf("the blocking script's syntax rows = %+v, want exactly one error row", broken)
+	}
+
+	// The aggregate "N hook(s) parse" row is dropped once there are
+	// per-script rows: it either repeats them or contradicts them.
+	for _, f := range report.Findings {
+		if f.Check == WorkflowCheckLocalBashSyntax && f.Script == "" && f.Severity == WorkflowSeverityOK {
+			t.Errorf("a check-level pass survived beside per-script rows: %+v", f)
+		}
+	}
+}
+
+// The excerpt review MAJOR 2 asks for: a finding carries the script's own
+// line, inert and bounded, from the bytes this validation hashed.
+func TestEachFindingCarriesItsOwnSourceLine(t *testing.T) {
+	t.Parallel()
+
+	svc, _, root := openWorkflowSaveService(t)
+	writeHook(t, root, "global-before", "clean.local.sh",
+		"#!/bin/bash",
+		"rm -rf $STAGING/tmp",
+		"echo \x1b]0;pwned\x07done",
+	)
+	writeGlobalBeforeDir(t, svc, root)
+
+	report, err := svc.ValidateWorkflow(context.Background(), "production/alpha")
+	if err != nil {
+		t.Fatalf("ValidateWorkflow: %v", err)
+	}
+	if len(report.Scripts) != 1 {
+		t.Fatalf("scripts = %+v", report.Scripts)
+	}
+
+	var found bool
+	for _, f := range report.Scripts[0].Lint.Findings {
+		if f.Code != "BSH003" {
+			continue
+		}
+		found = true
+
+		if len(f.Excerpt.Lines) == 0 {
+			t.Fatalf("BSH003 carries no source excerpt: %+v", f)
+		}
+
+		var onTheReportedLine string
+		for _, line := range f.Excerpt.Lines {
+			if line.Number == f.Line {
+				onTheReportedLine = line.Text
+			}
+			for _, r := range line.Text {
+				if r < 0x20 || r == 0x7f {
+					t.Errorf("the excerpt carries a control character a terminal would act on: %q", line.Text)
+				}
+			}
+		}
+		if !strings.Contains(onTheReportedLine, "rm -rf") {
+			t.Errorf("the excerpt's line %d = %q, want the line the finding is about", f.Line, onTheReportedLine)
+		}
+	}
+	if !found {
+		t.Fatalf("no BSH003 finding on the script: %+v", report.Scripts[0].Lint)
+	}
+}

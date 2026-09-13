@@ -2333,6 +2333,68 @@ export interface WorkflowFinding {
 }
 
 /**
+ * A few of one hook script's OWN lines, carried beside a position that
+ * names one of them: the reported line with one line either side (#906).
+ *
+ * # Why a report of somebody's script carries part of it at all
+ *
+ * A position on its own is not a finding, it is a lookup. "BSH003 at
+ * 24:10" tells an operator to go and open the file, and the file is on
+ * the machine the hook runs on — which for a `*.remote.sh` hook is NOT
+ * the machine this browser is on, and is quite often a source host behind
+ * a jump host that somebody has to be on a VPN to reach. The operator who
+ * has just had a save refused is exactly the operator who cannot afford
+ * that errand, so the report carries the line it is talking about and the
+ * surface draws a caret under the column, which is the whole of what the
+ * lookup would have produced.
+ *
+ * # Why this is safe to render, which a field holding somebody's script
+ * has to answer before it is allowed to exist
+ *
+ *   - it arrives INERT. The service produces it from the same bytes the
+ *     verification read and hashed, with control characters already
+ *     removed and each line already bounded. No surface sanitizes it
+ *     again and no surface may assume it needs to: two sanitizers on one
+ *     value is how they drift and how one of them quietly stops being the
+ *     safe one. A tab arrives as a single space, deliberately, so the
+ *     reported COLUMN still counts to the same place — which is what
+ *     makes a caret drawable under it at all.
+ *   - it is the script's own text and never a resolved value. Nothing on
+ *     the path that produces it resolves an environment variable or a
+ *     secret reference, so `$PGPASSWORD` in a hook reaches this field as
+ *     the eleven characters somebody typed. That is the point rather than
+ *     a limitation: the finding is about the text, and this product has
+ *     no read anywhere that carries a resolved secret.
+ *   - it comes from the bytes that were HASHED, not from a later re-read.
+ *     An excerpt fetched afterwards could disagree with the position
+ *     beside it — somebody edits the hook between the check and the
+ *     render — and a caret under the wrong line is worse than no caret.
+ *
+ * An excerpt with no lines is the ordinary absent case, not an error: an
+ * engine that predates this field, or a finding the service chose to
+ * carry no source for. A surface draws nothing extra for it rather than
+ * an empty box.
+ */
+export interface WorkflowSourceExcerpt {
+  lines: WorkflowSourceLine[];
+}
+
+/**
+ * One line of a hook script, as an editor would number it.
+ *
+ * `truncated` is carried per line rather than left to a surface to infer
+ * from a length, because the two are not the same statement: a surface
+ * that cut at its own bound would be showing an operator a line their
+ * file does not contain, with a caret under a column of it that is no
+ * longer where the rule fired. The service cuts, and says it cut.
+ */
+export interface WorkflowSourceLine {
+  number: number;
+  text: string;
+  truncated: boolean;
+}
+
+/**
  * One thing backupd's OWN shell rules reported about one hook script
  * (#906).
  *
@@ -2354,6 +2416,11 @@ export interface WorkflowLintFinding {
   line: number;
   col: number;
   message: string;
+  /** The reported line with one line either side, or no lines at all
+   *  when the service carried none. A surface draws the caret under
+   *  `col` of the line numbered `line`: the text is column-aligned by
+   *  construction, which is why it may be. */
+  excerpt: WorkflowSourceExcerpt;
 }
 
 /**
@@ -2385,6 +2452,11 @@ export interface WorkflowScriptLint {
   parseError?: string;
   parseErrorLine?: number;
   parseErrorCol?: number;
+  /** The line the parser gave up on, with one either side. Its own
+   *  field and not a finding's, because a parse error is not a finding:
+   *  it is the statement that the file is not a shell program, and the
+   *  findings list beside it is empty for that reason. */
+  parseErrorExcerpt: WorkflowSourceExcerpt;
   findings: WorkflowLintFinding[];
 }
 
@@ -2409,6 +2481,19 @@ export interface WorkflowBlockingScript {
   parseError?: string;
   parseErrorLine?: number;
   parseErrorCol?: number;
+  parseErrorExcerpt: WorkflowSourceExcerpt;
+  /** Which backup set's stage directory this script came out of, when
+   *  the refusal is about a set at all — a global stage belongs to no
+   *  set and carries none.
+   *
+   *  It exists because a deployment-wide write can be refused over a set
+   *  the operator was not editing: changing `root` re-resolves EVERY
+   *  set's stage directories under the new root, so the gate verifies
+   *  every set's stages and may come back holding a script from one of
+   *  them. "20-dump.remote.sh in before" on its own would not say whose,
+   *  and an operator who had just edited one field would go looking in
+   *  the wrong set's directory. */
+  backupSetId?: string;
   findings: WorkflowLintFinding[];
 }
 

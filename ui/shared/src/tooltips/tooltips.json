@@ -1869,7 +1869,15 @@
   },
   "workflow.set.finding-severity": {
     "label": "This script's findings",
-    "html": "What the shell verification made of this one script. <strong>Not examined</strong> is never a pass — nothing read those bytes. <strong>Does not parse</strong> means the file is not a shell program, so nothing in it would run. Otherwise the worst severity present is shown: errors, then warnings, then notes. Select it to read every finding with its line and column."
+    "html": "What the shell verification made of this one script. <strong>Not examined</strong> is never a pass — nothing read those bytes. <strong>Does not parse</strong> means the file is not a shell program, so nothing in it would run. Otherwise the worst severity present is shown, with a count of the findings it does not account for: <em>1 error, 4 more</em>. Select it to read every finding with its line, its column and the source it is about."
+  },
+  "workflow.source-excerpt": {
+    "label": "Source excerpt",
+    "html": "The script's own line, with one either side and a caret under the column the rule fired at. It is the text this verification <strong>read and hashed</strong>, not a later re-read, so it cannot disagree with the position beside it. Inert text on the surface the run terminal uses, never an editor: nothing in this product writes somebody's hook. A line longer than the excerpt carries is cut and says so."
+  },
+  "workflow.source-truncated": {
+    "label": "Line cut here",
+    "html": "This line is longer than the excerpt carries, so it was cut where the <code>…</code> is rather than shown as though that were the end of it. The rest of the line is in the file; nothing in this product changed it."
   },
   "workflow.set.save-refused": {
     "label": "This set's configuration was not saved",

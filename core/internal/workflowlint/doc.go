@@ -60,10 +60,16 @@
 // A hook directory is a place another program's output can end up, so
 // nothing here may hang or exhaust memory:
 //
-//   - MaxScriptBytes bounds the input before the parser sees it. The
-//     parser is recursive descent, a stack overflow in Go is fatal and
-//     cannot be recovered with a deferred recover(), so a bound on the
-//     input is the only thing that makes a megabyte of "$(" safe;
+//   - MaxNestingDepth is measured by a linear pre-scan BEFORE the parser
+//     is handed anything, because the parser is recursive descent with no
+//     depth limit of its own and a stack overflow in Go is FATAL: not a
+//     panic, not recoverable with a deferred recover(), and it takes the
+//     process with it. A size bound does not imply a depth bound -- a
+//     megabyte of "$(" is a legal script at the default script-size
+//     limit -- so the depth is the bound that makes parsing safe, and
+//     over-counting in that pre-scan is the safe direction because it can
+//     only produce "not examined";
+//   - MaxScriptBytes bounds the WORK: how much of a file is read at all;
 //   - nothing is executed, nothing is resolved, no file other than the
 //     bytes handed in is read, and no network call is made, so the
 //     analysis cannot be made to do work by the thing it is analysing.

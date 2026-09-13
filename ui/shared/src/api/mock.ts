@@ -3035,6 +3035,7 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
           lint: {
             examined: true,
             parsed: true,
+            parseErrorExcerpt: { lines: [] },
             findings: [
               {
                 code: "BSH005",
@@ -3045,7 +3046,17 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
                   "this variable expansion is not quoted inside `[ ... ]`. When it is empty the " +
                   "test sees one operand fewer than it was written for and fails with a syntax " +
                   "error rather than a false -- which is the case the condition is usually there " +
-                  "to handle. Put it in double quotes, or use `[[ ... ]]`, which does not split"
+                  "to handle. Put it in double quotes, or use `[[ ... ]]`, which does not split",
+                // Column 9 of line 11 is the `$`, which is what makes the
+                // caret in the panel worth drawing: the position alone
+                // does not say WHICH expansion on a line with two.
+                excerpt: {
+                  lines: [
+                    { number: 10, text: "# only freeze when the caller named a database", truncated: false },
+                    { number: 11, text: "if [ -n $DB_NAME ]; then", truncated: false },
+                    { number: 12, text: "  mysql -e 'FLUSH TABLES WITH READ LOCK'", truncated: false }
+                  ]
+                }
               }
             ]
           }
@@ -3061,7 +3072,7 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
           sha256: "b70c1d5546e2a0f9c3812d7b5eaf4019c26d83bb7f1ea4c095d2386af17c0e9b",
           sizeBytes: 2_944,
           timeoutMs: 300_000,
-          lint: { examined: true, parsed: true, findings: [] }
+          lint: { examined: true, parsed: true, parseErrorExcerpt: { lines: [] }, findings: [] }
         }
       ],
       findings: [
@@ -3127,6 +3138,17 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
             parseError: "unexpected EOF while looking for matching `\"'",
             parseErrorLine: 18,
             parseErrorCol: 24,
+            // Column 24 of line 18 is the quote nothing closes. A parse
+            // error is the one verdict whose excerpt an operator cannot
+            // get any other way from this product: the file has no
+            // findings, because no rule ran on a tree that does not exist.
+            parseErrorExcerpt: {
+              lines: [
+                { number: 17, text: "  # move the rendered config into place", truncated: false },
+                { number: 18, text: "  mv \"$STAGE/auth.yml\" \"$OUT_DIR", truncated: false },
+                { number: 19, text: "fi", truncated: false }
+              ]
+            },
             findings: []
           }
         },
@@ -3144,6 +3166,7 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
           lint: {
             examined: true,
             parsed: true,
+            parseErrorExcerpt: { lines: [] },
             findings: [
               {
                 code: "BSH004",
@@ -3155,7 +3178,14 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
                   "pipeline's exit status is its LAST command's, so a failure earlier in this " +
                   "pipeline -- the dump, not the compressor -- leaves `set -e` with nothing to " +
                   "trip on: the script continues and the hook reports success. Write " +
-                  "`set -euo pipefail`, or check ${PIPESTATUS[@]}"
+                  "`set -euo pipefail`, or check ${PIPESTATUS[@]}",
+                excerpt: {
+                  lines: [
+                    { number: 5, text: "# push the config to the standby", truncated: false },
+                    { number: 6, text: "pg_dump \"$DB\" | gzip -9 > \"$OUT\"", truncated: false },
+                    { number: 7, text: "echo done", truncated: false }
+                  ]
+                }
               }
             ]
           }
@@ -3225,6 +3255,7 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
         lint: {
           examined: true,
           parsed: true,
+          parseErrorExcerpt: { lines: [] },
           findings: [
             {
               code: "BSH001",
@@ -3235,7 +3266,25 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
                 "this variable expansion is not quoted, so the shell splits its value on " +
                 "whitespace and expands any glob characters in it before the command sees it: a " +
                 "path with a space in it becomes two arguments, and one with a `*` becomes " +
-                "whatever that matched. Put it in double quotes"
+                "whatever that matched. Put it in double quotes",
+              // The TRUNCATED line lives here, on the line after the one
+              // the finding is about: a real hook has a 300-character
+              // comment in it somewhere, and the panel has to be
+              // developable against one rather than against four tidy
+              // lines that all fit.
+              excerpt: {
+                lines: [
+                  { number: 13, text: "# ship it while the source is still frozen", truncated: false },
+                  { number: 14, text: "  rsync -a $dest \"$REMOTE_HOST:/srv/\"", truncated: false },
+                  {
+                    number: 15,
+                    text:
+                      "  # NOTE: keep this in step with the retention job, which expects the " +
+                      "same layout under /srv and will silently skip anything it does not",
+                    truncated: true
+                  }
+                ]
+              }
             },
             {
               code: "BSH003",
@@ -3246,7 +3295,14 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
                 "this recursive, forced delete targets /var whenever the expansion in it is " +
                 "empty, because an unset or empty variable leaves the literal path behind. That " +
                 "is a root-level directory. Write ${NAME:?} so the script fails instead, give " +
-                "the expansion a default, or put `set -u` at the top of the script"
+                "the expansion a default, or put `set -u` at the top of the script",
+              excerpt: {
+                lines: [
+                  { number: 11, text: "# clear anything the last run left behind", truncated: false },
+                  { number: 12, text: "rm -rf \"$STAGING/var\"", truncated: false },
+                  { number: 13, text: "# ship it while the source is still frozen", truncated: false }
+                ]
+              }
             },
             {
               code: "BSH006",
@@ -3257,7 +3313,20 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
                 "this script has no #! interpreter line. This product runs a hook by handing " +
                 "its bytes to bash, so this changes nothing about how it runs here; it changes " +
                 "what happens when somebody runs the file by hand to test it. Start the file " +
-                "with #!/usr/bin/env bash"
+                "with #!/usr/bin/env bash",
+              // Line 1 has no line before it, which is the shape a
+              // surface has to survive: the excerpt is the reported line
+              // with one either side WHERE THERE IS ONE.
+              excerpt: {
+                lines: [
+                  {
+                    number: 1,
+                    text: "# 10-flush-cache.remote.sh -- flush the application cache",
+                    truncated: false
+                  },
+                  { number: 2, text: "set -e", truncated: false }
+                ]
+              }
             },
             {
               code: "BSH002",
@@ -3268,7 +3337,14 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
                 "this cd does not check whether it worked, and nothing in this script does " +
                 "either. When it fails -- the directory is gone, the mount is not there -- the " +
                 "commands after it run in the directory the script was already in, against the " +
-                "wrong tree. Write `cd ... || exit 1`, or put `set -e` at the top of the script"
+                "wrong tree. Write `cd ... || exit 1`, or put `set -e` at the top of the script",
+              excerpt: {
+                lines: [
+                  { number: 8, text: "# everything below runs inside the staging tree", truncated: false },
+                  { number: 9, text: "cd \"$STAGING\"", truncated: false },
+                  { number: 10, text: "", truncated: false }
+                ]
+              }
             }
           ]
         }
@@ -3284,7 +3360,7 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
         sizeBytes: 2_902,
         timeoutMs: 120_000,
         // The CLEAN one. Read, parsed, nothing reported.
-        lint: { examined: true, parsed: true, findings: [] }
+        lint: { examined: true, parsed: true, parseErrorExcerpt: { lines: [] }, findings: [] }
       },
       {
         stepId: "step_quiesce",
@@ -3305,6 +3381,10 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
             "this script is 4.1 MB, larger than the 1 MB the shell verification reads. Nothing " +
             "looked at its contents",
           parsed: false,
+          // Nothing read these bytes, so there is no line to show. An
+          // excerpt here would be this product quoting a file it never
+          // opened.
+          parseErrorExcerpt: { lines: [] },
           findings: []
         }
       },
@@ -3329,6 +3409,13 @@ function workflowValidationFor(backupSetId: string): WorkflowValidation {
           parseError: "unexpected EOF while looking for matching `\"'",
           parseErrorLine: 18,
           parseErrorCol: 24,
+          parseErrorExcerpt: {
+            lines: [
+              { number: 17, text: "  if [ -n \"$HOOK_URL\" ]; then", truncated: false },
+              { number: 18, text: "    curl -fsSL -X POST \"$HOOK_URL", truncated: false },
+              { number: 19, text: "  fi", truncated: false }
+            ]
+          },
           findings: []
         }
       }
@@ -3448,6 +3535,16 @@ const WORKFLOW_BROKEN_DIR = "/srv/hooks/known-broken";
  * the one finding this product refuses a save over. The warnings those
  * scripts also carry are deliberately NOT here: a refusal that listed
  * them would read as though the warnings had refused it.
+ *
+ * The second one carries a `backupSetId`, which is the case #906's review
+ * found nothing could draw: a deployment-wide write re-resolves every
+ * backup set's stage directories, so the gate visits them and a refusal
+ * can be about a set the operator was not editing. A mock that only ever
+ * produced global-stage refusals would leave that banner line
+ * undevelopable.
+ *
+ * Both carry the excerpt the real service now sends — the reported line
+ * with one either side, from the bytes it read and hashed.
  */
 function workflowScriptRefusal(dir: string, scope: "global" | "set", phase: "before" | "after"): BackupdError {
   const blocking: WorkflowBlockingScript[] = [
@@ -3459,6 +3556,13 @@ function workflowScriptRefusal(dir: string, scope: "global" | "set", phase: "bef
       parseError: "unexpected EOF while looking for matching `\"'",
       parseErrorLine: 18,
       parseErrorCol: 24,
+      parseErrorExcerpt: {
+        lines: [
+          { number: 17, text: "  # quiesce before anything else touches the volume", truncated: false },
+          { number: 18, text: "  mysql -e \"FLUSH TABLES WITH READ LOCK", truncated: false },
+          { number: 19, text: "fi", truncated: false }
+        ]
+      },
       findings: []
     },
     {
@@ -3466,6 +3570,8 @@ function workflowScriptRefusal(dir: string, scope: "global" | "set", phase: "bef
       dir,
       scope,
       phase,
+      backupSetId: WORKFLOW_SFTP_SET,
+      parseErrorExcerpt: { lines: [] },
       findings: [
         {
           code: "BSH003",
@@ -3476,7 +3582,14 @@ function workflowScriptRefusal(dir: string, scope: "global" | "set", phase: "bef
             "this recursive, forced delete targets /var whenever the expansion in it is empty, " +
             "because an unset or empty variable leaves the literal path behind. That is a " +
             "root-level directory. Write ${NAME:?} so the script fails instead, give the " +
-            "expansion a default, or put `set -u` at the top of the script"
+            "expansion a default, or put `set -u` at the top of the script",
+          excerpt: {
+            lines: [
+              { number: 11, text: "# clear anything the last run left behind", truncated: false },
+              { number: 12, text: "rm -rf \"$STAGING/var\"", truncated: false },
+              { number: 13, text: "mkdir -p \"$STAGING/var\"", truncated: false }
+            ]
+          }
         }
       ]
     }

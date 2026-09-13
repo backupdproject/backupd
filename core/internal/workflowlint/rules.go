@@ -1,6 +1,9 @@
 package workflowlint
 
 import (
+	"cmp"
+	"path"
+	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -91,11 +94,93 @@ func check(file *syntax.File, src []byte) []Finding {
 	return r.findings
 }
 
-// shellOpts is what the script did to its own failure handling.
+// shellOpts is what the script did to its own failure handling: the
+// ordered list of `set` decisions rather than a set of booleans.
+//
+// Order is the whole point, because `set` is a statement and not a
+// declaration. `set -e` protects what comes after it and nothing that
+// came before, and `set +e` takes the protection away again. A pair of
+// booleans -- what this used to be, because nothing here ever wrote
+// false -- reads `set -e; set +e` as a protected script and silences
+// three rules over a file whose second line turned the protection off.
 type shellOpts struct {
-	errexit  bool // set -e
-	nounset  bool // set -u
-	pipefail bool // set -o pipefail
+	// events is every option change the file makes, in source order.
+	events []optionEvent
+
+	// enabledSomewhere is the fallback for a command with no `set`
+	// before it at all. See enabledAt.
+	enabledSomewhere [numShellOptions]bool
+}
+
+// The options the rules consult.
+//
+// `set -u` is deliberately not among them. It used to be, and it was the
+// wrong question to ask: see recursiveRemove, the only rule that ever
+// asked it.
+type shellOption int
+
+const (
+	optErrexit  shellOption = iota // set -e, set -o errexit
+	optPipefail                    // set -o pipefail
+
+	numShellOptions
+)
+
+// optionEvent is one `set` turning one option on or off.
+type optionEvent struct {
+	// offset is where the `set` word is in the source, which is what
+	// "before this command" is measured against.
+	offset uint
+
+	opt    shellOption
+	enable bool
+
+	// unconditional says this `set` is a top-level statement of the
+	// file: it runs, once, in the order it is written. A `set` inside an
+	// `if`, a function body or a subshell is not -- the walk that found
+	// it has no control flow and cannot say whether it runs at all, and
+	// a subshell's options do not outlive the subshell.
+	unconditional bool
+}
+
+// enabledAt reports whether opt is in force at pos.
+//
+// The honest limitation of reading a tree rather than running it is that
+// nothing here knows which statements execute. It is resolved
+// asymmetrically, and the asymmetry is chosen so that uncertainty never
+// produces a finding:
+//
+//   - an ENABLING `set` counts wherever it is written, at any depth. A
+//     `set -e` inside a function is a script protecting itself, and
+//     treating it as absent would report a script that has;
+//   - a DISABLING `set` counts only when it is unconditional, and only
+//     for the commands after it. In `set -u; if x; then set +u; fi; rm
+//     -rf "$D/tmp"` the protection stands, because the `set +u` may
+//     never run and the finding it would unlock is a refused save;
+//   - a command with no `set` before it falls back to whether the file
+//     enables the option anywhere. That is the shape where source order
+//     and execution order genuinely differ: `main() { cd /srv; }` above
+//     `set -e; main`, where the `cd` is written before the `set -e`
+//     that will be in force when it runs.
+func (o shellOpts) enabledAt(opt shellOption, pos syntax.Pos) bool {
+	state, decided := false, false
+
+	for _, ev := range o.events {
+		if ev.offset >= pos.Offset() {
+			break
+		}
+		if ev.opt != opt || (!ev.enable && !ev.unconditional) {
+			continue
+		}
+
+		state, decided = ev.enable, true
+	}
+
+	if decided {
+		return state
+	}
+
+	return o.enabledSomewhere[opt]
 }
 
 // rules accumulates one script's findings.
@@ -104,8 +189,10 @@ type rules struct {
 	opts     shellOpts
 
 	// guarded holds the statements whose failure the script DOES notice:
-	// the left operand of `&&`/`||`, a condition of `if`/`while`/`until`,
-	// and a negated statement.
+	// the left operand of `&&`/`||`, a negated statement, and the leaf
+	// of an `if`/`while`/`until` condition that actually decides its
+	// status -- which is not every statement in that condition. See
+	// collectGuarded.
 	guarded map[syntax.Node]bool
 
 	// pipelineReported keeps BSH004 to one finding. The rule is about the
@@ -150,6 +237,14 @@ func (r *rules) shebang(src []byte) {
 
 // collectGuarded records every statement whose failure the script
 // notices.
+//
+// For `&&`, `||` and `!` that is a property of the operator. For a
+// condition it is a property of the LIST, and this used to get it wrong
+// in both directions: `if a; b; then` runs both and branches on b's
+// status alone, so a failing `a` there is exactly as unnoticed as a
+// failing `a` on a line of its own, and marking every statement of the
+// condition silenced BSH002 on `if cd /missing; echo ready; then` --
+// which is the shape the rule exists for.
 func (r *rules) collectGuarded(file *syntax.File) {
 	syntax.Walk(file, func(node syntax.Node) bool {
 		switch n := node.(type) {
@@ -161,13 +256,9 @@ func (r *rules) collectGuarded(file *syntax.File) {
 				r.guarded[n.X] = true
 			}
 		case *syntax.IfClause:
-			for _, s := range n.Cond {
-				r.guarded[s] = true
-			}
+			r.guardCondition(n.Cond)
 		case *syntax.WhileClause:
-			for _, s := range n.Cond {
-				r.guarded[s] = true
-			}
+			r.guardCondition(n.Cond)
 		case *syntax.Stmt:
 			// `! cmd` is a test of cmd's status.
 			if n.Negated {
@@ -179,6 +270,53 @@ func (r *rules) collectGuarded(file *syntax.File) {
 	})
 }
 
+// guardCondition marks the statements of an `if`/`while`/`until`
+// condition whose exit status the construct branches on.
+//
+// A condition is a LIST and its status is its last statement's. Every
+// statement before that one runs for its effects and its failure is
+// discarded, which is the same thing BSH002 says about a bare line.
+func (r *rules) guardCondition(cond []*syntax.Stmt) {
+	if len(cond) == 0 {
+		return
+	}
+
+	r.guardStatusLeaves(cond[len(cond)-1])
+}
+
+// guardStatusLeaves marks the statements inside one statement that can
+// decide its exit status.
+//
+//   - `a && b`: if a fails the status IS a's failure, and if a succeeds
+//     the status is b's. Both are branched on, so both are marked;
+//   - `a || b`: a's failure is what makes b run and is then discarded,
+//     so b is the leaf. a is marked anyway, by the `||` case above --
+//     the same claim from the other direction, and the reason the
+//     operator cases here need not repeat it;
+//   - `a | b`: a pipeline's status is its LAST command's. That is the
+//     whole of BSH004's complaint and it is true here too, so only b
+//     decides the condition.
+//
+// Anything else -- a simple command, a subshell, a `[[ ]]` -- is the
+// leaf itself.
+func (r *rules) guardStatusLeaves(stmt *syntax.Stmt) {
+	if bin, ok := stmt.Cmd.(*syntax.BinaryCmd); ok {
+		switch bin.Op {
+		case syntax.AndStmt:
+			r.guardStatusLeaves(bin.X)
+			r.guardStatusLeaves(bin.Y)
+
+			return
+		case syntax.OrStmt, syntax.Pipe, syntax.PipeAll:
+			r.guardStatusLeaves(bin.Y)
+
+			return
+		}
+	}
+
+	r.guarded[stmt] = true
+}
+
 func (r *rules) walk(file *syntax.File) {
 	syntax.Walk(file, func(node syntax.Node) bool {
 		switch n := node.(type) {
@@ -186,6 +324,8 @@ func (r *rules) walk(file *syntax.File) {
 			if call, ok := n.Cmd.(*syntax.CallExpr); ok {
 				r.call(n, call)
 			}
+		case *syntax.DeclClause:
+			r.declaration(n)
 		case *syntax.BinaryCmd:
 			if n.Op == syntax.Pipe || n.Op == syntax.PipeAll {
 				r.pipeline(n)
@@ -221,6 +361,37 @@ func (r *rules) call(stmt *syntax.Stmt, call *syntax.CallExpr) {
 	r.unquotedArguments(call)
 }
 
+// declaration is BSH001 over a declaration builtin's arguments.
+//
+// `export`, `readonly`, `declare`, `typeset` and `local` are not
+// CallExprs in bash: the parser gives them their own node, whose
+// arguments arrive already sorted into assignments and naked words. That
+// distinction is exactly the one this rule needs, and it is why this is
+// a separate walk case rather than a list of command names inside
+// unquotedArguments:
+//
+//   - an assignment's right-hand side is not word-split. `export
+//     NAME=$x` is as safe as the bare `NAME=$x` the rule already
+//     excludes, and telling an operator to quote it is advice that
+//     changes nothing on the line they are most likely to have copied
+//     from a manual;
+//   - a naked argument IS an ordinary word. `export $names` splits on
+//     whitespace and globs exactly like `tar $args`, and it went
+//     unreported for as long as these commands were left out
+//     altogether.
+//
+// A flag is a naked argument too (`declare -r NAME=$x` holds `-r` as
+// one), which costs nothing: a flag is a literal and holds no expansion.
+func (r *rules) declaration(decl *syntax.DeclClause) {
+	for _, arg := range decl.Args {
+		if !arg.Naked || arg.Value == nil {
+			continue
+		}
+
+		r.unquotedWord(arg.Value)
+	}
+}
+
 // uncheckedCd reports a directory change whose failure nothing notices.
 //
 // The shape it is about: `cd /srv/data` followed by `rm -rf ./old`. When
@@ -243,7 +414,7 @@ func (r *rules) call(stmt *syntax.Stmt, call *syntax.CallExpr) {
 // needs a second thing to go wrong, and it is a line that is in a great
 // many working hooks.
 func (r *rules) uncheckedCd(stmt *syntax.Stmt, call *syntax.CallExpr, name string) {
-	if r.opts.errexit || r.guarded[stmt] || len(call.Args) < 2 {
+	if r.opts.enabledAt(optErrexit, call.Pos()) || r.guarded[stmt] || len(call.Args) < 2 {
 		return
 	}
 
@@ -265,53 +436,104 @@ func (r *rules) uncheckedCd(stmt *syntax.Stmt, call *syntax.CallExpr, name strin
 //   - the command has to be `rm` with BOTH recursion and force, which is
 //     what makes an accidental target a silent deletion rather than a
 //     prompt or an error;
-//   - the word has to hold an expansion with no default and no error
-//     branch. `${DIR:?}` (fail if unset), `${DIR:-/srv/fallback}` and
-//     friends have already handled this and are not reported;
-//   - the word's literal text, with every expansion removed, has to be
-//     an absolute path of at most one component. `/`, `/tmp`, `/*` are
-//     reported; `/srv/backupd/cache/$NAME` is NOT, because an empty NAME
-//     there deletes a directory the deployment owns rather than a
-//     root-level one;
-//   - the script must not use `set -u` (or `set -o nounset`), which
-//     aborts on an unset variable and therefore makes the whole class
-//     impossible.
+//   - the word has to hold an expansion that can produce NOTHING.
+//     `${DIR:?}` aborts, `${DIR:-/srv/fallback}` cannot be empty and
+//     `${#list}` is a number, so none of the three is reported;
+//   - the word's literal text, with every expansion that can vanish
+//     removed and the result cleaned of `.` and `..`, has to be an
+//     absolute path of at most one component. `/`, `/tmp`, `/*` and
+//     `"$ROOT/var/../tmp"` are reported; `/srv/backupd/cache/$NAME` is
+//     NOT, because an empty NAME there deletes a directory the
+//     deployment owns rather than a root-level one.
+//
+// # Why `set -u` is not an exemption
+//
+// This rule used to return early on a script with `set -u` or `set -o
+// nounset`, reasoning that nounset aborts on an unset variable and
+// therefore makes the whole class impossible. It does not. nounset
+// aborts on an UNSET parameter and says nothing about one that is SET to
+// the empty string, so
+//
+//	set -u; STAGING=; rm -rf "$STAGING/tmp"
+//
+// deletes /tmp with the option in force. Asked per expansion -- would
+// nounset abort THIS one? -- the answer is no for every name a script
+// can assign, which is every name this rule sees; the expansions nounset
+// would abort on are unset ones, and a variable that is merely empty
+// reaches rm either way. So the option is not consulted, and the remedy
+// in the message no longer offers it.
+//
+// # Two deliberate silences
+//
+// Both in the direction of not refusing a save over an arguable shape:
+//
+//   - `${NAME?}` and `${NAME?message}` are read as guards even though
+//     the non-colon form aborts only when NAME is unset, so a NAME set
+//     to the empty string still collapses. A script that wrote `?` has
+//     said out loud that the variable must be there, and an error on it
+//     would be this product arguing about the difference between unset
+//     and empty in the one place where being wrong costs somebody a
+//     save;
+//   - nothing here does dataflow, so `D=/srv/stage; rm -rf "$D/tmp"` IS
+//     reported. The rule reads one word and not the script. That is the
+//     aggressive half of the policy and it stays: the remedy it prints
+//     is one character long and correct for the reported word.
 func (r *rules) recursiveRemove(call *syntax.CallExpr) {
-	if r.opts.nounset {
-		return
+	recursive, force := false, false
+
+	var targets []*syntax.Word
+
+	endOfOptions := false
+	for _, arg := range call.Args[1:] {
+		word := literal(arg)
+
+		switch {
+		case endOfOptions || len(word) < 2 || word[0] != '-':
+			targets = append(targets, arg)
+		case word == "--":
+			// `rm -- -rf "$D/tmp"` deletes a file named `-rf` and a
+			// path: after an exact `--` every word is an operand,
+			// however much it looks like a flag. Reading `-rf` there as
+			// recursion and force made this rule refuse a save over a
+			// delete that is neither.
+			endOfOptions = true
+		case strings.HasPrefix(word, "--"):
+			// The long forms rm actually has. An unrecognised long
+			// option is neither of them: `--one-file-system` is not
+			// force, and skipping every `--...` word -- what this used
+			// to do -- missed `rm --recursive --force` entirely.
+			switch word {
+			case "--recursive":
+				recursive = true
+			case "--force":
+				force = true
+			}
+		default:
+			// A short cluster: `-rf`, `-r -f`, `-Rf`.
+			if strings.ContainsAny(word[1:], "rR") {
+				recursive = true
+			}
+			if strings.ContainsRune(word[1:], 'f') {
+				force = true
+			}
+		}
 	}
 
-	recursive, force := false, false
-	for _, arg := range call.Args[1:] {
-		flag := literal(arg)
-		if !strings.HasPrefix(flag, "-") || strings.HasPrefix(flag, "--") {
-			continue
-		}
-		if strings.ContainsAny(flag, "rR") {
-			recursive = true
-		}
-		if strings.Contains(flag, "f") {
-			force = true
-		}
-	}
 	if !recursive || !force {
 		return
 	}
 
-	for _, arg := range call.Args[1:] {
-		if strings.HasPrefix(literal(arg), "-") {
+	for _, target := range targets {
+		if !hasUnguardedExpansion(target) {
 			continue
 		}
-		if !hasUnguardedExpansion(arg) {
-			continue
-		}
-		collapsed := collapse(arg)
-		if !rootLevel(collapsed) {
+		cleaned, ok := rootLevelPath(collapse(target))
+		if !ok {
 			continue
 		}
 
-		r.add(arg.Pos(), CodeRecursiveRemoveRoot, SeverityError,
-			"this recursive, forced delete targets "+quoteForMessage(collapsed)+" whenever the expansion in it is empty, because an unset or empty variable leaves the literal path behind. That is a root-level directory. Write ${NAME:?} so the script fails instead, give the expansion a default, or put `set -u` at the top of the script")
+		r.add(target.Pos(), CodeRecursiveRemoveRoot, SeverityError,
+			"this recursive, forced delete targets "+quoteForMessage(cleaned)+" whenever the expansion in it is empty, because an unset or empty variable leaves the literal path behind. That is a root-level directory. Write ${NAME:?} so the script fails instead, or give the expansion a default")
 	}
 }
 
@@ -325,12 +547,18 @@ func (r *rules) recursiveRemove(call *syntax.CallExpr) {
 // script that keeps going. That is a backup that reports success and
 // cannot be restored.
 //
-// It does NOT fire on a script without `set -e` (nothing was claiming to
-// stop on failure, so there is nothing misleading about it) or on one
-// that sets `pipefail`. One finding per script, at the first pipeline:
-// the mistake is in the options, not in each pipeline.
+// It does NOT fire on a script without `set -e` in force at the pipeline
+// (nothing was claiming to stop on failure, so there is nothing
+// misleading about it) or on one where `pipefail` is in force there.
+// "In force" and not "mentioned anywhere": `set -o pipefail` followed by
+// `set +o pipefail` is a script that turned it back off, and reading the
+// second line as protection was how this rule went quiet on the file
+// that needed it. One finding per script, at the first pipeline: the
+// mistake is in the options, not in each pipeline.
 func (r *rules) pipeline(cmd *syntax.BinaryCmd) {
-	if r.pipelineReported || !r.opts.errexit || r.opts.pipefail {
+	if r.pipelineReported ||
+		!r.opts.enabledAt(optErrexit, cmd.Pos()) ||
+		r.opts.enabledAt(optPipefail, cmd.Pos()) {
 		return
 	}
 	r.pipelineReported = true
@@ -359,18 +587,31 @@ func (r *rules) pipeline(cmd *syntax.BinaryCmd) {
 //     rather than by a list this file has to keep up to date;
 //   - `$?`, `$#`, `$$`, `$!`, `$-`, `$0`, `$@` and `$*`, whose values
 //     either cannot contain whitespace or are being split deliberately;
-//   - `${#x}` and `${!x}`, which are a length and a name.
+//   - `${#x}`, which is a length, and `${!prefix*}` / `${!prefix@}`,
+//     which are lists of NAMES. `${!x}` is NOT among them: it is
+//     indirect expansion, it produces the value of the variable x names,
+//     and that value splits like any other. The exclusion used to be
+//     written against ParamExp.Excl, which the parser sets for all
+//     three, and so hid a real finding;
+//   - a declaration builtin's assignment argument -- `export NAME=$x`,
+//     `local dir=$1` -- which is an assignment context and does not
+//     split. Those commands are not CallExprs at all; see declaration
+//     for the half of them that IS reported.
 //
 // Info severity: it is the most common finding by a wide margin, it is
 // usually harmless in a hook with no spaces in its paths, and it is the
 // one that becomes noise if it shouts.
 func (r *rules) unquotedArguments(call *syntax.CallExpr) {
 	for _, arg := range call.Args[1:] {
-		for _, part := range arg.Parts {
-			if pos, what, ok := splittable(part); ok {
-				r.add(pos, CodeUnquotedExpansion, SeverityInfo,
-					"this "+what+" is not quoted, so the shell splits its value on whitespace and expands any glob characters in it before the command sees it: a path with a space in it becomes two arguments, and one with a `*` becomes whatever that matched. Put it in double quotes")
-			}
+		r.unquotedWord(arg)
+	}
+}
+
+func (r *rules) unquotedWord(word *syntax.Word) {
+	for _, part := range word.Parts {
+		if pos, what, ok := splittable(part); ok {
+			r.add(pos, CodeUnquotedExpansion, SeverityInfo,
+				"this "+what+" is not quoted, so the shell splits its value on whitespace and expands any glob characters in it before the command sees it: a path with a space in it becomes two arguments, and one with a `*` becomes whatever that matched. Put it in double quotes")
 		}
 	}
 }
@@ -405,6 +646,9 @@ func splittable(part syntax.WordPart) (syntax.Pos, string, bool) {
 		if !splittableParam(p) {
 			return syntax.Pos{}, "", false
 		}
+		if p.Excl {
+			return p.Pos(), "indirect expansion of ${!" + p.Param.Value + "}", true
+		}
 
 		return p.Pos(), "expansion of $" + p.Param.Value, true
 	case *syntax.CmdSubst:
@@ -417,8 +661,14 @@ func splittable(part syntax.WordPart) (syntax.Pos, string, bool) {
 // splittableParam decides whether a parameter expansion is one whose
 // value could split into several words. See unquotedArguments for the
 // argument behind each exclusion.
+//
+// ParamExp.Excl is set for `${!x}`, `${!prefix*}` and `${!prefix@}`
+// alike, and only the last two are name expansions. The first is
+// indirect expansion -- the value of the variable whose name x holds --
+// which splits exactly like the value it reaches. ParamExp.Names is what
+// tells the three apart, and it is set only for the name-list forms.
 func splittableParam(p *syntax.ParamExp) bool {
-	if p.Length || p.Excl || p.Width || p.Param == nil {
+	if p.Length || p.Width || p.Names != 0 || p.Param == nil {
 		return false
 	}
 
@@ -431,52 +681,166 @@ func splittableParam(p *syntax.ParamExp) bool {
 }
 
 // hasUnguardedExpansion reports whether this word contains an expansion
-// that contributes NOTHING when the variable is unset or empty -- the
-// property BSH003 is about.
+// that can produce NOTHING -- the property BSH003 is about.
 //
-// An expansion carrying a default, an assignment or an error branch is
-// guarded: the script has already decided what happens when the value is
-// missing.
+// "Can produce nothing" rather than "carries no guard": the two differ
+// in both directions and each difference was a wrong answer on a real
+// script. `${#list}` carries no guard and cannot be empty -- it is a
+// number -- and reading it as a hole turned `rm -rf "/${#list}/tmp"`
+// into a refused save. `${D-/srv}` carries a guard that does not cover a
+// D set to the empty string, and reading it as covered missed a delete
+// of /tmp.
 func hasUnguardedExpansion(word *syntax.Word) bool {
-	found := false
+	return partsCanVanish(word.Parts)
+}
 
-	syntax.Walk(word, func(node syntax.Node) bool {
-		switch n := node.(type) {
+// partsCanVanish reports whether any expansion among these parts can
+// produce nothing.
+//
+// It does not descend blindly into an expansion's own words the way a
+// syntax.Walk would -- paramCanBeEmpty decides those, in terms of what
+// the operator does with them. A blind walk finds the `$OTHER` in
+// `${D:-/srv/$OTHER}` and calls the whole expansion a hole, when what it
+// produces is at least "/srv/".
+func partsCanVanish(parts []syntax.WordPart) bool {
+	for _, part := range parts {
+		switch p := part.(type) {
+		case *syntax.DblQuoted:
+			if partsCanVanish(p.Parts) {
+				return true
+			}
 		case *syntax.ParamExp:
-			if n.Exp == nil || !guardsUnset(n.Exp.Op) {
-				found = true
+			if paramCanBeEmpty(p) {
+				return true
 			}
 		case *syntax.CmdSubst:
 			// A command whose output is empty -- it failed, it printed
 			// nothing -- leaves the same hole a variable does.
-			found = true
+			return true
 		}
+	}
 
-		return !found
-	})
-
-	return found
+	return false
 }
 
-func guardsUnset(op syntax.ParExpOperator) bool {
-	switch op {
-	case syntax.DefaultUnset, syntax.DefaultUnsetOrNull,
-		syntax.ErrorUnset, syntax.ErrorUnsetOrNull,
-		syntax.AssignUnset, syntax.AssignUnsetOrNull,
-		syntax.AlternateUnset, syntax.AlternateUnsetOrNull:
+// wordCanBeEmpty reports whether a whole word can expand to nothing at
+// all: every part of it empty at once.
+func wordCanBeEmpty(word *syntax.Word) bool {
+	if word == nil {
+		return true
+	}
+
+	for _, part := range word.Parts {
+		if !partCanBeEmpty(part) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func partCanBeEmpty(part syntax.WordPart) bool {
+	switch p := part.(type) {
+	case *syntax.Lit:
+		return p.Value == ""
+	case *syntax.SglQuoted:
+		return p.Value == ""
+	case *syntax.DblQuoted:
+		for _, inner := range p.Parts {
+			if !partCanBeEmpty(inner) {
+				return false
+			}
+		}
+
+		return true
+	case *syntax.ParamExp:
+		return paramCanBeEmpty(p)
+	case *syntax.CmdSubst:
 		return true
 	default:
+		// An arithmetic expansion prints a number, a process
+		// substitution prints a path, and a part this package does not
+		// recognise is assumed to print something. Being wrong in this
+		// direction is silence.
 		return false
 	}
 }
 
-// collapse renders a word with every expansion replaced by nothing: what
-// the shell would pass to the command if every variable in it were unset.
+// paramCanBeEmpty reports whether a parameter expansion can produce
+// nothing, decided per operator rather than per "has an operator".
+//
+// The cases, and why each is what it is:
+//
+//   - `${#x}` and mksh's `${%x}` are a length and a width: a number, so
+//     at least one character, whatever x holds;
+//   - `$?`, `$$`, `$#`, `$0` and `$-` are set by the shell itself and
+//     are never empty. `$!` is empty until a background job exists and
+//     `$@`/`$*` are empty with no arguments, so those three are not in
+//     the list;
+//   - `${x:?}` and `${x:?message}` abort the script rather than expand.
+//     `${x?}` is read the same way, which is an over-reading argued at
+//     recursiveRemove;
+//   - `${x:-word}` and `${x:=word}` are empty only if the WORD is: the
+//     colon forms cover unset and null alike. `${x:-/srv/stage}` cannot
+//     vanish; `${x:-$OTHER}` can, so the fallback is analysed rather
+//     than accepted categorically;
+//   - `${x-word}` and `${x=word}` do NOT cover null. An x assigned the
+//     empty string is SET, so the fallback is never reached and the
+//     expansion is empty;
+//   - `${x+word}` and `${x:+word}` are the other way round: they produce
+//     the word only when x has a value and nothing when it does not, so
+//     an alternate operator guards nothing here;
+//   - a prefix or suffix removal, a case conversion, a replacement, a
+//     slice, an indirect `${!x}` and a name list `${!p*}` can all come
+//     out empty.
+func paramCanBeEmpty(p *syntax.ParamExp) bool {
+	if p.Length || p.Width {
+		return false
+	}
+
+	if p.Exp == nil {
+		if p.Param == nil || p.Excl || p.Names != 0 || p.Repl != nil || p.Slice != nil {
+			return true
+		}
+
+		switch p.Param.Value {
+		case "?", "$", "#", "0", "-":
+			return false
+		default:
+			return true
+		}
+	}
+
+	switch p.Exp.Op {
+	case syntax.ErrorUnset, syntax.ErrorUnsetOrNull:
+		return false
+	case syntax.DefaultUnsetOrNull, syntax.AssignUnsetOrNull:
+		return wordCanBeEmpty(p.Exp.Word)
+	default:
+		return true
+	}
+}
+
+// nonEmptyExpansion is what collapse writes for an expansion that cannot
+// be empty.
+//
+// One character, and deliberately not the expansion's source text: a
+// default word carries slashes (`${D:-/srv/stage}`) and splicing them in
+// would invent path components as surely as erasing the expansion
+// removes them.
+const nonEmptyExpansion = "x"
+
+// collapse renders a word as what the shell would pass to the command if
+// every expansion in it that CAN be empty were empty: the worst case
+// BSH003 is about.
 //
 // Single-quoted and double-quoted text contributes its literal
-// characters, because the quotes are not part of the value; a nested
-// expansion inside double quotes contributes nothing, for the same reason
-// an unquoted one does.
+// characters, because the quotes are not part of the value. An expansion
+// that can vanish contributes nothing; one that cannot contributes a
+// stand-in, because erasing that one too invents a shorter path.
+// `"/$D/${#list}/data"` is `//5/data` at its worst -- three components,
+// not this rule's business -- and erasing both expansions makes it read
+// as `/data`, which is a refused save on a safe script.
 func collapse(word *syntax.Word) string {
 	var b strings.Builder
 	collapseParts(&b, word.Parts)
@@ -493,26 +857,44 @@ func collapseParts(b *strings.Builder, parts []syntax.WordPart) {
 			b.WriteString(p.Value)
 		case *syntax.DblQuoted:
 			collapseParts(b, p.Parts)
+		default:
+			if !partCanBeEmpty(part) {
+				b.WriteString(nonEmptyExpansion)
+			}
 		}
 	}
 }
 
-// rootLevel reports whether a path is the filesystem root or one
-// component inside it: the paths whose recursive deletion is not
-// something a deployment recovers from by restoring a directory.
-func rootLevel(path string) bool {
-	if !strings.HasPrefix(path, "/") {
-		return false
+// rootLevelPath cleans a collapsed path and reports whether it is the
+// filesystem root or one component inside it: the paths whose recursive
+// deletion is not something a deployment recovers from by restoring a
+// directory. The cleaned path is what the message quotes.
+//
+// The cleaning is load bearing rather than cosmetic. `rm -rf
+// "$ROOT/var/../tmp"` with an empty ROOT deletes /tmp, but the text left
+// behind is `/var/../tmp`, which counts as three components and walked
+// past this rule. path.Clean resolves the `.` and `..` lexically,
+// without asking the filesystem -- which is also all this package is
+// allowed to do.
+//
+// A relative path is never root-level, before or after cleaning:
+// `./$NAME/data` with an empty NAME is `.//data`, inside whatever
+// directory the hook is already in.
+func rootLevelPath(collapsed string) (string, bool) {
+	if !strings.HasPrefix(collapsed, "/") {
+		return "", false
 	}
 
+	cleaned := path.Clean(collapsed)
+
 	components := 0
-	for _, c := range strings.Split(path, "/") {
+	for _, c := range strings.Split(cleaned, "/") {
 		if c != "" {
 			components++
 		}
 	}
 
-	return components <= 1
+	return cleaned, components <= 1
 }
 
 // literal renders a word that is exactly one unquoted literal, or "".
@@ -536,69 +918,111 @@ func literal(word *syntax.Word) string {
 // quoteForMessage renders a collapsed path for a message, saying "the
 // filesystem root" rather than printing a bare slash that reads like
 // punctuation.
-func quoteForMessage(path string) string {
-	if strings.Trim(path, "/") == "" {
+func quoteForMessage(target string) string {
+	if strings.Trim(target, "/") == "" {
 		return "the filesystem root (/)"
 	}
 
-	return path
+	return target
 }
 
-// shellOptions reads what the script does to its own failure handling.
+// shellOptions reads what the script does to its own failure handling,
+// as an ordered list of changes rather than a verdict.
 //
-// Every `set` in the file counts, at any depth, and that is deliberately
-// generous: a `set -e` inside a function or an `if` is unusual, and
-// treating it as absent would make this package report a script that has
-// in fact protected itself. The rules that consult these options are all
-// of the form "this failure goes unnoticed", so over-detecting protection
-// produces silence and under-detecting it produces a false finding -- and
-// only one of those two is acceptable.
+// Every `set` in the file is read, at any depth. Whether one COUNTS at a
+// given command is enabledAt's question, and that is where the direction
+// of the uncertainty is argued; this function only records what the
+// script wrote, including the `+` forms it used to ignore entirely.
+//
+// `-u` and `+u` are parsed like every other flag and deliberately not
+// recorded: no rule consults nounset any more. recursiveRemove did, and
+// was wrong to -- nounset aborts on an unset parameter and not on an
+// empty one, so it never made that rule's hole impossible.
 func shellOptions(file *syntax.File) shellOpts {
+	// A `set` that is a top-level statement of the file runs, once, in
+	// the order it is written. Nothing else about the tree says that.
+	unconditional := map[uint]bool{}
+	for _, stmt := range file.Stmts {
+		if call, ok := stmt.Cmd.(*syntax.CallExpr); ok && isSetCall(call) {
+			unconditional[call.Pos().Offset()] = true
+		}
+	}
+
 	var opts shellOpts
 
 	syntax.Walk(file, func(node syntax.Node) bool {
 		call, ok := node.(*syntax.CallExpr)
-		if !ok || len(call.Args) == 0 || literal(call.Args[0]) != "set" {
+		if !ok || !isSetCall(call) {
 			return true
 		}
 
-		expectOptionName := false
-		for _, arg := range call.Args[1:] {
-			word := literal(arg)
-
-			if expectOptionName {
-				expectOptionName = false
-				switch word {
-				case "errexit":
-					opts.errexit = true
-				case "nounset":
-					opts.nounset = true
-				case "pipefail":
-					opts.pipefail = true
-				}
-
-				continue
-			}
-
-			if !strings.HasPrefix(word, "-") {
-				continue
-			}
-
-			// `set -euo pipefail`: the flags are one word and the `o`
-			// says the NEXT word is an option name.
-			if strings.ContainsRune(word, 'e') {
-				opts.errexit = true
-			}
-			if strings.ContainsRune(word, 'u') {
-				opts.nounset = true
-			}
-			if strings.ContainsRune(word, 'o') {
-				expectOptionName = true
-			}
-		}
+		opts.record(call, unconditional[call.Pos().Offset()])
 
 		return true
 	})
 
+	// syntax.Walk visits a file in source order, but enabledAt's
+	// last-one-wins scan depends on that rather than assuming it.
+	slices.SortStableFunc(opts.events, func(a, b optionEvent) int {
+		return cmp.Compare(a.offset, b.offset)
+	})
+
 	return opts
+}
+
+func isSetCall(call *syntax.CallExpr) bool {
+	return len(call.Args) > 0 && literal(call.Args[0]) == "set"
+}
+
+// record reads one `set` and appends what it changes.
+//
+// `set -euo pipefail` is one word of flags and then an option NAME;
+// `set +o pipefail` is the same shape turning one off; a word starting
+// with `+` turns off whatever the same letter after `-` turns on. A word
+// that is neither is not an option: `set -- "$@"` replaces the
+// positional parameters and everything after the `--` is a value.
+func (o *shellOpts) record(call *syntax.CallExpr, unconditional bool) {
+	offset := call.Pos().Offset()
+
+	pendingName, pendingEnable := false, false
+	for _, arg := range call.Args[1:] {
+		word := literal(arg)
+
+		if pendingName {
+			pendingName = false
+
+			switch word {
+			case "errexit":
+				o.add(optionEvent{offset: offset, opt: optErrexit, enable: pendingEnable, unconditional: unconditional})
+			case "pipefail":
+				o.add(optionEvent{offset: offset, opt: optPipefail, enable: pendingEnable, unconditional: unconditional})
+			}
+
+			continue
+		}
+
+		if word == "--" {
+			return
+		}
+		if len(word) < 2 || (word[0] != '-' && word[0] != '+') {
+			continue
+		}
+
+		enable := word[0] == '-'
+		for _, flag := range word[1:] {
+			switch flag {
+			case 'e':
+				o.add(optionEvent{offset: offset, opt: optErrexit, enable: enable, unconditional: unconditional})
+			case 'o':
+				pendingName, pendingEnable = true, enable
+			}
+		}
+	}
+}
+
+func (o *shellOpts) add(ev optionEvent) {
+	o.events = append(o.events, ev)
+	if ev.enable {
+		o.enabledSomewhere[ev.opt] = true
+	}
 }

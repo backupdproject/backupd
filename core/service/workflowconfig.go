@@ -331,7 +331,18 @@ func (b *BackupService) UpdateWorkflowSettings(ctx context.Context, req UpdateWo
 	// the scripts it verifies are the ones the saved file would point
 	// at. Verifying the ones the CURRENT file points at would check the
 	// directory the operator is moving away from.
-	if err := refuseUnverifiableScripts(ctx, cfg, globalWorkflowStages(cfg)); err != nil {
+	//
+	// A patch that moves the ROOT reaches every set, and that is review
+	// BLOCKER 2 rather than a nicety: a stage directory is a NAME inside
+	// the root, so moving the root re-points every set's stages at
+	// scripts nobody has verified, without touching a single line of any
+	// set's own block. The narrow scope is right for every other field
+	// and wrong for that one.
+	stages := globalWorkflowStages(cfg)
+	if req.Root != nil {
+		stages = everyWorkflowStage(cfg)
+	}
+	if err := refuseUnverifiableScripts(ctx, cfg, stages); err != nil {
 		return WorkflowSettings{}, err
 	}
 
@@ -459,7 +470,7 @@ func (b *BackupService) UpdateBackupSetWorkflow(ctx context.Context, id string, 
 	// broken stage directory is exactly the save this must not refuse:
 	// there are no stages left to verify, and clearing one is how an
 	// operator gets out of this state.
-	if err := refuseUnverifiableScripts(ctx, cfg, setWorkflowStages(bs)); err != nil {
+	if err := refuseUnverifiableScripts(ctx, cfg, setWorkflowStages(id, bs)); err != nil {
 		return BackupSetWorkflow{}, err
 	}
 

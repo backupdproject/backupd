@@ -35,7 +35,9 @@ import type {
   ApiError,
   FailureOrigin,
   WorkflowBlockingScript,
-  WorkflowLintFinding
+  WorkflowLintFinding,
+  WorkflowSourceExcerpt,
+  WorkflowSourceLine
 } from "./contracts";
 import { debugEnvironment, debugLog, describeError } from "./debug";
 
@@ -270,9 +272,17 @@ function blockingScriptsOf(raw: unknown[]): WorkflowBlockingScript[] {
       dir: str(s.dir),
       scope: str(s.scope),
       phase: str(s.phase),
+      // Absent on a global stage, which belongs to no set. Present when
+      // the gate reached this script through a set's own stage — which a
+      // deployment-wide write can do without the operator having touched
+      // that set, because changing the root re-resolves every set's stage
+      // directories under it.
+      backupSetId:
+        typeof s.backup_set_id === "string" && s.backup_set_id !== "" ? s.backup_set_id : undefined,
       parseError: typeof s.parse_error === "string" && s.parse_error !== "" ? s.parse_error : undefined,
       parseErrorLine: num(s.parse_error_line),
       parseErrorCol: num(s.parse_error_col),
+      parseErrorExcerpt: excerptOf(s.parse_error_excerpt),
       findings: Array.isArray(s.findings) ? lintFindingsOf(s.findings) : []
     });
   }
@@ -297,10 +307,49 @@ function lintFindingsOf(raw: unknown[]): WorkflowLintFinding[] {
         severity === "warning" || severity === "info" || severity === "style" ? severity : "error",
       line: num(f.line) ?? 0,
       col: num(f.col) ?? 0,
-      message: str(f.message)
+      message: str(f.message),
+      excerpt: excerptOf(f.excerpt)
     });
   }
   return findings;
+}
+
+/**
+ * A refused script's source excerpt, off the wire and defended field by
+ * field.
+ *
+ * The rule this whole decoder is written to is that nothing on the path
+ * that reads a REFUSAL may throw: the operator is already being told
+ * their save did not happen, and an exception here would replace the
+ * reason with "this page could not read the answer". An excerpt is the
+ * most decorative field on that path, so it gets the strictest version
+ * of the rule — a non-object, a `lines` that is not an array, an entry
+ * that is not an object, and a line whose number is not a real position
+ * all reduce to "no excerpt" rather than to a failure.
+ *
+ * The text is NOT re-sanitized here, and that is deliberate rather than
+ * an omission: it is produced inert at the service, from the bytes the
+ * verification hashed, and a second sanitizer on this value would be a
+ * second thing to keep correct — with the one that mattered ending up
+ * being whichever of the two nobody was looking at. It is rendered as
+ * text, never as markup, which is the property that actually holds.
+ */
+function excerptOf(value: unknown): WorkflowSourceExcerpt {
+  if (value === null || typeof value !== "object") return { lines: [] };
+  const raw = (value as Record<string, unknown>).lines;
+  if (!Array.isArray(raw)) return { lines: [] };
+  const lines: WorkflowSourceLine[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const l = entry as Record<string, unknown>;
+    const number = num(l.number);
+    // A line numbered 0 is not a place in a file, exactly as a position
+    // of 0 is not: drawing it would put a caret under a line nobody can
+    // go and look at.
+    if (number === undefined || number <= 0) continue;
+    lines.push({ number, text: str(l.text), truncated: l.truncated === true });
+  }
+  return { lines };
 }
 
 function str(value: unknown): string {

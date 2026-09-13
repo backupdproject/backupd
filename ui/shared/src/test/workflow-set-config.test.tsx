@@ -28,6 +28,7 @@ import type {
   BackupdApi,
   WorkflowLintFinding,
   WorkflowScriptLint,
+  WorkflowSourceExcerpt,
   WorkflowValidatedScript
 } from "@shared/api/contracts";
 import { createMockApi } from "@shared/api/mock";
@@ -403,36 +404,78 @@ describe("an unresolved recovery hold", () => {
  *     each finding's position, because that is what the operator has to
  *     go and edit. A one-line "not saved" is a dead end.
  */
+const NO_SOURCE: WorkflowSourceExcerpt = { lines: [] };
+
 const RICH_FINDINGS: WorkflowLintFinding[] = [
   {
     code: "BSH001",
     severity: "info",
     line: 14,
     col: 12,
-    message: "this variable expansion is not quoted, so the shell splits its value on whitespace"
+    message: "this variable expansion is not quoted, so the shell splits its value on whitespace",
+    // The line AFTER the reported one is cut, which is the case that has
+    // to be visible rather than silent: an operator comparing this
+    // against their file would otherwise be comparing against a line
+    // their file does not contain.
+    excerpt: {
+      lines: [
+        { number: 13, text: "# ship it while the source is still frozen", truncated: false },
+        { number: 14, text: "  rsync -a $dest \"$REMOTE_HOST:/srv/\"", truncated: false },
+        { number: 15, text: "  # keep this in step with the retention job, which expects", truncated: true }
+      ]
+    }
   },
   {
     code: "BSH003",
     severity: "error",
     line: 12,
     col: 8,
-    message: "this recursive, forced delete targets /var whenever the expansion in it is empty"
+    message: "this recursive, forced delete targets /var whenever the expansion in it is empty",
+    // Column 8 of line 12 is the quote that opens the expansion, so the
+    // caret the panel draws lands under it and nowhere else.
+    excerpt: {
+      lines: [
+        { number: 11, text: "# clear anything the last run left behind", truncated: false },
+        { number: 12, text: "rm -rf \"$STAGING/var\"", truncated: false },
+        { number: 13, text: "mkdir -p \"$STAGING/var\"", truncated: false }
+      ]
+    }
   },
   {
     code: "BSH002",
     severity: "warning",
     line: 9,
     col: 1,
-    message: "this cd does not check whether it worked, and nothing in this script does either"
+    message: "this cd does not check whether it worked, and nothing in this script does either",
+    // No source at all, deliberately: an engine that carries no excerpt
+    // for a finding must cost that finding nothing, and certainly not an
+    // empty dark box under it.
+    excerpt: NO_SOURCE
   },
   {
     code: "BSH006",
     severity: "style",
     line: 1,
     col: 1,
-    message: "this script has no #! interpreter line"
+    message: "this script has no #! interpreter line",
+    excerpt: NO_SOURCE
   }
 ];
+
+/** Every source excerpt block the panel is currently drawing. The count
+ *  is the assertion that matters: a panel that rendered an empty box per
+ *  excerpt-less finding would draw four of these for the two findings
+ *  that have one. */
+function sourceBlocks(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-tip="workflow.source-excerpt"]'));
+}
+
+/** getByText with NO whitespace normalization. The default matcher trims
+ *  and collapses, which on this surface throws away the thing being
+ *  asserted: a source line's own indentation, and the padding that puts a
+ *  caret under a particular column. With the default normalizer, a caret
+ *  drawn at column 1 passes an assertion about column 24. */
+const VERBATIM = { normalizer: (value: string) => value };
 
 /** One discovered script carrying the verification result a case is
  *  about. Every other field is the shape a remote hook's row has, so the
@@ -492,13 +535,14 @@ describe("the shell verification's findings panel", () => {
     const { user } = await checkedWith([scriptWith("before/10-prune.remote.sh", {
       examined: true,
       parsed: true,
+      parseErrorExcerpt: NO_SOURCE,
       findings: RICH_FINDINGS
     })]);
 
     // Nothing is expanded until the badge is used: the panel is the
     // badge's disclosure and not a second copy of the table.
     expect(panelCodes()).toEqual([]);
-    await user.click(screen.getByRole("button", { name: "1 error" }));
+    await user.click(screen.getByRole("button", { name: "1 error, 3 more" }));
 
     // Grouped error, warning, info, style — not the order the engine
     // reported them in, which is the order they are declared above.
@@ -512,6 +556,70 @@ describe("the shell verification's findings panel", () => {
     }
   });
 
+  it("draws a finding's own source line, its line number and a caret at the reported column", async () => {
+    const { user } = await checkedWith([scriptWith("before/10-prune.remote.sh", {
+      examined: true,
+      parsed: true,
+      parseErrorExcerpt: NO_SOURCE,
+      findings: [RICH_FINDINGS[1]]
+    })]);
+
+    await user.click(screen.getByRole("button", { name: "1 error" }));
+
+    const source = sourceBlocks();
+    expect(source.length).toBe(1);
+    const block = within(source[0]);
+    // The reported line and its neighbours, with the gutter numbers an
+    // operator counts against their own copy of the file.
+    expect(block.getByText("rm -rf \"$STAGING/var\"")).toBeTruthy();
+    expect(block.getByText("# clear anything the last run left behind")).toBeTruthy();
+    expect(block.getByText("12")).toBeTruthy();
+    // The column, MARKED, and marked in the right place: the caret is
+    // padded to the reported column, so asserting the padding verbatim is
+    // what pins it under the 8th character rather than merely somewhere
+    // on the row. `VERBATIM` is why — the default matcher trims, and a
+    // trimmed caret row would pass with the caret at column 1.
+    //
+    // It says "column 8" in words as well as with the mark, because a row
+    // of spaces and a caret is nothing to a screen reader.
+    expect(block.getByText(" ".repeat(7) + "^ column 8", VERBATIM)).toBeTruthy();
+  });
+
+  it("marks a truncated excerpt line rather than cutting it silently", async () => {
+    const { user } = await checkedWith([scriptWith("before/10-prune.remote.sh", {
+      examined: true,
+      parsed: true,
+      parseErrorExcerpt: NO_SOURCE,
+      findings: [RICH_FINDINGS[0]]
+    })]);
+
+    await user.click(screen.getByRole("button", { name: "1 note" }));
+
+    const block = within(sourceBlocks()[0]);
+    expect(block.getByText(/keep this in step with the retention job/)).toBeTruthy();
+    // A line that merely stopped would look like a line that ended, and
+    // an operator comparing it against their file would be comparing
+    // against a line the file does not contain.
+    expect(block.getByText(/is cut here/)).toBeTruthy();
+  });
+
+  it("draws no source block at all for a finding the service carried no excerpt for", async () => {
+    const { user } = await checkedWith([scriptWith("before/10-prune.remote.sh", {
+      examined: true,
+      parsed: true,
+      parseErrorExcerpt: NO_SOURCE,
+      findings: RICH_FINDINGS
+    })]);
+
+    await user.click(screen.getByRole("button", { name: "1 error, 3 more" }));
+
+    // Four findings, two of which carry source. The other two get
+    // nothing: an empty dark box is this panel drawing a rectangle to
+    // say "no source here", which is worse than saying nothing.
+    expect(panelCodes().length).toBe(4);
+    expect(sourceBlocks().length).toBe(2);
+  });
+
   it("reports a script that does not parse with its position, and never as clean", async () => {
     const { user } = await checkedWith([scriptWith("before/10-broken.remote.sh", {
       examined: true,
@@ -519,6 +627,14 @@ describe("the shell verification's findings panel", () => {
       parseError: "unexpected EOF while looking for matching `\"'",
       parseErrorLine: 18,
       parseErrorCol: 24,
+      // Column 24 of line 18 is the quote nothing closes.
+      parseErrorExcerpt: {
+        lines: [
+          { number: 17, text: "  # move the rendered config into place", truncated: false },
+          { number: 18, text: "  mv \"$STAGE/auth.yml\" \"$OUT_DIR", truncated: false },
+          { number: 19, text: "fi", truncated: false }
+        ]
+      },
       findings: []
     })]);
 
@@ -532,6 +648,14 @@ describe("the shell verification's findings panel", () => {
     // The negative that matters. An empty findings list here means the
     // rules never ran, and must not read as a pass anywhere on the card.
     expect(screen.queryAllByText("clean")).toEqual([]);
+    // The parser's own line, which is the one excerpt an operator cannot
+    // get any other way from this product: a file that does not parse
+    // carries no findings, because no rule ran on a tree that does not
+    // exist.
+    const block = within(sourceBlocks()[0]);
+    expect(block.getByText("  mv \"$STAGE/auth.yml\" \"$OUT_DIR", VERBATIM)).toBeTruthy();
+    expect(block.getByText("18")).toBeTruthy();
+    expect(block.getByText(" ".repeat(23) + "^ column 24", VERBATIM)).toBeTruthy();
   });
 
   it("reports a NOT EXAMINED script with its reason, and never as clean", async () => {
@@ -539,6 +663,7 @@ describe("the shell verification's findings panel", () => {
       examined: false,
       notExaminedReason: "this script is 4.1 MB, larger than the 1 MB the shell verification reads",
       parsed: false,
+      parseErrorExcerpt: NO_SOURCE,
       findings: []
     })]);
 
@@ -556,6 +681,7 @@ describe("the shell verification's findings panel", () => {
     const { user } = await checkedWith([scriptWith("before/10-fine.remote.sh", {
       examined: true,
       parsed: true,
+      parseErrorExcerpt: NO_SOURCE,
       findings: []
     })]);
 
@@ -567,33 +693,52 @@ describe("the shell verification's findings panel", () => {
     expect(panelCodes()).toEqual([]);
   });
 
-  it("counts the worst severity on the badge, and opens only that script's findings", async () => {
+  it("states the worst severity and counts the rest, and opens only that script's findings", async () => {
     const { user } = await checkedWith([
       scriptWith("before/10-mixed.remote.sh", {
         examined: true,
         parsed: true,
+        parseErrorExcerpt: NO_SOURCE,
         findings: [
-          RICH_FINDINGS[1],
-          RICH_FINDINGS[2],
-          { code: "BSH005", severity: "warning", line: 21, col: 6, message: "unquoted operand in [ ... ]" }
+          ...RICH_FINDINGS,
+          {
+            code: "BSH005",
+            severity: "warning",
+            line: 21,
+            col: 6,
+            message: "unquoted operand in [ ... ]",
+            excerpt: NO_SOURCE
+          }
         ]
       }),
       scriptWith("before/20-other.remote.sh", {
         examined: true,
         parsed: true,
-        findings: [{ code: "BSH004", severity: "warning", line: 6, col: 1, message: "set -e with a pipeline and no pipefail" }]
+        parseErrorExcerpt: NO_SOURCE,
+        findings: [
+          {
+            code: "BSH004",
+            severity: "warning",
+            line: 6,
+            col: 1,
+            message: "set -e with a pipeline and no pipefail",
+            excerpt: NO_SOURCE
+          }
+        ]
       })
     ]);
 
-    // One error beside two warnings is an ERROR badge: the error is what
-    // refuses a save, so a "2 warnings" badge would be counting the rows
-    // that do not matter.
-    expect(screen.getByRole("button", { name: "1 error" })).toBeTruthy();
+    // One error beside four other findings is an ERROR badge that also
+    // counts the four. "5 findings" would make the error and the missing
+    // shebang look like the same fact; "1 error" on its own would not say
+    // there were four more things to read.
+    expect(screen.getByRole("button", { name: "1 error, 4 more" })).toBeTruthy();
+    // And no tail where the worst severity accounts for everything.
     expect(screen.getByRole("button", { name: "1 warning" })).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "1 error" }));
+    await user.click(screen.getByRole("button", { name: "1 error, 4 more" }));
 
-    expect(panelCodes()).toEqual(["BSH003", "BSH002", "BSH005"]);
+    expect(panelCodes()).toEqual(["BSH003", "BSH002", "BSH005", "BSH001", "BSH006"]);
     // And not the other script's, which has its own badge and its own
     // panel: a shared panel would show findings from a file the operator
     // did not select.
@@ -621,6 +766,13 @@ describe("a workflow save the shell rules refused", () => {
             parseError: "unexpected EOF while looking for matching `\"'",
             parseErrorLine: 18,
             parseErrorCol: 24,
+            parseErrorExcerpt: {
+              lines: [
+                { number: 17, text: "  # quiesce before anything touches the volume", truncated: false },
+                { number: 18, text: "  mysql -e \"FLUSH TABLES WITH READ LOCK", truncated: false },
+                { number: 19, text: "fi", truncated: false }
+              ]
+            },
             findings: []
           },
           {
@@ -628,13 +780,25 @@ describe("a workflow save the shell rules refused", () => {
             dir: "/srv/hooks/billing-mysql/after",
             scope: "set",
             phase: "after",
+            // A refusal that names the set it is about. The gate reached
+            // this script through a set's own stage, and a deployment-wide
+            // write can do that for a set nobody was editing.
+            backupSetId: "production/billing-mysql",
+            parseErrorExcerpt: NO_SOURCE,
             findings: [
               {
                 code: "BSH003",
                 severity: "error",
                 line: 12,
                 col: 8,
-                message: "this recursive, forced delete targets /var whenever the expansion in it is empty"
+                message: "this recursive, forced delete targets /var whenever the expansion in it is empty",
+                excerpt: {
+                  lines: [
+                    { number: 11, text: "# clear anything the last run left behind", truncated: false },
+                    { number: 12, text: "rm -rf \"$STAGING/var\"", truncated: false },
+                    { number: 13, text: "mkdir -p \"$STAGING/var\"", truncated: false }
+                  ]
+                }
               }
             ]
           }
@@ -667,6 +831,19 @@ describe("a workflow save the shell rules refused", () => {
     expect(refusal.getByText(/does not parse at 18:24/)).toBeTruthy();
     expect(refusal.getByText("BSH003 at 12:8")).toBeTruthy();
     expect(refusal.getByText(/this recursive, forced delete targets \/var/)).toBeTruthy();
+
+    // The line each refusal is about, in the banner, so the operator does
+    // not have to reach the machine the hook lives on to read it.
+    expect(refusal.getByText("  mysql -e \"FLUSH TABLES WITH READ LOCK", VERBATIM)).toBeTruthy();
+    expect(refusal.getByText(" ".repeat(23) + "^ column 24", VERBATIM)).toBeTruthy();
+    expect(refusal.getByText("rm -rf \"$STAGING/var\"", VERBATIM)).toBeTruthy();
+    expect(refusal.getByText(" ".repeat(7) + "^ column 8", VERBATIM)).toBeTruthy();
+
+    // And WHOSE stage the second one is. "20-prune-cache.local.sh in
+    // after" does not say which set's after directory to go and look in,
+    // and a deployment-wide write re-resolves every set's stages.
+    expect(refusal.getByText("backup set production/billing-mysql")).toBeTruthy();
+    expect(refusal.getByText(/a refusal can be about a set you were not editing/)).toBeTruthy();
   });
 
   it("falls back to the service's own sentence when the refusal carried no structured list", async () => {
@@ -696,12 +873,15 @@ describe("a workflow save the shell rules refused", () => {
 /**
  * The masking rule, on the surface #906 adds.
  *
- * A finding carries the script's OWN text and a position in it, and that
- * is all this card may draw. The risk the new panel introduces is not that
- * it leaks a secret it was given — it is that a card showing what is
- * inside a hook grows a habit of resolving things: an env reference, a
- * script body. There is no endpoint that returns either, and this pins
- * that the card asks for neither.
+ * A finding carries the script's OWN text — a position, and now the lines
+ * around it — and that is all this card may draw. The risk the new panel
+ * introduces is not that it leaks a secret it was given: an excerpt is
+ * the script's own bytes, so an unexpanded `$(cat …)` in a hook is text
+ * somebody typed and not a value anything resolved. The risk is that a
+ * card showing what is inside a hook grows a habit of resolving things —
+ * an env reference, a script body. There is no endpoint that returns
+ * either, and this pins that the card asks for neither, and that what it
+ * WAS given reaches the screen as text rather than as markup.
  */
 describe("what the findings panel is allowed to show", () => {
   it("renders a finding's own text verbatim and resolves nothing it was not given", async () => {
@@ -709,13 +889,21 @@ describe("what the findings panel is allowed to show", () => {
     const { user } = await checkedWith([scriptWith("before/10-export.remote.sh", {
       examined: true,
       parsed: true,
+      parseErrorExcerpt: NO_SOURCE,
       findings: [
         {
           code: "BSH001",
           severity: "info",
           line: 7,
           col: 3,
-          message: "this variable expansion is not quoted: " + secretish
+          message: "this variable expansion is not quoted: " + secretish,
+          excerpt: {
+            lines: [
+              { number: 6, text: "# export the dump", truncated: false },
+              { number: 7, text: "  " + secretish + " pg_dump <b>db</b>", truncated: false },
+              { number: 8, text: "", truncated: false }
+            ]
+          }
         }
       ]
     })]);
@@ -725,6 +913,13 @@ describe("what the findings panel is allowed to show", () => {
     // The finding's text, exactly as handed over: not expanded, not
     // executed, not interpreted as markup.
     expect(screen.getByText(/this variable expansion is not quoted: PGPASSWORD=\$\(cat/)).toBeTruthy();
+
+    // And the excerpt likewise: the script's own characters, including
+    // the ones that look like markup and the ones that look like a
+    // command substitution. Nothing here was expanded, run, or parsed as
+    // HTML — getByText matches a text node, so a <b> that had been
+    // rendered as an element would not be found as part of this string.
+    expect(screen.getByText("  " + secretish + " pg_dump <b>db</b>", VERBATIM)).toBeTruthy();
 
     // And the environment beside it still states a secret as a LOCATION.
     // The value is something no read on this API carries, so there is

@@ -51,11 +51,16 @@ const (
 //
 // It is workflow.DefaultMaxScriptSize's value and not a coincidence: that
 // is how large a hook script may be by default, so the ordinary
-// deployment is never told its script was too large to check. It is a
-// constant rather than a parameter because it is not a policy: the parser
-// is recursive descent, a stack overflow in Go is fatal and cannot be
-// recovered, and the only thing standing between a megabyte of "$((((("
-// and a dead process is a limit on how much of it is read.
+// deployment is never told its script was too large to check.
+//
+// What it does NOT do is make the parser safe, and this comment used to
+// claim that it did. A megabyte of "$(" is a legal script at the default
+// size limit and it drives mvdan.cc/sh's recursive descent off the
+// goroutine stack, which in Go is a FATAL error that no deferred
+// recover() can catch: the process dies, and this code path is reachable
+// from a configuration write and from an API read. The bound that makes
+// the parser safe is MaxNestingDepth, checked by a linear pre-scan
+// before the parser is handed anything; this one bounds the WORK.
 //
 // A deployment that raises workflows.max_script_size_bytes past this gets
 // "not examined" for the scripts above it, which says what happened. It
@@ -164,11 +169,26 @@ func Report(_ context.Context, name string, src []byte) ScriptReport {
 	out := ScriptReport{Script: name}
 
 	if len(src) > MaxScriptBytes {
-		// Before the parser, because this is the bound that makes the
-		// parser safe rather than a check on its result.
+		// The bound on WORK. It is not what makes the parser safe; see
+		// MaxScriptBytes and the nesting check below.
 		out.NotExaminedReason = fmt.Sprintf(
 			"not examined: %s is %d bytes and this check reads at most %d. A hook is a shell script; a prefix of one is a different program, so it is not examined rather than partly examined",
 			name, len(src), MaxScriptBytes)
+
+		return out
+	}
+
+	// The bound that makes the parser safe, and it has to be here --
+	// before the parser sees a byte -- rather than around it. A stack
+	// overflow in Go is a fatal runtime error: it is not a panic, no
+	// deferred recover() intercepts it, and the process dies with it.
+	// This code path is reached by a configuration write and by an
+	// authenticated API read, so a script nobody can parse safely has to
+	// be refused BY MEASUREMENT rather than survived.
+	if depth := maxNestingDepth(src); depth > MaxNestingDepth {
+		out.NotExaminedReason = fmt.Sprintf(
+			"not examined: %s nests shell constructs at least %d deep and this check parses at most %d. A hook a person wrote nests a handful of levels; this is deeper than any shell would run and deeper than this product can parse without risking the process, so it is not examined and it does not refuse your save",
+			name, depth, MaxNestingDepth)
 
 		return out
 	}

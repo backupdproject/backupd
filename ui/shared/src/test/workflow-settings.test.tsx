@@ -261,6 +261,18 @@ describe("the deployment-wide workflow card", () => {
     expect(refusal.getAllByText("/srv/hooks/known-broken").length).toBe(2);
     expect(refusal.getByText(/does not parse at 18:24/)).toBeTruthy();
     expect(refusal.getByText("BSH003 at 12:8")).toBeTruthy();
+    // The line each refusal is about. A global stage directory wraps
+    // every backup set, so the operator refused here is often not the
+    // person who wrote the hook: a position they have to go and resolve
+    // on somebody else's host is a dead end.
+    expect(refusal.getByText("mysql -e \"FLUSH TABLES WITH READ LOCK")).toBeTruthy();
+    expect(refusal.getByText("^ column 24")).toBeTruthy();
+    expect(refusal.getByText("rm -rf \"$STAGING/var\"")).toBeTruthy();
+    expect(refusal.getByText("^ column 8")).toBeTruthy();
+    // And whose stage the second script came out of. This card writes
+    // DEPLOYMENT-WIDE directories, so a refusal naming a set is a refusal
+    // about a set nobody was editing on this screen.
+    expect(refusal.getByText("backup set production/billing-mysql")).toBeTruthy();
     // And the half a refusal must never overstate: warnings save fine.
     expect(refusal.getByText(/does not block a save/)).toBeTruthy();
   });

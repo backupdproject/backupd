@@ -219,6 +219,11 @@ type WorkflowLintFinding struct {
 	// never a resolved secret, because nothing on this path resolves
 	// one.
 	Message string
+
+	// Excerpt is the script's own line at Line, with one line either
+	// side, so a client can show the code beside the position rather
+	// than only the position. See WorkflowSourceExcerpt.
+	Excerpt WorkflowSourceExcerpt
 }
 
 // WorkflowScriptLint is the static verification of one script.
@@ -244,12 +249,56 @@ type WorkflowScriptLint struct {
 	ParseErrorLine int
 	ParseErrorCol  int
 
+	// ParseErrorExcerpt is the script's own line at that position, with
+	// one line either side.
+	ParseErrorExcerpt WorkflowSourceExcerpt
+
 	// Findings is what the rules reported, in position order. It carries
 	// every severity, including the ones that do not block a save, for
 	// the reason the report's own vocabulary has four: a client that only
 	// saw the blocking ones could not show an operator the warning they
 	// are about to introduce.
 	Findings []WorkflowLintFinding
+}
+
+// WorkflowSourceExcerpt is a few of a script's own lines, carried beside
+// a position that names one of them.
+//
+// # Why the report carries source
+//
+// Because a position on its own is a lookup somebody has to perform on a
+// machine they may not be on: "BSH003 at 24:10" sends an operator to a
+// NAS over SSH to read one line. The excerpt is the finding and the line
+// in one place, which is what the approved design for this feature draws
+// -- a gutter, the line, and the reported column marked.
+//
+// # What is safe about it
+//
+// The lines come from internal/workflowlint, from the bytes this
+// validation READ AND HASHED rather than from a re-read, so they cannot
+// disagree with the positions beside them; and they arrive with control
+// characters removed and their length bounded, at the point they are
+// produced rather than at each surface that draws them. A hook script is
+// arbitrary text and this text goes into a browser and a terminal.
+//
+// It is the script's own text and never a resolved secret: nothing on
+// this path resolves one. A hook that has a credential WRITTEN INTO it
+// as a literal is a hook whose own bytes say so, which is true of every
+// surface this product has that echoes a script -- including the `bash
+// -n` error a runner already returns.
+type WorkflowSourceExcerpt struct {
+	Lines []WorkflowSourceLine
+}
+
+// WorkflowSourceLine is one line of a script, numbered as an editor
+// numbers it.
+type WorkflowSourceLine struct {
+	Number int
+	Text   string
+
+	// Truncated says the line was longer than the excerpt carries, so a
+	// reader can tell the script from what they are being shown.
+	Truncated bool
 }
 
 // BlockingLintFindings is the subset of one script's findings that would
@@ -270,13 +319,19 @@ func (l WorkflowScriptLint) BlockingLintFindings() []WorkflowLintFinding {
 	return out
 }
 
-// toWorkflowScriptLint renders one engine report onto the reported shape.
+// toWorkflowScriptLint renders one engine report onto the reported shape,
+// over the bytes it was produced from.
 //
 // Field by field rather than by embedding the engine's type, which is the
 // discipline every boundary in this package keeps: a field added to the
 // engine has to be given a name here by somebody, rather than arriving on
 // an API surface because a struct grew.
-func toWorkflowScriptLint(r workflowlint.ScriptReport) WorkflowScriptLint {
+//
+// src is the source the report is ABOUT, and it is passed rather than
+// re-read for the reason WorkflowSourceExcerpt gives: an excerpt read
+// later is an excerpt of a file somebody may have edited since, and a
+// line shown under the wrong position is worse than no line.
+func toWorkflowScriptLint(r workflowlint.ScriptReport, src []byte) WorkflowScriptLint {
 	out := WorkflowScriptLint{
 		Examined:          r.Examined,
 		NotExaminedReason: r.NotExaminedReason,
@@ -288,15 +343,34 @@ func toWorkflowScriptLint(r workflowlint.ScriptReport) WorkflowScriptLint {
 		out.ParseError = r.ParseError.Message
 		out.ParseErrorLine = r.ParseError.Line
 		out.ParseErrorCol = r.ParseError.Col
+		out.ParseErrorExcerpt = toWorkflowSourceExcerpt(workflowlint.Excerpt(src, r.ParseError.Line))
 	}
 
 	for _, f := range r.Findings {
-		out.Findings = append(out.Findings, WorkflowLintFinding{
-			Code:     f.Code,
-			Severity: f.Severity,
-			Line:     f.Line,
-			Col:      f.Col,
-			Message:  f.Message,
+		out.Findings = append(out.Findings, toWorkflowLintFinding(f, src))
+	}
+
+	return out
+}
+
+func toWorkflowLintFinding(f workflowlint.Finding, src []byte) WorkflowLintFinding {
+	return WorkflowLintFinding{
+		Code:     f.Code,
+		Severity: f.Severity,
+		Line:     f.Line,
+		Col:      f.Col,
+		Message:  f.Message,
+		Excerpt:  toWorkflowSourceExcerpt(workflowlint.Excerpt(src, f.Line)),
+	}
+}
+
+func toWorkflowSourceExcerpt(lines []workflowlint.SourceLine) WorkflowSourceExcerpt {
+	out := WorkflowSourceExcerpt{Lines: make([]WorkflowSourceLine, 0, len(lines))}
+	for _, l := range lines {
+		out.Lines = append(out.Lines, WorkflowSourceLine{
+			Number:    l.Number,
+			Text:      l.Text,
+			Truncated: l.Truncated,
 		})
 	}
 
@@ -360,6 +434,10 @@ type workflowValidator struct {
 
 	report WorkflowValidation
 	plan   workflow.Plan
+
+	// syntax holds every observation about the two syntax checks until
+	// settleSyntaxFindings collapses them. See scriptFinding.
+	syntax []WorkflowFinding
 }
 
 func (v *workflowValidator) add(f WorkflowFinding) {
@@ -417,6 +495,10 @@ func (v *workflowValidator) run(ctx context.Context) {
 	v.checkPlan(ctx, stages)
 	v.checkTimeouts()
 	v.checkExecutors(ctx)
+
+	// After every observer, and before the verdict: the two syntax
+	// checks have two of them. See settleSyntaxFindings.
+	v.settleSyntaxFindings()
 	v.settle()
 }
 
@@ -537,13 +619,9 @@ func (v *workflowValidator) checkPlan(ctx context.Context, stages []workflow.Sta
 // one sentence -- refused, blocking, reported-but-not-blocking, not
 // examined, or nothing -- and the positions are one field away.
 func (v *workflowValidator) checkScriptLint(ctx context.Context) {
-	examined := map[string]int{}
-	clean := map[string]int{}
-
 	for i := range v.report.Scripts {
 		script := &v.report.Scripts[i]
 		check := scriptSyntaxCheck(script.Target)
-		examined[check]++
 
 		spooled, err := v.plan.OpenScript(script.StepID)
 		if err != nil {
@@ -557,7 +635,7 @@ func (v *workflowValidator) checkScriptLint(ctx context.Context) {
 		}
 
 		report := workflowlint.Report(ctx, script.ScriptName, spooled.Body)
-		script.Lint = toWorkflowScriptLint(report)
+		script.Lint = toWorkflowScriptLint(report, spooled.Body)
 
 		switch {
 		case !report.Examined:
@@ -573,20 +651,10 @@ func (v *workflowValidator) checkScriptLint(ctx context.Context) {
 			v.scriptFinding(check, WorkflowSeverityWarning, *script,
 				lintDetail(script.ScriptName, "parses, and", report.Findings, len(report.Findings)))
 		default:
-			clean[check]++
+			v.scriptFinding(check, WorkflowSeverityOK, *script, fmt.Sprintf(
+				"%s parses, and this product's own shell rules report nothing about it. Nothing was executed: the bytes were parsed and walked in this process",
+				script.ScriptName))
 		}
-	}
-
-	// One pass line per target whose every script was clean. A per-script
-	// "this one is fine" line for each of sixty-four hooks would bury the
-	// one that is not.
-	for _, check := range []string{WorkflowCheckLocalBashSyntax, WorkflowCheckRemoteBashSyntax} {
-		if examined[check] == 0 || clean[check] != examined[check] {
-			continue
-		}
-		v.ok(check, fmt.Sprintf(
-			"%d script(s) parse, and this product's own shell rules report nothing about them. Nothing was executed: the bytes were parsed and walked in this process",
-			clean[check]))
 	}
 }
 
@@ -620,10 +688,19 @@ func scriptSyntaxCheck(target string) string {
 	return WorkflowCheckLocalBashSyntax
 }
 
-// scriptFinding adds a finding narrowed to one step, so a client can
+// scriptFinding records a finding narrowed to one step, so a client can
 // group it under the script it is about.
+//
+// The two SYNTAX checks do not go straight onto the report, and that is
+// review MAJOR 1: two things observe them -- this product's own parser,
+// in process, and the executor's `bash -n`, over a socket or an SSH
+// connection -- and both used to emit under the same check id
+// unreconciled. A clean script produced two `ok` rows; a script with a
+// blocking finding produced an `error` saying it does not pass and an
+// `ok` saying the hooks parse, which is a report that contradicts itself
+// about the same bytes. See settleSyntaxFindings.
 func (v *workflowValidator) scriptFinding(check, severity string, script WorkflowValidatedScript, detail string) {
-	v.add(WorkflowFinding{
+	v.recordSyntax(WorkflowFinding{
 		Check:    check,
 		Severity: severity,
 		Detail:   detail,
@@ -632,6 +709,143 @@ func (v *workflowValidator) scriptFinding(check, severity string, script Workflo
 		Target:   script.Target,
 		Script:   script.ScriptName,
 	})
+}
+
+// isSyntaxCheck reports whether a check is one of the two that more than
+// one observer answers.
+func isSyntaxCheck(check string) bool {
+	return check == WorkflowCheckLocalBashSyntax || check == WorkflowCheckRemoteBashSyntax
+}
+
+// emitOrRecord puts a finding on the report, unless it is about one of
+// the two checks two observers answer, in which case it waits for the
+// other one.
+//
+// Every other check has exactly one observer, and routing those through
+// the reconciler would be a map lookup to decide something already known.
+func (v *workflowValidator) emitOrRecord(f WorkflowFinding) {
+	if isSyntaxCheck(f.Check) {
+		v.recordSyntax(f)
+
+		return
+	}
+
+	v.add(f)
+}
+
+// recordSyntax holds one observation about a script's syntax until every
+// observer has spoken.
+func (v *workflowValidator) recordSyntax(f WorkflowFinding) {
+	v.syntax = append(v.syntax, f)
+}
+
+// syntaxSeverityRank orders the severities so "worst" is a value rather
+// than a comparison each caller writes.
+//
+// skipped outranks ok deliberately: "nobody examined this" is a weaker
+// claim than "this passed", so when one observer passed a script and
+// another could not look at it, the row has to be the one that does not
+// claim a pass.
+func syntaxSeverityRank(severity string) int {
+	switch severity {
+	case WorkflowSeverityError:
+		return 3
+	case WorkflowSeverityWarning:
+		return 2
+	case WorkflowSeveritySkipped:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// settleSyntaxFindings collapses every observation about the two syntax
+// checks into ONE row per script per check, at the worst severity
+// observed (review MAJOR 1).
+//
+// # Why worst-severity rather than both rows
+//
+// Because the two observations are about the same question -- would a
+// shell accept this script -- asked of the same bytes by two things that
+// can both answer. A report carrying both is a report an operator has to
+// reconcile, and the reconciliation is always the same: the worse answer
+// is the one to act on. So it is done once, here, rather than by every
+// reader.
+//
+// The losing sentence is not always thrown away: when it is itself a
+// complaint (an error or a warning rather than a pass or a skip) it is
+// appended, because "the parser refuses line 4" and "the runner's bash
+// refuses it too" are two facts and an operator debugging a hook wants
+// both.
+//
+// # Why a check-level row is dropped once any script has one
+//
+// The executor probe emits one aggregate pass for a whole target ("3
+// local hook(s) parse") beside the per-script answers. With per-script
+// rows present that aggregate is either redundant or, when one script
+// failed, actively contradictory. The check-level row survives only when
+// there is nothing per-script to say -- "this set runs no local hooks",
+// which is the honest skip.
+func (v *workflowValidator) settleSyntaxFindings() {
+	worst := make(map[string]WorkflowFinding, len(v.syntax))
+	order := make([]string, 0, len(v.syntax))
+	perScript := map[string]bool{}
+
+	for _, f := range v.syntax {
+		key := syntaxKey(f.Check, f.Scope, f.Phase, f.Target, f.Script)
+
+		if f.Script != "" {
+			perScript[f.Check] = true
+		}
+
+		prev, seen := worst[key]
+		if !seen {
+			worst[key] = f
+			order = append(order, key)
+
+			continue
+		}
+
+		winner, loser := prev, f
+		if syntaxSeverityRank(f.Severity) > syntaxSeverityRank(prev.Severity) {
+			winner, loser = f, prev
+		}
+		if syntaxSeverityRank(loser.Severity) >= syntaxSeverityRank(WorkflowSeverityWarning) &&
+			loser.Detail != winner.Detail {
+			winner.Detail += " Also: " + loser.Detail
+		}
+		worst[key] = winner
+	}
+
+	// Per script, in PLAN order, then whatever is left in the order it
+	// was observed: two runs of this validation over an unchanged
+	// deployment have to print the same report.
+	for _, check := range []string{WorkflowCheckLocalBashSyntax, WorkflowCheckRemoteBashSyntax} {
+		for _, s := range v.report.Scripts {
+			key := syntaxKey(check, s.Scope, s.Phase, s.Target, s.ScriptName)
+			if f, ok := worst[key]; ok {
+				v.add(f)
+				delete(worst, key)
+			}
+		}
+	}
+
+	for _, key := range order {
+		f, ok := worst[key]
+		if !ok {
+			continue
+		}
+		delete(worst, key)
+
+		if f.Script == "" && perScript[f.Check] {
+			continue
+		}
+		v.add(f)
+	}
+}
+
+func syntaxKey(check, scope, phase, target, script string) string {
+	return check + "\x00" + scope + "\x00" + phase + "\x00" + target + "\x00" + script
 }
 
 // planChecks are the checks one Snapshot answers, in report order.
@@ -942,7 +1156,7 @@ func (v *workflowValidator) checkExecutors(ctx context.Context) {
 	v.svc.probePlanExecutors(ctx, v.plan, func(f workflowPlanFinding) bool {
 		switch {
 		case f.Skipped:
-			v.skip(f.Check, f.Detail)
+			v.emitOrRecord(WorkflowFinding{Check: f.Check, Severity: WorkflowSeveritySkipped, Detail: f.Detail})
 		case f.Err != nil:
 			finding := WorkflowFinding{Check: f.Check, Severity: WorkflowSeverityError, Detail: f.Err.Error()}
 			if f.Step != nil {
@@ -951,9 +1165,9 @@ func (v *workflowValidator) checkExecutors(ctx context.Context) {
 				finding.Target = string(f.Step.Target)
 				finding.Script = f.Step.ScriptName
 			}
-			v.add(finding)
+			v.emitOrRecord(finding)
 		default:
-			v.ok(f.Check, f.Detail)
+			v.emitOrRecord(WorkflowFinding{Check: f.Check, Severity: WorkflowSeverityOK, Detail: f.Detail})
 		}
 
 		// Every answer, always: this is the verb an operator typed to

@@ -106,11 +106,26 @@ type WorkflowRefusedScript struct {
 	Scope      string
 	Phase      string
 
+	// BackupSetID names the set whose stage this is, and is empty for a
+	// deployment-wide one.
+	//
+	// It exists because of what a ROOT change does (review BLOCKER 2): a
+	// deployment-wide patch that moves workflows.root re-resolves every
+	// set's stage directories underneath the new root, so the write has
+	// to verify those too -- and a refusal naming "before" in
+	// "pg.before.d" without saying whose set that is would send an
+	// operator looking through every backup set they have.
+	BackupSetID string
+
 	// ParseError, with its position, when the script is not a shell
 	// program at all.
 	ParseError     string
 	ParseErrorLine int
 	ParseErrorCol  int
+
+	// ParseErrorExcerpt is the script's own line at that position, so a
+	// refusal can show what it is refusing rather than only where.
+	ParseErrorExcerpt WorkflowSourceExcerpt
 
 	// Findings is the error-severity findings only. The rest are
 	// reported by the validation surface and do not block, so including
@@ -132,7 +147,13 @@ func (r *WorkflowScriptRefusal) Error() string {
 	fmt.Fprintf(&b, " (%d script(s) refused; warnings and style findings do not block a save)", len(r.Scripts))
 
 	for _, s := range r.Scripts {
-		fmt.Fprintf(&b, "\n  %s in %s (%s %s): ", s.ScriptName, s.Dir, s.Scope, s.Phase)
+		where := s.Scope + " " + s.Phase
+		if s.BackupSetID != "" {
+			// Whose set, because a root change verifies every set's
+			// stages and "set before" alone would not say which one.
+			where = s.BackupSetID + ", " + where
+		}
+		fmt.Fprintf(&b, "\n  %s in %s (%s): ", s.ScriptName, s.Dir, where)
 
 		switch {
 		case s.ParseError != "":
@@ -167,16 +188,35 @@ func (r *WorkflowScriptRefusal) Unwrap() error { return ErrWorkflowScriptRefused
 // refuse on.
 const workflowVerificationDeadline = 30 * time.Second
 
+// verifiedStage is one stage directory the gate will visit, and whose
+// set it belongs to.
+//
+// The set id is carried alongside rather than derived, because a stage
+// cannot say whose it is: workflow.StageSpec has a scope ("set") and a
+// directory, and two backup sets may name the same directory. A refusal
+// has to be able to say which set it is about; see
+// WorkflowRefusedScript.BackupSetID.
+type verifiedStage struct {
+	backupSetID string
+	spec        workflow.StageSpec
+}
+
 // refuseUnverifiableScripts is the gate, applied to the stages a write
-// changes.
+// leaves in force.
 //
 // stages are the ones the RESULTING configuration declares for the scope
-// being written: a deployment-wide patch verifies the global stages, a
-// per-set patch verifies that set's own. Verifying every set's hooks on
-// every deployment-wide patch would make one save's refusal depend on a
-// script in a different set that the operator did not touch and may not
-// be able to fix.
-func refuseUnverifiableScripts(ctx context.Context, cfg *config.Config, stages []workflow.StageSpec) error {
+// being written, and the callers decide that scope:
+//
+//   - a per-set patch verifies that set's own stages. Verifying the
+//     deployment's globals as well would let a global hook somebody else
+//     broke refuse an unrelated per-set patch;
+//   - a deployment-wide patch verifies the global stages -- and, when it
+//     moves workflows.ROOT, every set-owned stage too, because that one
+//     field re-resolves all of them underneath a new directory. That was
+//     review BLOCKER 2: without it, moving the root re-pointed every
+//     set's hooks at whatever is under the new tree and the gate looked
+//     at none of them.
+func refuseUnverifiableScripts(ctx context.Context, cfg *config.Config, stages []verifiedStage) error {
 	if len(stages) == 0 || !cfg.WorkflowsConfigured() {
 		return nil
 	}
@@ -196,11 +236,11 @@ func refuseUnverifiableScripts(ctx context.Context, cfg *config.Config, stages [
 	refusal := &WorkflowScriptRefusal{}
 
 	for _, stage := range stages {
-		if stage.Dir == "" {
+		if stage.spec.Dir == "" {
 			continue
 		}
 
-		dir, err := root.ResolveStage(stage.Dir)
+		dir, err := root.ResolveStage(stage.spec.Dir)
 		if err != nil {
 			continue
 		}
@@ -227,32 +267,42 @@ func refuseUnverifiableScripts(ctx context.Context, cfg *config.Config, stages [
 				continue
 			}
 
-			refused := WorkflowRefusedScript{
-				ScriptName: script.Name,
-				Dir:        stage.Dir,
-				Scope:      string(stage.Scope),
-				Phase:      string(stage.Phase),
-			}
-			if report.ParseError != nil {
-				refused.ParseError = report.ParseError.Message
-				refused.ParseErrorLine = report.ParseError.Line
-				refused.ParseErrorCol = report.ParseError.Col
-			}
-			for _, f := range report.Blocking() {
-				refused.Findings = append(refused.Findings, WorkflowLintFinding{
-					Code:     f.Code,
-					Severity: f.Severity,
-					Line:     f.Line,
-					Col:      f.Col,
-					Message:  f.Message,
-				})
-			}
-
-			refusal.Scripts = append(refusal.Scripts, refused)
+			refusal.Scripts = append(refusal.Scripts, refusedScript(stage, script.Name, body, report))
 		}
 	}
 
 	return settleRefusal(refusal)
+}
+
+// refusedScript renders one blocking verdict, with the script's own
+// lines at the positions it names.
+//
+// The excerpt comes from the bytes that were just read and verified,
+// which is the only source that cannot disagree with the positions: a
+// re-read could land on a file somebody edited in between, and a refusal
+// pointing at line 4 of a file whose line 4 is now something else is
+// worse than one showing no line at all.
+func refusedScript(stage verifiedStage, name string, body []byte, report workflowlint.ScriptReport) WorkflowRefusedScript {
+	out := WorkflowRefusedScript{
+		ScriptName:  name,
+		Dir:         stage.spec.Dir,
+		Scope:       string(stage.spec.Scope),
+		Phase:       string(stage.spec.Phase),
+		BackupSetID: stage.backupSetID,
+	}
+
+	if report.ParseError != nil {
+		out.ParseError = report.ParseError.Message
+		out.ParseErrorLine = report.ParseError.Line
+		out.ParseErrorCol = report.ParseError.Col
+		out.ParseErrorExcerpt = toWorkflowSourceExcerpt(workflowlint.Excerpt(body, report.ParseError.Line))
+	}
+
+	for _, f := range report.Blocking() {
+		out.Findings = append(out.Findings, toWorkflowLintFinding(f, body))
+	}
+
+	return out
 }
 
 func settleRefusal(r *WorkflowScriptRefusal) error {
@@ -263,27 +313,67 @@ func settleRefusal(r *WorkflowScriptRefusal) error {
 	return r
 }
 
-// globalWorkflowStages are the stages a deployment-wide write changes.
-func globalWorkflowStages(cfg *config.Config) []workflow.StageSpec {
-	return workflow.PlanStages(
+// globalWorkflowStages are the deployment-wide stages.
+func globalWorkflowStages(cfg *config.Config) []verifiedStage {
+	return withSet("", workflow.PlanStages(
 		workflow.StageDirs{Before: cfg.Workflows.Global.BeforeDir, After: cfg.Workflows.Global.AfterDir},
 		workflow.StageDirs{},
-	)
+	))
 }
 
-// setWorkflowStages are the stages a per-set write changes.
+// setWorkflowStages are one set's own stages.
 //
-// The set's OWN stages and not its resolved plan: the deployment's
-// globals run against this set too, and they were verified when they were
-// saved. Re-verifying them here would let a global hook somebody else
-// broke refuse an unrelated per-set patch.
-func setWorkflowStages(bs *config.BackupSet) []workflow.StageSpec {
+// The id is passed in rather than read off the set, and that is not
+// tidiness: a configuration freshly loaded for WRITING has not had its
+// composite ids resolved (findBackupSetForWrite matches on the source and
+// set NAMES for exactly that reason), so bs.ID.String() on this path is
+// "/" and a refusal built from it would name no set at all.
+func setWorkflowStages(backupSetID string, bs *config.BackupSet) []verifiedStage {
 	if bs == nil || bs.Workflow == nil {
 		return nil
 	}
 
-	return workflow.PlanStages(
+	return withSet(backupSetID, workflow.PlanStages(
 		workflow.StageDirs{},
 		workflow.StageDirs{Before: bs.Workflow.BeforeDir, After: bs.Workflow.AfterDir},
-	)
+	))
+}
+
+// everyWorkflowStage is what a ROOT change has to verify: the global
+// stages and every set-owned one, under the resulting configuration.
+//
+// # Why a root change is the one deployment-wide patch that reaches every
+// set
+//
+// Because a stage directory is a NAME inside the root, usually relative.
+// Moving the root does not change one line of any set's own block and
+// still re-points every one of those names at a different directory, so
+// the scripts a set would run after the save are scripts this deployment
+// has never verified. A gate that looked only at the global stages would
+// let a save do exactly what the gate exists to prevent, which is review
+// BLOCKER 2.
+//
+// The order is deterministic -- globals, then sets in configuration
+// order, then each set's stages in execution order -- so two attempts at
+// the same save produce the same refusal in the same order.
+func everyWorkflowStage(cfg *config.Config) []verifiedStage {
+	stages := globalWorkflowStages(cfg)
+
+	for i := range cfg.Sources {
+		for j := range cfg.Sources[i].BackupSets {
+			id := cfg.Sources[i].Name + "/" + cfg.Sources[i].BackupSets[j].Name
+			stages = append(stages, setWorkflowStages(id, &cfg.Sources[i].BackupSets[j])...)
+		}
+	}
+
+	return stages
+}
+
+func withSet(backupSetID string, specs []workflow.StageSpec) []verifiedStage {
+	out := make([]verifiedStage, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, verifiedStage{backupSetID: backupSetID, spec: spec})
+	}
+
+	return out
 }

@@ -46,6 +46,32 @@
   structured fields, so a client draws the position rather than parsing it out
   of prose.
 
+  **A hostile hook cannot take the process with it.** The shell parser is
+  recursive descent with no depth limit of its own, and a stack overflow in
+  Go is fatal rather than recoverable, so the nesting depth is MEASURED by a
+  linear pre-scan before the parser is handed anything: a megabyte of `$(`
+  -- a legal script at the default size limit, and reachable from both a
+  configuration write and an authenticated read -- is reported as not
+  examined instead of killing the daemon.
+
+  **Every finding carries the script's own line.** The reported line with one
+  either side, with control characters removed and its length bounded at the
+  point it is produced, taken from the bytes the validation read and hashed
+  so the text cannot disagree with the position beside it. A position without
+  the line it points at is an errand on a machine the operator may not be
+  on.
+
+  **A root change is verified against every set.** A stage directory is a
+  name inside `workflows.root`, so moving the root re-points every backup
+  set's hooks at scripts nobody has verified without touching a line of any
+  set's own block; that one field therefore verifies the global stages AND
+  every set-owned one, and the refusal says whose set it is about.
+
+  **One verdict per script per check.** The in-process parser and the
+  executor's `bash -n` both answer the same two check ids, and the report
+  collapses them into a single row at the worst severity rather than
+  printing a pass beside a refusal about the same bytes.
+
   **What it refuses on is what it ESTABLISHED.** A stage directory nobody has
   created, a script larger than the verification reads, a hook tree the run
   layer would refuse: none of those refuse a save, because a save is how an

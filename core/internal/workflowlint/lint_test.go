@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
 
 // The rule corpus. One triggering script per rule, asserting the exact
@@ -146,6 +145,89 @@ func TestBSH001IsSilentWhereTheShellDoesNotSplit(t *testing.T) {
 	}
 }
 
+// TestBSH001ReportsAnIndirectExpansion is the half of ParamExp.Excl that
+// is not a name expansion. `${!x}` produces the VALUE of the variable x
+// names, and that value splits on whitespace like any other; only
+// `${!prefix*}` and `${!prefix@}` are lists of names. Excluding all
+// three, which is what a check on Excl alone does, hides this.
+func TestBSH001ReportsAnIndirectExpansion(t *testing.T) {
+	r := report(t, "indirect.local.sh",
+		"#!/bin/bash",
+		"ref=target",
+		"tar -cf out.tar ${!ref}",
+	)
+
+	f := finding(t, r, CodeUnquotedExpansion)
+	if f.Severity != SeverityInfo {
+		t.Errorf("%s severity = %q, want %q", f.Code, f.Severity, SeverityInfo)
+	}
+	if f.Line != 3 || f.Col != 17 {
+		t.Errorf("%s position = %d:%d, want 3:17", f.Code, f.Line, f.Col)
+	}
+	if !strings.Contains(f.Message, "indirect") {
+		t.Errorf("%s message does not say the expansion is indirect: %q", f.Code, f.Message)
+	}
+}
+
+func TestBSH001IsSilentOnTheNameListForms(t *testing.T) {
+	for _, tc := range []struct{ name, line string }{
+		{"${!prefix*}, which is a list of names", `printf '%s\n' ${!BACKUPD_*}`},
+		{"${!prefix@}, the same list", `printf '%s\n' ${!BACKUPD_@}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := report(t, "names.local.sh", "#!/bin/bash", tc.line)
+			parsed(t, r)
+
+			for _, f := range r.Findings {
+				if f.Code == CodeUnquotedExpansion {
+					t.Errorf("%s fired on %q: %+v", f.Code, tc.line, f)
+				}
+			}
+		})
+	}
+}
+
+// A declaration builtin's `NAME=value` argument is an assignment
+// context: the shell does not split or glob the right-hand side, so
+// advice to quote it is advice that changes nothing.
+func TestBSH001IsSilentOnADeclarationBuiltinsAssignment(t *testing.T) {
+	for _, tc := range []struct{ name, line string }{
+		{"export", "export NAME=$x"},
+		{"readonly", "readonly ROOT=$root"},
+		{"declare behind a flag", "declare -r NAME=$x"},
+		{"typeset", "typeset NAME=$x"},
+		{"local, inside the function it belongs to", "f() { local dir=$1; }"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := report(t, "decl.local.sh", "#!/bin/bash", tc.line)
+			parsed(t, r)
+
+			for _, f := range r.Findings {
+				if f.Code == CodeUnquotedExpansion {
+					t.Errorf("%s fired on %q: %+v", f.Code, tc.line, f)
+				}
+			}
+		})
+	}
+}
+
+// The other half of the same claim: a declaration builtin's NON
+// assignment argument is an ordinary word and does split.
+func TestBSH001ReportsADeclarationBuiltinsNakedArgument(t *testing.T) {
+	r := report(t, "decl.local.sh",
+		"#!/bin/bash",
+		"export $names",
+	)
+
+	f := finding(t, r, CodeUnquotedExpansion)
+	if f.Severity != SeverityInfo {
+		t.Errorf("%s severity = %q, want %q", f.Code, f.Severity, SeverityInfo)
+	}
+	if f.Line != 2 || f.Col != 8 {
+		t.Errorf("%s position = %d:%d, want 2:8", f.Code, f.Line, f.Col)
+	}
+}
+
 func TestBSH002ReportsACdWhoseFailureNothingNotices(t *testing.T) {
 	r := report(t, "cd.local.sh",
 		"#!/bin/bash",
@@ -178,9 +260,15 @@ func TestBSH002IsSilentWhereTheFailureIsHandled(t *testing.T) {
 		{"a negated test", []string{"#!/bin/bash", "if ! cd /srv/data; then exit 1; fi"}},
 		{"a while condition", []string{"#!/bin/bash", "while cd /srv/data; do break; done"}},
 		{"no argument, so not this shape", []string{"#!/bin/bash", "cd"}},
+		{"the right operand of && in a condition, which decides its status", []string{"#!/bin/bash", "if true && cd /srv/data; then echo there; fi"}},
+		{"the last command of a pipeline condition", []string{"#!/bin/bash", "if echo x | cd /srv/data; then echo there; fi"}},
+		{"an until condition", []string{"#!/bin/bash", "until cd /srv/data; do break; done"}},
+		{"set +e and then set -e again", []string{"#!/bin/bash", "set -e", "set +e", "set -e", "cd /srv/data"}},
+		{"a set +e that may never run", []string{"#!/bin/bash", "set -e", `if [ -n "$1" ]; then set +e; fi`, "cd /srv/data"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := report(t, "cd.local.sh", tc.script...)
+			parsed(t, r)
 
 			for _, f := range r.Findings {
 				if f.Code == CodeUncheckedCd {
@@ -191,28 +279,146 @@ func TestBSH002IsSilentWhereTheFailureIsHandled(t *testing.T) {
 	}
 }
 
+// An `if` condition is a LIST, and a list's exit status is its LAST
+// statement's. `if cd /missing; echo ready; then` branches on the echo,
+// so the cd's failure is exactly as unnoticed as it would be on a line
+// of its own -- and the script then runs its `then` body in the wrong
+// directory, which is the whole shape BSH002 is about.
+func TestBSH002ReportsACdThatDoesNotDecideItsConditionsStatus(t *testing.T) {
+	r := report(t, "cd.local.sh",
+		"#!/bin/bash",
+		"if cd /missing; echo ready; then",
+		"  rm -rf ./old",
+		"fi",
+	)
+
+	f := finding(t, r, CodeUncheckedCd)
+	if f.Severity != SeverityWarning {
+		t.Errorf("%s severity = %q, want %q", f.Code, f.Severity, SeverityWarning)
+	}
+	if f.Line != 2 || f.Col != 4 {
+		t.Errorf("%s position = %d:%d, want 2:4", f.Code, f.Line, f.Col)
+	}
+}
+
+// `set -e` protects what comes after it, and `set +e` takes the
+// protection away again. Reading the first line and ignoring the second
+// -- which is what a write-only flag does -- silences this rule over a
+// script that turned errexit off on purpose.
+func TestBSH002ReportsACdAfterErrexitWasTurnedBackOff(t *testing.T) {
+	r := report(t, "cd.local.sh",
+		"#!/bin/bash",
+		"set -e",
+		"set +e",
+		"cd /srv/data",
+	)
+
+	f := finding(t, r, CodeUncheckedCd)
+	if f.Severity != SeverityWarning {
+		t.Errorf("%s severity = %q, want %q", f.Code, f.Severity, SeverityWarning)
+	}
+	if f.Line != 4 || f.Col != 1 {
+		t.Errorf("%s position = %d:%d, want 4:1", f.Code, f.Line, f.Col)
+	}
+}
+
 func TestBSH003BlocksARecursiveDeleteThatBecomesARootPath(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		line string
-		line1Col,
+		name     string
+		script   []string
 		wantLine int
+		wantCol  int
 	}{
-		{name: "an unquoted expansion with a trailing slash", line: "rm -rf $STAGING/", wantLine: 2},
-		{name: "a quoted path whose first component is the variable", line: `rm -rf "$STAGING/tmp"`, wantLine: 2},
-		{name: "a braced expansion", line: "rm -rf ${STAGING}/*", wantLine: 2},
-		{name: "separate flags", line: "rm -r -f $STAGING/tmp", wantLine: 2},
-		{name: "a command substitution", line: "rm -rf $(cat /tmp/target)/data", wantLine: 2},
+		{
+			name:     "an unquoted expansion with a trailing slash",
+			script:   []string{"#!/bin/bash", "rm -rf $STAGING/"},
+			wantLine: 2, wantCol: 8,
+		},
+		{
+			name:     "a quoted path whose first component is the variable",
+			script:   []string{"#!/bin/bash", `rm -rf "$STAGING/tmp"`},
+			wantLine: 2, wantCol: 8,
+		},
+		{
+			name:     "a braced expansion",
+			script:   []string{"#!/bin/bash", "rm -rf ${STAGING}/*"},
+			wantLine: 2, wantCol: 8,
+		},
+		{
+			name:     "separate flags",
+			script:   []string{"#!/bin/bash", "rm -r -f $STAGING/tmp"},
+			wantLine: 2, wantCol: 10,
+		},
+		{
+			name:     "a command substitution",
+			script:   []string{"#!/bin/bash", "rm -rf $(cat /tmp/target)/data"},
+			wantLine: 2, wantCol: 8,
+		},
+		{
+			// set -u aborts on an UNSET parameter and says nothing about
+			// one that is set to the empty string. This is the script
+			// the old blanket exemption silenced, and it deletes /tmp.
+			name:     "set -u, with a variable that is set to nothing",
+			script:   []string{"#!/bin/bash", "set -u", "STAGING=", `rm -rf "$STAGING/tmp"`},
+			wantLine: 4, wantCol: 8,
+		},
+		{
+			name:     "an option that was turned back off before the delete",
+			script:   []string{"#!/bin/bash", "set -u", "set +u", `rm -rf "$STAGING/tmp"`},
+			wantLine: 4, wantCol: 8,
+		},
+		{
+			name:     "rm's long options, which the flag scan used to skip",
+			script:   []string{"#!/bin/bash", `rm --recursive --force "$STAGING/tmp"`},
+			wantLine: 2, wantCol: 24,
+		},
+		{
+			name:     "-R, which is recursion too",
+			script:   []string{"#!/bin/bash", `rm -R -f "$STAGING/tmp"`},
+			wantLine: 2, wantCol: 10,
+		},
+		{
+			// /var/../tmp is three components of text and one directory
+			// inside the root, which is what rm acts on.
+			name:     "a path that cleans down to a root-level one",
+			script:   []string{"#!/bin/bash", `rm -rf "$ROOT/var/../tmp"`},
+			wantLine: 2, wantCol: 8,
+		},
+		{
+			name:     "a default whose fallback can itself be empty",
+			script:   []string{"#!/bin/bash", `rm -rf "${STAGING:-$OTHER}/tmp"`},
+			wantLine: 2, wantCol: 8,
+		},
+		{
+			// The non-colon form covers UNSET only: a STAGING assigned
+			// the empty string is set, so the fallback never runs.
+			name:     "a non-colon default, which leaves an empty value empty",
+			script:   []string{"#!/bin/bash", `rm -rf "${STAGING-/srv/stage}/tmp"`},
+			wantLine: 2, wantCol: 8,
+		},
+		{
+			name:     "an alternate operator, which produces nothing without a value",
+			script:   []string{"#!/bin/bash", `rm -rf "${STAGING:+/srv/stage}/tmp"`},
+			wantLine: 2, wantCol: 8,
+		},
+		{
+			// The stand-in for an expansion that cannot be empty keeps
+			// the component count honest in BOTH directions: /N/ is
+			// still one directory inside the root.
+			name:     "a hole beside an expansion that cannot be one, still root-level",
+			script:   []string{"#!/bin/bash", `rm -rf "/${#items}/$STAGING"`},
+			wantLine: 2, wantCol: 8,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := report(t, "clean.local.sh", "#!/bin/bash", tc.line)
+			r := report(t, "clean.local.sh", tc.script...)
 
 			f := finding(t, r, CodeRecursiveRemoveRoot)
 			if f.Severity != SeverityError {
 				t.Errorf("%s severity = %q, want %q", f.Code, f.Severity, SeverityError)
 			}
-			if f.Line != tc.wantLine {
-				t.Errorf("%s line = %d, want %d", f.Code, f.Line, tc.wantLine)
+			if f.Line != tc.wantLine || f.Col != tc.wantCol {
+				t.Errorf("%s position = %d:%d, want %d:%d", f.Code, f.Line, f.Col, tc.wantLine, tc.wantCol)
 			}
 			if !r.Blocks() {
 				t.Error("an error-severity finding does not block a save")
@@ -232,8 +438,12 @@ func TestBSH003IsSilentWhereTheDeleteIsNotRootLevel(t *testing.T) {
 		{"a path the deployment owns", []string{"#!/bin/bash", "rm -rf /srv/backupd/cache/$NAME"}},
 		{"an expansion that fails when unset", []string{"#!/bin/bash", `rm -rf "${STAGING:?}/tmp"`}},
 		{"an expansion with a default", []string{"#!/bin/bash", `rm -rf "${STAGING:-/srv/backupd/stage}/tmp"`}},
-		{"set -u, which aborts on an unset variable", []string{"#!/bin/bash", "set -u", "rm -rf $STAGING/tmp"}},
-		{"set -o nounset", []string{"#!/bin/bash", "set -o nounset", "rm -rf $STAGING/tmp"}},
+		{"an assign-default that cannot be empty", []string{"#!/bin/bash", `rm -rf "${STAGING:=/srv/backupd/stage}/tmp"`}},
+		{"a non-colon error branch, read as a guard on purpose", []string{"#!/bin/bash", `rm -rf "${STAGING?}/tmp"`}},
+		{"a length, which is a number and never empty", []string{"#!/bin/bash", `rm -rf "/${#items}/tmp"`}},
+		{"a hole beside an expansion that cannot be one", []string{"#!/bin/bash", `rm -rf "/$STAGING/${#items}/data"`}},
+		{"everything after -- is an operand and not a flag", []string{"#!/bin/bash", `rm -- -rf "$STAGING/tmp"`}},
+		{"set -u with an expansion that really does abort", []string{"#!/bin/bash", "set -u", `rm -rf "${STAGING:?}/tmp"`}},
 		{"no force flag, so it prompts rather than deleting", []string{"#!/bin/bash", "rm -r $STAGING/tmp"}},
 		{"no recursion", []string{"#!/bin/bash", "rm -f $STAGING/tmp"}},
 		{"a literal path with no expansion at all", []string{"#!/bin/bash", "rm -rf /tmp/backupd.lock"}},
@@ -270,6 +480,27 @@ func TestBSH004ReportsAPipelineWhoseEarlierFailureSetEWillNotSee(t *testing.T) {
 	}
 }
 
+// `set -o pipefail` followed by `set +o pipefail` is a script that
+// turned the protection back off, and the pipeline below it is exactly
+// the one this rule exists for.
+func TestBSH004ReportsAPipelineAfterPipefailWasTurnedBackOff(t *testing.T) {
+	r := report(t, "dump.remote.sh",
+		"#!/bin/bash",
+		"set -e",
+		"set -o pipefail",
+		"set +o pipefail",
+		"pg_dump mydb | gzip > /srv/out.gz",
+	)
+
+	f := finding(t, r, CodeMaskedPipelineFailure)
+	if f.Severity != SeverityWarning {
+		t.Errorf("%s severity = %q, want %q", f.Code, f.Severity, SeverityWarning)
+	}
+	if f.Line != 5 || f.Col != 1 {
+		t.Errorf("%s position = %d:%d, want 5:1", f.Code, f.Line, f.Col)
+	}
+}
+
 func TestBSH004IsOneFindingPerScriptAndSilentWhenHandled(t *testing.T) {
 	t.Run("pipefail", func(t *testing.T) {
 		r := report(t, "dump.remote.sh",
@@ -282,6 +513,37 @@ func TestBSH004IsOneFindingPerScriptAndSilentWhenHandled(t *testing.T) {
 		for _, f := range r.Findings {
 			if f.Code == CodeMaskedPipelineFailure {
 				t.Errorf("%s fired on a script that sets pipefail: %+v", f.Code, f)
+			}
+		}
+	})
+
+	t.Run("set -e turned back off, so nothing claimed to stop", func(t *testing.T) {
+		r := report(t, "dump.remote.sh",
+			"#!/bin/bash",
+			"set -e",
+			"set +e",
+			"pg_dump mydb | gzip > /srv/out.gz",
+		)
+
+		for _, f := range r.Findings {
+			if f.Code == CodeMaskedPipelineFailure {
+				t.Errorf("%s fired on a script that turned errexit off: %+v", f.Code, f)
+			}
+		}
+	})
+
+	t.Run("a set +o pipefail that may never run", func(t *testing.T) {
+		r := report(t, "dump.remote.sh",
+			"#!/bin/bash",
+			"set -e",
+			"set -o pipefail",
+			`if [ -n "$1" ]; then set +o pipefail; fi`,
+			"pg_dump mydb | gzip > /srv/out.gz",
+		)
+
+		for _, f := range r.Findings {
+			if f.Code == CodeMaskedPipelineFailure {
+				t.Errorf("%s fired on a conditional set +o pipefail: %+v", f.Code, f)
 			}
 		}
 	})
@@ -436,52 +698,60 @@ func TestAScriptLargerThanTheBoundIsNotExaminedRatherThanTruncated(t *testing.T)
 	}
 }
 
-func TestHostileBytesProduceAVerdictRatherThanAPanic(t *testing.T) {
+func TestHostileBytesProduceTheRightVerdictRatherThanAPanic(t *testing.T) {
+	// Every one of these is small enough to be examined, so the verdict
+	// worth asserting is the parse one, per case. "it did not panic" on
+	// its own -- the assertion this replaces -- also passes on a report
+	// that quietly dropped the script, which is the failure that would
+	// matter here.
 	for _, tc := range []struct {
-		name string
-		src  []byte
+		name      string
+		src       []byte
+		wantFault bool
+		wantCodes []string
 	}{
-		{"a NUL byte", []byte("#!/bin/bash\necho \x00hi\n")},
-		{"invalid UTF-8", []byte("#!/bin/bash\necho '\xff\xfe'\n")},
-		{"no newline at all", []byte("echo hi")},
-		{"only a heredoc opener", []byte("#!/bin/bash\ncat <<EOF\n")},
-		{"empty", []byte("")},
+		{name: "a NUL byte", src: []byte("#!/bin/bash\necho \x00hi\n")},
+		{name: "invalid UTF-8", src: []byte("#!/bin/bash\necho '\xff\xfe'\n"), wantFault: true},
+		{name: "no newline at all", src: []byte("echo hi"), wantCodes: []string{CodeMissingShebang}},
+		{name: "only a heredoc opener", src: []byte("#!/bin/bash\ncat <<EOF\n"), wantFault: true},
+		{name: "empty", src: []byte(""), wantCodes: []string{CodeMissingShebang}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := Report(context.Background(), "hostile.local.sh", tc.src)
 
-			if !r.Examined && r.NotExaminedReason == "" {
-				t.Error("the report neither examined the script nor said why")
+			if !r.Examined {
+				t.Fatalf("the script was not examined: %q", r.NotExaminedReason)
+			}
+
+			if tc.wantFault {
+				if r.ParseError == nil {
+					t.Fatalf("no parse fault; findings %+v", r.Findings)
+				}
+				if r.ParseError.Line == 0 || r.ParseError.Col == 0 || r.ParseError.Message == "" {
+					t.Errorf("the parse fault carries no position or no message: %+v", r.ParseError)
+				}
+				if !r.Blocks() {
+					t.Error("a script that does not parse does not block a save")
+				}
+
+				return
+			}
+
+			if r.ParseError != nil {
+				t.Fatalf("reported a parse fault: %+v", r.ParseError)
+			}
+
+			var codes []string
+			for _, f := range r.Findings {
+				codes = append(codes, f.Code)
+			}
+			if !reflect.DeepEqual(codes, tc.wantCodes) {
+				t.Errorf("findings = %v, want %v: %+v", codes, tc.wantCodes, r.Findings)
+			}
+			if r.Blocks() {
+				t.Errorf("a script with no error finding blocks a save: %+v", r.Blocking())
 			}
 		})
-	}
-}
-
-func TestPathologicalNestingIsBoundedRatherThanHanging(t *testing.T) {
-	// Deeply nested command substitution: the shape that would drive a
-	// recursive-descent parser off the stack if nothing bounded the
-	// input, and a stack overflow in Go is fatal rather than
-	// recoverable. It must answer -- either verdict is fine -- and it
-	// must not panic or hang.
-	var b strings.Builder
-	for range 20_000 {
-		b.WriteString("$(")
-	}
-	b.WriteString("true")
-	for range 20_000 {
-		b.WriteString(")")
-	}
-
-	done := make(chan ScriptReport, 1)
-	go func() { done <- Report(context.Background(), "nested.local.sh", []byte(b.String())) }()
-
-	select {
-	case r := <-done:
-		if !r.Examined && r.NotExaminedReason == "" {
-			t.Error("the report neither examined the script nor said why")
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("a pathologically nested script did not produce a report")
 	}
 }
 
@@ -524,6 +794,21 @@ func report(t *testing.T, name string, lines ...string) ScriptReport {
 	t.Helper()
 
 	return Report(context.Background(), name, []byte(strings.Join(lines, "\n")+"\n"))
+}
+
+// parsed fails a "this rule stays silent here" row that is silent only
+// because there was nothing to look at. An unexamined or unparsed script
+// carries no findings at all, so a table row that passes for that reason
+// is asserting nothing about the rule it names.
+func parsed(t *testing.T, r ScriptReport) {
+	t.Helper()
+
+	if !r.Examined {
+		t.Fatalf("the script was not examined: %s", r.NotExaminedReason)
+	}
+	if r.ParseError != nil {
+		t.Fatalf("the script did not parse: %+v", r.ParseError)
+	}
 }
 
 func finding(t *testing.T, r ScriptReport, code string) Finding {

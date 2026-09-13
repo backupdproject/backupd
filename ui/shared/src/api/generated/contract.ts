@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "b31a3870d790d5e13968d21a3d4d03f091516794cee853dd96ac6baf8adc2a30";
+export const CONTRACT_SHA256 = "9dfdc396f506580848de03fa90c5d36e80961a923e6d6d5e7d513133aa15723c";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -4047,6 +4047,7 @@ export interface WireWorkflowFinding {
 export interface WireWorkflowLintFinding {
   code?: string;
   col?: number;
+  excerpt?: WireWorkflowSourceExcerpt;
   line?: number;
   message?: string;
   severity?: "error" | "warning" | "info" | "style";
@@ -4075,10 +4076,12 @@ export interface WireWorkflowRecoveryResponse {
  *  error-severity findings -- because a refusal that also listed the
  *  warnings would read as though they had refused it. */
 export interface WireWorkflowRefusedScript {
+  backup_set_id?: string;
   dir?: string;
   findings?: WireWorkflowLintFinding[];
   parse_error?: string;
   parse_error_col?: number;
+  parse_error_excerpt?: WireWorkflowSourceExcerpt;
   parse_error_line?: number;
   phase?: "before" | "after";
   scope?: "global" | "set";
@@ -4137,6 +4140,7 @@ export interface WireWorkflowScriptLint {
   not_examined_reason?: string;
   parse_error?: string;
   parse_error_col?: number;
+  parse_error_excerpt?: WireWorkflowSourceExcerpt;
   parse_error_line?: number;
   parsed?: boolean;
 }
@@ -4191,6 +4195,30 @@ export interface WireWorkflowSettingsResponse {
   runner?: WireWorkflowRunnerSettings;
   script_timeout_configured?: boolean;
   script_timeout_seconds?: number;
+}
+
+/** A few of a hook script's own lines, carried beside a position that
+ *  names one of them: the reported line with one line either side. It
+ *  exists because a position on its own is a lookup somebody has to
+ *  perform on a machine they may not be on -- "BSH003 at 24:10" sends
+ *  an operator to a NAS over SSH to read one line. The lines come
+ *  from the bytes this validation READ AND HASHED rather than from a
+ *  later re-read, so they cannot disagree with the position beside
+ *  them. They are the script's own text and never a resolved secret:
+ *  nothing on the path that produces them resolves one. */
+export interface WireWorkflowSourceExcerpt {
+  lines?: WireWorkflowSourceLine[];
+}
+
+/** One line of a hook script, as an editor would number it. The text
+ *  arrives with control characters removed and its length bounded, at
+ *  the point it is produced rather than at each surface that draws
+ *  it: a hook is arbitrary text and this text reaches a browser and a
+ *  terminal. */
+export interface WireWorkflowSourceLine {
+  number?: number;
+  text?: string;
+  truncated?: boolean;
 }
 
 /** One scope-and-phase pair that has a directory. A run executes five

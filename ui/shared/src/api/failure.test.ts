@@ -227,6 +227,7 @@ describe("workflowScriptRefusalOf", () => {
       parseError: "unexpected EOF",
       parseErrorLine: 18,
       parseErrorCol: 24,
+      parseErrorExcerpt: { lines: [] },
       findings: []
     }
   ];

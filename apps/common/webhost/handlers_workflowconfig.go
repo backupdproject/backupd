@@ -225,11 +225,32 @@ type workflowFindingBody struct {
 // them, so an operator reading a code in a browser and grepping the same
 // code in `validate workflow` meets one vocabulary.
 type workflowLintFindingBody struct {
-	Code     string `json:"code"`
-	Col      int    `json:"col"`
-	Line     int    `json:"line"`
-	Message  string `json:"message"`
-	Severity string `json:"severity"`
+	Code     string                    `json:"code"`
+	Col      int                       `json:"col"`
+	Excerpt  workflowSourceExcerptBody `json:"excerpt"`
+	Line     int                       `json:"line"`
+	Message  string                    `json:"message"`
+	Severity string                    `json:"severity"`
+}
+
+// workflowSourceExcerptBody is a few of a script's own lines, beside the
+// position that names one of them.
+//
+// The lines arrive already inert -- control characters removed, length
+// bounded -- from internal/workflowlint, over the bytes the validation
+// hashed. Sanitising here instead would be a sanitiser every other
+// surface that draws a script would need its own copy of, and a copy one
+// of them would be missing.
+type workflowSourceExcerptBody struct {
+	Lines []workflowSourceLineBody `json:"lines"`
+}
+
+// workflowSourceLineBody is one line of a hook script, numbered as an
+// editor numbers it.
+type workflowSourceLineBody struct {
+	Number    int    `json:"number"`
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated"`
 }
 
 // workflowScriptLintBody is what the verification established about one
@@ -246,6 +267,7 @@ type workflowScriptLintBody struct {
 	NotExaminedReason string                    `json:"not_examined_reason"`
 	ParseError        string                    `json:"parse_error"`
 	ParseErrorCol     int                       `json:"parse_error_col"`
+	ParseErrorExcerpt workflowSourceExcerptBody `json:"parse_error_excerpt"`
 	ParseErrorLine    int                       `json:"parse_error_line"`
 	Parsed            bool                      `json:"parsed"`
 }
@@ -273,14 +295,16 @@ type workflowValidatedScriptBody struct {
 // refused it, and the whole point of the documented threshold is that
 // they do not.
 type workflowRefusedScriptBody struct {
-	Dir            string                    `json:"dir"`
-	Findings       []workflowLintFindingBody `json:"findings"`
-	ParseError     string                    `json:"parse_error"`
-	ParseErrorCol  int                       `json:"parse_error_col"`
-	ParseErrorLine int                       `json:"parse_error_line"`
-	Phase          string                    `json:"phase"`
-	Scope          string                    `json:"scope"`
-	ScriptName     string                    `json:"script_name"`
+	BackupSetID       string                    `json:"backup_set_id"`
+	Dir               string                    `json:"dir"`
+	Findings          []workflowLintFindingBody `json:"findings"`
+	ParseError        string                    `json:"parse_error"`
+	ParseErrorCol     int                       `json:"parse_error_col"`
+	ParseErrorExcerpt workflowSourceExcerptBody `json:"parse_error_excerpt"`
+	ParseErrorLine    int                       `json:"parse_error_line"`
+	Phase             string                    `json:"phase"`
+	Scope             string                    `json:"scope"`
+	ScriptName        string                    `json:"script_name"`
 }
 
 // workflowScriptRejectedResponse is the WORKFLOW_SCRIPT_REJECTED 409
@@ -844,6 +868,25 @@ func toWorkflowScriptLintBody(l service.WorkflowScriptLint) workflowScriptLintBo
 		ParseErrorLine:    l.ParseErrorLine,
 		ParseErrorCol:     l.ParseErrorCol,
 		Findings:          toWorkflowLintFindingBodies(l.Findings),
+		ParseErrorExcerpt: toWorkflowSourceExcerptBody(l.ParseErrorExcerpt),
+	}
+
+	return out
+}
+
+// toWorkflowSourceExcerptBody renders one excerpt.
+//
+// The slice is allocated at length zero rather than left nil, so a
+// finding with no excerpt serialises "lines": [] instead of null: one
+// shape for a client to render rather than two.
+func toWorkflowSourceExcerptBody(e service.WorkflowSourceExcerpt) workflowSourceExcerptBody {
+	out := workflowSourceExcerptBody{Lines: make([]workflowSourceLineBody, 0, len(e.Lines))}
+	for _, l := range e.Lines {
+		out.Lines = append(out.Lines, workflowSourceLineBody{
+			Number:    l.Number,
+			Text:      l.Text,
+			Truncated: l.Truncated,
+		})
 	}
 
 	return out
@@ -858,6 +901,7 @@ func toWorkflowLintFindingBodies(findings []service.WorkflowLintFinding) []workf
 			Line:     f.Line,
 			Col:      f.Col,
 			Message:  f.Message,
+			Excerpt:  toWorkflowSourceExcerptBody(f.Excerpt),
 		})
 	}
 
@@ -887,14 +931,16 @@ func (h *handlers) writeWorkflowScriptRejected(w http.ResponseWriter, r *http.Re
 
 	for _, s := range refusal.Scripts {
 		body.BlockingScripts = append(body.BlockingScripts, workflowRefusedScriptBody{
-			ScriptName:     s.ScriptName,
-			Dir:            s.Dir,
-			Scope:          s.Scope,
-			Phase:          s.Phase,
-			ParseError:     s.ParseError,
-			ParseErrorLine: s.ParseErrorLine,
-			ParseErrorCol:  s.ParseErrorCol,
-			Findings:       toWorkflowLintFindingBodies(s.Findings),
+			ScriptName:        s.ScriptName,
+			Dir:               s.Dir,
+			Scope:             s.Scope,
+			Phase:             s.Phase,
+			BackupSetID:       s.BackupSetID,
+			ParseError:        s.ParseError,
+			ParseErrorLine:    s.ParseErrorLine,
+			ParseErrorCol:     s.ParseErrorCol,
+			ParseErrorExcerpt: toWorkflowSourceExcerptBody(s.ParseErrorExcerpt),
+			Findings:          toWorkflowLintFindingBodies(s.Findings),
 		})
 	}
 

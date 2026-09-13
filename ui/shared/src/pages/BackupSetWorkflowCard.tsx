@@ -35,7 +35,7 @@
  * not run in the engine container and no copy here may imply it did: the
  * runner exists precisely because that container has no shell for a hook.
  */
-import { useCallback, useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useApi } from "@shared/api/ApiContext";
@@ -62,6 +62,7 @@ import type {
   WorkflowFinding,
   WorkflowLintFinding,
   WorkflowScriptLint,
+  WorkflowSourceExcerpt,
   WorkflowValidation
 } from "@shared/api/contracts";
 
@@ -118,6 +119,33 @@ function positionLabel(line: number, col: number): string {
 }
 
 /**
+ * A badge's count: the worst severity present, then how many findings
+ * that count does not account for.
+ *
+ * "1 error, 4 more" and not "5 findings", which is the distinction the
+ * approved design argues at length and the one an operator acts on. The
+ * number they need from a table cell is whether this file holds something
+ * that BLOCKS A SAVE; a single neutral total makes the error and the
+ * missing shebang look like the same fact, and the worst severity alone
+ * makes a file with one error look identical to a file with one error and
+ * four other things wrong with it.
+ *
+ * The tail is omitted when it would be ", 0 more", rather than printed as
+ * a zero: a cell reading "1 error, 0 more" invites the reader to work out
+ * what it is contrasting with, which is nothing.
+ *
+ * `noun` pluralizes with a bare "s" because all three of this badge's
+ * nouns do — error, warning, note — and a pluralizer that handled cases
+ * this function is never given would be a claim about vocabulary that
+ * does not exist.
+ */
+function countedLabel(worst: number, noun: string, total: number): string {
+  const head = worst + " " + noun + (worst === 1 ? "" : "s");
+  const rest = total - worst;
+  return rest > 0 ? head + ", " + rest + " more" : head;
+}
+
+/**
  * The state one script's verification is in, as a badge.
  *
  * Five states and the order they are tested in is the whole contract:
@@ -135,6 +163,10 @@ function positionLabel(line: number, col: number): string {
  *      a count and "1 note, 1 note" would be nonsense; the panel keeps
  *      them apart).
  *
+ * The worst severity is followed by a count of the findings it does not
+ * account for — "1 error, 4 more" — for the reason argued on
+ * countedLabel above.
+ *
  * Only a script that reaches the end — read, parsed, nothing reported —
  * is drawn as clean.
  */
@@ -145,21 +177,19 @@ function lintBadge(lint: WorkflowScriptLint): {
 } {
   if (!lint.examined) return { tone: "neutral", icon: "status-idle", label: "not examined" };
   if (!lint.parsed) return { tone: "danger", icon: "failure", label: "does not parse" };
+  const total = lint.findings.length;
   const errors = lint.findings.filter((f) => f.severity === "error").length;
   if (errors > 0) {
-    return { tone: "danger", icon: "failure", label: errors + (errors === 1 ? " error" : " errors") };
+    return { tone: "danger", icon: "failure", label: countedLabel(errors, "error", total) };
   }
   const warnings = lint.findings.filter((f) => f.severity === "warning").length;
   if (warnings > 0) {
-    return {
-      tone: "warn",
-      icon: "warning",
-      label: warnings + (warnings === 1 ? " warning" : " warnings")
-    };
+    return { tone: "warn", icon: "warning", label: countedLabel(warnings, "warning", total) };
   }
-  const notes = lint.findings.length;
-  if (notes > 0) {
-    return { tone: "neutral", icon: "info", label: notes + (notes === 1 ? " note" : " notes") };
+  if (total > 0) {
+    // The notes ARE the remainder here, so the tail is always empty: the
+    // count and the total are the same number by construction.
+    return { tone: "neutral", icon: "info", label: countedLabel(total, "note", total) };
   }
   return { tone: "ok", icon: "success", label: "clean" };
 }
@@ -198,38 +228,72 @@ export function WorkflowSaveRefusal({
       {blocking.length === 0 ? (
         <span style={{ fontSize: "var(--text-sm)", color: "var(--text-2)" }}>{fallback}</span>
       ) : (
-        blocking.map((script) => (
-          <div
-            key={script.dir + "/" + script.scriptName}
-            style={{ display: "flex", flexDirection: "column", gap: 4 }}
-          >
-            <span className="mono" style={{ fontSize: 12.5 }}>
-              {script.scriptName}
-            </span>
-            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
-              {script.dir}
-            </span>
-            {script.parseError ? (
-              <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>
-                {"does not parse at " +
-                  positionLabel(script.parseErrorLine ?? 0, script.parseErrorCol ?? 0) +
-                  ": " +
-                  script.parseError}
+        <>
+          {blocking.map((script) => (
+            <div
+              key={script.dir + "/" + script.scriptName}
+              style={{ display: "flex", flexDirection: "column", gap: 4 }}
+            >
+              <span className="mono" style={{ fontSize: 12.5 }}>
+                {script.scriptName}
               </span>
-            ) : null}
-            {script.findings.map((finding) => (
-              <span
-                key={finding.code + finding.line + ":" + finding.col}
-                style={{ fontSize: 12.5, color: "var(--text-2)" }}
-              >
-                <span className="mono">
-                  {finding.code + " at " + positionLabel(finding.line, finding.col)}
+              <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+                {script.dir}
+              </span>
+              {/* Whose stage this is, when it is a set's. A refusal can
+                  arrive about a set nobody was editing — a deployment-wide
+                  root change re-resolves every set's stage directories, so
+                  the gate verifies every set's stages — and "20-dump.sh in
+                  before" would not say whose directory to go and look in. */}
+              {script.backupSetId !== undefined ? (
+                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+                  {"backup set " + script.backupSetId}
                 </span>
-                {": " + finding.message}
-              </span>
-            ))}
-          </div>
-        ))
+              ) : null}
+              {script.parseError ? (
+                <>
+                  <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>
+                    {"does not parse at " +
+                      positionLabel(script.parseErrorLine ?? 0, script.parseErrorCol ?? 0) +
+                      ": " +
+                      script.parseError}
+                  </span>
+                  <SourceExcerpt
+                    excerpt={script.parseErrorExcerpt}
+                    line={script.parseErrorLine}
+                    col={script.parseErrorCol}
+                    tone="danger"
+                  />
+                </>
+              ) : null}
+              {script.findings.map((finding) => (
+                <Fragment key={finding.code + finding.line + ":" + finding.col}>
+                  <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>
+                    <span className="mono">
+                      {finding.code + " at " + positionLabel(finding.line, finding.col)}
+                    </span>
+                    {": " + finding.message}
+                  </span>
+                  <SourceExcerpt
+                    excerpt={finding.excerpt}
+                    line={finding.line}
+                    col={finding.col}
+                    tone={LINT_SEVERITY[finding.severity].tone}
+                  />
+                </Fragment>
+              ))}
+            </div>
+          ))}
+          {/* One sentence, once, rather than per script: a refusal that
+              explained itself under every entry would bury the entries. */}
+          {blocking.some((script) => script.backupSetId !== undefined) ? (
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-3)", maxWidth: "76ch" }}>
+              {"A backup set named above is one whose own stage directories this change " +
+                "re-resolved. A deployment-wide change moves every set's stages, so a refusal " +
+                "can be about a set you were not editing."}
+            </span>
+          ) : null}
+        </>
       )}
     </div>
   );
@@ -904,6 +968,145 @@ function ValidationReport({ report, readAt }: { report: WorkflowValidation; read
   );
 }
 
+/** The colour a caret is drawn in, per severity tone: the run terminal's
+ *  own palette (#815's `--term-*` tokens), because this block IS that
+ *  surface. A second dark-panel vocabulary would be two dark panels that
+ *  disagree about what an error looks like. */
+const CARET_TONE: Record<"ok" | "warn" | "danger" | "neutral", string> = {
+  ok: "var(--term-ok)",
+  warn: "var(--term-warn)",
+  danger: "var(--term-danger)",
+  neutral: "var(--term-info)"
+};
+
+const SOURCE_ROW: React.CSSProperties = {
+  display: "flex",
+  fontFamily: "var(--font-mono)",
+  fontSize: 11.5,
+  lineHeight: 1.65,
+  color: "var(--term-text)"
+};
+
+/** The gutter is a FIXED width and right-aligned, which is load-bearing
+ *  rather than decorative: every row's code column therefore starts at
+ *  the same x, and a caret row whose text began one character further
+ *  left than the line above it would point at the wrong column — the one
+ *  thing this whole block exists to get right. */
+const SOURCE_GUTTER: React.CSSProperties = {
+  flex: "0 0 46px",
+  textAlign: "right",
+  paddingRight: 12,
+  marginRight: 12,
+  borderRight: "1px solid var(--term-scroll)",
+  color: "var(--term-time)",
+  userSelect: "none"
+};
+
+/** `pre`, so the line's own leading indentation survives. It has to: the
+ *  caret is counted in characters from the start of the line, and a
+ *  renderer that collapsed the indent would slide the code out from under
+ *  it. */
+const SOURCE_CODE: React.CSSProperties = { whiteSpace: "pre" };
+
+/**
+ * A finding's own source, drawn the way the approved #906 design draws
+ * it: a dark panel, a line-number gutter, the line in a mono face, and a
+ * caret under the column the rule fired at.
+ *
+ * # Why a caret rather than a highlight
+ *
+ * A position is `line:col`, and the column is the half nobody can use
+ * without counting. A caret under it is the form every compiler and every
+ * shell has printed for decades; it survives being copied into a bug
+ * report as text, and it needs no colour to be read — which matters here,
+ * because colour is never the message on this product's surfaces. The
+ * caret row carries the words "column N" beside the mark as well, so the
+ * position is still stated when the alignment is what is lost: a screen
+ * reader flattens the two rows into one sentence, and a row of spaces and
+ * a `^` would read as nothing at all.
+ *
+ * # What this renders, and what it will never render
+ *
+ * Exactly the lines it was handed. There is no re-read of the script, no
+ * request for a body, and no endpoint on this API that would answer one:
+ * the excerpt arrives WITH the finding, from the bytes the verification
+ * read and hashed, already inert and already bounded. So this component
+ * neither sanitizes it a second time nor bounds it a second time — a
+ * second copy of either would be a second thing to keep right, and the
+ * one that mattered would end up being whichever nobody was looking at.
+ *
+ * A `truncated` line says so at its end rather than just stopping,
+ * because a line that merely stops looks like a line that ends, and an
+ * operator comparing this against their file would be comparing against a
+ * line their file does not contain.
+ *
+ * An excerpt with no lines renders NOTHING — not an empty panel. A
+ * finding the service carried no source for must not cost it a box of
+ * dark nothing underneath.
+ */
+function SourceExcerpt({
+  excerpt,
+  line,
+  col,
+  tone
+}: {
+  excerpt: WorkflowSourceExcerpt;
+  line?: number;
+  col?: number;
+  tone: "ok" | "warn" | "danger" | "neutral";
+}) {
+  if (excerpt.lines.length === 0) return null;
+  // The caret is drawn only under the line the position actually names,
+  // and only when there is a column to name one with. A caret on a line
+  // the position is not about would be this component inventing a place
+  // in somebody's file.
+  const caret = line !== undefined && col !== undefined && col > 0 ? { line, col } : null;
+  return (
+    <div
+      data-tip="workflow.source-excerpt"
+      style={{
+        background: "var(--term-bg)",
+        borderRadius: "var(--radius-md)",
+        padding: "7px 0",
+        // The mock's panel hides its overflow because its lines fit. A
+        // real hook's line is as long as somebody made it, and a hidden
+        // overflow would cut it with nothing to say it had been cut —
+        // which is exactly the failure `truncated` exists to avoid.
+        overflowX: "auto"
+      }}
+    >
+      {excerpt.lines.map((source) => (
+        <Fragment key={source.number}>
+          <div style={SOURCE_ROW}>
+            <span style={SOURCE_GUTTER}>{source.number}</span>
+            <span style={SOURCE_CODE}>
+              {source.text}
+              {source.truncated ? (
+                <span data-tip="workflow.source-truncated" style={{ color: "var(--term-time)" }}>
+                  {"\u2026"}
+                  {/* The ellipsis is the whole of the visual statement, and
+                      it is not one a screen reader can make. */}
+                  <span className="visually-hidden">
+                    {" this line is longer than the excerpt carries and is cut here"}
+                  </span>
+                </span>
+              ) : null}
+            </span>
+          </div>
+          {caret !== null && source.number === caret.line ? (
+            <div style={SOURCE_ROW}>
+              <span style={SOURCE_GUTTER} aria-hidden="true" />
+              <span style={{ ...SOURCE_CODE, color: CARET_TONE[tone] }}>
+                {" ".repeat(caret.col - 1) + "^ column " + caret.col}
+              </span>
+            </div>
+          ) : null}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
 /**
  * One script's shell verification, in full.
  *
@@ -959,6 +1162,15 @@ function LintPanel({ scriptName, lint }: { scriptName: string; lint: WorkflowScr
               {lint.parseError || "the shell parser refused this file and named no reason."}
             </span>
           </div>
+          {/* The parser's own line, under the position it named. This is
+              the one excerpt an operator cannot get any other way: a file
+              that does not parse has no findings to carry one. */}
+          <SourceExcerpt
+            excerpt={lint.parseErrorExcerpt}
+            line={lint.parseErrorLine}
+            col={lint.parseErrorCol}
+            tone="danger"
+          />
           <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-3)", maxWidth: "76ch" }}>
             {"This file is not a shell program, so nothing in it would run: the hook would fail " +
               "at the first line. A save that points a stage directory at it is refused."}
@@ -982,25 +1194,35 @@ function LintPanel({ scriptName, lint }: { scriptName: string; lint: WorkflowScr
               {group.map((finding) => (
                 <div
                   key={finding.code + positionLabel(finding.line, finding.col)}
-                  style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}
+                  style={{ display: "flex", flexDirection: "column", gap: 4 }}
                 >
-                  <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-2)" }}>
-                    {finding.code}
-                  </span>
-                  <StatusBadge
+                  <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                    <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-2)" }}>
+                      {finding.code}
+                    </span>
+                    <StatusBadge
+                      tone={LINT_SEVERITY[severity].tone}
+                      icon={
+                        severity === "error" ? "failure" : severity === "warning" ? "warning" : "info"
+                      }
+                    >
+                      {LINT_SEVERITY[severity].label}
+                    </StatusBadge>
+                    <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
+                      {positionLabel(finding.line, finding.col)}
+                    </span>
+                    <span style={{ fontSize: 12.5, color: "var(--text-2)", flex: 1, minWidth: 220 }}>
+                      {finding.message}
+                    </span>
+                  </div>
+                  {/* Beneath the message, not beside it: the excerpt is
+                      several lines wide and belongs to the row above it. */}
+                  <SourceExcerpt
+                    excerpt={finding.excerpt}
+                    line={finding.line}
+                    col={finding.col}
                     tone={LINT_SEVERITY[severity].tone}
-                    icon={
-                      severity === "error" ? "failure" : severity === "warning" ? "warning" : "info"
-                    }
-                  >
-                    {LINT_SEVERITY[severity].label}
-                  </StatusBadge>
-                  <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>
-                    {positionLabel(finding.line, finding.col)}
-                  </span>
-                  <span style={{ fontSize: 12.5, color: "var(--text-2)", flex: 1, minWidth: 220 }}>
-                    {finding.message}
-                  </span>
+                  />
                 </div>
               ))}
             </div>

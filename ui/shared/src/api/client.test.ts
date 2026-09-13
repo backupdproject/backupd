@@ -2900,7 +2900,26 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
             examined: true,
             parsed: true,
             findings: [
-              { code: "BSH003", severity: "error", line: 12, col: 8, message: "root-level delete" },
+              {
+                code: "BSH003",
+                severity: "error",
+                line: 12,
+                col: 8,
+                message: "root-level delete",
+                excerpt: {
+                  lines: [
+                    { number: 11, text: "# tidy up before the dump", truncated: false },
+                    { number: 12, text: "rm -rf \"$STAGING/var\"", truncated: true },
+                    // Line 0 is not a place in a file, and an entry that
+                    // is not an object at all is a later build or a
+                    // proxy: both are dropped rather than drawn, and
+                    // neither may throw while a findings panel is being
+                    // decoded.
+                    { number: 0, text: "not a line", truncated: false },
+                    "nonsense"
+                  ]
+                }
+              },
               { code: "BSH000", severity: "unheard-of", line: 2, col: 1, message: "from a later build" }
             ]
           }
@@ -2928,12 +2947,38 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
       parseError: undefined,
       parseErrorLine: undefined,
       parseErrorCol: undefined,
+      parseErrorExcerpt: { lines: [] },
       findings: [
-        { code: "BSH003", severity: "error", line: 12, col: 8, message: "root-level delete" },
+        {
+          code: "BSH003",
+          severity: "error",
+          line: 12,
+          col: 8,
+          message: "root-level delete",
+          // The two unusable entries are gone and the two real lines
+          // survive, with `truncated` carried through: a surface that
+          // cut a line itself would be showing a line the file does not
+          // contain.
+          excerpt: {
+            lines: [
+              { number: 11, text: "# tidy up before the dump", truncated: false },
+              { number: 12, text: "rm -rf \"$STAGING/var\"", truncated: true }
+            ]
+          }
+        },
         // A severity from a later build is a WARNING and never an error:
         // an invented error would tell an operator their configuration
         // cannot be saved when the service would save it.
-        { code: "BSH000", severity: "warning", line: 2, col: 1, message: "from a later build" }
+        {
+          code: "BSH000",
+          severity: "warning",
+          line: 2,
+          col: 1,
+          message: "from a later build",
+          // No excerpt on the wire is an EMPTY excerpt and never absent,
+          // so every reader can ask for `.lines.length` without a guard.
+          excerpt: { lines: [] }
+        }
       ]
     });
     expect(report.scripts[1].lint.notExaminedReason).toBe("larger than the verification reads");
@@ -2946,6 +2991,7 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
       parseError: undefined,
       parseErrorLine: undefined,
       parseErrorCol: undefined,
+      parseErrorExcerpt: { lines: [] },
       findings: []
     });
   });
@@ -2957,7 +3003,16 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
         {
           step_id: "s1",
           script_name: "a.sh",
-          lint: { examined: true, parsed: false, parse_error: "unexpected EOF", parse_error_line: 18, parse_error_col: 24 }
+          lint: {
+            examined: true,
+            parsed: false,
+            parse_error: "unexpected EOF",
+            parse_error_line: 18,
+            parse_error_col: 24,
+            parse_error_excerpt: {
+              lines: [{ number: 18, text: "  mv \"$STAGE/a.yml\" \"$OUT", truncated: false }]
+            }
+          }
         },
         {
           step_id: "s2",
@@ -2976,6 +3031,15 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
     // editor can go to, so it is absent instead.
     expect(report.scripts[1].lint.parseErrorLine).toBeUndefined();
     expect(report.scripts[1].lint.parseErrorCol).toBeUndefined();
+    // The parser's own line, beside the position it named. It is carried
+    // on the lint block rather than on a finding because a file that does
+    // not parse has no findings: no rule ran on a tree that does not
+    // exist, so this is the only source an operator gets for it.
+    expect(report.scripts[0].lint.parseErrorExcerpt).toEqual({
+      lines: [{ number: 18, text: "  mv \"$STAGE/a.yml\" \"$OUT", truncated: false }]
+    });
+    // And an absent one is empty rather than undefined.
+    expect(report.scripts[1].lint.parseErrorExcerpt).toEqual({ lines: [] });
   });
 
   /**
@@ -3003,8 +3067,22 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
               dir: "/srv/hooks/before",
               scope: "set",
               phase: "before",
+              // Which set's stage this was reached through. A
+              // deployment-wide write re-resolves every set's stage
+              // directories, so a refusal can name a set the operator was
+              // not editing.
+              backup_set_id: "production/billing-mysql",
               findings: [
-                { code: "BSH003", severity: "error", line: 12, col: 8, message: "root-level delete" }
+                {
+                  code: "BSH003",
+                  severity: "error",
+                  line: 12,
+                  col: 8,
+                  message: "root-level delete",
+                  excerpt: {
+                    lines: [{ number: 12, text: "rm -rf \"$STAGING/var\"", truncated: false }]
+                  }
+                }
               ]
             }
           ]
@@ -3026,11 +3104,20 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
         dir: "/srv/hooks/before",
         scope: "set",
         phase: "before",
+        backupSetId: "production/billing-mysql",
         parseError: undefined,
         parseErrorLine: undefined,
         parseErrorCol: undefined,
+        parseErrorExcerpt: { lines: [] },
         findings: [
-          { code: "BSH003", severity: "error", line: 12, col: 8, message: "root-level delete" }
+          {
+            code: "BSH003",
+            severity: "error",
+            line: 12,
+            col: 8,
+            message: "root-level delete",
+            excerpt: { lines: [{ number: 12, text: "rm -rf \"$STAGING/var\"", truncated: false }] }
+          }
         ]
       }
     ]);
@@ -3048,7 +3135,19 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
         headers: new Headers(),
         json: async () => ({
           error: { code: "WORKFLOW_SCRIPT_REJECTED", message: "not saved" },
-          blocking_scripts: [null, "nonsense", { findings: [42, { severity: "error" }] }]
+          blocking_scripts: [
+            null,
+            "nonsense",
+            // An excerpt that is a string, and a finding whose excerpt
+            // holds a number: the two shapes a hand-written proxy or a
+            // later build could produce, on the path where throwing would
+            // replace a refusal's reason with "this page could not read
+            // the answer".
+            {
+              parse_error_excerpt: "not an object",
+              findings: [42, { severity: "error", excerpt: { lines: [7] } }]
+            }
+          ]
         })
       })
     );
@@ -3068,10 +3167,12 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
         dir: "",
         scope: "",
         phase: "",
+        backupSetId: undefined,
         parseError: undefined,
         parseErrorLine: undefined,
         parseErrorCol: undefined,
-        findings: [{ code: "", severity: "error", line: 0, col: 0, message: "" }]
+        parseErrorExcerpt: { lines: [] },
+        findings: [{ code: "", severity: "error", line: 0, col: 0, message: "", excerpt: { lines: [] } }]
       }
     ]);
   });

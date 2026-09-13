@@ -121,6 +121,7 @@ import type {
   WireWorkflowRun,
   WireWorkflowScriptLint,
   WireWorkflowSettingsResponse,
+  WireWorkflowSourceExcerpt,
   WireWorkflowStage,
   WireWorkflowStep,
   WireWorkflowStepLogPage,
@@ -169,6 +170,8 @@ import type {
   WorkflowScriptLint,
   WorkflowSettings,
   WorkflowSettingsPatch,
+  WorkflowSourceExcerpt,
+  WorkflowSourceLine,
   WorkflowStage,
   WorkflowStatus,
   WorkflowStepLogPage,
@@ -2609,6 +2612,38 @@ function fromWireFinding(f: WireWorkflowFinding): WorkflowFinding {
 }
 
 /**
+ * One source excerpt (#906), read the way every other field on this path
+ * is read: defensively, and never throwing.
+ *
+ * An excerpt is decoration on a finding an operator has already been
+ * shown. So the failure to avoid here is not a missing excerpt, which
+ * costs a few lines of context, but an exception raised while decoding
+ * one — that would turn a readable findings panel into "this page could
+ * not read the answer" over a field nothing depends on. Hence: a missing
+ * or non-object excerpt is an empty one, a `lines` that is not an array
+ * is an empty one, and an entry inside it that is not an object is
+ * dropped.
+ *
+ * A line whose number is not a positive integer is dropped rather than
+ * drawn with a 0 in the gutter, for the same reason the parse-error
+ * position below drops a zero: line 0 is not a place in a file, and a
+ * gutter claiming it is would put the caret-matching below onto a line
+ * that does not exist.
+ */
+function fromWireExcerpt(excerpt: WireWorkflowSourceExcerpt | undefined): WorkflowSourceExcerpt {
+  const raw = excerpt?.lines;
+  if (!Array.isArray(raw)) return { lines: [] };
+  const lines: WorkflowSourceLine[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const number = entry.number;
+    if (typeof number !== "number" || !Number.isFinite(number) || number <= 0) continue;
+    lines.push({ number, text: entry.text ?? "", truncated: entry.truncated === true });
+  }
+  return { lines };
+}
+
+/**
  * One script's shell-verification result (#906).
  *
  * Every default here is the conservative direction, and each one is a
@@ -2639,6 +2674,7 @@ function fromWireScriptLint(lint: WireWorkflowScriptLint | undefined): WorkflowS
     parseError: lint?.parse_error || undefined,
     parseErrorLine: lint?.parse_error_line || undefined,
     parseErrorCol: lint?.parse_error_col || undefined,
+    parseErrorExcerpt: fromWireExcerpt(lint?.parse_error_excerpt),
     findings: (lint?.findings ?? []).map((f) => ({
       code: f.code ?? "",
       severity:
@@ -2647,7 +2683,8 @@ function fromWireScriptLint(lint: WireWorkflowScriptLint | undefined): WorkflowS
           : "warning",
       line: f.line ?? 0,
       col: f.col ?? 0,
-      message: f.message ?? ""
+      message: f.message ?? "",
+      excerpt: fromWireExcerpt(f.excerpt)
     }))
   };
 }
