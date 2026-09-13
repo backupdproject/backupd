@@ -111,6 +111,16 @@ export interface BackupSet {
    *  RetentionIsOverride). The chain itself is not here: see the note
    *  above this interface. */
   retentionIsOverride: boolean;
+  /** This set's OWN polling cadence in seconds, or null when it inherits
+   *  the deployment default (issue #845). Null is a real answer and has
+   *  to be drawn as one: showing the deployment's number in the box
+   *  would make the next save an explicit override and detach this set
+   *  from a default it was tracking. */
+  pollIntervalSeconds: number | null;
+  /** How often this set is actually polled: its own override, or the
+   *  deployment default when it has none. Resolved by the engine, so a
+   *  surface never combines the two scopes itself. */
+  effectivePollIntervalSeconds: number;
   validations: ValidationKind[];
   state: HealthState;
   /** Human sentence explaining the state. Never rely on colour alone. */

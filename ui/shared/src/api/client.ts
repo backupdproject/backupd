@@ -569,6 +569,14 @@ function fromWireBackupSet(bs: WireBackupSet, health?: WireBackupSetHealth): Bac
     // (getBackupSetRetention) on the one page that can render a whole
     // chain.
     retentionIsOverride: bs.retention_is_override,
+    // Issue #845. The override is nullable on the wire and stays
+    // nullable here: null is "this set inherits", which the edit form
+    // has to draw differently from a set that happens to poll at the
+    // deployment's own interval. The effective number is read rather
+    // than derived, because the deployment default is not on this
+    // response and guessing it is what this pair exists to prevent.
+    pollIntervalSeconds: bs.poll_interval_seconds ?? null,
+    effectivePollIntervalSeconds: bs.effective_poll_interval_seconds,
     validations: [],
     state: health ? HEALTH_STATE[health.state] ?? "degraded" : "stale",
     stateNote: health
@@ -1039,6 +1047,7 @@ function fromWireSettingsResponse(body: WireSettingsResponse): AppSettings {
       protectLastKnownGood: body.retention.protect_last_known_good
     },
     capacity: fromWireCapacitySettings(body.capacity),
+    service: { pollIntervalSeconds: body.service.poll_interval_seconds },
     mediums: (body.mediums ?? []).map(fromWireStorageMedium),
     schema: {
       storage: {
@@ -1053,6 +1062,7 @@ function fromWireSettingsResponse(body: WireSettingsResponse): AppSettings {
         mediumDisclosure: body.schema.storage.medium_disclosure,
         retrievalDisclosure: body.schema.storage.retrieval_disclosure
       },
+      service: { minPollIntervalSeconds: body.schema.service.min_poll_interval_seconds },
       retention: {
         granularities: body.schema.retention.granularities,
         windowUnits: body.schema.retention.window_units,
@@ -1128,6 +1138,17 @@ function wireUpdateSettings(req: UpdateSettingsRequest) {
     if (c.criticalFreeBytes !== undefined) capacity.critical_free_bytes = c.criticalFreeBytes;
     if (c.safetyMarginBytes !== undefined) capacity.safety_margin_bytes = c.safetyMarginBytes;
     body.capacity = capacity;
+  }
+
+  if (req.service) {
+    const service: Record<string, unknown> = {};
+    // `!== undefined`, never truthiness: on this field zero is the
+    // request that clears an override, and dropping it would silently
+    // turn "inherit again" into "leave it alone".
+    if (req.service.pollIntervalSeconds !== undefined) {
+      service.poll_interval_seconds = req.service.pollIntervalSeconds;
+    }
+    body.service = service;
   }
 
   // Sent only when it is true. It is a consent, not a setting, and a
@@ -1784,6 +1805,10 @@ function wireBackupSetPatch(patch: BackupSetPatch): Record<string, unknown> {
   put("completion_strategy", patch.completionMethod && COMPLETION_METHOD_TO_STRATEGY[patch.completionMethod]);
   put("stable_for_seconds", patch.stableForSeconds);
   put("stale_after_seconds", patch.staleAfterSeconds);
+  // Issue #845. `put` drops only `undefined`, which is exactly right
+  // here: an explicit 0 is the request that returns this set to the
+  // deployment's own cadence, and it has to reach the wire as a 0.
+  put("poll_interval_seconds", patch.pollIntervalSeconds);
   put("ssh_key_id", patch.sshKeyId);
   put("known_hosts_line", patch.knownHostsLine);
   // Both sent only when the caller actually set them, like every key

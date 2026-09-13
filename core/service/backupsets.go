@@ -243,6 +243,25 @@ type BackupSet struct {
 	// override, on demand. What a LIST needs is which of the two policies
 	// is in force, which is exactly this bool.
 	RetentionIsOverride bool
+
+	// PollInterval is this backup set's own override of the deployment's
+	// poll cadence (issue #845, config.BackupSet.PollInterval), and nil
+	// when the set inherits.
+	//
+	// Nil is a real answer and has to be rendered as one: an edit form
+	// showing the deployment's number in the box would turn the next
+	// save into an explicit override, permanently detaching that set
+	// from a default it was tracking. That is the same trap
+	// CapacitySettings.BackupRootConfigured exists to avoid, so this
+	// reports the OVERRIDE, and EffectivePollInterval below reports what
+	// is actually in force.
+	PollInterval *time.Duration
+
+	// EffectivePollInterval is how often this set is actually polled:
+	// its own override, or the deployment's default when it has none.
+	// Resolved here so no surface has to combine the two itself and
+	// none can combine them differently (config.EffectivePollInterval).
+	EffectivePollInterval time.Duration
 }
 
 // CreateBackupSetRequest is what a caller submits to persist one new
@@ -402,7 +421,7 @@ func (b *BackupService) ListBackupSets(_ context.Context) ([]BackupSet, error) {
 	var out []BackupSet
 	for _, src := range st.inner.Config.Sources {
 		for _, bs := range src.BackupSets {
-			out = append(out, toServiceBackupSet(b.configPath, src.Name, bs))
+			out = append(out, toServiceBackupSet(st.inner.Config, b.configPath, src.Name, bs))
 		}
 	}
 	return out, nil
@@ -416,7 +435,7 @@ func (b *BackupService) GetBackupSet(_ context.Context, id string) (BackupSet, e
 	for _, src := range st.inner.Config.Sources {
 		for _, bs := range src.BackupSets {
 			if src.Name+"/"+bs.Name == id {
-				return toServiceBackupSet(b.configPath, src.Name, bs), nil
+				return toServiceBackupSet(st.inner.Config, b.configPath, src.Name, bs), nil
 			}
 		}
 	}
@@ -703,7 +722,7 @@ func (b *BackupService) CreateBackupSet(ctx context.Context, req CreateBackupSet
 	// (adoptConfig, and edithold.go for why the hold was there).
 	newRevision := b.adoptConfig(cfg)
 
-	created := toServiceBackupSet(b.configPath, sourceName, findBackupSet(cfg, sourceName, req.Name))
+	created := toServiceBackupSet(cfg, b.configPath, sourceName, findBackupSet(cfg, sourceName, req.Name))
 	result := CreateBackupSetResult{Set: created}
 
 	// Issue #391: the adoption. A backup set is identified by its source
@@ -894,6 +913,19 @@ func completionProblems(strategy string, stableFor time.Duration) []string {
 	return problems
 }
 
+// pollIntervalOverride is bs's own poll interval as a *time.Duration, or
+// nil when it inherits the deployment's. It exists so this package never
+// hands out a pointer into a config.BackupSet a caller could write
+// through, which is the same reason nothing here returns bs.Include
+// without copying it.
+func pollIntervalOverride(bs config.BackupSet) *time.Duration {
+	if bs.PollInterval == nil {
+		return nil
+	}
+	d := bs.PollInterval.Duration()
+	return &d
+}
+
 func validatorIDProblem(id ValidatorID) string {
 	if id != "" && !isRegisteredValidator(id) {
 		// Deliberately does not echo the value back. An unregistered id is
@@ -906,12 +938,17 @@ func validatorIDProblem(id ValidatorID) string {
 	return ""
 }
 
+// It takes cfg because two of the fields it reports are not properties
+// of the set alone: a poll interval a set does not override is the
+// deployment's, and resolving that anywhere but here would be a second
+// place the two scopes could be combined differently (issue #845).
+//
 // It takes configPath because the trusted host key is a FILE, and reading
 // it here rather than at each caller is what stops one read surface
 // reporting a set's real anchor while another reports nothing. Every
 // caller has a config path; the ones that do not have a BackupService
 // (firstrun.go) have the path they just wrote.
-func toServiceBackupSet(configPath, sourceName string, bs config.BackupSet) BackupSet {
+func toServiceBackupSet(cfg *config.Config, configPath, sourceName string, bs config.BackupSet) BackupSet {
 	trusted, recordedAt := trustedHostKeysFor(configPath, bs)
 	return BackupSet{
 		ID:                 sourceName + "/" + bs.Name,
@@ -944,6 +981,13 @@ func toServiceBackupSet(configPath, sourceName string, bs config.BackupSet) Back
 		// point of pinning it is that a later edit to the deployment's
 		// policy will not move it.
 		RetentionIsOverride: bs.RetentionIsOverride(),
+		// The override and what it resolves to, both reported, for the
+		// reason BackupSet.PollInterval's own doc gives: a surface that
+		// could only see the effective number would have to write it
+		// back to save anything else, silently pinning a set to today's
+		// deployment default.
+		PollInterval:          pollIntervalOverride(bs),
+		EffectivePollInterval: cfg.EffectivePollInterval(bs),
 		// Read straight off the configuration rather than derived from
 		// anything: whether a connection was ever proven is not something
 		// a set's own history can answer, so it is only ever what somebody

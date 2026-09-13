@@ -60,8 +60,10 @@ function settingsFixture(capacity: Partial<CapacitySettings> = {}): AppSettings 
   return {
     retention: retentionFixture(),
     capacity: capacityFixture(capacity),
+    service: { pollIntervalSeconds: 900 },
     mediums: [],
     schema: {
+      service: { minPollIntervalSeconds: 60 },
       storage: {
         verificationClasses: [
           { className: "content", proves: "the bytes hash to what was recorded", requires: "a full download", downloadsObject: true },

@@ -200,6 +200,24 @@ type backupSetResponse struct {
 	// /backup-sets/{source}/{set}/retention, which serves it on demand
 	// alongside the deployment's own.
 	RetentionIsOverride bool `json:"retention_is_override"`
+
+	// PollIntervalSeconds is this set's own poll-interval override
+	// (issue #845), and NULL when the set inherits the deployment's.
+	//
+	// Null is a real answer and a form has to render it as one: filling
+	// the box with the deployment's number would make the next save an
+	// explicit override, permanently detaching this set from a default
+	// it was tracking. That is capacity's backup_root_configured
+	// problem in a different field.
+	PollIntervalSeconds *int `json:"poll_interval_seconds"`
+
+	// EffectivePollIntervalSeconds is how often this set is actually
+	// polled: its override, or the deployment's default. Served beside
+	// the override so a form can label the inherit option with the real
+	// number without a second request, and resolved by the engine so no
+	// client combines the two scopes itself.
+	EffectivePollIntervalSeconds int `json:"effective_poll_interval_seconds"`
+
 	// TrustedHostKeys is what this set's known_hosts actually pins for its
 	// own address (service.BackupSet.TrustedHostKeys). Omitted, not sent
 	// as an empty list, and the difference is the whole point: absent
@@ -266,6 +284,9 @@ func toBackupSetResponse(bs service.BackupSet) backupSetResponse {
 		Disabled:            bs.Disabled,
 		ReadOnly:            bs.ReadOnly,
 		RetentionIsOverride: bs.RetentionIsOverride,
+
+		PollIntervalSeconds:          secondsPointerFromDuration(bs.PollInterval),
+		EffectivePollIntervalSeconds: int(bs.EffectivePollInterval / time.Second),
 
 		TrustedHostKeys:          trusted,
 		TrustedHostKeyRecordedAt: recordedAt,
@@ -726,6 +747,14 @@ type updateBackupSetRequest struct {
 	StableForSeconds   *int    `json:"stable_for_seconds"`
 	StaleAfterSeconds  *int    `json:"stale_after_seconds"`
 
+	// PollIntervalSeconds changes how often this set's source is checked
+	// (issue #845). Absent leaves it alone, like every field here; an
+	// explicit 0 is the spelling of "inherit the deployment's interval
+	// again", which is unambiguous because the engine's floor
+	// (schema.service.min_poll_interval_seconds) makes zero a value no
+	// caller could be asking for.
+	PollIntervalSeconds *int `json:"poll_interval_seconds"`
+
 	ValidatorID *string `json:"validator_id"`
 
 	// SSHKeyID and KnownHostsLine are issue #572's two: the key this set
@@ -804,6 +833,7 @@ func (h *handlers) updateBackupSet(w http.ResponseWriter, r *http.Request) {
 		CompletionStrategy: body.CompletionStrategy,
 		StableFor:          secondsPointerToDuration(body.StableForSeconds),
 		StaleAfter:         secondsPointerToDuration(body.StaleAfterSeconds),
+		PollInterval:       secondsPointerToDuration(body.PollIntervalSeconds),
 		SSHKeyID:           body.SSHKeyID,
 		KnownHostsLine:     body.KnownHostsLine,
 
@@ -827,6 +857,18 @@ func (h *handlers) updateBackupSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toBackupSetResponse(updated))
+}
+
+// secondsPointerFromDuration is the read direction of
+// secondsPointerToDuration: a duration a backup set may not have at all
+// becomes a nullable number, so "this set inherits" stays distinguishable
+// from "this set polls at the same interval the deployment does".
+func secondsPointerFromDuration(d *time.Duration) *int {
+	if d == nil {
+		return nil
+	}
+	s := int(*d / time.Second)
+	return &s
 }
 
 // secondsPointerToDuration is secondsToDuration for a field that has to

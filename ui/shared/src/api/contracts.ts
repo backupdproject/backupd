@@ -324,6 +324,12 @@ export interface BackupSetPatch {
    *  actually kept. */
   stableForSeconds?: number;
   staleAfterSeconds?: number;
+  /** How often this set's source is checked, in seconds (issue #845).
+   *  Omit the key to leave it alone; an explicit 0 means "inherit the
+   *  deployment default again", which is unambiguous because the server
+   *  refuses anything under `schema.service.minPollIntervalSeconds`, so
+   *  zero is a value no caller could be asking for. */
+  pollIntervalSeconds?: number;
   /** The id of a key POST /ssh-keys has already imported, replacing the
    *  one this set authenticates with. A reference, never key material.
    *  An id no import produced is refused with SSH_KEY_NOT_FOUND. */
@@ -1459,15 +1465,41 @@ export interface UpdateCapacitySettings {
  *  settings so a form can enforce the server's rules without holding a
  *  second copy of them, which is the rule the retention and capacity
  *  cards are both written to. */
+export interface ServiceSettings {
+  /** The deployment-wide DEFAULT cadence a backup source is checked for
+   *  new backup files at. A backup set may override it for itself
+   *  (BackupSet.pollIntervalSeconds), so this is never a claim about any
+   *  particular set. */
+  pollIntervalSeconds: number;
+}
+
+/** The rule the service-behaviour settings are validated against, served
+ *  with them so a form enforces the server's floor rather than a second
+ *  copy of it that drifts. */
+export interface ServiceSchema {
+  /** The floor under BOTH scopes: the deployment default and any per-set
+   *  override. A shorter interval is refused wherever it was written. */
+  minPollIntervalSeconds: number;
+}
+
+/** A PARTIAL service-behaviour update: only the fields named here
+ *  change. */
+export interface UpdateServiceSettings {
+  pollIntervalSeconds?: number;
+}
+
 export interface AppSettings {
   retention: RetentionSettings;
   capacity: CapacitySettings;
+  /** How this manager behaves, as opposed to what it keeps (issue
+   *  #845). */
+  service: ServiceSettings;
   /** Every storage medium the configuration declares, in declaration
    *  order. Empty for every deployment that has configured none, which is
    *  the case the Medium column and the medium picker both disappear
    *  for. */
   mediums: StorageMedium[];
-  schema: { retention: RetentionSchema; storage: StorageSchema };
+  schema: { retention: RetentionSchema; storage: StorageSchema; service: ServiceSchema };
 }
 
 /** A PARTIAL update: only the fields named here change, everything else
@@ -1489,6 +1521,7 @@ export interface UpdateRetentionSettings {
 export interface UpdateSettingsRequest {
   retention?: UpdateRetentionSettings;
   capacity?: UpdateCapacitySettings;
+  service?: UpdateServiceSettings;
   /** The operator's acknowledgment of `schema.storage.mediumDisclosure`,
    *  required by the backend on a write that first sends a tier's backups
    *  to a non-local medium (FR-27).

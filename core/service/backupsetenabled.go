@@ -135,7 +135,7 @@ func (b *BackupService) SetBackupSetEnabled(_ context.Context, id string, enable
 
 	b.adoptConfig(cfg)
 
-	return toServiceBackupSet(b.configPath, sourceName, findBackupSet(cfg, sourceName, setName)), nil
+	return toServiceBackupSet(cfg, b.configPath, sourceName, findBackupSet(cfg, sourceName, setName)), nil
 }
 
 // SetBackupSetReadOnly turns issue #282's read-only declaration on or off
@@ -231,7 +231,7 @@ func (b *BackupService) SetBackupSetReadOnly(_ context.Context, id string, readO
 
 	b.adoptConfig(cfg)
 
-	return toServiceBackupSet(b.configPath, sourceName, findBackupSet(cfg, sourceName, setName)), nil
+	return toServiceBackupSet(cfg, b.configPath, sourceName, findBackupSet(cfg, sourceName, setName)), nil
 }
 
 // TestBackupSetConnection runs the same non-destructive reachability and

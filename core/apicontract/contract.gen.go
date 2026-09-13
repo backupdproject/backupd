@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "968e886be082dec27483df797d8b085b7b754833c3a26d3be27d100ed463a14d"
+const ContractSHA256 = "8023c997479fa1ba0dcbc1a60b6bfa162a04acfbd11c9b23a091ea211efab3f5"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -1191,26 +1191,28 @@ type BackendProbeStep struct {
 
 // BackupSet is A persisted backup set as the API reports it.
 type BackupSet struct {
-	CompletionStrategy       string           `json:"completion_strategy"`
-	ConnectionUnverified     bool             `json:"connection_unverified,omitempty"`
-	Disabled                 bool             `json:"disabled"`
-	Host                     string           `json:"host"`
-	ID                       string           `json:"id"`
-	Include                  []string         `json:"include"`
-	LocalPath                string           `json:"local_path"`
-	Name                     string           `json:"name"`
-	Port                     int              `json:"port"`
-	ReadOnly                 bool             `json:"read_only"`
-	RemotePath               string           `json:"remote_path"`
-	RetentionIsOverride      bool             `json:"retention_is_override"`
-	SourceName               string           `json:"source_name"`
-	SSHKeyID                 string           `json:"ssh_key_id"`
-	StableForSeconds         int              `json:"stable_for_seconds"`
-	StaleAfterSeconds        int              `json:"stale_after_seconds"`
-	TrustedHostKeyRecordedAt string           `json:"trusted_host_key_recorded_at,omitempty"`
-	TrustedHostKeys          []TrustedHostKey `json:"trusted_host_keys,omitempty"`
-	User                     string           `json:"user"`
-	ValidatorID              string           `json:"validator_id"`
+	CompletionStrategy           string           `json:"completion_strategy"`
+	ConnectionUnverified         bool             `json:"connection_unverified,omitempty"`
+	Disabled                     bool             `json:"disabled"`
+	EffectivePollIntervalSeconds int              `json:"effective_poll_interval_seconds"`
+	Host                         string           `json:"host"`
+	ID                           string           `json:"id"`
+	Include                      []string         `json:"include"`
+	LocalPath                    string           `json:"local_path"`
+	Name                         string           `json:"name"`
+	PollIntervalSeconds          *int             `json:"poll_interval_seconds"`
+	Port                         int              `json:"port"`
+	ReadOnly                     bool             `json:"read_only"`
+	RemotePath                   string           `json:"remote_path"`
+	RetentionIsOverride          bool             `json:"retention_is_override"`
+	SourceName                   string           `json:"source_name"`
+	SSHKeyID                     string           `json:"ssh_key_id"`
+	StableForSeconds             int              `json:"stable_for_seconds"`
+	StaleAfterSeconds            int              `json:"stale_after_seconds"`
+	TrustedHostKeyRecordedAt     string           `json:"trusted_host_key_recorded_at,omitempty"`
+	TrustedHostKeys              []TrustedHostKey `json:"trusted_host_keys,omitempty"`
+	User                         string           `json:"user"`
+	ValidatorID                  string           `json:"validator_id"`
 }
 
 // BackupSetEditHold is POST /backup-sets/{source}/{set}/edit-hold. The lease just taken
@@ -2231,6 +2233,19 @@ type SSHKeyDiscoveryLocation struct {
 	Problem string `json:"problem,omitempty"`
 }
 
+// ServiceSchema is the rules the service-behaviour settings are validated against,
+// served so a form does not keep its own copy of a bound the engine
+// enforces.
+type ServiceSchema struct {
+	MinPollIntervalSeconds int `json:"min_poll_interval_seconds"`
+}
+
+// ServiceSettings is how this manager behaves, as opposed to what it keeps: the
+// service-behaviour settings.
+type ServiceSettings struct {
+	PollIntervalSeconds int `json:"poll_interval_seconds"`
+}
+
 // SessionResponse is GET /auth/session.
 type SessionResponse struct {
 	Username string `json:"username"`
@@ -2259,11 +2274,13 @@ type SettingsResponse struct {
 	Mediums   []StorageMediumSummary `json:"mediums"`
 	Retention RetentionSettings      `json:"retention"`
 	Schema    SettingsSchema         `json:"schema"`
+	Service   ServiceSettings        `json:"service"`
 }
 
 // SettingsSchema is the schema half of the settings response.
 type SettingsSchema struct {
 	Retention RetentionSchema `json:"retention"`
+	Service   ServiceSchema   `json:"service"`
 	Storage   StorageSchema   `json:"storage"`
 }
 
@@ -2491,6 +2508,7 @@ type UpdateBackupSetRequest struct {
 	Include                  *[]string `json:"include"`
 	KnownHostsLine           *string   `json:"known_hosts_line"`
 	LocalPath                *string   `json:"local_path"`
+	PollIntervalSeconds      *int      `json:"poll_interval_seconds"`
 	Port                     *int      `json:"port"`
 	RemotePath               *string   `json:"remote_path"`
 	SkipConnectionCheck      bool      `json:"skip_connection_check"`
@@ -2522,12 +2540,19 @@ type UpdateRetentionSettings struct {
 	WeekStartsOn         *string         `json:"week_starts_on"`
 }
 
+// UpdateServiceSettings is A PARTIAL service-behaviour update. An omitted field is left
+// exactly as the running configuration has it.
+type UpdateServiceSettings struct {
+	PollIntervalSeconds *int `json:"poll_interval_seconds"`
+}
+
 // UpdateSettingsRequest is PATCH /settings. An enumerated request type, never a configuration
 // passthrough.
 type UpdateSettingsRequest struct {
 	AcknowledgeMediumDisclosure bool                     `json:"acknowledge_medium_disclosure,omitempty"`
 	Capacity                    *UpdateCapacitySettings  `json:"capacity"`
 	Retention                   *UpdateRetentionSettings `json:"retention"`
+	Service                     *UpdateServiceSettings   `json:"service"`
 }
 
 // Validator is one registered application validator. An id and a sentence, and
@@ -2665,6 +2690,8 @@ var SchemaTypes = map[string]any{
 	"SSHKey":                            SSHKey{},
 	"SSHKeyCandidate":                   SSHKeyCandidate{},
 	"SSHKeyDiscoveryLocation":           SSHKeyDiscoveryLocation{},
+	"ServiceSchema":                     ServiceSchema{},
+	"ServiceSettings":                   ServiceSettings{},
 	"SessionResponse":                   SessionResponse{},
 	"SetEnabledRequest":                 SetEnabledRequest{},
 	"SetReadOnlyRequest":                SetReadOnlyRequest{},
@@ -2687,6 +2714,7 @@ var SchemaTypes = map[string]any{
 	"UpdateBackupSetRequest":            UpdateBackupSetRequest{},
 	"UpdateCapacitySettings":            UpdateCapacitySettings{},
 	"UpdateRetentionSettings":           UpdateRetentionSettings{},
+	"UpdateServiceSettings":             UpdateServiceSettings{},
 	"UpdateSettingsRequest":             UpdateSettingsRequest{},
 	"Validator":                         Validator{},
 	"VerificationClassInfo":             VerificationClassInfo{},

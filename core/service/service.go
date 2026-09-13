@@ -92,12 +92,6 @@ type BackupService struct {
 	// (operations.go, scheduler.go) for the numbers no event carries.
 	activity *liveActivity
 
-	// pollInterval is cfg.PollInterval.Duration(), copied out at
-	// construction time so PollInterval() (scheduler.go) can report it
-	// without exposing *config.Config itself, which a caller outside
-	// core/ cannot even name.
-	pollInterval time.Duration
-
 	// ctx/cancel give executeRunCycle a lifetime independent of both
 	// context.Background() and any single request's context: it is
 	// canceled by Close, so a process shutdown can actually ask an
@@ -272,7 +266,6 @@ func New(cfg *config.Config, journal *state.Journal, tr transport.Transport, log
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &BackupService{
 		journal:        journal,
-		pollInterval:   cfg.PollInterval.Duration(),
 		ctx:            ctx,
 		cancel:         cancel,
 		retentionPlans: make(map[string]retentionPlanRecord),

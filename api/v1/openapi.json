@@ -1111,6 +1111,15 @@
             "type": "boolean",
             "description": "Whether this backup set was written without its SSH connection ever having been proven (issue #624). True means a surface deliberately skipped a check it could have run, which is `backup-set create --no-verify` and nothing else; a connection test that PASSES against the set clears it, and one that fails leaves it alone. ABSENT is not \"unverified\": every configuration written before this field existed says nothing, an engine built before it answers nothing, and a client that read silence as a mark would declare every backup set on every deployment unproven on the first upgrade. Read absence as \"nothing here says this was skipped\".",
             "x-go-omitempty": true
+          },
+          "poll_interval_seconds": {
+            "type": "integer",
+            "description": "This backup set's own poll-interval override, or NULL when it inherits the deployment default. Null is a real answer: a form must not put the deployment's number in the box, because saving it would pin this set to today's default and detach it from one it was tracking.",
+            "x-go-pointer": true
+          },
+          "effective_poll_interval_seconds": {
+            "type": "integer",
+            "description": "How often this backup set is actually polled: its own override, or the deployment default when it has none. Resolved by the engine so no client combines the two scopes itself."
           }
         },
         "required": [
@@ -1130,7 +1139,8 @@
           "stable_for_seconds",
           "stale_after_seconds",
           "retention_is_override",
-          "ssh_key_id"
+          "ssh_key_id",
+          "effective_poll_interval_seconds"
         ]
       },
       "CreateBackupSetResponse": {
@@ -1468,6 +1478,20 @@
           "backup_root_configured"
         ]
       },
+      "ServiceSettings": {
+        "type": "object",
+        "description": "How this manager behaves, as opposed to what it keeps: the service-behaviour settings.",
+        "additionalProperties": false,
+        "properties": {
+          "poll_interval_seconds": {
+            "type": "integer",
+            "description": "The deployment-wide DEFAULT cadence a backup source is checked for new backup files at. A backup set may override it for itself (BackupSet.poll_interval_seconds), so this is not a claim about any particular set. At least min_poll_interval_seconds."
+          }
+        },
+        "required": [
+          "poll_interval_seconds"
+        ]
+      },
       "RetentionSchema": {
         "type": "object",
         "description": "The closed value sets and bounds a retention chain is validated against, served rather than transcribed into a frontend.",
@@ -1527,11 +1551,29 @@
           },
           "storage": {
             "$ref": "#/components/schemas/StorageSchema"
+          },
+          "service": {
+            "$ref": "#/components/schemas/ServiceSchema"
           }
         },
         "required": [
           "retention",
-          "storage"
+          "storage",
+          "service"
+        ]
+      },
+      "ServiceSchema": {
+        "type": "object",
+        "description": "The rules the service-behaviour settings are validated against, served so a form does not keep its own copy of a bound the engine enforces.",
+        "additionalProperties": false,
+        "properties": {
+          "min_poll_interval_seconds": {
+            "type": "integer",
+            "description": "The floor under BOTH scopes of the poll interval: the deployment default and any per-set override. A shorter interval is refused, wherever it was written."
+          }
+        },
+        "required": [
+          "min_poll_interval_seconds"
         ]
       },
       "SettingsResponse": {
@@ -1554,13 +1596,17 @@
               "$ref": "#/components/schemas/StorageMediumSummary"
             },
             "description": "Every storage medium this configuration declares, in declaration order. Empty for a configuration that declares none, which is every configuration written before storage mediums existed."
+          },
+          "service": {
+            "$ref": "#/components/schemas/ServiceSettings"
           }
         },
         "required": [
           "retention",
           "capacity",
           "mediums",
-          "schema"
+          "schema",
+          "service"
         ]
       },
       "UpdateRetentionSettings": {
@@ -1617,6 +1663,18 @@
         },
         "required": []
       },
+      "UpdateServiceSettings": {
+        "type": "object",
+        "description": "A PARTIAL service-behaviour update. An omitted field is left exactly as the running configuration has it.",
+        "additionalProperties": false,
+        "properties": {
+          "poll_interval_seconds": {
+            "type": "integer",
+            "x-go-pointer": true
+          }
+        },
+        "required": []
+      },
       "UpdateSettingsRequest": {
         "type": "object",
         "description": "PATCH /settings. An enumerated request type, never a configuration passthrough.",
@@ -1634,6 +1692,10 @@
             "type": "boolean",
             "description": "The operator's acknowledgment of the storage-medium disclosure (SettingsSchema.storage.medium_disclosure). Required on, and only on, a write that FIRST sends a retention tier's artifacts to a non-local medium: without it that write is refused with MEDIUM_DISCLOSURE_REQUIRED. It is not a setting, so a request carrying nothing but this acknowledgment still names no setting to change and is refused as such.",
             "x-go-omitempty": true
+          },
+          "service": {
+            "$ref": "#/components/schemas/UpdateServiceSettings",
+            "x-go-pointer": true
           }
         },
         "required": []
@@ -2730,6 +2792,11 @@
           "skip_connection_check": {
             "type": "boolean",
             "description": "Writes this edit without proving the connection first (issue #624). An edit that changes host, port, user, ssh_key_id, known_hosts_line or remote_path is checked against the source before it is written, and refused with BACKUP_SET_CONNECTION_NOT_PROVEN when the check fails; this is the deliberate opt-out, and a set written under it is marked connection_unverified until a test passes. The check is made here rather than by the caller because a sparse edit plus a set whose trust anchor this API never publishes is not something a caller can assemble a candidate out of. Omitted or false checks, which is what every edit that changes a connection field should do."
+          },
+          "poll_interval_seconds": {
+            "type": "integer",
+            "description": "Change how often this set's source is checked. Absent leaves it alone; an explicit 0 means \"inherit the deployment default again\", which is unambiguous because SettingsSchema.service.min_poll_interval_seconds makes zero a value no caller could be asking for.",
+            "x-go-pointer": true
           }
         }
       },

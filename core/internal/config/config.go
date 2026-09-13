@@ -897,6 +897,35 @@ type BackupSet struct {
 	// own note on that one-way door).
 	ConnectionUnverified bool `yaml:"connection_unverified,omitempty"`
 
+	// PollInterval is issue #845's per-set override of the deployment's
+	// own poll_interval: "check THIS source this often, whatever cadence
+	// the rest of the deployment runs at".
+	//
+	// nil means inherit, and inherit is not the same as a copy of
+	// today's global value: a set that says nothing here follows
+	// Config.PollInterval wherever an operator later moves it. That is
+	// what makes the global control worth having, and it is why this is
+	// a pointer rather than a Duration whose zero would have to stand in
+	// for "not said" -- the same reason ReadOnlyConfig and
+	// RetentionConfig are pointers.
+	//
+	// Unlike those two this field is read directly rather than resolved
+	// into a second one by Validate. A resolved copy would be a snapshot
+	// of the global taken at load time, and the whole point of the
+	// inheritance is that it tracks. Config.EffectivePollInterval is the
+	// one place the two scopes are combined, so no caller decides it
+	// twice.
+	//
+	// The floor (MinPollInterval) applies to this value exactly as it
+	// applies to the global one: a typo here would hammer one operator's
+	// source rather than all of them, which is not a reason to accept it.
+	//
+	// omitempty, like every other key this schema has gained, so a
+	// deployment that overrides nothing never writes a file an older
+	// build cannot parse (Load's KnownFields(true); see RetentionConfig's
+	// own note on that one-way door).
+	PollInterval *Duration `yaml:"poll_interval,omitempty"`
+
 	Validation   Validation   `yaml:"validation"`
 	Revalidation Revalidation `yaml:"revalidation"`
 }

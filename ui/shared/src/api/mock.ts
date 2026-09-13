@@ -155,6 +155,9 @@ const SETS: BackupSet[] = [
     remoteFolder: "/backups/postgresql/", includePatterns: ["*.dump.zst"],
     excludePatterns: ["*.tmp", "*.part"], completionMethod: "completion-marker", stableForSeconds: 0,
     destination: "/data/backups/production/postgres/", retentionIsOverride: false,
+    // Issue #845: inherits the deployment's cadence, which is the
+    // ordinary case and the one the edit form has to draw as "inherit".
+    pollIntervalSeconds: null, effectivePollIntervalSeconds: 15 * 60,
     validations: ["transfer", "checksum", "application"],
     state: "healthy",
     stateNote: "Verified nightly dump; application validation passed 42 minutes ago.",
@@ -174,6 +177,9 @@ const SETS: BackupSet[] = [
     remoteFolder: "/srv/backups/mysql/", includePatterns: ["*.sql.gz"],
     excludePatterns: ["*.part"], completionMethod: "atomic-rename", stableForSeconds: 0,
     destination: "/data/backups/production/billing/", retentionIsOverride: false,
+    // The one fixture that polls on its own cadence, so every surface
+    // that draws an override is exercised against a set that has one.
+    pollIntervalSeconds: 5 * 60, effectivePollIntervalSeconds: 5 * 60,
     validations: ["transfer", "checksum"],
     state: "stale",
     stateNote: "No verified backup received for 31 hours. Expected within 24 hours.",
@@ -204,6 +210,7 @@ const SETS: BackupSet[] = [
     excludePatterns: [], completionMethod: "stable-size", stableForSeconds: 300,
     destination: "/data/backups/production/auth/",
     retentionIsOverride: true,
+    pollIntervalSeconds: null, effectivePollIntervalSeconds: 15 * 60,
     validations: ["transfer", "checksum"],
     state: "failing",
     stateNote: "Halted — the SSH host key changed. Remote artifacts are untouched.",
@@ -227,6 +234,7 @@ const SETS: BackupSet[] = [
     excludePatterns: [], completionMethod: "completion-marker", stableForSeconds: 0,
     destination: "/data/backups/media/",
     retentionIsOverride: true,
+    pollIntervalSeconds: 6 * 60 * 60, effectivePollIntervalSeconds: 6 * 60 * 60,
     validations: ["transfer", "checksum"],
     state: "healthy", stateNote: "Weekly cold archive; checksum verification only.",
     // This fixture is the one read-only set (issue #282, #316): a cold
@@ -1187,6 +1195,11 @@ function mockBackupSetFromCreateRequest(req: CreateBackupSetRequest): BackupSet 
     // the deployment's, which is what a set with no retention block in
     // config.yaml means.
     retentionIsOverride: false,
+    // A newly created set has no cadence of its own either: it follows
+    // the deployment's, exactly as a set with no poll_interval key in
+    // config.yaml does.
+    pollIntervalSeconds: null,
+    effectivePollIntervalSeconds: 15 * 60,
     validations: ["transfer"],
     state: "healthy",
     stateNote: "Created just now; no runs yet.",
@@ -1535,6 +1548,9 @@ function defaultSettings(): AppSettings {
       protectLastKnownGood: true
     },
     capacity: defaultCapacitySettings(),
+    // Issue #845's deployment-wide cadence, at the product default an
+    // unedited config.yaml carries.
+    service: { pollIntervalSeconds: 15 * 60 },
     // The local hard drive leads, then a second local volume, then two
     // buckets, one of them an archive class. Four rows and two backends,
     // which is what makes this fixture able to show the thing EPIC I
@@ -1590,6 +1606,10 @@ function defaultSettings(): AppSettings {
       }
     ],
     schema: {
+      // The floor core/internal/config enforces on both scopes of the
+      // poll interval. Served rather than written into the form, so a
+      // fixture cannot advertise a bound the engine does not apply.
+      service: { minPollIntervalSeconds: 60 },
       // The words come from core/internal/placement in a real deployment.
       // They are reproduced here because this is a mock of the SERVER, and
       // a mock that served different words would hide exactly the drift
@@ -1996,6 +2016,15 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
       if (patch.destination !== undefined) found.destination = patch.destination;
       if (patch.includePatterns !== undefined) found.includePatterns = [...patch.includePatterns];
       if (patch.completionMethod !== undefined) found.completionMethod = patch.completionMethod;
+      if (patch.stableForSeconds !== undefined) found.stableForSeconds = patch.stableForSeconds;
+      if (patch.pollIntervalSeconds !== undefined) {
+        // Zero is the request that returns this set to the deployment's
+        // cadence, which is why it is applied as null rather than stored
+        // (issue #845). The effective value follows, since with no
+        // override the set polls at whatever the deployment does.
+        found.pollIntervalSeconds = patch.pollIntervalSeconds === 0 ? null : patch.pollIntervalSeconds;
+        found.effectivePollIntervalSeconds = found.pollIntervalSeconds ?? 15 * 60;
+      }
       return delay({ ...found });
     },
 
@@ -2261,7 +2290,9 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
           c.warningFreeBytes === undefined &&
           c.criticalFreeBytes === undefined &&
           c.safetyMarginBytes === undefined);
-      if (retentionNamesNothing && capacityNamesNothing)
+      const sv = req.service;
+      const serviceNamesNothing = sv === undefined || sv.pollIntervalSeconds === undefined;
+      if (retentionNamesNothing && capacityNamesNothing && serviceNamesNothing)
         return Promise.reject(new BackupdError({
           code: "INVALID_REQUEST",
           message: "a settings write must name at least one setting to change",
@@ -2271,7 +2302,11 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
       // the OTHER section carries a real change: quietly dropping half a
       // request is how a settings page reports success for an edit that
       // never happened.
-      if ((r !== undefined && retentionNamesNothing) || (c !== undefined && capacityNamesNothing))
+      if (
+        (r !== undefined && retentionNamesNothing) ||
+        (c !== undefined && capacityNamesNothing) ||
+        (sv !== undefined && serviceNamesNothing)
+      )
         return Promise.reject(new BackupdError({
           code: "INVALID_REQUEST",
           message: "a settings section was sent with no field in it; omit the section instead of sending an empty one",
@@ -2349,6 +2384,20 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
         if (c.warningFreeBytes !== undefined) settings.capacity.warningFreeBytes = c.warningFreeBytes;
         if (c.criticalFreeBytes !== undefined) settings.capacity.criticalFreeBytes = c.criticalFreeBytes;
         if (c.safetyMarginBytes !== undefined) settings.capacity.safetyMarginBytes = c.safetyMarginBytes;
+      }
+
+      if (sv?.pollIntervalSeconds !== undefined) {
+        // config.MinPollInterval, applied here for the reason the
+        // capacity rules above are: a fixture that accepted an interval
+        // the server refuses would let a form ship a Save that can only
+        // fail on a real deployment.
+        if (sv.pollIntervalSeconds < settings.schema.service.minPollIntervalSeconds)
+          return Promise.reject(new BackupdError({
+            code: "INVALID_REQUEST",
+            message: "poll_interval: must be at least 1m0s",
+            correlationId: "cid_mocksettings400"
+          }));
+        settings.service.pollIntervalSeconds = sv.pollIntervalSeconds;
       }
 
       return delay(structuredClone(settings));

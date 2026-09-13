@@ -31,14 +31,11 @@ import (
 // behavior a test controls directly, without a real
 // core/service.BackupService or its SQLite journal.
 type fakeScheduler struct {
-	pollInterval time.Duration
-	runFunc      func(ctx context.Context, interval time.Duration) error
+	runFunc func(ctx context.Context) error
 }
 
-func (f fakeScheduler) PollInterval() time.Duration { return f.pollInterval }
-
-func (f fakeScheduler) RunOnSchedule(ctx context.Context, interval time.Duration) error {
-	return f.runFunc(ctx, interval)
+func (f fakeScheduler) RunOnSchedule(ctx context.Context) error {
+	return f.runFunc(ctx)
 }
 
 const testShutdownGrace = 200 * time.Millisecond
@@ -54,8 +51,7 @@ func TestRunEngine_StopsCleanlyOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	scheduler := fakeScheduler{
-		pollInterval: time.Hour,
-		runFunc: func(ctx context.Context, _ time.Duration) error {
+		runFunc: func(ctx context.Context) error {
 			<-ctx.Done()
 			return nil
 		},
@@ -106,8 +102,7 @@ func TestRunEngine_NilSchedulerRunsHTTPServerOnly(t *testing.T) {
 func TestRunEngine_SchedulerErrorIsReportedPromptly(t *testing.T) {
 	wantErr := errors.New("scheduler exploded")
 	scheduler := fakeScheduler{
-		pollInterval: time.Hour,
-		runFunc: func(context.Context, time.Duration) error {
+		runFunc: func(context.Context) error {
 			return wantErr // fails immediately, independent of ctx
 		},
 	}
@@ -144,8 +139,7 @@ func TestRunEngine_SchedulerErrorIsReportedPromptly(t *testing.T) {
 // scheduler.
 func TestRunEngine_ServerErrorIsReported(t *testing.T) {
 	scheduler := fakeScheduler{
-		pollInterval: time.Hour,
-		runFunc: func(ctx context.Context, _ time.Duration) error {
+		runFunc: func(ctx context.Context) error {
 			<-ctx.Done()
 			return nil
 		},
@@ -188,8 +182,7 @@ func TestRunEngine_ServerErrorIsReported(t *testing.T) {
 func TestRunEngine_ServerErrorCancelsScheduler(t *testing.T) {
 	schedulerStopped := make(chan struct{})
 	scheduler := fakeScheduler{
-		pollInterval: time.Hour,
-		runFunc: func(ctx context.Context, _ time.Duration) error {
+		runFunc: func(ctx context.Context) error {
 			<-ctx.Done()
 			close(schedulerStopped)
 			return nil

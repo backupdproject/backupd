@@ -30,7 +30,29 @@ import (
 // tail. See AlertTick.
 
 // Daemon is FR-1's `daemon` execution mode: it runs RunCycle once
-// immediately, then again every interval, until ctx is done.
+// immediately, then repeatedly, until ctx is done.
+//
+// # The cadence comes from the configuration, not from the caller
+//
+// It used to be an argument, and since issue #845 it cannot be: a backup
+// set may override the deployment-wide poll_interval, so "how often does
+// this loop wake" is a question about the whole configuration rather
+// than one number, and a caller passing one in would be passing half the
+// answer. The loop sleeps config.PollWakeInterval -- the tightest
+// cadence anything configured is entitled to -- which for a deployment
+// that overrides nothing is exactly poll_interval, the loop this has
+// always been.
+//
+// Which sets a given wake actually processes is RunCycle's own decision,
+// made per set against that set's effective interval, because the cycle
+// is marked as a scheduled one here (WithScheduledCycle). A wake where
+// nothing is due does nothing. See pollschedule.go for why the cadence
+// lives inside one sequential loop rather than in a timer per set.
+//
+// The alerting pass below stays on the DEPLOYMENT's poll_interval rather
+// than the wake interval: it reports on the manager, not on any one
+// source, so one set asking to be polled every minute is not a reason to
+// rebuild a health report every minute.
 //
 // cmd/backupd owns turning SIGTERM/SIGINT into ctx's cancellation
 // (via signal.NotifyContext), exactly as FR-1 asks for "handle
@@ -59,16 +81,18 @@ import (
 // right after a RunCycle call returns or while waiting out the interval
 // between cycles: either way this is FR-1's ordinary, expected shutdown
 // path, not an error condition cmd/backupd needs to distinguish
-// from a clean exit. It returns a non-nil error only for a genuine
-// argument problem (a non-positive interval) caught before the loop ever
+// from a clean exit. It returns a non-nil error only for a configuration
+// problem (a non-positive poll_interval) caught before the loop ever
 // starts.
-func (s *Service) Daemon(ctx context.Context, interval time.Duration) error {
+func (s *Service) Daemon(ctx context.Context) error {
+	interval := s.Config.PollInterval.Duration()
 	if interval <= 0 {
-		return fmt.Errorf("app: daemon needs a positive poll interval, got %s", interval)
+		return fmt.Errorf("app: daemon needs a positive poll_interval, got %s", interval)
 	}
 
 	s.logger().Event(ctx, obs.LevelInfo, "daemon_start", "daemon starting",
-		slog.Duration("poll_interval", interval))
+		slog.Duration("poll_interval", interval),
+		slog.Duration("wake_interval", s.Config.PollWakeInterval()))
 
 	// Work Package 3.5's alerting pass also runs on its own timer, beside
 	// the cycle loop rather than inside it (see AlertTick). A cycle that
@@ -85,14 +109,19 @@ func (s *Service) Daemon(ctx context.Context, interval time.Duration) error {
 	defer func() { <-alertsStopped }()
 
 	for {
-		s.RunCycle(ctx)
+		s.RunCycle(WithScheduledCycle(ctx))
 
 		if ctx.Err() != nil {
 			s.logger().Event(ctx, obs.LevelInfo, "daemon_stop", "daemon shutting down", slog.String("reason", ctx.Err().Error()))
 			return nil
 		}
 
-		timer := time.NewTimer(interval)
+		// Re-derived every pass rather than computed once: this
+		// Service's configuration is fixed for its lifetime, but a
+		// value read once outside the loop would go stale the first
+		// time that stops being true, and the cost of a min over the
+		// configured sets is nothing beside a cycle.
+		timer := time.NewTimer(s.Config.PollWakeInterval())
 		select {
 		case <-ctx.Done():
 			timer.Stop()

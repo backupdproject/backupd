@@ -69,9 +69,14 @@ func NewHTTPServer(addr string, handler http.Handler) *http.Server {
 // RunEngine needs to drive the background scheduler loop alongside the
 // HTTP server, sharing one process shutdown context (§9.3).
 // *service.BackupService satisfies this directly; no adapter needed.
+// It carries one method, not two. RunOnSchedule used to be handed the
+// interval a second method reported, and since issue #845 there is no
+// single interval to hand: a backup set may poll on its own cadence, so
+// the schedule is a property of the whole configuration and the scheduler
+// is the only thing that can read it. FirstRunEngine below already
+// ignored the argument for a version of the same reason.
 type Scheduler interface {
-	PollInterval() time.Duration
-	RunOnSchedule(ctx context.Context, interval time.Duration) error
+	RunOnSchedule(ctx context.Context) error
 }
 
 // DefaultShutdownGrace bounds how long RunEngine waits for the HTTP
@@ -133,7 +138,7 @@ func RunEngine(ctx context.Context, httpServer *http.Server, scheduler Scheduler
 	var schedulerErrCh chan error
 	if scheduler != nil {
 		schedulerErrCh = make(chan error, 1)
-		go func() { schedulerErrCh <- scheduler.RunOnSchedule(schedCtx, scheduler.PollInterval()) }()
+		go func() { schedulerErrCh <- scheduler.RunOnSchedule(schedCtx) }()
 	}
 
 	var exitErr error

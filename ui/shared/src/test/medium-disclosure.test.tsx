@@ -94,8 +94,9 @@ function settingsFixture(over: {
       capBytes: 0, warningFreeBytes: 0, criticalFreeBytes: 0, safetyMarginBytes: 0,
       backupRoot: "/data/backups", backupRootConfigured: false
     },
+    service: { pollIntervalSeconds: 900 },
     mediums: over.mediums ?? MEDIUMS,
-    schema: { retention: SCHEMA, storage: STORAGE }
+    schema: { retention: SCHEMA, storage: STORAGE, service: { minPollIntervalSeconds: 60 } }
   };
 }
 

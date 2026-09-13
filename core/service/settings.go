@@ -30,6 +30,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -159,12 +160,51 @@ type CapacitySettings struct {
 	BackupRootConfigured bool
 }
 
+// ServiceSettings is how this manager BEHAVES, as opposed to what it
+// keeps (retention) or how much room it may use (capacity): issue #845's
+// "Service behaviour" section, which today is one field.
+//
+// It is a section of its own rather than a loose field on Settings so
+// that the next knob of this kind -- something about the engine's own
+// running, not about any backup -- has an obvious home, and so the API
+// shape does not have to change to gain one.
+type ServiceSettings struct {
+	// PollInterval is the deployment-wide default cadence a source is
+	// checked for new backup files at (config.Config.PollInterval).
+	//
+	// It is the DEFAULT, not the whole answer: a backup set may override
+	// it (BackupSet.PollInterval), and a set that does is unaffected by
+	// a change here. Every set that does not follows this value the next
+	// time the scheduler wakes -- no restart.
+	PollInterval time.Duration
+}
+
+// ServiceUpdate names the service-behaviour fields a settings write
+// should change. nil leaves the field alone, exactly as on every other
+// section.
+type ServiceUpdate struct {
+	// PollInterval replaces the deployment-wide default. There is no
+	// "unset" spelling: poll_interval is a required key with a floor
+	// (config.MinPollInterval), so a zero here is not "no cadence", it
+	// is a value config.Validate refuses -- and refusing it is the right
+	// answer rather than silently reading it as an omission.
+	PollInterval *time.Duration
+}
+
+// namesNothing reports a service section that carries no field at all,
+// which UpdateSettings refuses exactly as it refuses an absent one. See
+// RetentionUpdate.namesNothing for why the check is structural.
+func (u ServiceUpdate) namesNothing() bool {
+	return u.PollInterval == nil
+}
+
 // Settings is every server-side setting this API can report. One field
 // per section, so a future section is an added field rather than a new
 // method or a new route.
 type Settings struct {
 	Retention RetentionSettings
 	Capacity  CapacitySettings
+	Service   ServiceSettings
 
 	// Mediums is every storage medium this configuration declares, in
 	// declaration order, described without any credential material at all
@@ -271,6 +311,10 @@ type UpdateSettingsRequest struct {
 	Retention *RetentionUpdate
 	Capacity  *CapacityUpdate
 
+	// Service is issue #845's service-behaviour section: today the
+	// deployment-wide poll interval.
+	Service *ServiceUpdate
+
 	// AcknowledgeMediumDisclosure carries the operator's acknowledgment of
 	// StorageSchema().MediumDisclosure (EPIC E, FR-27).
 	//
@@ -304,6 +348,11 @@ func (r UpdateSettingsRequest) namesNothing() bool {
 			named = true
 		}
 	}
+	if r.Service != nil {
+		if !r.Service.namesNothing() {
+			named = true
+		}
+	}
 	return !named
 }
 
@@ -315,7 +364,8 @@ func (r UpdateSettingsRequest) namesNothing() bool {
 // happened.
 func (r UpdateSettingsRequest) anySectionIsEmpty() bool {
 	return (r.Retention != nil && r.Retention.namesNothing()) ||
-		(r.Capacity != nil && r.Capacity.namesNothing())
+		(r.Capacity != nil && r.Capacity.namesNothing()) ||
+		(r.Service != nil && r.Service.namesNothing())
 }
 
 // RetentionSchemaInfo is the closed value sets and bounds
@@ -360,6 +410,25 @@ func RetentionSchema() RetentionSchemaInfo {
 	}
 }
 
+// ServiceSchemaInfo is the rule config.Validate enforces on the
+// service-behaviour settings, reported so a client validates against the
+// same bound rather than a hand-copied one (RetentionSchemaInfo's own
+// reason).
+type ServiceSchemaInfo struct {
+	// MinPollInterval is the floor under both scopes of the poll
+	// interval, the deployment default and any per-set override
+	// (config.MinPollInterval).
+	MinPollInterval time.Duration
+}
+
+// ServiceSchema reports the bounds a service-behaviour write is validated
+// against. A package-level function rather than a method, for
+// RetentionSchema's reason: the answer is a property of the schema,
+// identical for every BackupService.
+func ServiceSchema() ServiceSchemaInfo {
+	return ServiceSchemaInfo{MinPollInterval: config.MinPollInterval}
+}
+
 // Settings reports the settings this BackupService is currently running.
 //
 // Read from the loaded, validated, in-memory config (b.state), not from
@@ -373,6 +442,7 @@ func (b *BackupService) Settings(_ context.Context) (Settings, error) {
 	return Settings{
 		Retention: toRetentionSettings(cfg.Retention),
 		Capacity:  toCapacitySettings(cfg),
+		Service:   toServiceSettings(cfg),
 		Mediums:   toStorageMediumSummaries(cfg),
 	}, nil
 }
@@ -465,6 +535,13 @@ func (b *BackupService) UpdateSettings(_ context.Context, req UpdateSettingsRequ
 	if req.Capacity != nil {
 		applyCapacityUpdate(&cfg.Capacity, *req.Capacity)
 	}
+	if req.Service != nil && req.Service.PollInterval != nil {
+		// Validated by cfg.Validate below, exactly like every other
+		// field on this path: an interval refused here is refused for
+		// the same reason, and in the same words, the same value in a
+		// hand-edited config.yaml would be (config.MinPollInterval).
+		cfg.PollInterval = config.Duration(*req.Service.PollInterval)
+	}
 
 	// Encode what will be written BEFORE cfg.Validate, and write these
 	// bytes rather than re-encoding the validated struct.
@@ -538,8 +615,17 @@ func (b *BackupService) UpdateSettings(_ context.Context, req UpdateSettingsRequ
 	return Settings{
 		Retention: toRetentionSettings(cfg.Retention),
 		Capacity:  toCapacitySettings(cfg),
+		Service:   toServiceSettings(cfg),
 		Mediums:   toStorageMediumSummaries(cfg),
 	}, nil
+}
+
+// toServiceSettings projects the service-behaviour keys onto the
+// boundary shape. One function rather than a literal at each of the two
+// call sites above, for toCapacitySettings' reason: the read and the
+// write must not be able to report a section differently.
+func toServiceSettings(cfg *config.Config) ServiceSettings {
+	return ServiceSettings{PollInterval: cfg.PollInterval.Duration()}
 }
 
 // applyCapacityUpdate folds u onto c in place, and validates nothing: the

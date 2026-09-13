@@ -108,8 +108,9 @@ function settingsFixture(
       ...overrides
     },
     capacity: defaultCapacityFixture(),
+    service: { pollIntervalSeconds: 900 },
     mediums,
-    schema: { retention: schema, storage: STORAGE_SCHEMA }
+    schema: { retention: schema, storage: STORAGE_SCHEMA, service: { minPollIntervalSeconds: 60 } }
   };
 }
 

@@ -42,27 +42,12 @@ func TestPollInterval_ReportsTheConfiguredValue(t *testing.T) {
 	}
 }
 
-// TestRunOnSchedule_RejectsNonPositiveInterval mirrors
-// internal/app.Service.Daemon's own validation (core/internal/app/daemon.go):
-// RunOnSchedule is this package's equivalent entry point for a process
-// that also runs an HTTP API (docs/EPIC-B-multi-nas.md §9.3), so it must
-// not silently accept an interval that would spin a tight loop.
-func TestRunOnSchedule_RejectsNonPositiveInterval(t *testing.T) {
-	svc := newTestService(t)
-	if err := svc.RunOnSchedule(context.Background(), 0); err == nil {
-		t.Fatal("RunOnSchedule(ctx, 0) = nil error, want a non-nil error")
-	}
-	if err := svc.RunOnSchedule(context.Background(), -time.Second); err == nil {
-		t.Fatal("RunOnSchedule(ctx, -1s) = nil error, want a non-nil error")
-	}
-}
-
 // TestRunOnSchedule_RepeatsAtIntervalAndStopsOnCancel proves the basic
 // scheduler-loop contract, the same shape internal/app.Service.Daemon
 // already proves for the plain CLI: it runs more than once over several
 // multiples of a short interval, and returns once ctx is canceled.
 func TestRunOnSchedule_RepeatsAtIntervalAndStopsOnCancel(t *testing.T) {
-	svc := newTestService(t)
+	svc := newTestServiceWithPollInterval(t, 20*time.Millisecond)
 
 	var cycles int32
 	withStubbedRunCycle(t, func(inner *app.Service, ctx context.Context) app.CycleReport {
@@ -74,7 +59,7 @@ func TestRunOnSchedule_RepeatsAtIntervalAndStopsOnCancel(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- svc.RunOnSchedule(ctx, 20*time.Millisecond) }()
+	go func() { done <- svc.RunOnSchedule(ctx) }()
 
 	select {
 	case err := <-done:
@@ -106,7 +91,7 @@ func TestRunOnSchedule_RepeatsAtIntervalAndStopsOnCancel(t *testing.T) {
 // RunOnSchedule's own tick, arriving while that lock is held, does NOT
 // also enter runCycle concurrently — it must skip that tick instead.
 func TestRunOnSchedule_NeverOverlapsAnAPISubmittedRunCycle(t *testing.T) {
-	svc := newTestService(t)
+	svc := newTestServiceWithPollInterval(t, 10*time.Millisecond)
 
 	var concurrent int32
 	var maxConcurrent int32
@@ -134,7 +119,7 @@ func TestRunOnSchedule_NeverOverlapsAnAPISubmittedRunCycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	if err := svc.RunOnSchedule(ctx, 10*time.Millisecond); err != nil {
+	if err := svc.RunOnSchedule(ctx); err != nil {
 		t.Fatalf("RunOnSchedule: %v", err)
 	}
 
@@ -194,7 +179,7 @@ func TestRunScheduledCycle_RecoversFromPanicAndReleasesTheLock(t *testing.T) {
 // the same "just try again next tick" behavior a skipped tick already
 // gets.
 func TestRunOnSchedule_ContinuesTickingAfterAPanickingCycle(t *testing.T) {
-	svc := newTestService(t)
+	svc := newTestServiceWithPollInterval(t, 20*time.Millisecond)
 
 	var cycles int32
 	withStubbedRunCycle(t, func(inner *app.Service, ctx context.Context) app.CycleReport {
@@ -209,7 +194,7 @@ func TestRunOnSchedule_ContinuesTickingAfterAPanickingCycle(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- svc.RunOnSchedule(ctx, 20*time.Millisecond) }()
+	go func() { done <- svc.RunOnSchedule(ctx) }()
 
 	select {
 	case err := <-done:

@@ -295,18 +295,29 @@ type Service struct {
 	// lock at all.
 	//
 	// A cycle is sequential and every field above is written once at
-	// construction, so nothing else here is contended. These two are,
+	// construction, so nothing else here is contended. These are,
 	// because Daemon runs its alerting pass on a goroutine beside the
 	// cycle loop (daemon.go): that pass builds a health report, which
 	// reads lastPollAt and lastRetentionAt for every backup set, while the
 	// cycle is writing them for the set it is on.
 	//
-	// Both are in memory and nothing persists them, which is why a
+	// All three are in memory and nothing persists them, which is why a
 	// short-lived `status` process reports them as unknown rather than
 	// inventing a value; BuildHealthReport's doc carries the consequence
-	// and the follow-up it needs.
-	mu            sync.Mutex
-	lastPoll      map[model.BackupSetID]time.Time
+	// and the follow-up it needs. lastPollAttempt is carried across a
+	// configuration reload by AdoptPollSchedule (pollschedule.go), which
+	// the other two are not: it decides when work HAPPENS, so losing it
+	// changes behaviour rather than a report.
+	mu       sync.Mutex
+	lastPoll map[model.BackupSetID]time.Time
+
+	// lastPollAttempt is when a pass over each backup set last STARTED
+	// (issue #845), which is what the per-set poll cadence is measured
+	// from. Distinct from lastPoll, which is when discovery last
+	// SUCCEEDED; see pollschedule.go for why a schedule keyed on success
+	// would retry a broken source hardest.
+	lastPollAttempt map[model.BackupSetID]time.Time
+
 	lastRetention map[model.BackupSetID]time.Time
 }
 

@@ -959,6 +959,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                     key={field.key}
                     field={field}
                     value={draft[field.key]}
+                    placeholder={field.placeholder?.(s)}
                     dirty={draft[field.key] !== baseline[field.key]}
                     saving={savingFields.includes(field.key)}
                     error={fieldErrors[field.key]}
@@ -1250,6 +1251,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
 function EditRow({
   field,
   value,
+  placeholder,
   dirty,
   saving,
   error,
@@ -1258,6 +1260,9 @@ function EditRow({
 }: {
   field: EditField;
   value: string;
+  /** What an empty box means, for the one field where empty is a
+   *  request rather than a missing value; see EditField.placeholder. */
+  placeholder?: string;
   dirty: boolean;
   saving: boolean;
   error?: string;
@@ -1286,6 +1291,7 @@ function EditRow({
                   className="input"
                   type={field.control === "number" ? "number" : "text"}
                   aria-describedby={helpId}
+                  placeholder={placeholder}
                   value={value}
                   onChange={(e) => onChange(e.target.value)}
                 />
