@@ -283,6 +283,41 @@ synology, truenas, ugos, unraid, zimaos.
 - [ ] **Tests are red before they are green**, and pushed in that order where
   practical. *(Ungated.)*
 
+### Fixtures
+
+The same "can it fail" question the mutation self-test asks of a guard, asked of
+the test data. All of this is ungated: nothing counts fixtures or inspects their
+shape.
+
+- [ ] **A fixture earns its place by being able to fail**, not by covering a
+  feature. A fixture built out of values the defect cannot move passes whether the
+  code is right or wrong, and it is worse than no fixture, because it converts
+  "untested" into "covered" on whatever matrix is counting.
+- [ ] **One fixture per claim the code makes**, not per feature the format has. A
+  kind the epic says it handles needs one, and so does a kind it says it refuses,
+  because both are claims. The cross product of every option against every other
+  one is not a target, and reaching for it is how a corpus becomes too large to
+  re-record and too slow to review.
+- [ ] **Pick the values against the wrong implementation, not the right one.**
+  *(The one I would most expect to get wrong.)* Ask what the plausible defect
+  moves, and choose inputs it moves. A symmetric shape, a zero, an identity
+  transform and an origin are all fixed points: the wrong answer and the right
+  answer agree there. If the fixture would pass against the bug, it is testing
+  nothing and needs different numbers, not more of them.
+- [ ] **Richer beats more.** A fixture that leaves most fields at their zero value
+  silently stops covering each new field added later, so the test decays without
+  anybody touching it. Prefer extending an existing fixture to carry the new field
+  over adding a thin new one beside it, and where a round-trip is asserted over a
+  whole struct, require every field to be non-zero or explicitly exempt.
+- [ ] **A new fixture is added when a defect is found, or when the epic states a
+  property nothing existing can falsify.** Those two are the triggers. "This format
+  supports it" is not one.
+- [ ] **Anything generated is reproducible from its generator**, and the generator
+  lands in the same commit. A committed artefact whose producer is not in the tree
+  is one nobody can re-record, and a fixture nobody can re-record is one nobody
+  will correct.
+- [ ] **Provenance and licence are recorded** for anything not written here.
+
 ---
 
 ## The ungated items, in one place
@@ -308,3 +343,5 @@ repository will tell me I got these wrong:
     changes.
 12. The CHANGELOG entry.
 13. Comments the change falsified.
+14. Fixtures chosen against the wrong implementation rather than the right one,
+    and extended rather than multiplied.
