@@ -624,33 +624,57 @@ func (i *treeDirIterator) Close() {
 	})
 }
 
+// checkEntryName refuses a stored entry name that is not exactly one
+// ordinary path element.
+//
+// It is shared by the two ends of the same threat, and that is the whole
+// reason it is a function rather than four lines inside checkTreeEntry.
+// The WRITE path refuses such a name before it is stored, which is the
+// point at which it costs nothing; the RESTORE path (localrestore.go)
+// refuses it again on the way out, because a repository is not a trust
+// boundary -- a domain may be shared, an operator may have written to the
+// same bucket with the vendor's own CLI, and a snapshot that is only safe
+// because our writer was careful is a snapshot whose safety nobody can
+// check.
+//
+// What it does NOT refuse is as load-bearing as what it does. A backslash,
+// a newline, a colon, a leading "..", bytes that are not valid UTF-8: each
+// of those is one legal path element on the platforms this product runs
+// on, so each is stored verbatim and restored verbatim (#784's
+// namesThatOnlyLOOKLikePaths). Refusing them would be the worse bug of the
+// two -- a backup that silently drops every file whose name contains a
+// backslash is a backup nobody can rely on. Where those names could still
+// mean something dangerous is when they are JOINED to a directory, on a
+// platform whose separator differs, and that is caught where it happens:
+// the restore proves the assembled path is still under the destination.
+func checkEntryName(name string) error {
+	switch {
+	case name == "":
+		return errors.New("an entry arrived with an empty name; an entry with no name cannot be placed in a tree")
+	case strings.ContainsRune(name, '/') || strings.ContainsRune(name, os.PathSeparator):
+		return fmt.Errorf(
+			"entry name %q contains a path separator; an entry name is one path element and may not choose where in the snapshot it lands", name)
+	case name == "." || name == "..":
+		return fmt.Errorf("entry name %q is a directory traversal, not the name of an entry", name)
+	case strings.ContainsRune(name, '\x00'):
+		return fmt.Errorf(
+			"entry name %q contains a NUL byte; it would store cleanly and then be unrestorable, which is a restore point this engine must not advertise", name)
+	}
+
+	return nil
+}
+
 // checkTreeEntry refuses a source entry that cannot honestly be stored.
 //
 // Each of these could be stored as SOMETHING, and that is the problem. An
 // entry with no content is storable as a zero-byte file, which is how a
-// hole in a backup gets hidden behind a plausible-looking restore. A name
-// carrying a separator is storable as a nested path, which lets a
-// source's own directory listing decide where in the snapshot its content
-// lands -- and "." or ".." decide it lands somewhere else entirely. A name
-// with a NUL byte in it is storable too, and is the quietest of the four:
-// the snapshot is well-formed, the manifest resolves, every content hash
-// checks out, and no filesystem on earth can create the file, so the
-// repository advertises a restore point that no restore will ever
-// produce. #784's restore drill finds that one; this refuses it before it
-// is stored, which is the only point at which it costs nothing. They are
-// refusals with sentences instead.
+// hole in a backup gets hidden behind a plausible-looking restore. The
+// name half is checkEntryName above, shared with the restore that has to
+// refuse the same names on the way out; what is left here is the half
+// that is about an entry's CONTENT rather than its name.
 func checkTreeEntry(e backupengine.SourceEntry) error {
-	switch {
-	case e.Name == "":
-		return errors.New("a source entry arrived with an empty name; an entry with no name cannot be placed in a tree")
-	case strings.ContainsRune(e.Name, '/') || strings.ContainsRune(e.Name, os.PathSeparator):
-		return fmt.Errorf(
-			"source entry name %q contains a path separator; an entry name is one path element and may not choose where in the snapshot it lands", e.Name)
-	case e.Name == "." || e.Name == "..":
-		return fmt.Errorf("source entry name %q is a directory traversal, not the name of an entry", e.Name)
-	case strings.ContainsRune(e.Name, '\x00'):
-		return fmt.Errorf(
-			"source entry name %q contains a NUL byte; it would store cleanly and then be unrestorable, which is a restore point this engine must not advertise", e.Name)
+	if err := checkEntryName(e.Name); err != nil {
+		return fmt.Errorf("this source entry cannot be stored: %w", err)
 	}
 
 	switch {

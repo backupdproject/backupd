@@ -46,6 +46,15 @@ const (
 
 	gapRunBackupSet = "`" + Binary + " fetch --backup-set <source/backup-set>` runs that set's cycle in your own shell, not in this engine, so it is a different act against a different process"
 
+	// EPIC K, #787. There is no verb that restores a snapshot to a local
+	// directory, and this is deliberately a gap rather than a wrong
+	// answer: `restore` is the archived-copy retrieval, an entirely
+	// different act against a storage provider, and printing it here
+	// would tell somebody trying to get a file back out of a restore
+	// point to start paying for a retrieval of something else. The verb
+	// lands with the rest of the restore surface in #788.
+	gapRestoreSnapshot = "there is no verb that restores a snapshot to a local directory; `" + Binary + " restore` asks a storage provider to make an ARCHIVED COPY readable again, which is a different act against a different store"
+
 	gapDeploymentScope = "there is no flag that narrows `activity --follow` to the deployment's own events: --backup-set names one set, and naming none already means every set"
 
 	// Issue #624. The candidate half of the connection check has no verb
@@ -176,6 +185,14 @@ var routes = map[string]entry{
 				// somebody asking about one set to a verb about all of
 				// them.
 				return newCmd().refuse(gapRunBackupSet)
+			case apicontract.ActionRestoreSnapshot:
+				// Its own sentence for the reason the arm above has one,
+				// and more urgently: the nearest-looking verb, `restore`,
+				// is the ARCHIVED-COPY retrieval on the arm above this
+				// one. Printing it for a snapshot restore would answer
+				// "get this file back out of last night's restore point"
+				// with a billed provider retrieval of a different object.
+				return newCmd().refuse(gapRestoreSnapshot)
 			default:
 				// The gap the issue names, and the one a lazier
 				// implementation gets wrong. `backupd run`
@@ -194,12 +211,13 @@ var routes = map[string]entry{
 		// for that case rather than one of the two below, which are
 		// answers about a specific act.
 		why:               "there is no verb that submits an operation from a request body",
-		refusals:          []string{gapRunCycle, gapRunBackupSet},
-		namesShippedVerbs: []string{"run", "fetch"},
+		refusals:          []string{gapRunCycle, gapRunBackupSet, gapRestoreSnapshot},
+		namesShippedVerbs: []string{"run", "fetch", "restore"},
 		examples: []Action{
 			{Body: []byte(`{"action":"` + apicontract.ActionRestorePlacement + `","config_revision":"r1","restore":{"artifact_id":"api-server/var-backups/dump.tar","medium":"offsite_s3","window_days":7,"acknowledged":true}}`)},
 			{Body: []byte(`{"action":"` + apicontract.ActionRunBackupSet + `","config_revision":"r1","backup_set_id":"api-server/var-backups"}`)},
 			{Body: []byte(`{"action":"` + apicontract.ActionRunCycle + `","config_revision":"r1"}`)},
+			{Body: []byte(`{"action":"` + apicontract.ActionRestoreSnapshot + `","config_revision":"r1","backup_set_id":"api-server/var-backups"}`)},
 		},
 	},
 	key("GET", "/operations"): {

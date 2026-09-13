@@ -41,6 +41,7 @@ package backupengine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -515,26 +516,250 @@ type VerifyReport struct {
 	Errors []string
 }
 
-// RestoreRequest asks for one snapshot to be written to a local directory.
+// ErrNoRestoreDestination is returned when a restore is asked for with no
+// local directory to write into.
+//
+// A refusal rather than a scratch directory the adapter invents, for the
+// reason ErrRestoreTargetRequired gives about a drill: a restore writes a
+// tree onto a disk somebody owns, and which disk is the caller's
+// decision.
+var ErrNoRestoreDestination = errors.New("backupengine: a restore needs a directory to restore into")
+
+// ErrRestorePathNotFound is returned when RestoreRequest.SourcePath names
+// nothing inside the snapshot.
+//
+// Distinct from ErrSnapshotNotFound because the two send an operator to
+// different places: one means the restore point is gone, the other means
+// the file they asked for was not in the restore point they named -- which
+// for a single-file restore is the ordinary answer to "was this backed up
+// on that date", and must never be reported as a missing snapshot.
+var ErrRestorePathNotFound = errors.New("backupengine: that path is not in this snapshot")
+
+// ErrRestoreConflict is returned when the destination already holds
+// something where a restored entry would land and the request said to
+// refuse rather than replace or skip it.
+//
+// It is the default outcome, and deliberately so: the one thing a restore
+// must never do by accident is destroy the data somebody is restoring
+// BESIDE.
+var ErrRestoreConflict = errors.New("backupengine: the destination already holds something the restore would replace")
+
+// ErrUnsafeSnapshotPath is returned when a snapshot names an entry whose
+// name cannot be placed under the destination without leaving it.
+//
+// # Why a stored snapshot gets treated as hostile input
+//
+// Because a repository is not a trust boundary. A repository domain may
+// be shared, an operator may have written to the same bucket with the
+// vendor's own CLI, a source is somebody else's filesystem, and an
+// attacker who can put a file on a source can choose its name. The
+// snapshot WRITE path refuses a name that is not one path element
+// (backupengine/source.SafeRelPath, and the tree adapter's own entry
+// check), and the restore path refuses it again rather than trusting that
+// it was written by the same build of the same program.
+//
+// A restore that met one of these stops. It does not skip the entry and
+// carry on, because a restore that silently omits files is a restore that
+// lies about being complete, and a snapshot containing a name shaped like
+// an escape is evidence about the whole snapshot rather than about one
+// file in it.
+var ErrUnsafeSnapshotPath = errors.New("backupengine: this snapshot names an entry that would be written outside the restore destination")
+
+// ErrUnknownRestoreConflict is returned for a conflict policy this
+// boundary does not define. Silence means RestoreConflict's documented
+// default; a value that is neither silence nor one of the three is a
+// caller mistake, and guessing which one they meant is how "skip" becomes
+// "overwrite".
+var ErrUnknownRestoreConflict = errors.New("backupengine: unknown restore conflict policy")
+
+// RestoreConflict says what a restore does when something already exists
+// where an entry would land.
+//
+// The zero value is the safe one (ConflictRefuse), which is the whole
+// reason this is a named string rather than a bool: the destructive
+// choice cannot be reached by leaving a field unset, only by spelling it.
+type RestoreConflict string
+
+const (
+	// ConflictRefuse stops the restore at the first collision and writes
+	// nothing over it. It is what silence means.
+	ConflictRefuse RestoreConflict = "refuse"
+
+	// ConflictSkip leaves what is already there and carries on, counting
+	// what it left alone in RestoreReport.Skipped. It is the policy for
+	// resuming a restore that was interrupted, where everything already
+	// written is what this restore would have written anyway.
+	ConflictSkip RestoreConflict = "skip"
+
+	// ConflictOverwrite replaces what is already there. It is the only
+	// value that can destroy data the caller did not restore, so it is
+	// never a default and never inferred.
+	ConflictOverwrite RestoreConflict = "overwrite"
+)
+
+// ParseRestoreConflict resolves a conflict policy arriving as a string,
+// which is how one arrives from outside this process.
+//
+// Empty is the documented default rather than an error, because a
+// request that says nothing about collisions is asking for the safe
+// behaviour and getting it. An unrecognised value is refused: a
+// misspelling resolved by guessing is how "skip" becomes "overwrite" on
+// somebody's data, and a restore is the operation where that matters
+// most.
+//
+// It is here rather than in the adapter because both ends need it -- the
+// adapter to normalise what it was handed, and whatever accepts an
+// operator's request to refuse a bad one BEFORE a durable operation row
+// exists for work that could never run.
+func ParseRestoreConflict(s string) (RestoreConflict, error) {
+	switch RestoreConflict(s) {
+	case "":
+		return ConflictRefuse, nil
+	case ConflictRefuse, ConflictSkip, ConflictOverwrite:
+		return RestoreConflict(s), nil
+	default:
+		return "", fmt.Errorf("%w: %q", ErrUnknownRestoreConflict, s)
+	}
+}
+
+// RestoreProgress is one entry's worth of a restore in flight, plus the
+// running totals at that moment.
+//
+// It is delivered per completed entry rather than per byte because the
+// unit an operator is waiting for is a file, and a byte-level callback on
+// a tree of small files costs more than the restore. Path is the entry's
+// slash-separated path relative to what was asked for, so a single-file
+// restore reports the file's own name and a whole-snapshot restore
+// reports the path inside the snapshot.
+//
+// The counters are cumulative and are the same numbers RestoreReport
+// ends with, so a surface that renders progress and a surface that
+// renders the outcome are reading one set of facts rather than two.
+type RestoreProgress struct {
+	Path        string
+	Files       int64
+	Directories int64
+	Symlinks    int64
+	Skipped     int64
+	Bytes       int64
+}
+
+// RestoreRequest asks for a snapshot, or one directory or file inside it,
+// to be written to a local directory.
+//
+// # Local, and that is a decision rather than a phase
+//
+// There is no destination other than a filesystem path this process can
+// write to. Restoring straight back to the remote the source came from is
+// a real thing operators want and is deliberately not here: it is a
+// streaming write against somebody else's endpoint with its own failure,
+// resume and partial-write story, and offering it as a field on this
+// struct would make it look like a flag rather than the separate piece of
+// work it is.
 type RestoreRequest struct {
+	// SourcePath selects what to restore, as a slash-separated path
+	// inside the snapshot. Empty means the whole snapshot.
+	//
+	// One field rather than a mode plus a path, because the three
+	// granularities an operator asks for -- everything, this directory,
+	// this one file -- are one question ("what part of the restore point
+	// do you want") and the answer is a path. What the path names decides
+	// what happens: a directory is restored as a tree under TargetPath, a
+	// file is restored as one file INSIDE TargetPath, keeping its own
+	// name.
+	//
+	// It is validated as untrusted input like everything else here, so a
+	// caller cannot use it to reach out of the snapshot either.
+	SourcePath string
+
+	// TargetPath is the local directory the restore writes into. It is
+	// created if it does not exist, and it is the boundary nothing the
+	// snapshot says can write outside of.
 	TargetPath string
 
-	// Overwrite permits replacing files and directories that already exist
-	// under TargetPath. False means a collision is an error, which is the
-	// right default for a tool whose whole purpose is not destroying data.
-	Overwrite bool
+	// Conflict is what happens when something already exists where an
+	// entry would land. The zero value refuses.
+	Conflict RestoreConflict
 
 	// SkipOwners skips restoring uid/gid, which is what an unprivileged
-	// restore has to do.
+	// restore has to do. It covers files, directories and symbolic links
+	// alike: a tree whose files carry their owners and whose directories
+	// carry the restoring process's is not the tree that was backed up.
+	//
+	// Nothing else about metadata is optional. Every implementation
+	// restores each entry's mode and its modification time, because a
+	// restored tree stamped "now" is one no operator, build system or
+	// incremental tool can reason about -- and a directory that was
+	// ALREADY in the destination keeps its own mode, ownership and time,
+	// since re-entering a directory to put a file in it is not
+	// permission to restyle it. The one documented exception is a
+	// symbolic link's own timestamp on a platform with no l-variant of
+	// utimes, which is skipped rather than applied to the link's target.
 	SkipOwners bool
+
+	// VerifyContent re-reads every file after writing it and checks the
+	// bytes on the disk against the bytes the repository handed over.
+	// The check happens before the file is published under its real
+	// name, so a file whose bytes did not survive the write never
+	// appears at all.
+	//
+	// It is a request-level choice because it costs a second read of
+	// everything restored, and because the callers want different
+	// things. An operator restoring a terabyte to a disk they are about
+	// to use has already paid for the write and may not want to pay for
+	// the read. The durable restore operation always asks for it, since
+	// it records a completion that is read later as evidence and a
+	// restore's own statistics are exactly what a broken restore path
+	// reports correctly.
+	//
+	// The verification ladder's restore drill does NOT set it, and that
+	// is not an oversight: a drill compares the restored tree against
+	// the repository's own bytes afterwards, which is the same property
+	// established against a stronger reference, and asking for both
+	// would read everything three times to learn one thing twice.
+	//
+	// A file whose disk bytes do not match is a failure of the whole
+	// restore, not a finding on it: the file is there, it is wrong, and
+	// nothing downstream would ever look again.
+	VerifyContent bool
+
+	// Progress, when set, is called once per completed entry, in the
+	// restore's own goroutine. A slow callback slows the restore down,
+	// which is the honest coupling: a surface that cannot keep up should
+	// buffer on its own side rather than making this one guess.
+	Progress func(RestoreProgress)
 }
 
 // RestoreReport reports what a restore actually wrote.
+//
+// Complete is the field that must be read before any of the others are
+// believed. A restore torn down by a cancelled context, or stopped by a
+// conflict, still reports what it had written by then -- those files are
+// really there -- and a caller that recorded such a report as a finished
+// restore would be advertising a partial tree as a restore point. The
+// counts are an observation; Complete is the claim.
 type RestoreReport struct {
 	Files       int64
 	Directories int64
 	Symlinks    int64
 	Bytes       int64
+
+	// Skipped is how many entries were left alone because something was
+	// already there and the policy was ConflictSkip. It is always zero
+	// under the other two policies, which is what makes a skip-policy
+	// restore's report legible: Files is what this restore wrote, Skipped
+	// is what it found already done.
+	Skipped int64
+
+	// Verified is how many restored files had their bytes read back off
+	// the disk and compared with the repository's. It is zero unless
+	// RestoreRequest.VerifyContent was set, and equals Files when it was.
+	Verified int64
+
+	// Complete is true only when the restore reached the end of what was
+	// asked for. It is the only value that may be recorded as "this
+	// restore succeeded".
+	Complete bool
 }
 
 // MaintenanceMode selects how much work Maintain does.
@@ -749,7 +974,8 @@ type Repository interface {
 	// restore_drill means a restore happened.
 	Verify(ctx context.Context, id SnapshotID, req VerifyRequest) (VerifyReport, error)
 
-	// Restore writes a snapshot to a local directory.
+	// Restore writes a snapshot, or one directory or one file inside it,
+	// to a local directory.
 	Restore(ctx context.Context, id SnapshotID, req RestoreRequest) (RestoreReport, error)
 
 	// DeleteSnapshot removes one snapshot's identity. It does not reclaim

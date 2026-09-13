@@ -11,6 +11,7 @@ import (
 
 	"github.com/backupdproject/backupd/core/apicontract"
 	"github.com/backupdproject/backupd/core/internal/app"
+	"github.com/backupdproject/backupd/core/internal/config"
 	"github.com/backupdproject/backupd/core/internal/state"
 )
 
@@ -182,8 +183,8 @@ func (b *BackupService) SubmitRunBackupSet(ctx context.Context, req RunBackupSet
 	return toOperation(outcome.Operation), nil
 }
 
-// configuresBackupSet reports whether the running configuration holds a
-// backup set with this source/name pair.
+// configuredBackupSet returns the backup set the running configuration
+// holds under this source/name pair.
 //
 // It reads the snapshot the caller already Load()ed rather than re-reading
 // config.yaml, because a run acts on the configuration this process is
@@ -191,9 +192,14 @@ func (b *BackupService) SubmitRunBackupSet(ctx context.Context, req RunBackupSet
 // on-disk re-read here would let a hand edit made since the last reload
 // decide whether a run is accepted, against a configuration the run would
 // then not use.
-func configuresBackupSet(inner *app.Service, sourceName, setName string) bool {
+//
+// The whole set rather than a bool, because the callers that need more
+// than existence -- a restore needs the engine, since a set that stores
+// artifacts has no snapshot to restore -- would otherwise walk the same
+// two loops a second time to find the thing this one already had in hand.
+func configuredBackupSet(inner *app.Service, sourceName, setName string) (config.BackupSet, bool) {
 	if inner == nil || inner.Config == nil {
-		return false
+		return config.BackupSet{}, false
 	}
 	for _, src := range inner.Config.Sources {
 		if src.Name != sourceName {
@@ -201,11 +207,19 @@ func configuresBackupSet(inner *app.Service, sourceName, setName string) bool {
 		}
 		for _, bs := range src.BackupSets {
 			if bs.Name == setName {
-				return true
+				return bs, true
 			}
 		}
 	}
-	return false
+	return config.BackupSet{}, false
+}
+
+// configuresBackupSet reports whether the running configuration holds a
+// backup set with this source/name pair.
+func configuresBackupSet(inner *app.Service, sourceName, setName string) bool {
+	_, ok := configuredBackupSet(inner, sourceName, setName)
+
+	return ok
 }
 
 // configuresBackupSetID is configuresBackupSet against an id spelled the

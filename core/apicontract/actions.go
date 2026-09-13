@@ -1,8 +1,8 @@
 package apicontract
 
-// The three values SubmitOperationRequest.Action takes, which is the one
-// field on this contract whose VALUE selects a code path rather than
-// carrying data.
+// The values SubmitOperationRequest.Action takes, which is the one field
+// on this contract whose VALUE selects a code path rather than carrying
+// data.
 //
 // # Why they are here and hand-written
 //
@@ -11,7 +11,10 @@ package apicontract
 // contract.gen.go is compared against the document by
 // scripts/api/check-contract-drift.sh). What the document does say, in
 // SubmitOperationRequest's own description, is which action reads which
-// parameter object, and these are those three names.
+// parameter object, and the first three below are those names. The
+// fourth, ActionRestoreSnapshot, is the durable action #787 writes rows
+// with; the document grows its request parameters in #788, when a route
+// starts accepting one.
 //
 // They live in this package because it is the one both sides of the wire
 // may import. core/service and core/internal/archive define the action a
@@ -24,10 +27,10 @@ package apicontract
 // sentence was about a different verb (issue #599 review). A constant
 // spelled in one place cannot be wrong in one of them.
 //
-// core/service.ActionRunCycle, core/service.ActionRunBackupSet and
-// core/internal/archive.ActionRestore are defined FROM these, so the wire
-// value, the durable row's value and the echoed command all read one
-// spelling.
+// core/service.ActionRunCycle, core/service.ActionRunBackupSet,
+// core/service.ActionRestoreSnapshot and core/internal/archive.ActionRestore
+// are defined FROM these, so the wire value, the durable row's value and
+// the echoed command all read one spelling.
 const (
 	// ActionRunCycle runs one cycle across every enabled backup set in
 	// the deployment.
@@ -41,4 +44,21 @@ const (
 	// copy readable again, with the parameters in
 	// SubmitOperationRequest.Restore.
 	ActionRestorePlacement = "restore_placement"
+
+	// ActionRestoreSnapshot restores a stored snapshot, or one directory
+	// or file inside it, to a local directory on the machine running
+	// this deployment (EPIC K, #787).
+	//
+	// It is a different act from ActionRestorePlacement and the two are
+	// never folded together: that one asks a storage provider to make an
+	// archived object readable again, over hours, at a cost, and writes
+	// nothing anywhere; this one reads a restore point this deployment
+	// holds and writes a tree onto a disk. An operator who confused them
+	// would either pay a retrieval bill for a file that was never
+	// archived or wait for a restore that is already finished.
+	//
+	// Its request parameters are not on this contract yet: the engine and
+	// the durable operation land in #787 and the route that submits one
+	// lands in #788.
+	ActionRestoreSnapshot = "restore_snapshot"
 )
