@@ -114,6 +114,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shlex
 import shutil
 import socket
@@ -1277,6 +1278,22 @@ def render_env(args) -> str:
         f"BACKUP_DIR={args.host_dirs['--backup-dir']}",
         f"CONFIG_DIR={args.host_dirs['--config-dir']}",
         "",
+        "# EPIC L (#809). WORKFLOWS_DIR holds the .local.sh/.remote.sh hook",
+        "# scripts and is mounted into the engine READ-ONLY: the engine reads",
+        "# each script once, hashes it and copies it into its own spool, and",
+        "# never opens the original again. RUNTIME_DIR holds the host runner's",
+        "# socket and its per-step working directories, and is the only other",
+        "# thing the engine can reach on this host.",
+        f"WORKFLOWS_DIR={args.workflows_dir}",
+        f"RUNTIME_DIR={args.runtime_dir}",
+        "",
+        "# Whether this deployment supervises the host workflow runner:",
+        "# auto starts it once there are hook scripts, on starts it",
+        "# regardless, off leaves the directories and the credential in place",
+        "# and starts nothing. The installer reads this back on every run, so",
+        "# an operator's answer survives an upgrade.",
+        f"{WORKFLOW_RUNNER_ENV_KEY}={workflow_runner_mode(args)}",
+        "",
         f"SSH_KEY_FILE={args.ssh_key}",
         f"KNOWN_HOSTS_FILE={args.known_hosts}",
         "",
@@ -2353,6 +2370,12 @@ def adopt_installed_shape(args, installed_env: dict) -> None:
     LAN, which is the one thing that operator asked for the absence of. An
     upgrade is not the place to change what a deployment exposes.
     """
+    # EPIC L (#809): the same adoption for the workflow runner's answer.
+    # It is in .env rather than on the command line precisely so that it
+    # survives, and "survives" is this function.
+    args.workflow_runner = workflow_runner_mode(
+        argparse.Namespace(workflow_runner=installed_env.get(WORKFLOW_RUNNER_ENV_KEY, "auto")))
+
     if not hasattr(args, "cli_only"):
         return
     was = installed_env.get("CLI_ONLY")
@@ -2829,6 +2852,33 @@ services:
       - ${SSH_KEY_FILE:?set SSH_KEY_FILE in .env to the SFTP private key}:/etc/backupd/id_ed25519:ro
       - ${KNOWN_HOSTS_FILE:?set KNOWN_HOSTS_FILE in .env to the pinned known_hosts file}:/etc/backupd/known_hosts:ro
 
+      # EPIC L (#808, #809): the hook scripts, and the door to the host
+      # runner. Two mounts, and the difference between them is the whole
+      # security argument.
+      #
+      # The scripts are READ-ONLY. This container plans a workflow — it
+      # reads each script once, hashes it and copies it into its own
+      # private spool under /data/state, and never opens the original
+      # again — so write access here would buy nothing and would let a
+      # compromised engine edit what the host is about to execute.
+      #
+      # The runtime directory is writable because it holds a SOCKET, and
+      # connecting to a Unix socket is a write. It is the ONLY way into
+      # the host runner and it is deliberately not a shell, not the Docker
+      # socket and not the host filesystem: the process on the other end
+      # accepts four operations, takes captured bytes rather than a path,
+      # authenticates every connection, and refuses to run as root. This
+      # container gains no capability, no privilege and no host mount
+      # beyond this one directory; docs/runtime-contract.md states the
+      # same thing in the contract's own words.
+      #
+      # Both default rather than using `:?`, so a deployment whose .env
+      # predates EPIC L still starts. `./` resolves beside this file,
+      # which is the installation prefix, and is where the installer
+      # creates them.
+      - ${WORKFLOWS_DIR:-./workflows}:/workflows:ro
+      - ${RUNTIME_DIR:-./run}:/data/run
+
     # `unless-stopped`: restart across crashes and NAS reboots, but stay
     # down if an operator deliberately stops it — the right policy now that
     # `command` above (`/backupd-web serve`) is a real long-running
@@ -3041,7 +3091,7 @@ services:
 """
 
 # Written by scripts/install/embed_compose.py alongside the blob above.
-EMBEDDED_COMPOSE_SHA256 = "9285a6a9a8ddefed5afdbe22349cc1e47b09ef30415170b94da52c7e8d7aed4d"
+EMBEDDED_COMPOSE_SHA256 = "11119bfcce3f6fe8db6eb76b7ee02e6c9e22ddf308c29c443c8e1ba3c336c65f"
 
 
 def embedded_compose_bytes() -> bytes:
@@ -3156,6 +3206,381 @@ def warn_about_writable_ancestors(path: Path, stop_at: Path) -> list:
     return offenders
 
 
+# ---------------------------------------------------------------------
+# The host workflow runner (EPIC L, issue #809)
+# ---------------------------------------------------------------------
+#
+# A `.local.sh` hook means "run this on the machine backupd is installed
+# on". The engine cannot: container/Dockerfile is distroless with no
+# shell, compose.yaml runs it read-only, non-root, cap_drop ALL and
+# no-new-privileges, and docs/runtime-contract.md pins all of that. Every
+# way of making the CONTAINER able to execute a host script -- a shell in
+# the image, the Docker socket, CAP_SYS_ADMIN and nsenter, a host-root
+# bind mount -- is that contract deleted.
+#
+# So the runner is a HOST process beside the container: the same
+# `backupd` binary, extracted from the same image, run by the host's own
+# service manager as an unprivileged account, reachable only over a Unix
+# socket in <prefix>/run. This section is everything the installer does
+# about it, and what it deliberately does not do:
+#
+#   * it never adds a capability, a mount or a privilege to the engine.
+#     The engine gains exactly two bind mounts, one of them read-only,
+#     and distribution/compose's gates still pass unchanged.
+#   * it never creates a user account. Account creation differs on every
+#     platform this product targets (DSM, OMV, Proxmox, TrueNAS, a plain
+#     systemd host), and an installer that invented one would be making a
+#     decision the platform's own tooling has already made. The unit runs
+#     as the SAME uid the deployment already uses (PUID), which is the
+#     account that owns every path here.
+#   * it never runs the runner as root, because the runner refuses to.
+
+# CONTAINER_WORKFLOWS_DIR and CONTAINER_RUNTIME_DIR are where the two new
+# mounts land inside the engine. They match container/compose.yaml and
+# are constants here so the installer's own checks read the same values
+# the runtime does.
+CONTAINER_WORKFLOWS_DIR = "/workflows"
+CONTAINER_RUNTIME_DIR = "/data/run"
+
+# WORKFLOW_RUNNER_UNIT is the systemd unit's name, and the name of the
+# file staged under the prefix on a host with no systemd.
+WORKFLOW_RUNNER_UNIT = "backupd-workflow-runner.service"
+
+# WORKFLOW_RUNNER_TOKEN is the installation-scoped credential's file
+# name, inside the secrets directory beside the SSH key. It matches
+# core/internal/hostrunner's TokenName.
+WORKFLOW_RUNNER_TOKEN = "workflow-runner.token"
+
+# WORKFLOW_RUNNER_ENV_KEY is how an operator opts in or out, in the .env
+# this installer authors.
+#
+# A key in that file rather than a command-line flag, for one reason: the
+# answer has to SURVIVE. An operator who turns the runner on has turned
+# it on for the deployment, not for one invocation, and every later
+# `install` (an upgrade, a re-run to move a path) must keep that choice
+# rather than reverting it to a default. CLI_ONLY is in the same file for
+# the same reason and is adopted by the same mechanism.
+WORKFLOW_RUNNER_ENV_KEY = "WORKFLOW_RUNNER"
+
+# WORKFLOW_RUNNER_MODES: "auto" provisions everything and supervises the
+# runner only when this deployment actually has hook scripts; "on"
+# supervises it regardless, which is what an operator who is about to
+# write their first hook wants; "off" provisions the directories and the
+# credential but starts nothing.
+#
+# "off" still creates the directories on purpose. They are where an
+# operator's scripts live and where unresolved recovery spools sit, and a
+# deployment that turns the runner off for a week must not lose either.
+WORKFLOW_RUNNER_MODES = ("auto", "on", "off")
+
+
+def workflow_runner_mode(args) -> str:
+    """This deployment's answer, normalised, with anything unrecognised
+    treated as the default rather than as a refusal.
+
+    Unrecognised means a hand-edited .env, and refusing to install over a
+    typo in an optional key would turn a five-character mistake into a
+    deployment that will not upgrade.
+    """
+    mode = str(getattr(args, "workflow_runner", "auto") or "auto").strip().lower()
+    return mode if mode in WORKFLOW_RUNNER_MODES else "auto"
+
+
+def deployment_has_hooks(args) -> bool:
+    """Whether this deployment has any hook script at all.
+
+    Any regular file under the workflows directory counts, not only
+    `*.sh`: the engine is the authority on which names it will execute
+    (core/internal/workflow's discovery rules), and an installer that
+    re-implemented that rule would be a second opinion about it. The
+    question here is only "has the operator put anything in this
+    directory", which is what "auto" turns on for.
+    """
+    root = getattr(args, "workflows_dir", None)
+    if root is None or not root.is_dir():
+        return False
+    for path in root.rglob("*"):
+        if path.is_file():
+            return True
+    return False
+
+
+def ensure_workflow_runner_credential(args) -> Path:
+    """Create this installation's runner credential, once, and hold an
+    existing one to 0600.
+
+    ONCE. It is never regenerated on an upgrade, and that is the whole
+    reason this is a function rather than two lines in stage_payload: a
+    rotated credential is an engine that cannot authenticate to its own
+    runner until both halves restart, which is a broken deployment
+    produced by a routine upgrade. The credential is scoped to the
+    INSTALLATION, not to the release.
+
+    The mode is re-applied to an existing file because the second lock on
+    the runner's door is only a lock while the file is private, and a
+    credential that lost its mode (a restore of /etc with the wrong
+    ownership, a hand-edit, a copy across filesystems) fails silently:
+    everything keeps working and anybody on the host can execute scripts
+    as the service account. The runner refuses to start against such a
+    file; this is what stops it getting into that state in the first
+    place.
+    """
+    make_secure_dir(args.prefix / "secrets")
+    token = args.prefix / "secrets" / WORKFLOW_RUNNER_TOKEN
+    if not token.exists():
+        # 32 bytes of os.urandom rendered as 64 hex characters, well past
+        # the runner's 32-character floor. Written through a mode
+        # argument rather than written-then-chmod'ed, so there is no
+        # window in which the file exists and is readable.
+        fd = os.open(str(token), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(secrets.token_hex(32) + "\n")
+    else:
+        os.chmod(token, 0o600)
+    return token
+
+
+def render_workflow_runner_unit(args) -> str:
+    """The systemd unit that supervises the runner.
+
+    Every line of it is a security decision rather than boilerplate:
+
+    User/Group are the deployment's own uid, never root. The runner
+    refuses uid 0 outright, so a unit that omitted this would simply fail
+    to start under systemd's default -- loudly, which is right, but late.
+
+    NoNewPrivileges, ProtectSystem=strict, PrivateTmp and the rest are
+    the host-side echo of what the container contract gives the engine.
+    They are not theatre: this process executes scripts an operator drops
+    into a directory, which is the one process on the host most worth
+    confining. ReadWritePaths names the runtime directory alone, so the
+    runner can create a hook's working directory and can write nothing
+    else on the system.
+
+    Restart=on-failure rather than always: a runner that refused to start
+    because its credential is world-readable, or because the engine is a
+    different release, must stay down with that message in the journal
+    instead of looping.
+    """
+    if int(args.puid) == 0:
+        # Not reachable through provision_workflow_runner, which refuses
+        # first and says why. It is checked here as well because this
+        # function renders a FILE that outlives the run: a unit on disk
+        # saying User=0 is a unit somebody enables later, by hand, having
+        # forgotten which account it names.
+        raise Refusal(
+            EXIT_PREREQ_CREDENTIALS,
+            "the workflow runner cannot be supervised as uid 0",
+            "It executes hook scripts an operator drops into a directory, and running those as root "
+            "is not something installing backupd as an administrator implies. Re-run install with "
+            "--puid/--pgid naming an unprivileged account, and give that account any privileged "
+            "command it needs through sudoers.",
+        )
+
+    binary = args.prefix / "bin" / "backupd-workflow-runner"
+    return "\n".join([
+        "# Generated by scripts/install/install_docker_host.py for the",
+        f"# deployment under {args.prefix}. Re-running the installer rewrites it.",
+        "#",
+        "# This is the host half of backupd: it executes a backup set's",
+        "# .local.sh hooks on this machine, because the engine container is",
+        "# distroless and has no shell. It listens on a Unix socket only.",
+        "[Unit]",
+        "Description=backupd host workflow runner",
+        "Documentation=https://github.com/backupdproject/backupd/blob/main/docs/adr/0020-host-workflow-runner.md",
+        "After=network.target",
+        "",
+        "[Service]",
+        "Type=simple",
+        f"User={args.puid}",
+        f"Group={args.pgid}",
+        f"ExecStart={binary} workflow-runner serve"
+        f" --runtime-dir {args.runtime_dir}"
+        f" --secrets-dir {args.prefix / 'secrets'}"
+        f" --config {args.host_dirs['--config-dir']}",
+        "Restart=on-failure",
+        "RestartSec=5",
+        "NoNewPrivileges=yes",
+        "PrivateTmp=yes",
+        "ProtectSystem=strict",
+        "ProtectHome=read-only",
+        "ProtectControlGroups=yes",
+        "ProtectKernelModules=yes",
+        "ProtectKernelTunables=yes",
+        f"ReadWritePaths={args.runtime_dir}",
+        "",
+        "[Install]",
+        "WantedBy=multi-user.target",
+        "",
+    ])
+
+
+def extract_runner_binary(args) -> Path:
+    """Copy the `backupd` binary OUT of the image being installed, and
+    point the stable name at it.
+
+    Out of the image, rather than downloaded separately or built here,
+    because "version-matched" has to be a property of the bytes rather
+    than a step somebody remembers. The engine refuses a runner whose
+    version is not exactly its own (core/internal/hostrunner's Hello),
+    and the only way to satisfy that refusal reliably is for both halves
+    to come out of one artifact.
+
+    The copy is kept under its VERSION, with a stable symlink pointing at
+    it, and that shape is what makes upgrade and rollback a pair. An
+    upgrade writes the new version beside the old one and moves the
+    symlink; a rollback moves the symlink back and the binary it needs is
+    still there. Overwriting one path in place would make a rollback a
+    re-download on a NAS that may be offline.
+    """
+    bindir = args.prefix / "bin"
+    make_secure_dir(bindir)
+    versioned = bindir / f"backupd-{args.image_tag}"
+    stable = bindir / "backupd-workflow-runner"
+
+    if not versioned.exists():
+        created = run(["docker", "create", args.image], timeout=300)
+        container = created.stdout.strip().splitlines()[-1].strip()
+        try:
+            staging = versioned.with_suffix(".incoming")
+            run(["docker", "cp", f"{container}:/backupd", str(staging)], timeout=600)
+            os.chmod(staging, 0o755)
+            # Renamed into place only once the whole file is there, so a
+            # copy interrupted half way leaves no binary a supervisor
+            # could start.
+            staging.replace(versioned)
+        finally:
+            run(["docker", "rm", "-f", container], check=False, timeout=300)
+
+    # A symlink replaced atomically: os.replace over a symlink is one
+    # rename, so there is no instant at which the stable name is absent
+    # and a restarting unit could fail to find it.
+    tmp = bindir / ".backupd-workflow-runner.incoming"
+    if tmp.is_symlink() or tmp.exists():
+        tmp.unlink()
+    os.symlink(versioned.name, tmp)
+    os.replace(tmp, stable)
+    return stable
+
+
+def supervise_workflow_runner(args) -> str:
+    """Hand the unit to systemd, or say exactly what to type.
+
+    Two outcomes and no third. A host with systemd and the privilege to
+    write a unit gets the runner installed, enabled and started. A host
+    without either -- a DSM box, an unprivileged install, a container
+    host with a different supervisor -- gets the file staged under the
+    prefix and the three commands printed.
+
+    Printing is a real outcome rather than a fallback, and it is why this
+    returns a word instead of a bool: an installer that silently did
+    nothing on those platforms would leave `.local.sh` validation failing
+    with no explanation anywhere, and an installer that escalated to root
+    to write into /etc would be doing something an operator did not ask
+    for on the machine they are most careful about.
+    """
+    staged = args.prefix / WORKFLOW_RUNNER_UNIT
+    staged.write_text(render_workflow_runner_unit(args), encoding="utf-8")
+    os.chmod(staged, 0o644)
+
+    unit_dir = Path("/etc/systemd/system")
+    if not shutil.which("systemctl") or not os.access(unit_dir, os.W_OK):
+        say(f"==> The workflow runner's unit is staged at {staged}.")
+        say("    This host has no systemd, or this account cannot write a unit. Install it with:")
+        say(f"      sudo cp {staged} {unit_dir / WORKFLOW_RUNNER_UNIT}")
+        say("      sudo systemctl daemon-reload")
+        say(f"      sudo systemctl enable --now {WORKFLOW_RUNNER_UNIT}")
+        return "staged"
+
+    shutil.copyfile(staged, unit_dir / WORKFLOW_RUNNER_UNIT)
+    run(["systemctl", "daemon-reload"], check=False, timeout=120)
+    # `enable --now` rather than `start`: a NAS reboots, and a runner
+    # that came back only when somebody logged in would fail the first
+    # scheduled backup after every power cut.
+    started = run(["systemctl", "enable", "--now", WORKFLOW_RUNNER_UNIT], check=False, timeout=120)
+    if started.returncode != 0:
+        say("==> The workflow runner's unit was installed and systemd would not start it:")
+        say((started.stderr or started.stdout).strip())
+        say(f"    Ask it why with: systemctl status {WORKFLOW_RUNNER_UNIT}")
+        return "failed"
+    say(f"==> The workflow runner is supervised by systemd as {WORKFLOW_RUNNER_UNIT}.")
+    return "running"
+
+
+def provision_workflow_runner(args) -> str:
+    """Everything the host side of EPIC L needs, in the order it needs it.
+
+    Called after the stack is up, because the binary comes out of the
+    image and the image is only certainly present by then.
+
+    The directories and the credential are provisioned in EVERY mode,
+    including "off": they are where an operator's scripts live and where
+    unresolved recovery spools sit, and #809 requires both to survive a
+    container recreate and a version upgrade. Only the supervision is
+    conditional.
+    """
+    make_secure_dir(args.workflows_dir)
+    make_secure_dir(args.runtime_dir)
+    ensure_workflow_runner_credential(args)
+
+    if int(args.puid) == 0:
+        # A refusal that does not fail the install. The deployment is
+        # perfectly good without a runner -- backup sets with no local
+        # hooks are unaffected -- so this is a feature that stays off
+        # with a reason, rather than an install that stops.
+        say("==> The workflow runner is NOT started: this deployment runs as uid 0, and the runner "
+            "refuses to execute hook scripts as root.")
+        say("    Re-run install with --puid/--pgid naming an unprivileged account to supervise it.")
+        return "root"
+
+    mode = workflow_runner_mode(args)
+    if mode == "off":
+        say(f"==> {WORKFLOW_RUNNER_ENV_KEY}=off: the workflow directories and credential are in place "
+            "and no runner is started. Local .local.sh hooks will not run until it is.")
+        return "off"
+    if mode == "auto" and not deployment_has_hooks(args):
+        say(f"==> No hook scripts under {args.workflows_dir}, so no workflow runner is started yet.")
+        say(f"    Put a script there and re-run install, or set {WORKFLOW_RUNNER_ENV_KEY}=on in "
+            f"{args.prefix / '.env'} to supervise it regardless.")
+        return "idle"
+
+    extract_runner_binary(args)
+    return supervise_workflow_runner(args)
+
+
+def remove_workflow_runner(args) -> None:
+    """Take the runner down, and say what is deliberately left behind.
+
+    The unit, the socket and the transient run directory go: they are
+    this installer's, they are worthless without the deployment, and a
+    socket left behind is a path a later install would have to reason
+    about.
+
+    The SCRIPTS do not. <prefix>/workflows holds files an operator wrote,
+    which makes them the same kind of thing as the backups themselves:
+    an uninstall that deleted them by default would be a data-loss bug
+    with a friendly name, which is the rule this command already follows
+    for the state and backup directories.
+    """
+    unit = Path("/etc/systemd/system") / WORKFLOW_RUNNER_UNIT
+    if shutil.which("systemctl") and unit.exists() and os.access(unit.parent, os.W_OK):
+        run(["systemctl", "disable", "--now", WORKFLOW_RUNNER_UNIT], check=False, timeout=120)
+        unit.unlink()
+        run(["systemctl", "daemon-reload"], check=False, timeout=120)
+        say(f"removed {unit}")
+    elif unit.exists():
+        say(f"NOT removed (this account cannot write {unit.parent}): {unit}")
+        say(f"  sudo systemctl disable --now {WORKFLOW_RUNNER_UNIT} && sudo rm {unit}")
+
+    staged = args.prefix / WORKFLOW_RUNNER_UNIT
+    if staged.exists():
+        staged.unlink()
+        say(f"removed {staged}")
+    if args.runtime_dir.exists():
+        shutil.rmtree(args.runtime_dir, ignore_errors=True)
+        say(f"removed {args.runtime_dir} (the runner socket and any per-step working directories)")
+
+
 def ensure_credentials(args) -> None:
     """Create the key and known_hosts when they were defaulted and absent.
 
@@ -3265,6 +3690,17 @@ def stage_payload(args) -> None:
     make_secure_dir(args.prefix)
     for path in args.host_dirs.values():
         make_secure_dir(path)
+
+    # EPIC L (#809). Here rather than in provision_workflow_runner
+    # because these two are staged in EVERY mode, including a CLI-only
+    # install and a deployment that has turned the runner off: the
+    # compose file mounts both, so a `docker compose up` on a host where
+    # they do not exist has Docker create them as root-owned directories
+    # with whatever mode it feels like. Creating them first, 0700, is how
+    # the mount lands on a directory this installer owns.
+    make_secure_dir(args.workflows_dir)
+    make_secure_dir(args.runtime_dir)
+    ensure_workflow_runner_credential(args)
 
     # Copy, never rewrite. distribution/compose holds this exact file to
     # runtime-contract.json, so shipping a modified copy would be shipping
@@ -3705,6 +4141,13 @@ def cmd_install(args) -> int:
     say(f"==> Waiting up to {args.timeout}s for the engine's liveness probe")
     health = wait_for_engine_health(args, args.timeout)
     say(f"     engine: {health}")
+
+    # EPIC L (#809), after the stack is up because the runner binary is
+    # copied out of the image the stack just started. Never before: a
+    # runner extracted from an image the engine turned out not to be able
+    # to run would be a version-matched half of a deployment that does
+    # not work.
+    provision_workflow_runner(args)
 
     say("==> Probing the Web UI")
     web = probe_web_ui(args, args.timeout)
@@ -5389,11 +5832,20 @@ def cmd_uninstall(args) -> int:
         if p.exists():
             p.unlink()
             say(f"removed {p}")
+
+    # EPIC L (#809). The unit, the socket and the transient run directory
+    # are this installer's and go with it; the hook scripts are the
+    # operator's and are listed below with the backups instead.
+    remove_workflow_runner(args)
+
     say("")
     say("Left in place, deliberately:")
     for label, path in args.host_dirs.items():
         say(f"  {label:<14} {path}")
-    say("They hold the SQLite journal, the administrator record and the backups themselves.")
+    if args.workflows_dir.is_dir():
+        say(f"  {'--workflows':<14} {args.workflows_dir}")
+    say("They hold the SQLite journal, the administrator record, the backups themselves, and any")
+    say("hook scripts you wrote.")
     say("Remove them by hand if that is really what you want.")
     say("")
     say("NOT removed by this command: if `install` or `network-doctor` ever repaired this host's")
@@ -5959,6 +6411,13 @@ def resolve(args):
     args.state_dir = (args.state_dir or args.prefix / "state").expanduser()
     args.backup_dir = (args.backup_dir or args.prefix / "backups").expanduser()
     args.config_dir = (args.config_dir or args.prefix / "config").expanduser()
+    # EPIC L (#809). Derived from the prefix and NOT flags, and not in
+    # host_dirs either. host_dirs is the set of paths an operator can
+    # point somewhere else and that check_paths therefore has to verify
+    # ownership of; these two are this installer's own, always under the
+    # prefix, created 0700 by stage_payload and never anywhere else.
+    args.workflows_dir = args.prefix / "workflows"
+    args.runtime_dir = args.prefix / "run"
     args.host_dirs = {
         "--prefix": args.prefix,
         "--state-dir": args.state_dir,

@@ -6119,5 +6119,302 @@ class TestReissuingAnEnrollmentLink(unittest.TestCase):
         self.assertEqual(caught.exception.code, installer.EXIT_VERIFY)
 
 
+class TestTheHostWorkflowRunner(unittest.TestCase):
+    """EPIC L (#809): the host half of the deployment, and the container
+    contract it must not touch.
+
+    The runner exists because `.local.sh` means the HOST and the engine
+    image is distroless with no shell. Every assertion below is either
+    "the installer provisions the host side" or "and the container is
+    exactly as confined as it was", because a feature that delivered the
+    first by weakening the second would be a net loss.
+    """
+
+    def setUp(self):
+        self.old_umask = os.umask(0)
+        self.addCleanup(os.umask, self.old_umask)
+
+    def staged(self, *extra: str):
+        fx = Fixture(self)
+        args = fx.args(*extra, command="install")
+        with contextlib.redirect_stdout(io.StringIO()):
+            installer.stage_payload(args)
+        return args
+
+    def test_staging_creates_the_two_directories_the_engine_mounts(self):
+        """Created by the installer, 0700, before any `docker compose up`.
+
+        Docker creates a missing bind-mount source itself, as root, with
+        a mode nobody chose. A hook's working directory and the socket
+        the engine authenticates against are the last two paths on the
+        host that should be born that way.
+        """
+        args = self.staged()
+        for path in (args.workflows_dir, args.runtime_dir):
+            self.assertTrue(path.is_dir(), f"{path} was not created by staging")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700,
+                             f"{path} is not owner-only, and it holds hook scripts and a socket")
+
+    def test_staging_writes_an_installation_credential_and_never_rotates_it(self):
+        """The second lock on the runner's door, and the reason it is
+        written once.
+
+        A credential regenerated on upgrade is an engine that cannot
+        authenticate to its own runner until both halves restart: a
+        broken deployment produced by a routine upgrade.
+        """
+        args = self.staged()
+        token = args.prefix / "secrets" / installer.WORKFLOW_RUNNER_TOKEN
+        self.assertTrue(token.is_file(), "no workflow-runner credential was provisioned")
+        self.assertEqual(token.stat().st_mode & 0o777, 0o600,
+                         "the credential is readable by another account, so it is not a credential")
+        first = token.read_text()
+        self.assertGreaterEqual(len(first.strip()), 32,
+                                "a credential this short is below the runner's own floor and would be refused")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            installer.stage_payload(args)
+        self.assertEqual(token.read_text(), first,
+                         "re-running the installer rotated the credential, which breaks a running engine")
+
+    def test_a_credential_that_lost_its_mode_is_tightened(self):
+        """The silent failure: everything keeps working and anybody on the
+        host can execute scripts as the service account."""
+        args = self.staged()
+        token = args.prefix / "secrets" / installer.WORKFLOW_RUNNER_TOKEN
+        os.chmod(token, 0o644)
+        installer.ensure_workflow_runner_credential(args)
+        self.assertEqual(token.stat().st_mode & 0o777, 0o600)
+
+    def test_the_env_points_compose_at_both_directories(self):
+        args = self.staged()
+        rendered = (args.prefix / ".env").read_text()
+        self.assertIn(f"WORKFLOWS_DIR={args.workflows_dir}", rendered)
+        self.assertIn(f"RUNTIME_DIR={args.runtime_dir}", rendered)
+        self.assertIn(f"{installer.WORKFLOW_RUNNER_ENV_KEY}=auto", rendered)
+
+    def test_the_scripts_are_mounted_read_only_and_the_socket_directory_is_not(self):
+        """The two mounts are two different claims.
+
+        The engine reads each script once, hashes it and copies it into
+        its own spool, so it needs no write access to the originals and
+        must not have it. Connecting to a Unix socket IS a write, so the
+        runtime directory cannot be read-only.
+        """
+        canonical = CANONICAL_COMPOSE.read_text()
+        self.assertIn("${WORKFLOWS_DIR:-./workflows}:/workflows:ro", canonical,
+                      "the hook scripts are not mounted read-only into the engine")
+        self.assertIn("${RUNTIME_DIR:-./run}:/data/run", canonical,
+                      "the engine has no route to the runner socket")
+        self.assertNotIn("${RUNTIME_DIR:-./run}:/data/run:ro", canonical,
+                         "a read-only runtime mount cannot be connected to")
+
+    def test_neither_mount_is_required_so_an_older_env_still_starts(self):
+        """`:?` means the stack refuses to start without the variable. An
+        upgrade must not do that to a deployment whose .env predates EPIC
+        L and is only rewritten later in the same run."""
+        canonical = CANONICAL_COMPOSE.read_text()
+        for name in ("WORKFLOWS_DIR", "RUNTIME_DIR"):
+            self.assertNotIn(f"${{{name}:?", canonical,
+                             f"{name} is required, so a deployment upgraded from before EPIC L will not start")
+
+    def test_the_container_contract_is_untouched(self):
+        """The acceptance criterion that matters most: the runner buys the
+        host nothing at the container's expense."""
+        canonical = CANONICAL_COMPOSE.read_text()
+        for forbidden in ("privileged: true", "docker.sock", "cap_add", "network_mode: host",
+                          "pid: host", "nsenter"):
+            self.assertNotIn(forbidden, canonical,
+                             f"the canonical runtime now declares {forbidden!r}")
+        self.assertIn("read_only: true", canonical)
+        self.assertIn("no-new-privileges:true", canonical)
+
+    def test_auto_starts_nothing_until_there_are_hooks(self):
+        """"When local hooks are enabled or the operator opts in." A
+        deployment with no hook scripts has a runner it does not need, and
+        starting one anyway would be an installer deciding an operator's
+        deployment has a feature in it."""
+        args = self.staged()
+        self.assertFalse(installer.deployment_has_hooks(args))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            outcome = installer.provision_workflow_runner(args)
+        self.assertEqual(outcome, "idle")
+        self.assertIn(installer.WORKFLOW_RUNNER_ENV_KEY, out.getvalue(),
+                      "the installer does not say how to turn the runner on")
+
+        (args.workflows_dir / "global" / "before").mkdir(parents=True)
+        (args.workflows_dir / "global" / "before" / "10-quiesce.local.sh").write_text("#!/bin/bash\n")
+        self.assertTrue(installer.deployment_has_hooks(args))
+
+    def test_off_provisions_the_directories_and_starts_nothing(self):
+        """Off is not "uninstalled". The scripts and any unresolved
+        recovery spool have to survive a deployment that turns the runner
+        off for a week."""
+        args = self.staged()
+        args.workflow_runner = "off"
+        (args.workflows_dir / "hook.local.sh").write_text("#!/bin/bash\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            outcome = installer.provision_workflow_runner(args)
+        self.assertEqual(outcome, "off")
+        self.assertTrue(args.workflows_dir.is_dir())
+        self.assertTrue((args.prefix / "secrets" / installer.WORKFLOW_RUNNER_TOKEN).is_file())
+
+    def test_the_operators_answer_survives_an_upgrade(self):
+        """It is in .env rather than on the command line for exactly this
+        reason: a choice that reverted to the default on the next upgrade
+        would be a choice nobody could rely on."""
+        fx = Fixture(self)
+        args = fx.args(command="install")
+        with contextlib.redirect_stdout(io.StringIO()):
+            installer.adopt_installed_shape(args, {installer.WORKFLOW_RUNNER_ENV_KEY: "on"})
+        self.assertEqual(installer.workflow_runner_mode(args), "on")
+        with contextlib.redirect_stdout(io.StringIO()):
+            installer.stage_payload(args)
+        self.assertIn(f"{installer.WORKFLOW_RUNNER_ENV_KEY}=on", (args.prefix / ".env").read_text())
+
+    def test_a_hand_edited_answer_nobody_recognises_is_not_a_refusal(self):
+        """A five-character typo in an optional key must not be a
+        deployment that will not upgrade."""
+        fx = Fixture(self)
+        args = fx.args(command="install")
+        with contextlib.redirect_stdout(io.StringIO()):
+            installer.adopt_installed_shape(args, {installer.WORKFLOW_RUNNER_ENV_KEY: "yes please"})
+        self.assertEqual(installer.workflow_runner_mode(args), "auto")
+
+    def test_the_unit_runs_as_the_deployments_account_and_confines_itself(self):
+        """Every line of the unit is a security decision.
+
+        The uid especially: the runner refuses to run as root, so a unit
+        that omitted User= would produce a service that fails to start on
+        every systemd host.
+        """
+        args = self.staged()
+        unit = installer.render_workflow_runner_unit(args)
+        self.assertIn(f"User={args.puid}", unit)
+        self.assertNotIn("User=root", unit)
+        self.assertIn("NoNewPrivileges=yes", unit)
+        self.assertIn("ProtectSystem=strict", unit)
+        self.assertIn(f"ReadWritePaths={args.runtime_dir}", unit,
+                      "the runner may write its own runtime directory and nothing else on the host")
+        self.assertIn("workflow-runner serve", unit)
+        self.assertIn(f"--runtime-dir {args.runtime_dir}", unit)
+        self.assertIn(f"--secrets-dir {args.prefix / 'secrets'}", unit)
+        self.assertIn("Restart=on-failure", unit)
+        self.assertNotIn("Restart=always", unit,
+                         "a runner refusing to start because its credential is world-readable must stay "
+                         "down with that message rather than loop")
+
+    def test_a_root_deployment_is_refused_a_runner_rather_than_given_a_root_one(self):
+        """The unprivileged-by-default rule, at the installer end.
+
+        Installing backupd as an administrator says nothing about whether
+        every script in a hook directory should run as root -- including
+        one that arrived by rsync from somewhere else. It is a feature
+        that stays off with a reason, not an install that stops: a
+        deployment with no local hooks is unaffected either way.
+        """
+        args = self.staged()
+        args.puid = 0
+        args.pgid = 0
+        with self.assertRaises(installer.Refusal) as caught:
+            installer.render_workflow_runner_unit(args)
+        self.assertIn("sudoers", caught.exception.remedy)
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            outcome = installer.provision_workflow_runner(args)
+        self.assertEqual(outcome, "root", "a root deployment was given a root runner")
+        self.assertIn("--puid", out.getvalue(), "the refusal does not say how to fix it")
+        self.assertTrue(args.workflows_dir.is_dir(),
+                        "the hook directories were skipped too, so an operator who fixes the uid "
+                        "later finds nothing staged")
+
+    def test_the_runner_binary_comes_out_of_the_image_being_installed(self):
+        """Version-matched has to be a property of the bytes.
+
+        The engine refuses a runner whose version is not exactly its own,
+        and the only way to satisfy that reliably is for both halves to
+        come out of one artifact. The versioned name plus a symlink is
+        what makes upgrade and rollback a pair rather than a re-download.
+        """
+        args = self.staged()
+        calls = []
+
+        def fake_run(argv, **kw):
+            calls.append(list(argv))
+            if argv[:2] == ["docker", "create"]:
+                return subprocess.CompletedProcess(argv, 0, "deadbeefcafe\n", "")
+            if argv[:2] == ["docker", "cp"]:
+                Path(argv[3]).write_text("#!/bin/sh\nnot really a binary\n")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with unittest.mock.patch.object(installer, "run", fake_run):
+            stable = installer.extract_runner_binary(args)
+
+        versioned = args.prefix / "bin" / f"backupd-{args.image_tag}"
+        self.assertTrue(versioned.is_file(), f"{versioned} was not extracted from the image")
+        self.assertTrue(stable.is_symlink(), "the stable name is not a symlink, so a rollback is a re-download")
+        self.assertEqual(os.readlink(stable), versioned.name)
+        self.assertEqual(versioned.stat().st_mode & 0o111, 0o111, "the extracted binary is not executable")
+        self.assertTrue(any(c[:2] == ["docker", "rm"] for c in calls),
+                        "the temporary container the binary was copied out of was left behind")
+
+    def test_an_upgrade_keeps_the_previous_binary_and_moves_the_symlink(self):
+        """Rollback on a NAS that may be offline is a symlink flip, not a
+        download."""
+        args = self.staged()
+        bindir = args.prefix / "bin"
+        bindir.mkdir(parents=True, exist_ok=True)
+        old = bindir / "backupd-0.0.1"
+        old.write_text("old\n")
+        os.chmod(old, 0o755)
+        os.symlink(old.name, bindir / "backupd-workflow-runner")
+
+        def fake_run(argv, **kw):
+            if argv[:2] == ["docker", "create"]:
+                return subprocess.CompletedProcess(argv, 0, "cafe\n", "")
+            if argv[:2] == ["docker", "cp"]:
+                Path(argv[3]).write_text("new\n")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with unittest.mock.patch.object(installer, "run", fake_run):
+            stable = installer.extract_runner_binary(args)
+
+        self.assertTrue(old.is_file(), "the previous release's runner was deleted, so a rollback has nothing to point at")
+        self.assertEqual(os.readlink(stable), f"backupd-{args.image_tag}")
+
+    def test_supervision_falls_back_to_the_exact_commands(self):
+        """A DSM box, an unprivileged install, a host with a different
+        supervisor. Printing the three commands is a real outcome: an
+        installer that silently did nothing would leave .local.sh
+        validation failing with no explanation anywhere."""
+        args = self.staged()
+        with unittest.mock.patch.object(installer.shutil, "which", lambda _n: None):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                outcome = installer.supervise_workflow_runner(args)
+        self.assertEqual(outcome, "staged")
+        printed = out.getvalue()
+        self.assertIn(installer.WORKFLOW_RUNNER_UNIT, printed)
+        self.assertIn("systemctl daemon-reload", printed)
+        self.assertIn("enable --now", printed)
+        self.assertTrue((args.prefix / installer.WORKFLOW_RUNNER_UNIT).is_file(),
+                        "the unit was not staged for the operator to install")
+
+    def test_uninstall_takes_the_socket_and_leaves_the_scripts(self):
+        """The scripts are the operator's, like the backups. An uninstall
+        that deleted them by default is a data-loss bug with a friendly
+        name."""
+        args = self.staged()
+        (args.workflows_dir / "hook.local.sh").write_text("#!/bin/bash\n")
+        (args.runtime_dir / "workflow-runner.sock").write_text("")
+
+        with unittest.mock.patch.object(installer.shutil, "which", lambda _n: None):
+            with contextlib.redirect_stdout(io.StringIO()):
+                installer.remove_workflow_runner(args)
+
+        self.assertFalse(args.runtime_dir.exists(), "the runner socket and run spools were left behind")
+        self.assertTrue((args.workflows_dir / "hook.local.sh").is_file(),
+                        "uninstall deleted an operator's hook script")
+
+
 if __name__ == "__main__":
     unittest.main()

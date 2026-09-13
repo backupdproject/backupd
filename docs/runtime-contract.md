@@ -92,6 +92,62 @@ cannot introduce one: the prohibition rules run against every registered
 artifact, and `TestEveryComposeArtifactInTheTreeIsRegistered` fails when a
 compose file exists in the tree that nothing registered.
 
+## Local hook scripts, and why they do not touch this contract
+
+EPIC L (#809) gives a backup set hook scripts, and a `.local.sh` hook means
+"run this on the machine backupd is installed on". The engine cannot run one:
+this image is distroless and has no shell, the container is read-only and
+non-root, and every capability is dropped. That is not an obstacle to work
+around — it is the contract above.
+
+There are four ways to satisfy "run a script on the host", and three of them
+are this contract deleted:
+
+- add a shell to the image;
+- mount the Docker socket, or add `CAP_SYS_ADMIN` and use `nsenter`;
+- bind-mount the host root read-write and chroot into it;
+- run a **separate, version-matched, unprivileged process on the host** and let
+  the engine ask it, over one Unix-domain socket, with a narrow vocabulary.
+
+backupd does the fourth. The engine gains exactly two bind mounts and nothing
+else:
+
+```text
+${WORKFLOWS_DIR:-./workflows}:/workflows:ro    the hook scripts, READ-ONLY
+${RUNTIME_DIR:-./run}:/data/run                the runner's socket directory
+```
+
+The scripts are read-only because the engine reads each one once, hashes it and
+copies it into its own private spool under `/data/state`, and never opens the
+original again (`core/internal/workflow`), so write access would buy nothing and
+would let a compromised engine edit what the host is about to execute. The
+runtime directory is writable because connecting to a Unix socket is a write.
+
+Neither mount uses `:?`, so a deployment whose `.env` predates EPIC L still
+starts.
+
+What is on the other end of that socket is deliberately not a shell. It is
+`backupd workflow-runner serve`, built from the same commit as the engine and
+extracted from the same image by the installer, and it:
+
+- listens on a Unix socket only — there is no TCP listener and no address to
+  configure — with the socket 0600 inside a 0700 directory;
+- additionally requires an installation-scoped credential from backupd's
+  secrets area on every connection;
+- refuses an engine whose version is not exactly its own;
+- accepts four operations (`syntax-check`, `execute`, `cancel`, `status`) and
+  **captured script bytes, never a path**, re-checking size and SHA-256 against
+  what the engine's plan recorded;
+- refuses to run as root, runs each script in its own session and process group
+  with a private 0700 working directory, and terminates that process group when
+  the engine's connection — the lease — goes away.
+
+The prohibition list above is unchanged and still passes against the canonical
+definition and every derived artifact: no privileged container, no Docker
+socket, no host namespace, no added capability, no unbounded host mount, no
+shell in the image. `docs/adr/0020-host-workflow-runner.md` carries the full
+argument.
+
 ## Runtime profiles
 
 A runtime profile is how one executable changes host-dependent behaviour

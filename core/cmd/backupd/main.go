@@ -72,28 +72,29 @@ func run(args []string) int {
 // their text. TestUsage_EveryRegisteredCommandIsPinned holds all three
 // against each other now (#549).
 var commands = map[string]func([]string) int{
-	"run":          cmdRun,
-	"daemon":       cmdDaemon,
-	"check":        cmdCheck,
-	"status":       cmdStatus,
-	"sources":      cmdSources,
-	"backup-set":   cmdBackupSet,
-	"activity":     cmdActivity,
-	"artifacts":    cmdArtifacts,
-	"fetch":        cmdFetch,
-	"retention":    cmdRetention,
-	"reconcile":    cmdReconcile,
-	"validate":     cmdValidate,
-	"catalog":      cmdCatalog,
-	"quarantine":   cmdQuarantine,
-	"unconfigured": cmdUnconfigured,
-	"medium":       cmdMedium,
-	"retry":        cmdRetry,
-	"restore":      cmdRestore,
-	"snapshot":     cmdSnapshot,
-	"repository":   cmdRepository,
-	"settings":     cmdSettings,
-	"version":      cmdVersion,
+	"run":             cmdRun,
+	"daemon":          cmdDaemon,
+	"check":           cmdCheck,
+	"status":          cmdStatus,
+	"sources":         cmdSources,
+	"backup-set":      cmdBackupSet,
+	"activity":        cmdActivity,
+	"artifacts":       cmdArtifacts,
+	"fetch":           cmdFetch,
+	"retention":       cmdRetention,
+	"reconcile":       cmdReconcile,
+	"validate":        cmdValidate,
+	"catalog":         cmdCatalog,
+	"quarantine":      cmdQuarantine,
+	"unconfigured":    cmdUnconfigured,
+	"medium":          cmdMedium,
+	"retry":           cmdRetry,
+	"restore":         cmdRestore,
+	"snapshot":        cmdSnapshot,
+	"repository":      cmdRepository,
+	"settings":        cmdSettings,
+	"workflow-runner": cmdWorkflowRunner,
+	"version":         cmdVersion,
 }
 
 // usage is the text an operator reads when they type nothing, type
@@ -435,6 +436,21 @@ commands:
                                                   --acknowledge-medium-disclosure is needed when the policy sends one of
                                                   this set's tiers somewhere new, and without it the refusal carries the
                                                   disclosure. The show form prints each tier's destination
+  workflow-runner serve --runtime-dir DIR --secrets-dir DIR [--bash PATH]
+                                                  run the host workflow runner: the out-of-container helper that
+                                                  executes a backup set's .local.sh hooks on THIS machine. The engine
+                                                  container is distroless, read-only and has no shell, so "local"
+                                                  means the host and the host needs a process of its own. It listens
+                                                  on a Unix socket inside --runtime-dir and on nothing else: there is
+                                                  no TCP listener and no address to set. It refuses to run as root,
+                                                  refuses an engine from a different release, and refuses a client
+                                                  that does not hold the credential in --secrets-dir. The installer
+                                                  provisions all three and supervises this command (#809)
+  workflow-runner status --runtime-dir DIR --secrets-dir DIR
+                                                  ask that runner what it is: version, socket, the bash it fixed on
+                                                  at startup, the account hooks run as, and what it is running now.
+                                                  The same question the engine asks before it will validate a
+                                                  .local.sh hook, so an answer here is the answer a backup would get
   version                                        report version information
 
 every command except version accepts --config (default /etc/backupd/config/config.yaml;
