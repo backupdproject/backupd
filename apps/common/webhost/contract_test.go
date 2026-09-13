@@ -249,6 +249,11 @@ var contractBindings = map[string]contractBinding{
 		"/api/v1/workflow-recovery/run_1/acknowledge"},
 	"getRetentionErrorEnvelope": {nil, errorResponse{}, ""},
 	"getConfigRevisionStale":    {nil, configRevisionStaleResponse{}, ""},
+	// #906's save refusal, bound for its SHAPE the same way: it is the
+	// second structured error body in this package, and the fields a
+	// client draws the refusal from are exactly the ones that would
+	// drift if the contract and this struct stopped agreeing.
+	"getWorkflowScriptRejected": {nil, workflowScriptRejectedResponse{}, ""},
 }
 
 // nonRoutedBindings are the two entries above that describe a body shape
@@ -260,6 +265,7 @@ var contractBindings = map[string]contractBinding{
 var nonRoutedBindings = map[string]string{
 	"getRetentionErrorEnvelope": "ErrorResponse",
 	"getConfigRevisionStale":    "ConfigRevisionStaleResponse",
+	"getWorkflowScriptRejected": "WorkflowScriptRejectedResponse",
 }
 
 // contractEndpoints indexes the generated endpoint table by operation id.

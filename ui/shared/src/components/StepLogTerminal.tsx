@@ -466,6 +466,16 @@ export function StepLogTerminal({ runId, stepId, step, api }: StepLogTerminalPro
         className="activity-log"
         role="log"
         aria-label={"Captured output of " + step.scriptName}
+        // The scrollback IS what the registry's `workflow.step.output`
+        // entry describes, and until now nothing named it: the copy was
+        // written, registered and unreachable, which the tooltip
+        // registry's own test reports as an entry nothing in the app
+        // names. It sits on this container rather than on the toolbar
+        // above because the sentence is about these bytes -- read by
+        // cursor, read-only, and rendered as text rather than as markup
+        // or control sequences -- which is exactly what an operator
+        // hovering a wall of hook output is asking about.
+        data-tip="workflow.step.output"
         // Announced only while output is actually arriving. A log this
         // size on `polite` for a finished step is a screen reader reading
         // a wall; a hook that floods it while running is the case a

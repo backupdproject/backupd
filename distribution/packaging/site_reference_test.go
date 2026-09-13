@@ -202,7 +202,15 @@ var routeSections = map[string]documentedRoute{
 	"/repositories/maintenance":             {"reference.html", "web-repository-maintenance"},
 	"/settings/backup-defaults":             {"reference.html", "web-backup-defaults"},
 	"/catalog-recovery":                     {"reference.html", "web-catalog"},
-	"/enroll":                               {"first-run.html", "enrol"},
+	// EPIC L's one screen of its own (#814). The other four workflow
+	// surfaces are panels on screens already documented here -- the
+	// Workflow panel on a backup set, the environment editor inside it,
+	// and the Workflow card in Settings -- and this is the one an
+	// operator navigates TO, by run id, to find out what a hook printed
+	// and whether a machine is still quiesced. It was mounted without an
+	// entry here, which is the gap this map exists to catch.
+	"/workflow-runs/:runId": {"reference.html", "web-workflow-run"},
+	"/enroll":               {"first-run.html", "enrol"},
 	// Both halves of the forgotten-password flow (#830) are documented by
 	// one section, because they are one procedure: the page that asks for
 	// a reset link and the page the emailed link opens. first-run.html's

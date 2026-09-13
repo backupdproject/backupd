@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "9e6886ce7138cc17275fd2d92a9ada0cc5c793b5faa3241f3dc05da018b13770";
+export const CONTRACT_SHA256 = "9dfdc396f506580848de03fa90c5d36e80961a923e6d6d5e7d513133aa15723c";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -77,6 +77,7 @@ export const WIRE_ERROR_CODES = [
   "REPOSITORY_DOMAIN_EXISTS",
   "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
   "WORKFLOWS_NOT_CONFIGURED",
+  "WORKFLOW_SCRIPT_REJECTED",
   "WORKFLOW_ENV_NOT_FOUND",
   "WORKFLOW_RUN_NOT_FOUND",
   "WORKFLOW_STEP_NOT_FOUND",
@@ -171,6 +172,7 @@ export const API_ERROR_CODES = [
   "REPOSITORY_DOMAIN_EXISTS",
   "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE",
   "WORKFLOWS_NOT_CONFIGURED",
+  "WORKFLOW_SCRIPT_REJECTED",
   "WORKFLOW_ENV_NOT_FOUND",
   "WORKFLOW_RUN_NOT_FOUND",
   "WORKFLOW_STEP_NOT_FOUND",
@@ -185,7 +187,7 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 export const API_ERROR_CLASSES = {
   "authentication": ["UNAUTHENTICATED", "BOOTSTRAP_TOKEN_INVALID", "RESET_TOKEN_INVALID", "VERIFY_TOKEN_INVALID"],
   "authorization": ["ENROLLMENT_CLOSED", "DESTRUCTIVE_OPERATIONS_DISABLED", "CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
-  "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN", "SNAPSHOT_NOT_HOLDABLE", "INCREMENTAL_ENGINE_DISABLED", "REPOSITORY_DOMAIN_EXISTS", "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE", "WORKFLOWS_NOT_CONFIGURED"],
+  "conflict": ["RETENTION_PLAN_STALE", "RETENTION_APPLY_BUSY", "OPERATION_ALREADY_RUNNING", "BACKUP_SET_HELD_FOR_EDITING", "IDEMPOTENCY_KEY_CONFLICT", "CONFIG_REVISION_STALE", "ALREADY_CONFIGURED", "ARTIFACT_NOT_QUARANTINED", "ARTIFACT_IRRECOVERABLE", "REINSTATEMENT_REFUSED", "BACKUP_SET_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED", "BACKUP_SET_HOST_KEY_CHANGE_NOT_ACKNOWLEDGED", "ARTIFACT_NOT_FAILED", "BACKUP_SET_CONNECTION_NOT_PROVEN", "BACKUP_SET_SOURCE_NOT_WRITABLE", "MEDIUM_IS_DEFAULT", "MEDIUM_CONNECTION_NOT_PROVEN", "SNAPSHOT_NOT_HOLDABLE", "INCREMENTAL_ENGINE_DISABLED", "REPOSITORY_DOMAIN_EXISTS", "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE", "WORKFLOWS_NOT_CONFIGURED", "WORKFLOW_SCRIPT_REJECTED"],
   "internal": ["INTERNAL", "INTERNAL_ERROR"],
   "not-found": ["BACKUP_SET_NOT_FOUND", "OPERATION_NOT_FOUND", "RETENTION_PLAN_NOT_FOUND", "ARTIFACT_NOT_FOUND", "MEDIUM_NOT_FOUND", "SNAPSHOT_NOT_FOUND", "SNAPSHOT_HOLD_NOT_FOUND", "REPOSITORY_DOMAIN_NOT_FOUND", "WORKFLOW_ENV_NOT_FOUND", "WORKFLOW_RUN_NOT_FOUND", "WORKFLOW_STEP_NOT_FOUND"],
   "throttling": ["RATE_LIMITED"],
@@ -944,7 +946,7 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
       401: ["UNAUTHENTICATED"],
       403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
       404: ["BACKUP_SET_NOT_FOUND"],
-      409: ["WORKFLOWS_NOT_CONFIGURED"],
+      409: ["WORKFLOW_SCRIPT_REJECTED", "WORKFLOWS_NOT_CONFIGURED"],
       500: ["INTERNAL"],
       503: ["NOT_CONFIGURED"],
     }
@@ -1386,6 +1388,7 @@ export const API_OPERATIONS: readonly ContractOperation[] = [
       400: ["INVALID_REQUEST"],
       401: ["UNAUTHENTICATED"],
       403: ["CSRF_TOKEN_MISSING", "CSRF_TOKEN_MISMATCH"],
+      409: ["WORKFLOW_SCRIPT_REJECTED"],
       500: ["INTERNAL"],
       503: ["NOT_CONFIGURED"],
     }
@@ -4034,6 +4037,22 @@ export interface WireWorkflowFinding {
   target?: string;
 }
 
+/** One thing backupd's own shell rules reported about one hook
+ *  script. These are this product's own checks, carrying its own BSH
+ *  codes, and they are NOT ShellCheck: ShellCheck is GPL-3.0 and this
+ *  product is Apache-2.0, so the analysis is implemented here against
+ *  a Go shell parser's syntax tree rather than shipped as somebody
+ *  else's tool. The set is deliberately small and conservative; an
+ *  operator who wants a general shell linter should run one. */
+export interface WireWorkflowLintFinding {
+  code?: string;
+  col?: number;
+  excerpt?: WireWorkflowSourceExcerpt;
+  line?: number;
+  message?: string;
+  severity?: "error" | "warning" | "info" | "style";
+}
+
 /** One reason a backup set is refusing to run: a workflow run whose
  *  cleanup this product could not finish, and whose "after" hooks may
  *  therefore never have run. */
@@ -4050,6 +4069,23 @@ export interface WireWorkflowRecoveryHold {
  *  which is the ordinary state. */
 export interface WireWorkflowRecoveryResponse {
   holds?: WireWorkflowRecoveryHold[];
+}
+
+/** One hook script that refused a workflow configuration write, and
+ *  why. Only the BLOCKING half is here -- a parse error, or the
+ *  error-severity findings -- because a refusal that also listed the
+ *  warnings would read as though they had refused it. */
+export interface WireWorkflowRefusedScript {
+  backup_set_id?: string;
+  dir?: string;
+  findings?: WireWorkflowLintFinding[];
+  parse_error?: string;
+  parse_error_col?: number;
+  parse_error_excerpt?: WireWorkflowSourceExcerpt;
+  parse_error_line?: number;
+  phase?: "before" | "after";
+  scope?: "global" | "set";
+  script_name?: string;
 }
 
 /** One workflow run: one backup set's pass, wrapped in the five-stage
@@ -4091,6 +4127,36 @@ export interface WireWorkflowRunnerSettings {
   token_file?: string;
 }
 
+/** What backupd's own shell verification established about one hook
+ *  script's exact bytes, without running any of them. Three states,
+ *  kept distinguishable on purpose: examined and parsed, examined and
+ *  refused (a parse error with its position), and NOT EXAMINED, which
+ *  is a script larger than the verification reads. A client that
+ *  folded the third into either of the others would report either a
+ *  pass nobody proved or a fault nobody found. */
+export interface WireWorkflowScriptLint {
+  examined?: boolean;
+  findings?: WireWorkflowLintFinding[];
+  not_examined_reason?: string;
+  parse_error?: string;
+  parse_error_col?: number;
+  parse_error_excerpt?: WireWorkflowSourceExcerpt;
+  parse_error_line?: number;
+  parsed?: boolean;
+}
+
+/** The WORKFLOW_SCRIPT_REJECTED 409 body. It carries the blocking
+ *  scripts and their findings as structured fields, for the reason
+ *  CONFIG_REVISION_STALE carries the current revision as one: a
+ *  client that had to parse a position out of the message would be
+ *  parsing prose this contract explicitly does not promise to keep
+ *  stable. The message says the same thing in one string, for a
+ *  terminal. */
+export interface WireWorkflowScriptRejectedResponse {
+  blocking_scripts: WireWorkflowRefusedScript[];
+  error: WireErrorBody;
+}
+
 /** Where a workflow environment variable's value comes from, when it
  *  is not a literal. It is a LOCATION and never a value, on every
  *  surface and in both directions: exactly one of the three is set,
@@ -4129,6 +4195,30 @@ export interface WireWorkflowSettingsResponse {
   runner?: WireWorkflowRunnerSettings;
   script_timeout_configured?: boolean;
   script_timeout_seconds?: number;
+}
+
+/** A few of a hook script's own lines, carried beside a position that
+ *  names one of them: the reported line with one line either side. It
+ *  exists because a position on its own is a lookup somebody has to
+ *  perform on a machine they may not be on -- "BSH003 at 24:10" sends
+ *  an operator to a NAS over SSH to read one line. The lines come
+ *  from the bytes this validation READ AND HASHED rather than from a
+ *  later re-read, so they cannot disagree with the position beside
+ *  them. They are the script's own text and never a resolved secret:
+ *  nothing on the path that produces them resolves one. */
+export interface WireWorkflowSourceExcerpt {
+  lines?: WireWorkflowSourceLine[];
+}
+
+/** One line of a hook script, as an editor would number it. The text
+ *  arrives with control characters removed and its length bounded, at
+ *  the point it is produced rather than at each surface that draws
+ *  it: a hook is arbitrary text and this text reaches a browser and a
+ *  terminal. */
+export interface WireWorkflowSourceLine {
+  number?: number;
+  text?: string;
+  truncated?: boolean;
 }
 
 /** One scope-and-phase pair that has a directory. A run executes five
@@ -4190,11 +4280,15 @@ export interface WireWorkflowStepLogRecord {
 }
 
 /** One hook this backup set would run, as validation found it on
- *  disk. Nothing here was executed: the only things validation ever
- *  hands an interpreter are `bash -n`, which parses and never runs,
- *  and this product's own fixed remote capability probe. */
+ *  disk, with what backupd's own shell verification established about
+ *  its bytes. Nothing here was executed: the syntax verdict and the
+ *  findings come from parsing and walking the bytes in this process,
+ *  and the only things validation ever hands an interpreter are `bash
+ *  -n`, which parses and never runs, and this product's own fixed
+ *  remote capability probe. */
 export interface WireWorkflowValidatedScript {
   execution_connection_ref?: string;
+  lint?: WireWorkflowScriptLint;
   order?: number;
   phase?: "before" | "after";
   scope?: "global" | "set";

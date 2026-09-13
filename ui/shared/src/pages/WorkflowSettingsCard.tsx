@@ -41,11 +41,12 @@ import { Cell, CellGrid } from "@shared/components/Definitions";
 import { ErrorState } from "@shared/components/EmptyState";
 import { WarningBanner } from "@shared/components/WarningBanner";
 import { WorkflowEnvironmentEditor } from "@shared/components/WorkflowEnvironmentEditor";
-import { describeFailure, isNotConfigured } from "@shared/api/failure";
+import { apiErrorOf, describeFailure, isNotConfigured, workflowScriptRefusalOf } from "@shared/api/failure";
+import { WorkflowSaveRefusal } from "@shared/pages/BackupSetWorkflowCard";
 import { useAsync } from "@shared/hooks/useAsync";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import { bytes } from "@shared/utilities/format";
-import type { WorkflowSettingsPatch } from "@shared/api/contracts";
+import type { WorkflowBlockingScript, WorkflowSettingsPatch } from "@shared/api/contracts";
 
 /** The three boxes this card writes, and nothing else. Keyed so a
  *  per-box Save can name exactly what it is sending, which is the shape
@@ -67,6 +68,15 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
   const [draft, setDraft] = useState<Record<Box, string> | null>(null);
   const [saving, setSaving] = useState<Box | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  /** The scripts the last save was refused over, if it was. Separate from
+   *  `failure` above because it is not a sentence: a refusal names several
+   *  scripts, each with its own directory and its own blocking findings,
+   *  and flattening that into one line is what makes an operator go
+   *  hunting for a position the API already told this page. */
+  const [refusal, setRefusal] = useState<{
+    blocking: WorkflowBlockingScript[];
+    message: string;
+  } | null>(null);
 
   // The draft is seeded from what was persisted, and re-seeded whenever a
   // read lands: a box showing a value the service does not have is the
@@ -108,6 +118,7 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
             : { afterDir: draft.afterDir };
       setSaving(box);
       setFailure(null);
+      setRefusal(null);
       api
         .patchWorkflowSettings(patch)
         .then(() => {
@@ -119,7 +130,16 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
         })
         .catch((e: unknown) => {
           setSaving(null);
-          setFailure(describeFailure(e, "that setting was not saved").message);
+          const message = describeFailure(e, "that setting was not saved").message;
+          // The save gate's own refusal, kept structured. It is NOT put
+          // in `failure` as well: one refusal drawn twice, once as a
+          // sentence and once as a list, reads as two things having gone
+          // wrong.
+          if (apiErrorOf(e)?.code === "WORKFLOW_SCRIPT_REJECTED") {
+            setRefusal({ blocking: workflowScriptRefusalOf(e), message });
+          } else {
+            setFailure(message);
+          }
         });
     },
     [api, draft, settings]
@@ -237,6 +257,12 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
         {failure ? (
           <Banner tone="danger" dismissKey={failure}>
             <span style={{ fontSize: "var(--text-sm)" }}>{failure}</span>
+          </Banner>
+        ) : null}
+
+        {refusal ? (
+          <Banner tone="danger" dismissKey={refusal.message} tip="workflow.settings.save-refused">
+            <WorkflowSaveRefusal blocking={refusal.blocking} fallback={refusal.message} />
           </Banner>
         ) : null}
 

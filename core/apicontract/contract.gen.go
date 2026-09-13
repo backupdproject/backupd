@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "9e6886ce7138cc17275fd2d92a9ada0cc5c793b5faa3241f3dc05da018b13770"
+const ContractSHA256 = "9dfdc396f506580848de03fa90c5d36e80961a923e6d6d5e7d513133aa15723c"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -114,6 +114,7 @@ const (
 	ErrorCodeRepositoryDomainExists                 ErrorCode = "REPOSITORY_DOMAIN_EXISTS"
 	ErrorCodeRepositoryDomainMaintainedElsewhere    ErrorCode = "REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE"
 	ErrorCodeWorkflowsNotConfigured                 ErrorCode = "WORKFLOWS_NOT_CONFIGURED"
+	ErrorCodeWorkflowScriptRejected                 ErrorCode = "WORKFLOW_SCRIPT_REJECTED"
 	ErrorCodeWorkflowEnvNotFound                    ErrorCode = "WORKFLOW_ENV_NOT_FOUND"
 	ErrorCodeWorkflowRunNotFound                    ErrorCode = "WORKFLOW_RUN_NOT_FOUND"
 	ErrorCodeWorkflowStepNotFound                   ErrorCode = "WORKFLOW_STEP_NOT_FOUND"
@@ -180,6 +181,7 @@ var WireErrorCodes = []ErrorCode{
 	ErrorCodeRepositoryDomainExists,
 	ErrorCodeRepositoryDomainMaintainedElsewhere,
 	ErrorCodeWorkflowsNotConfigured,
+	ErrorCodeWorkflowScriptRejected,
 	ErrorCodeWorkflowEnvNotFound,
 	ErrorCodeWorkflowRunNotFound,
 	ErrorCodeWorkflowStepNotFound,
@@ -270,6 +272,7 @@ var ErrorCodes = []ErrorCode{
 	ErrorCodeRepositoryDomainExists,
 	ErrorCodeRepositoryDomainMaintainedElsewhere,
 	ErrorCodeWorkflowsNotConfigured,
+	ErrorCodeWorkflowScriptRejected,
 	ErrorCodeWorkflowEnvNotFound,
 	ErrorCodeWorkflowRunNotFound,
 	ErrorCodeWorkflowStepNotFound,
@@ -282,7 +285,7 @@ var ErrorCodes = []ErrorCode{
 var ErrorClasses = map[string][]ErrorCode{
 	"authentication": {ErrorCodeUnauthenticated, ErrorCodeBootstrapTokenInvalid, ErrorCodeResetTokenInvalid, ErrorCodeVerifyTokenInvalid},
 	"authorization":  {ErrorCodeEnrollmentClosed, ErrorCodeDestructiveOperationsDisabled, ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
-	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven, ErrorCodeSnapshotNotHoldable, ErrorCodeIncrementalEngineDisabled, ErrorCodeRepositoryDomainExists, ErrorCodeRepositoryDomainMaintainedElsewhere, ErrorCodeWorkflowsNotConfigured},
+	"conflict":       {ErrorCodeRetentionPlanStale, ErrorCodeRetentionApplyBusy, ErrorCodeOperationAlreadyRunning, ErrorCodeBackupSetHeldForEditing, ErrorCodeIdempotencyKeyConflict, ErrorCodeConfigRevisionStale, ErrorCodeAlreadyConfigured, ErrorCodeArtifactNotQuarantined, ErrorCodeArtifactIrrecoverable, ErrorCodeReinstatementRefused, ErrorCodeBackupSetRepointNotAcknowledged, ErrorCodeBackupSetHistoryRepointNotAcknowledged, ErrorCodeBackupSetHostKeyChangeNotAcknowledged, ErrorCodeArtifactNotFailed, ErrorCodeBackupSetConnectionNotProven, ErrorCodeBackupSetSourceNotWritable, ErrorCodeMediumIsDefault, ErrorCodeMediumConnectionNotProven, ErrorCodeSnapshotNotHoldable, ErrorCodeIncrementalEngineDisabled, ErrorCodeRepositoryDomainExists, ErrorCodeRepositoryDomainMaintainedElsewhere, ErrorCodeWorkflowsNotConfigured, ErrorCodeWorkflowScriptRejected},
 	"internal":       {ErrorCodeInternal, ErrorCodeInternalError},
 	"not-found":      {ErrorCodeBackupSetNotFound, ErrorCodeOperationNotFound, ErrorCodeRetentionPlanNotFound, ErrorCodeArtifactNotFound, ErrorCodeMediumNotFound, ErrorCodeSnapshotNotFound, ErrorCodeSnapshotHoldNotFound, ErrorCodeRepositoryDomainNotFound, ErrorCodeWorkflowEnvNotFound, ErrorCodeWorkflowRunNotFound, ErrorCodeWorkflowStepNotFound},
 	"throttling":     {ErrorCodeRateLimited},
@@ -736,7 +739,7 @@ var Endpoints = []Endpoint{
 			401: {ErrorCodeUnauthenticated},
 			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
 			404: {ErrorCodeBackupSetNotFound},
-			409: {ErrorCodeWorkflowsNotConfigured},
+			409: {ErrorCodeWorkflowScriptRejected, ErrorCodeWorkflowsNotConfigured},
 			500: {ErrorCodeInternal},
 			503: {ErrorCodeNotConfigured},
 		},
@@ -994,6 +997,7 @@ var Endpoints = []Endpoint{
 			400: {ErrorCodeInvalidRequest},
 			401: {ErrorCodeUnauthenticated},
 			403: {ErrorCodeCSRFTokenMissing, ErrorCodeCSRFTokenMismatch},
+			409: {ErrorCodeWorkflowScriptRejected},
 			500: {ErrorCodeInternal},
 			503: {ErrorCodeNotConfigured},
 		},
@@ -3375,6 +3379,22 @@ type WorkflowFinding struct {
 	Target   string `json:"target"`
 }
 
+// WorkflowLintFinding is one thing backupd's own shell rules reported about one hook
+// script. These are this product's own checks, carrying its own BSH
+// codes, and they are NOT ShellCheck: ShellCheck is GPL-3.0 and this
+// product is Apache-2.0, so the analysis is implemented here against
+// a Go shell parser's syntax tree rather than shipped as somebody
+// else's tool. The set is deliberately small and conservative; an
+// operator who wants a general shell linter should run one.
+type WorkflowLintFinding struct {
+	Code     string                `json:"code"`
+	Col      int                   `json:"col"`
+	Excerpt  WorkflowSourceExcerpt `json:"excerpt"`
+	Line     int                   `json:"line"`
+	Message  string                `json:"message"`
+	Severity string                `json:"severity"`
+}
+
 // WorkflowRecoveryHold is one reason a backup set is refusing to run: a workflow run whose
 // cleanup this product could not finish, and whose "after" hooks may
 // therefore never have run.
@@ -3391,6 +3411,23 @@ type WorkflowRecoveryHold struct {
 // which is the ordinary state.
 type WorkflowRecoveryResponse struct {
 	Holds []WorkflowRecoveryHold `json:"holds"`
+}
+
+// WorkflowRefusedScript is one hook script that refused a workflow configuration write, and
+// why. Only the BLOCKING half is here -- a parse error, or the
+// error-severity findings -- because a refusal that also listed the
+// warnings would read as though they had refused it.
+type WorkflowRefusedScript struct {
+	BackupSetID       string                `json:"backup_set_id"`
+	Dir               string                `json:"dir"`
+	Findings          []WorkflowLintFinding `json:"findings"`
+	ParseError        string                `json:"parse_error"`
+	ParseErrorCol     int                   `json:"parse_error_col"`
+	ParseErrorExcerpt WorkflowSourceExcerpt `json:"parse_error_excerpt"`
+	ParseErrorLine    int                   `json:"parse_error_line"`
+	Phase             string                `json:"phase"`
+	Scope             string                `json:"scope"`
+	ScriptName        string                `json:"script_name"`
 }
 
 // WorkflowRun is one workflow run: one backup set's pass, wrapped in the five-stage
@@ -3432,6 +3469,36 @@ type WorkflowRunnerSettings struct {
 	TokenFile  string `json:"token_file"`
 }
 
+// WorkflowScriptLint is what backupd's own shell verification established about one hook
+// script's exact bytes, without running any of them. Three states,
+// kept distinguishable on purpose: examined and parsed, examined and
+// refused (a parse error with its position), and NOT EXAMINED, which
+// is a script larger than the verification reads. A client that
+// folded the third into either of the others would report either a
+// pass nobody proved or a fault nobody found.
+type WorkflowScriptLint struct {
+	Examined          bool                  `json:"examined"`
+	Findings          []WorkflowLintFinding `json:"findings"`
+	NotExaminedReason string                `json:"not_examined_reason"`
+	ParseError        string                `json:"parse_error"`
+	ParseErrorCol     int                   `json:"parse_error_col"`
+	ParseErrorExcerpt WorkflowSourceExcerpt `json:"parse_error_excerpt"`
+	ParseErrorLine    int                   `json:"parse_error_line"`
+	Parsed            bool                  `json:"parsed"`
+}
+
+// WorkflowScriptRejectedResponse is the WORKFLOW_SCRIPT_REJECTED 409 body. It carries the blocking
+// scripts and their findings as structured fields, for the reason
+// CONFIG_REVISION_STALE carries the current revision as one: a
+// client that had to parse a position out of the message would be
+// parsing prose this contract explicitly does not promise to keep
+// stable. The message says the same thing in one string, for a
+// terminal.
+type WorkflowScriptRejectedResponse struct {
+	BlockingScripts []WorkflowRefusedScript `json:"blocking_scripts"`
+	Error           ErrorBody               `json:"error"`
+}
+
 // WorkflowSecretReference is where a workflow environment variable's value comes from, when it
 // is not a literal. It is a LOCATION and never a value, on every
 // surface and in both directions: exactly one of the three is set,
@@ -3470,6 +3537,30 @@ type WorkflowSettingsResponse struct {
 	Runner                  WorkflowRunnerSettings        `json:"runner"`
 	ScriptTimeoutConfigured bool                          `json:"script_timeout_configured"`
 	ScriptTimeoutSeconds    int64                         `json:"script_timeout_seconds"`
+}
+
+// WorkflowSourceExcerpt is A few of a hook script's own lines, carried beside a position that
+// names one of them: the reported line with one line either side. It
+// exists because a position on its own is a lookup somebody has to
+// perform on a machine they may not be on -- "BSH003 at 24:10" sends
+// an operator to a NAS over SSH to read one line. The lines come
+// from the bytes this validation READ AND HASHED rather than from a
+// later re-read, so they cannot disagree with the position beside
+// them. They are the script's own text and never a resolved secret:
+// nothing on the path that produces them resolves one.
+type WorkflowSourceExcerpt struct {
+	Lines []WorkflowSourceLine `json:"lines"`
+}
+
+// WorkflowSourceLine is one line of a hook script, as an editor would number it. The text
+// arrives with control characters removed and its length bounded, at
+// the point it is produced rather than at each surface that draws
+// it: a hook is arbitrary text and this text reaches a browser and a
+// terminal.
+type WorkflowSourceLine struct {
+	Number    int    `json:"number"`
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated"`
 }
 
 // WorkflowStage is one scope-and-phase pair that has a directory. A run executes five
@@ -3531,20 +3622,24 @@ type WorkflowStepLogRecord struct {
 }
 
 // WorkflowValidatedScript is one hook this backup set would run, as validation found it on
-// disk. Nothing here was executed: the only things validation ever
-// hands an interpreter are `bash -n`, which parses and never runs,
-// and this product's own fixed remote capability probe.
+// disk, with what backupd's own shell verification established about
+// its bytes. Nothing here was executed: the syntax verdict and the
+// findings come from parsing and walking the bytes in this process,
+// and the only things validation ever hands an interpreter are `bash
+// -n`, which parses and never runs, and this product's own fixed
+// remote capability probe.
 type WorkflowValidatedScript struct {
-	ExecutionConnectionRef string `json:"execution_connection_ref"`
-	Order                  int    `json:"order"`
-	Phase                  string `json:"phase"`
-	Scope                  string `json:"scope"`
-	ScriptName             string `json:"script_name"`
-	Sha256                 string `json:"sha256"`
-	SizeBytes              int64  `json:"size_bytes"`
-	StepID                 string `json:"step_id"`
-	Target                 string `json:"target"`
-	TimeoutMs              int64  `json:"timeout_ms"`
+	ExecutionConnectionRef string             `json:"execution_connection_ref"`
+	Lint                   WorkflowScriptLint `json:"lint"`
+	Order                  int                `json:"order"`
+	Phase                  string             `json:"phase"`
+	Scope                  string             `json:"scope"`
+	ScriptName             string             `json:"script_name"`
+	Sha256                 string             `json:"sha256"`
+	SizeBytes              int64              `json:"size_bytes"`
+	StepID                 string             `json:"step_id"`
+	Target                 string             `json:"target"`
+	TimeoutMs              int64              `json:"timeout_ms"`
 }
 
 // WorkflowValidationResponse is everything this product can establish about one backup set's hooks
@@ -3715,12 +3810,18 @@ var SchemaTypes = map[string]any{
 	"WorkflowEnvironmentVariable":        WorkflowEnvironmentVariable{},
 	"WorkflowEnvironmentVariableRequest": WorkflowEnvironmentVariableRequest{},
 	"WorkflowFinding":                    WorkflowFinding{},
+	"WorkflowLintFinding":                WorkflowLintFinding{},
 	"WorkflowRecoveryHold":               WorkflowRecoveryHold{},
 	"WorkflowRecoveryResponse":           WorkflowRecoveryResponse{},
+	"WorkflowRefusedScript":              WorkflowRefusedScript{},
 	"WorkflowRun":                        WorkflowRun{},
 	"WorkflowRunnerSettings":             WorkflowRunnerSettings{},
+	"WorkflowScriptLint":                 WorkflowScriptLint{},
+	"WorkflowScriptRejectedResponse":     WorkflowScriptRejectedResponse{},
 	"WorkflowSecretReference":            WorkflowSecretReference{},
 	"WorkflowSettingsResponse":           WorkflowSettingsResponse{},
+	"WorkflowSourceExcerpt":              WorkflowSourceExcerpt{},
+	"WorkflowSourceLine":                 WorkflowSourceLine{},
 	"WorkflowStage":                      WorkflowStage{},
 	"WorkflowStep":                       WorkflowStep{},
 	"WorkflowStepLogPage":                WorkflowStepLogPage{},

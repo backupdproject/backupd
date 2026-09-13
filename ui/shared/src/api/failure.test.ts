@@ -17,7 +17,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { BackupdError, RequestFailure } from "./contracts";
-import { asApiError, describeFailure } from "./failure";
+import { asApiError, describeFailure, workflowScriptRefusalOf } from "./failure";
 
 describe("describeFailure keeps what the exception said", () => {
   it("names a body it could not read, rather than substituting a fixed sentence", () => {
@@ -205,5 +205,68 @@ describe("provenance decides which hop a failure names", () => {
 
     expect(failure.message).toBe("something nobody typed");
     expect(failure.message).not.toMatch(/could not reach the Backupd service/i);
+  });
+});
+
+/**
+ * Issue #906's 409, read back off the refusal.
+ *
+ * The reason this is a function and not `e.api.blockingScripts` at each
+ * call site: a caller that reached for the field would get a list on any
+ * refusal that happened to carry one, and the surfaces reading it say
+ * "this workflow configuration was not saved". Only the
+ * WORKFLOW_SCRIPT_REJECTED code means that.
+ */
+describe("workflowScriptRefusalOf", () => {
+  const BLOCKING = [
+    {
+      scriptName: "10-quiesce.remote.sh",
+      dir: "/srv/hooks/before",
+      scope: "set",
+      phase: "before",
+      parseError: "unexpected EOF",
+      parseErrorLine: 18,
+      parseErrorCol: 24,
+      parseErrorExcerpt: { lines: [] },
+      findings: []
+    }
+  ];
+
+  it("answers the blocking scripts a script refusal carried", () => {
+    const refusal = new BackupdError({
+      code: "WORKFLOW_SCRIPT_REJECTED",
+      message: "this configuration was not saved",
+      blockingScripts: BLOCKING
+    });
+
+    expect(workflowScriptRefusalOf(refusal)).toEqual(BLOCKING);
+  });
+
+  it("answers an empty list for a script refusal that carried none, so the caller can fall back", () => {
+    // An engine older than the structured field. The caller renders the
+    // service's own sentence instead, which names the same scripts.
+    const refusal = new BackupdError({
+      code: "WORKFLOW_SCRIPT_REJECTED",
+      message: "10-quiesce.remote.sh does not parse at 18:24"
+    });
+
+    expect(workflowScriptRefusalOf(refusal)).toEqual([]);
+    expect(describeFailure(refusal, "not saved").message).toContain("does not parse at 18:24");
+  });
+
+  it("answers an empty list for every other failure, including one carrying a list", () => {
+    // The guard that matters: a different refusal is not a save the shell
+    // rules refused, whatever else is on the envelope.
+    expect(
+      workflowScriptRefusalOf(
+        new BackupdError({ code: "CONFIG_REVISION_STALE", message: "stale", blockingScripts: BLOCKING })
+      )
+    ).toEqual([]);
+    expect(
+      workflowScriptRefusalOf(
+        new RequestFailure({ kind: "no-response", path: "/settings/workflow", cause: new TypeError("x") })
+      )
+    ).toEqual([]);
+    expect(workflowScriptRefusalOf(new TypeError("not a refusal at all"))).toEqual([]);
   });
 });

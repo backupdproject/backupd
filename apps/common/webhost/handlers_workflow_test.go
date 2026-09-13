@@ -1070,3 +1070,131 @@ func TestSubmitRunCycle_RefusesABypassThatBelongsToAPerSetRun(t *testing.T) {
 		t.Errorf("the refusal does not name the field that belongs to another action: %s", rec.Body.String())
 	}
 }
+
+// The save gate on the wire (#906): a write refused by a hook script
+// answers 409 with its own code AND with the blocking findings as
+// structured fields.
+//
+// The fields are the assertion rather than the message, because they are
+// the reason this body exists: a client that had to parse "at 4:1" out of
+// prose would be parsing a string this package's own documentation
+// describes as free to change without notice.
+func TestUpdateWorkflowSettings_RefusedByAHookScriptCarriesTheBlockingFindings(t *testing.T) {
+	router, backend := workflowRouter(t)
+	workflowOf(backend).errOnWrite = &service.WorkflowScriptRefusal{
+		Scripts: []service.WorkflowRefusedScript{
+			{
+				ScriptName: "10-quiesce.local.sh", Dir: "global.before.d",
+				Scope: "global", Phase: "before",
+				ParseError: "`if` statement must end with `fi`", ParseErrorLine: 4, ParseErrorCol: 1,
+			},
+			{
+				ScriptName: "90-clean.local.sh", Dir: "global.before.d",
+				Scope: "global", Phase: "before",
+				Findings: []service.WorkflowLintFinding{{
+					Code: "BSH003", Severity: "error", Line: 2, Col: 8,
+					Message: "this recursive, forced delete targets /tmp whenever the expansion in it is empty",
+				}},
+			},
+		},
+	}
+
+	rec := workflowRequest(t, router, http.MethodPatch, "/api/v1/settings/workflow", `{"before_dir":"global.before.d"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body: %s", rec.Code, rec.Body.String())
+	}
+	if code := errorCodeOf(t, rec); code != "WORKFLOW_SCRIPT_REJECTED" {
+		t.Errorf("code = %q, want WORKFLOW_SCRIPT_REJECTED", code)
+	}
+
+	var body workflowScriptRejectedResponse
+	decodeBody(t, rec, &body)
+
+	if len(body.BlockingScripts) != 2 {
+		t.Fatalf("blocking_scripts = %+v, want both refused scripts", body.BlockingScripts)
+	}
+
+	unparseable := body.BlockingScripts[0]
+	if unparseable.ScriptName != "10-quiesce.local.sh" || unparseable.Dir != "global.before.d" {
+		t.Errorf("the first blocking script is %+v, want 10-quiesce.local.sh in global.before.d", unparseable)
+	}
+	if unparseable.ParseErrorLine != 4 || unparseable.ParseErrorCol != 1 || unparseable.ParseError == "" {
+		t.Errorf("the parse fault lost its position: %+v", unparseable)
+	}
+
+	refused := body.BlockingScripts[1]
+	if len(refused.Findings) != 1 {
+		t.Fatalf("findings = %+v, want the one blocking finding", refused.Findings)
+	}
+	if f := refused.Findings[0]; f.Code != "BSH003" || f.Severity != "error" || f.Line != 2 || f.Col != 8 {
+		t.Errorf("finding = %+v, want BSH003 error at 2:8", f)
+	}
+	if refused.Findings[0].Message == "" {
+		t.Error("the blocking finding carries no message, so nothing tells an operator what to write instead")
+	}
+}
+
+// The per-script verification reaches the wire on the validation read,
+// including the "not examined" state, which must never arrive as a pass.
+func TestGetBackupSetWorkflowValidation_CarriesEachScriptsLintFindings(t *testing.T) {
+	router, backend := workflowRouter(t)
+	workflowOf(backend).validation = service.WorkflowValidation{
+		ValidForBackup: true, WorkflowValid: false, Configured: true, Root: "/workflows",
+		Scripts: []service.WorkflowValidatedScript{
+			{
+				StepID: "s1", Order: 1, ScriptName: "10-quiesce.local.sh", Scope: "global", Phase: "before", Target: "local",
+				Lint: service.WorkflowScriptLint{
+					Examined: true, Parsed: true,
+					Findings: []service.WorkflowLintFinding{
+						{Code: "BSH003", Severity: "error", Line: 2, Col: 8, Message: "a recursive, forced delete of a root-level path"},
+						{Code: "BSH002", Severity: "warning", Line: 5, Col: 1, Message: "this cd does not check whether it worked"},
+					},
+				},
+			},
+			{
+				StepID: "s2", Order: 2, ScriptName: "20-dump.remote.sh", Scope: "set", Phase: "before", Target: "remote",
+				Lint: service.WorkflowScriptLint{
+					Examined:          false,
+					NotExaminedReason: "not examined: 20-dump.remote.sh is 2097153 bytes and this check reads at most 1048576",
+				},
+			},
+		},
+	}
+
+	rec := workflowRequest(t, router, http.MethodGet, "/api/v1/backup-sets/api-server/var-backups/workflow/validation", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+
+	var body workflowValidationResponse
+	decodeBody(t, rec, &body)
+
+	if len(body.Scripts) != 2 {
+		t.Fatalf("scripts = %+v, want both", body.Scripts)
+	}
+
+	lint := body.Scripts[0].Lint
+	if !lint.Examined || !lint.Parsed {
+		t.Errorf("the first script's lint = %+v, want examined and parsed", lint)
+	}
+	if len(lint.Findings) != 2 {
+		t.Fatalf("findings = %+v, want both severities, not only the blocking one", lint.Findings)
+	}
+	if lint.Findings[0].Code != "BSH003" || lint.Findings[0].Line != 2 || lint.Findings[0].Col != 8 {
+		t.Errorf("the error finding lost its identity or position: %+v", lint.Findings[0])
+	}
+	if lint.Findings[1].Severity != "warning" {
+		t.Errorf("the non-blocking finding was dropped or re-graded: %+v", lint.Findings[1])
+	}
+
+	unexamined := body.Scripts[1].Lint
+	if unexamined.Examined || unexamined.Parsed {
+		t.Errorf("a script nobody examined came back as examined or parsed: %+v", unexamined)
+	}
+	if unexamined.NotExaminedReason == "" {
+		t.Error("a not-examined script carries no reason, which is the one output that would mislead")
+	}
+	if unexamined.Findings == nil {
+		t.Error("findings serialised as null rather than [], which is two shapes for a client to render")
+	}
+}

@@ -4,6 +4,87 @@
 
 ### Added
 
+- **A hook script that does not pass verification cannot be saved** (EPIC L,
+  #906, over #813's validation surface and #814's Workflow tab). Hook scripts
+  are now parsed and statically checked, and a passing verdict is a
+  PRECONDITION OF SAVING a workflow configuration rather than something an
+  operator finds out at 2am from a backup that quiesced a database and then
+  refused to continue.
+
+  **The syntax verdict no longer needs a shell.** It comes from a shell parser
+  linked into this product (`mvdan.cc/sh`), so it arrives with a LINE AND
+  COLUMN and it arrives on a deployment whose Host Workflow Runner socket is
+  gone and whose source host is unreachable — neither of which a `bash -n` on
+  the far side of a connection can manage, and both of which are the state
+  somebody is in when they are fixing a hook. The runner's and the far side's
+  `bash -n` are still asked, and still report under the same two checks,
+  because they answer the other half: whether the executor that will run the
+  script exists, answers, and accepts it.
+
+  **Six rules, this product's own, deliberately few.** `BSH001` an unquoted
+  expansion in a command argument; `BSH002` a `cd` whose failure nothing
+  checks, so the next line operates on the wrong tree; `BSH003` an `rm -rf`
+  that becomes a recursive delete of a root-level path the day a variable is
+  unset; `BSH004` `set -e` with a pipeline and no `pipefail`, which is a
+  truncated dump that reports success; `BSH005` an unquoted operand in
+  `[ ... ]`, which is a syntax error on exactly the empty value the condition
+  was written to handle; `BSH006` a missing `#!` line. Each one is narrowed
+  until it fires on shapes that are wrong rather than shapes that are unusual,
+  and each carries a message saying what to write instead. These are backupd's
+  rules and not ShellCheck's: ShellCheck is GPL-3.0, this product is
+  Apache-2.0, and a tool that cannot be shipped is not a tool a save gate can
+  depend on. It is not a general shell linter and does not claim to be.
+
+  **The threshold is documented and narrow.** A parse error or an
+  `error`-severity finding refuses the save, on `PATCH /settings/workflow`,
+  on `PATCH /backup-sets/{source}/{set}/workflow` and on `settings workflow
+  patch` and `backup-set workflow patch` alike, naming the script, its stage
+  directory and each blocking finding with its position. `warning`, `info` and
+  `style` are reported and never block — a gate that refused a warning would
+  be a gate operators work around by not using these surfaces. The refusal is
+  a 409 `WORKFLOW_SCRIPT_REJECTED` whose body carries the blocking scripts as
+  structured fields, so a client draws the position rather than parsing it out
+  of prose.
+
+  **A hostile hook cannot take the process with it.** The shell parser is
+  recursive descent with no depth limit of its own, and a stack overflow in
+  Go is fatal rather than recoverable, so the nesting depth is MEASURED by a
+  linear pre-scan before the parser is handed anything: a megabyte of `$(`
+  -- a legal script at the default size limit, and reachable from both a
+  configuration write and an authenticated read -- is reported as not
+  examined instead of killing the daemon.
+
+  **Every finding carries the script's own line.** The reported line with one
+  either side, with control characters removed and its length bounded at the
+  point it is produced, taken from the bytes the validation read and hashed
+  so the text cannot disagree with the position beside it. A position without
+  the line it points at is an errand on a machine the operator may not be
+  on.
+
+  **A root change is verified against every set.** A stage directory is a
+  name inside `workflows.root`, so moving the root re-points every backup
+  set's hooks at scripts nobody has verified without touching a line of any
+  set's own block; that one field therefore verifies the global stages AND
+  every set-owned one, and the refusal says whose set it is about.
+
+  **One verdict per script per check.** The in-process parser and the
+  executor's `bash -n` both answer the same two check ids, and the report
+  collapses them into a single row at the worst severity rather than
+  printing a pass beside a refusal about the same bytes.
+
+  **What it refuses on is what it ESTABLISHED.** A stage directory nobody has
+  created, a script larger than the verification reads, a hook tree the run
+  layer would refuse: none of those refuse a save, because a save is how an
+  operator corrects a broken deployment and a gate that fired when it could
+  not look would make the deployment unconfigurable exactly when it needs
+  configuring. Every one of them is reported, loudly, by `validate workflow`
+  and by the Workflow tab, and "not examined" is never drawn as a pass.
+
+  **Nothing executes a script body**, which is the rule the whole validation
+  surface is built on: the bytes are parsed and walked in this process, and
+  the report carries the script's own positions and text and never a resolved
+  secret.
+
 - **Workflow hooks have a web UI: what ran, what it printed, and the hold
   that stops a set running** (EPIC L, #814, over #813's API). Five surfaces,
   all of them inside the existing shell and its design system: a workflow-run

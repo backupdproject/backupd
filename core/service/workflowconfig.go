@@ -288,7 +288,7 @@ func workflowSettingsOf(cfg *config.Config) WorkflowSettings {
 
 // UpdateWorkflowSettings patches the deployment-wide block and
 // hot-reloads this service.
-func (b *BackupService) UpdateWorkflowSettings(_ context.Context, req UpdateWorkflowSettingsRequest) (WorkflowSettings, error) {
+func (b *BackupService) UpdateWorkflowSettings(ctx context.Context, req UpdateWorkflowSettingsRequest) (WorkflowSettings, error) {
 	if b.configPath == "" {
 		return WorkflowSettings{}, ErrConfigNotFileBacked
 	}
@@ -324,6 +324,26 @@ func (b *BackupService) UpdateWorkflowSettings(_ context.Context, req UpdateWork
 	}
 	if req.MaxScriptSizeBytes != nil {
 		w.MaxScriptSizeBytes = *req.MaxScriptSizeBytes
+	}
+
+	// #906's gate, and it is deliberately the LAST thing before the
+	// write: it runs against the configuration this patch produced, so
+	// the scripts it verifies are the ones the saved file would point
+	// at. Verifying the ones the CURRENT file points at would check the
+	// directory the operator is moving away from.
+	//
+	// A patch that moves the ROOT reaches every set, and that is review
+	// BLOCKER 2 rather than a nicety: a stage directory is a NAME inside
+	// the root, so moving the root re-points every set's stages at
+	// scripts nobody has verified, without touching a single line of any
+	// set's own block. The narrow scope is right for every other field
+	// and wrong for that one.
+	stages := globalWorkflowStages(cfg)
+	if req.Root != nil {
+		stages = everyWorkflowStage(cfg)
+	}
+	if err := refuseUnverifiableScripts(ctx, cfg, stages); err != nil {
+		return WorkflowSettings{}, err
 	}
 
 	// The shared encode / validate / write / hot-reload tail. Every rule
@@ -393,7 +413,7 @@ func backupSetWorkflowOf(cfg *config.Config, bs config.BackupSet) BackupSetWorkf
 // pinned timeout copied from today's global value -- config.SetWorkflow's
 // own doc argues that inheritance must follow the deployment rather than
 // snapshot it.
-func (b *BackupService) UpdateBackupSetWorkflow(_ context.Context, id string, req UpdateBackupSetWorkflowRequest) (BackupSetWorkflow, error) {
+func (b *BackupService) UpdateBackupSetWorkflow(ctx context.Context, id string, req UpdateBackupSetWorkflowRequest) (BackupSetWorkflow, error) {
 	if b.configPath == "" {
 		return BackupSetWorkflow{}, ErrConfigNotFileBacked
 	}
@@ -443,6 +463,15 @@ func (b *BackupService) UpdateBackupSetWorkflow(_ context.Context, id string, re
 	// own workflow configuration.
 	if emptySetWorkflow(*bs.Workflow) {
 		bs.Workflow = nil
+	}
+
+	// #906's gate, against the stages this patch leaves the set with.
+	// After the empty-block removal above, so a patch that CLEARS a
+	// broken stage directory is exactly the save this must not refuse:
+	// there are no stages left to verify, and clearing one is how an
+	// operator gets out of this state.
+	if err := refuseUnverifiableScripts(ctx, cfg, setWorkflowStages(id, bs)); err != nil {
+		return BackupSetWorkflow{}, err
 	}
 
 	if err := b.persistConfig(cfg); err != nil {

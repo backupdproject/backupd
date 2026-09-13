@@ -119,7 +119,9 @@ import type {
   WireWorkflowFinding,
   WireWorkflowRecoveryResponse,
   WireWorkflowRun,
+  WireWorkflowScriptLint,
   WireWorkflowSettingsResponse,
+  WireWorkflowSourceExcerpt,
   WireWorkflowStage,
   WireWorkflowStep,
   WireWorkflowStepLogPage,
@@ -165,8 +167,11 @@ import type {
   WorkflowRun,
   WorkflowRunState,
   WorkflowScope,
+  WorkflowScriptLint,
   WorkflowSettings,
   WorkflowSettingsPatch,
+  WorkflowSourceExcerpt,
+  WorkflowSourceLine,
   WorkflowStage,
   WorkflowStatus,
   WorkflowStepLogPage,
@@ -2606,6 +2611,84 @@ function fromWireFinding(f: WireWorkflowFinding): WorkflowFinding {
   };
 }
 
+/**
+ * One source excerpt (#906), read the way every other field on this path
+ * is read: defensively, and never throwing.
+ *
+ * An excerpt is decoration on a finding an operator has already been
+ * shown. So the failure to avoid here is not a missing excerpt, which
+ * costs a few lines of context, but an exception raised while decoding
+ * one — that would turn a readable findings panel into "this page could
+ * not read the answer" over a field nothing depends on. Hence: a missing
+ * or non-object excerpt is an empty one, a `lines` that is not an array
+ * is an empty one, and an entry inside it that is not an object is
+ * dropped.
+ *
+ * A line whose number is not a positive integer is dropped rather than
+ * drawn with a 0 in the gutter, for the same reason the parse-error
+ * position below drops a zero: line 0 is not a place in a file, and a
+ * gutter claiming it is would put the caret-matching below onto a line
+ * that does not exist.
+ */
+function fromWireExcerpt(excerpt: WireWorkflowSourceExcerpt | undefined): WorkflowSourceExcerpt {
+  const raw = excerpt?.lines;
+  if (!Array.isArray(raw)) return { lines: [] };
+  const lines: WorkflowSourceLine[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const number = entry.number;
+    if (typeof number !== "number" || !Number.isFinite(number) || number <= 0) continue;
+    lines.push({ number, text: entry.text ?? "", truncated: entry.truncated === true });
+  }
+  return { lines };
+}
+
+/**
+ * One script's shell-verification result (#906).
+ *
+ * Every default here is the conservative direction, and each one is a
+ * claim this build must not make on a field it did not receive:
+ *
+ *   - `examined` and `parsed` default FALSE. An absent `examined` reads
+ *     as "nothing looked at this", which renders as "not examined" with
+ *     no reason rather than as a pass; an absent `parsed` reads as "this
+ *     build was not told it parses".
+ *   - the findings default to an EMPTY list, which is honest because the
+ *     list is only ever drawn beside the two booleans above: an
+ *     unexamined script with no findings renders as unexamined, not as
+ *     clean.
+ *   - a severity this build cannot read becomes "warning", exactly as
+ *     fromWireFinding does it and for the same reason — a finding whose
+ *     severity is unreadable has not been established as a mere note.
+ *     It deliberately does not become "error": an error is what refuses
+ *     a save, and inventing one would tell an operator their
+ *     configuration cannot be written when the service would write it.
+ *   - a position of 0 is dropped to undefined. Zero is not a place in a
+ *     file, and "line 0, column 0" is a link no editor can follow.
+ */
+function fromWireScriptLint(lint: WireWorkflowScriptLint | undefined): WorkflowScriptLint {
+  return {
+    examined: lint?.examined === true,
+    notExaminedReason: lint?.not_examined_reason || undefined,
+    parsed: lint?.parsed === true,
+    parseError: lint?.parse_error || undefined,
+    parseErrorLine: lint?.parse_error_line || undefined,
+    parseErrorCol: lint?.parse_error_col || undefined,
+    parseErrorExcerpt: fromWireExcerpt(lint?.parse_error_excerpt),
+    findings: (lint?.findings ?? []).map((f) => ({
+      code: f.code ?? "",
+      severity:
+        f.severity === "error" || f.severity === "info" || f.severity === "style"
+          ? f.severity
+          : "warning",
+      line: f.line ?? 0,
+      col: f.col ?? 0,
+      message: f.message ?? "",
+      excerpt: fromWireExcerpt(f.excerpt)
+    }))
+  };
+}
+
 function fromWireValidatedScript(s: WireWorkflowValidatedScript): WorkflowValidatedScript {
   return {
     stepId: s.step_id ?? "",
@@ -2617,7 +2700,8 @@ function fromWireValidatedScript(s: WireWorkflowValidatedScript): WorkflowValida
     executionConnectionRef: s.execution_connection_ref || undefined,
     sha256: s.sha256 ?? "",
     sizeBytes: s.size_bytes ?? 0,
-    timeoutMs: s.timeout_ms ?? 0
+    timeoutMs: s.timeout_ms ?? 0,
+    lint: fromWireScriptLint(s.lint)
   };
 }
 

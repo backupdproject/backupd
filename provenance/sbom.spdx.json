@@ -2796,6 +2796,29 @@
       ]
     },
     {
+      "SPDXID": "SPDXRef-Package-go-mvdan.cc-sh-v3-v3.14.1",
+      "name": "mvdan.cc/sh/v3",
+      "versionInfo": "v3.14.1",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/mvdan.cc/sh/v3@v3.14.1"
+        }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "ce63850f77649f00d1394045e2794ffb09a5596beabac51c9548edd958845d7c"
+        }
+      ]
+    },
+    {
       "SPDXID": "SPDXRef-Package-go-sigs.k8s.io-yaml-v1.6.0",
       "name": "sigs.k8s.io/yaml",
       "versionInfo": "v1.6.0",
@@ -3577,6 +3600,11 @@
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
       "relatedSpdxElement": "SPDXRef-Package-go-moul.io-http2curl-v2-v2.3.0"
+    },
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Package-go-mvdan.cc-sh-v3-v3.14.1"
     },
     {
       "spdxElementId": "SPDXRef-DOCUMENT",

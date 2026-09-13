@@ -1861,7 +1861,31 @@
   },
   "workflow.set.validate": {
     "label": "Check this set's hooks",
-    "html": "Reads every script, hashes it and parses it with <code>bash -n</code>, which never runs it. Read on demand rather than on a timer, because it opens a connection to the source host and to the Host Workflow Runner."
+    "html": "Reads every script, hashes it and verifies its shell <strong>in this process</strong> with a Go shell parser, which never runs it. Read on demand rather than on a timer, because it opens a connection to the source host and to the Host Workflow Runner, where the executor's own <code>bash -n</code> capability check happens."
+  },
+  "workflow.set.findings": {
+    "label": "Shell findings",
+    "html": "Backupd's own shell rules, carrying its own <code>BSH</code> codes. They are <strong>not</strong> a general shell linter: the set is deliberately small and conservative, and nothing in a script was executed to produce them. A script that does not parse, or a finding at <strong>error</strong> severity, refuses a save of this workflow configuration; a warning, an info and a style finding are reported and save fine."
+  },
+  "workflow.set.finding-severity": {
+    "label": "This script's findings",
+    "html": "What the shell verification made of this one script. <strong>Not examined</strong> is never a pass — nothing read those bytes. <strong>Does not parse</strong> means the file is not a shell program, so nothing in it would run. Otherwise the worst severity present is shown, with a count of the findings it does not account for: <em>1 error, 4 more</em>. Select it to read every finding with its line, its column and the source it is about."
+  },
+  "workflow.source-excerpt": {
+    "label": "Source excerpt",
+    "html": "The script's own line, with one either side and a caret under the column the rule fired at. It is the text this verification <strong>read and hashed</strong>, not a later re-read, so it cannot disagree with the position beside it. Inert text on the surface the run terminal uses, never an editor: nothing in this product writes somebody's hook. A line longer than the excerpt carries is cut and says so."
+  },
+  "workflow.source-truncated": {
+    "label": "Line cut here",
+    "html": "This line is longer than the excerpt carries, so it was cut where the <code>…</code> is rather than shown as though that were the end of it. The rest of the line is in the file; nothing in this product changed it."
+  },
+  "workflow.set.save-refused": {
+    "label": "This set's configuration was not saved",
+    "html": "A write that points a stage directory at a hook which does not parse, or which carries an <strong>error</strong>-severity finding, is refused whole: nothing was saved. Warnings, infos and style findings never refuse a save."
+  },
+  "workflow.settings.save-refused": {
+    "label": "This deployment's configuration was not saved",
+    "html": "A global stage directory holding a hook that does not parse, or one with an <strong>error</strong>-severity finding, refuses the write whole: nothing was saved. Global hooks wrap <strong>every</strong> backup set, which is why the same gate is stricter here in consequence than on one set."
   },
   "workflow.set.valid-for-backup": {
     "label": "Valid for backup",

@@ -31,7 +31,14 @@
  * bundle can request.
  */
 import { BackupdError, RequestFailure, toApiErrorCode } from "./contracts";
-import type { ApiError, FailureOrigin } from "./contracts";
+import type {
+  ApiError,
+  FailureOrigin,
+  WorkflowBlockingScript,
+  WorkflowLintFinding,
+  WorkflowSourceExcerpt,
+  WorkflowSourceLine
+} from "./contracts";
 import { debugEnvironment, debugLog, describeError } from "./debug";
 
 /**
@@ -238,8 +245,121 @@ export async function apiErrorFromResponse(
         ? undefined
         : (body?.correlationId as string | undefined)) ?? headerCorrelationId,
     status: res.status,
-    origin
+    origin,
+    // #906's 409. Decoded here and nowhere else, so a panel never parses
+    // a position back out of the sentence. Every field is read
+    // defensively and nothing here throws: this function already
+    // tolerates a bodyless 502 from serve-ui's ErrorHandler, and a
+    // refusal that crashed the client while decoding the refusal would
+    // be the worst failure on this path.
+    ...(Array.isArray(body?.blocking_scripts)
+      ? { blockingScripts: blockingScriptsOf(body.blocking_scripts) }
+      : {})
   };
+}
+
+/** One refused script per entry, with every field defaulted rather than
+ *  trusted. An entry that is not an object at all is dropped: a row with
+ *  no script name and no findings names nothing an operator could go and
+ *  fix, and a banner listing it would be inventing a refusal. */
+function blockingScriptsOf(raw: unknown[]): WorkflowBlockingScript[] {
+  const scripts: WorkflowBlockingScript[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const s = entry as Record<string, unknown>;
+    scripts.push({
+      scriptName: str(s.script_name),
+      dir: str(s.dir),
+      scope: str(s.scope),
+      phase: str(s.phase),
+      // Absent on a global stage, which belongs to no set. Present when
+      // the gate reached this script through a set's own stage — which a
+      // deployment-wide write can do without the operator having touched
+      // that set, because changing the root re-resolves every set's stage
+      // directories under it.
+      backupSetId:
+        typeof s.backup_set_id === "string" && s.backup_set_id !== "" ? s.backup_set_id : undefined,
+      parseError: typeof s.parse_error === "string" && s.parse_error !== "" ? s.parse_error : undefined,
+      parseErrorLine: num(s.parse_error_line),
+      parseErrorCol: num(s.parse_error_col),
+      parseErrorExcerpt: excerptOf(s.parse_error_excerpt),
+      findings: Array.isArray(s.findings) ? lintFindingsOf(s.findings) : []
+    });
+  }
+  return scripts;
+}
+
+/** The findings on a refused script. A severity this build cannot read
+ *  becomes "error", which is the opposite of the default
+ *  api/client.ts's own lint mapper takes and is right for the same
+ *  reason: these findings arrived ON A REFUSAL, so every one of them is
+ *  something the service treated as blocking. Drawing an unreadable one
+ *  as a note would describe a save that went through. */
+function lintFindingsOf(raw: unknown[]): WorkflowLintFinding[] {
+  const findings: WorkflowLintFinding[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const f = entry as Record<string, unknown>;
+    const severity = f.severity;
+    findings.push({
+      code: str(f.code),
+      severity:
+        severity === "warning" || severity === "info" || severity === "style" ? severity : "error",
+      line: num(f.line) ?? 0,
+      col: num(f.col) ?? 0,
+      message: str(f.message),
+      excerpt: excerptOf(f.excerpt)
+    });
+  }
+  return findings;
+}
+
+/**
+ * A refused script's source excerpt, off the wire and defended field by
+ * field.
+ *
+ * The rule this whole decoder is written to is that nothing on the path
+ * that reads a REFUSAL may throw: the operator is already being told
+ * their save did not happen, and an exception here would replace the
+ * reason with "this page could not read the answer". An excerpt is the
+ * most decorative field on that path, so it gets the strictest version
+ * of the rule — a non-object, a `lines` that is not an array, an entry
+ * that is not an object, and a line whose number is not a real position
+ * all reduce to "no excerpt" rather than to a failure.
+ *
+ * The text is NOT re-sanitized here, and that is deliberate rather than
+ * an omission: it is produced inert at the service, from the bytes the
+ * verification hashed, and a second sanitizer on this value would be a
+ * second thing to keep correct — with the one that mattered ending up
+ * being whichever of the two nobody was looking at. It is rendered as
+ * text, never as markup, which is the property that actually holds.
+ */
+function excerptOf(value: unknown): WorkflowSourceExcerpt {
+  if (value === null || typeof value !== "object") return { lines: [] };
+  const raw = (value as Record<string, unknown>).lines;
+  if (!Array.isArray(raw)) return { lines: [] };
+  const lines: WorkflowSourceLine[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const l = entry as Record<string, unknown>;
+    const number = num(l.number);
+    // A line numbered 0 is not a place in a file, exactly as a position
+    // of 0 is not: drawing it would put a caret under a line nobody can
+    // go and look at.
+    if (number === undefined || number <= 0) continue;
+    lines.push({ number, text: str(l.text), truncated: l.truncated === true });
+  }
+  return { lines };
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/** A number, or absent. NaN and a non-number are both absent rather than
+ *  zero: a position of 0 renders as a place no editor can go to. */
+function num(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 /** The refusal, thrown, with the debug line that joins it to the

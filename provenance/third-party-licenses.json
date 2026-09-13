@@ -1472,6 +1472,18 @@
       ]
     },
     {
+      "name": "mvdan.cc/sh/v3",
+      "version": "v3.14.1",
+      "ecosystem": "go",
+      "licenseId": "BSD-3-Clause",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "ce63850f77649f00d1394045e2794ffb09a5596beabac51c9548edd958845d7c",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "sigs.k8s.io/yaml",
       "version": "v1.6.0",
       "ecosystem": "go",

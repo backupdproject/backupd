@@ -2880,4 +2880,300 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
     // a check whose verdict is unreadable has not passed.
     expect(report.findings[0].severity).toBe("warning");
   });
+
+  /**
+   * Issue #906's shell verification, script by script.
+   *
+   * Every default asserted here is a claim this build must NOT make about
+   * a field the service did not send: a script whose lint block is absent
+   * has not been examined and has not parsed, and an empty findings list
+   * beside those two booleans is honest rather than clean.
+   */
+  it("maps a script's shell verification, and reads an absent block as 'nothing looked'", async () => {
+    const fetchMock = mockFetchOk({
+      backup_set_id: "src/set-1",
+      scripts: [
+        {
+          step_id: "s1",
+          script_name: "before/10-a.remote.sh",
+          lint: {
+            examined: true,
+            parsed: true,
+            findings: [
+              {
+                code: "BSH003",
+                severity: "error",
+                line: 12,
+                col: 8,
+                message: "root-level delete",
+                excerpt: {
+                  lines: [
+                    { number: 11, text: "# tidy up before the dump", truncated: false },
+                    { number: 12, text: "rm -rf \"$STAGING/var\"", truncated: true },
+                    // Line 0 is not a place in a file, and an entry that
+                    // is not an object at all is a later build or a
+                    // proxy: both are dropped rather than drawn, and
+                    // neither may throw while a findings panel is being
+                    // decoded.
+                    { number: 0, text: "not a line", truncated: false },
+                    "nonsense"
+                  ]
+                }
+              },
+              { code: "BSH000", severity: "unheard-of", line: 2, col: 1, message: "from a later build" }
+            ]
+          }
+        },
+        {
+          step_id: "s2",
+          script_name: "before/20-b.remote.sh",
+          lint: {
+            examined: false,
+            not_examined_reason: "larger than the verification reads",
+            parsed: false
+          }
+        },
+        { step_id: "s3", script_name: "before/30-c.remote.sh" }
+      ]
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const report = await httpApi.getBackupSetWorkflowValidation("src", "set-1");
+
+    expect(report.scripts[0].lint).toEqual({
+      examined: true,
+      parsed: true,
+      notExaminedReason: undefined,
+      parseError: undefined,
+      parseErrorLine: undefined,
+      parseErrorCol: undefined,
+      parseErrorExcerpt: { lines: [] },
+      findings: [
+        {
+          code: "BSH003",
+          severity: "error",
+          line: 12,
+          col: 8,
+          message: "root-level delete",
+          // The two unusable entries are gone and the two real lines
+          // survive, with `truncated` carried through: a surface that
+          // cut a line itself would be showing a line the file does not
+          // contain.
+          excerpt: {
+            lines: [
+              { number: 11, text: "# tidy up before the dump", truncated: false },
+              { number: 12, text: "rm -rf \"$STAGING/var\"", truncated: true }
+            ]
+          }
+        },
+        // A severity from a later build is a WARNING and never an error:
+        // an invented error would tell an operator their configuration
+        // cannot be saved when the service would save it.
+        {
+          code: "BSH000",
+          severity: "warning",
+          line: 2,
+          col: 1,
+          message: "from a later build",
+          // No excerpt on the wire is an EMPTY excerpt and never absent,
+          // so every reader can ask for `.lines.length` without a guard.
+          excerpt: { lines: [] }
+        }
+      ]
+    });
+    expect(report.scripts[1].lint.notExaminedReason).toBe("larger than the verification reads");
+    // The script with no block at all: not examined, not parsed, and an
+    // empty list that must never be drawn as clean.
+    expect(report.scripts[2].lint).toEqual({
+      examined: false,
+      parsed: false,
+      notExaminedReason: undefined,
+      parseError: undefined,
+      parseErrorLine: undefined,
+      parseErrorCol: undefined,
+      parseErrorExcerpt: { lines: [] },
+      findings: []
+    });
+  });
+
+  it("keeps a parse error's position, and drops a position of zero rather than pointing at line 0", async () => {
+    const fetchMock = mockFetchOk({
+      backup_set_id: "src/set-1",
+      scripts: [
+        {
+          step_id: "s1",
+          script_name: "a.sh",
+          lint: {
+            examined: true,
+            parsed: false,
+            parse_error: "unexpected EOF",
+            parse_error_line: 18,
+            parse_error_col: 24,
+            parse_error_excerpt: {
+              lines: [{ number: 18, text: "  mv \"$STAGE/a.yml\" \"$OUT", truncated: false }]
+            }
+          }
+        },
+        {
+          step_id: "s2",
+          script_name: "b.sh",
+          lint: { examined: true, parsed: false, parse_error: "refused", parse_error_line: 0, parse_error_col: 0 }
+        }
+      ]
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const report = await httpApi.getBackupSetWorkflowValidation("src", "set-1");
+
+    expect(report.scripts[0].lint.parseErrorLine).toBe(18);
+    expect(report.scripts[0].lint.parseErrorCol).toBe(24);
+    // Zero is not a place in a file: "line 0, column 0" is a position no
+    // editor can go to, so it is absent instead.
+    expect(report.scripts[1].lint.parseErrorLine).toBeUndefined();
+    expect(report.scripts[1].lint.parseErrorCol).toBeUndefined();
+    // The parser's own line, beside the position it named. It is carried
+    // on the lint block rather than on a finding because a file that does
+    // not parse has no findings: no rule ran on a tree that does not
+    // exist, so this is the only source an operator gets for it.
+    expect(report.scripts[0].lint.parseErrorExcerpt).toEqual({
+      lines: [{ number: 18, text: "  mv \"$STAGE/a.yml\" \"$OUT", truncated: false }]
+    });
+    // And an absent one is empty rather than undefined.
+    expect(report.scripts[1].lint.parseErrorExcerpt).toEqual({ lines: [] });
+  });
+
+  /**
+   * The 409 the save gate answers with, decoded onto the envelope.
+   *
+   * The whole reason it is a structured field: the message says the same
+   * thing in prose, and a client that parsed "at 12:8" back out of that
+   * sentence would break the day somebody rewords it.
+   */
+  it("carries a WORKFLOW_SCRIPT_REJECTED refusal's blocking scripts onto the thrown error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        headers: new Headers({ "x-correlation-id": "cid_wf409" }),
+        json: async () => ({
+          error: {
+            code: "WORKFLOW_SCRIPT_REJECTED",
+            message: "this configuration was not saved: 1 hook script it points at would not run"
+          },
+          blocking_scripts: [
+            {
+              script_name: "10-prune.local.sh",
+              dir: "/srv/hooks/before",
+              scope: "set",
+              phase: "before",
+              // Which set's stage this was reached through. A
+              // deployment-wide write re-resolves every set's stage
+              // directories, so a refusal can name a set the operator was
+              // not editing.
+              backup_set_id: "production/billing-mysql",
+              findings: [
+                {
+                  code: "BSH003",
+                  severity: "error",
+                  line: 12,
+                  col: 8,
+                  message: "root-level delete",
+                  excerpt: {
+                    lines: [{ number: 12, text: "rm -rf \"$STAGING/var\"", truncated: false }]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+
+    const refusal = await httpApi
+      .patchBackupSetWorkflow("src", "set-1", { beforeDir: "/srv/hooks/before" })
+      .then(() => null)
+      .catch((e: unknown) => e);
+
+    expect(refusal).toBeInstanceOf(BackupdError);
+    expect((refusal as BackupdError).api.code).toBe("WORKFLOW_SCRIPT_REJECTED");
+    expect((refusal as BackupdError).api.correlationId).toBe("cid_wf409");
+    expect((refusal as BackupdError).api.blockingScripts).toEqual([
+      {
+        scriptName: "10-prune.local.sh",
+        dir: "/srv/hooks/before",
+        scope: "set",
+        phase: "before",
+        backupSetId: "production/billing-mysql",
+        parseError: undefined,
+        parseErrorLine: undefined,
+        parseErrorCol: undefined,
+        parseErrorExcerpt: { lines: [] },
+        findings: [
+          {
+            code: "BSH003",
+            severity: "error",
+            line: 12,
+            col: 8,
+            message: "root-level delete",
+            excerpt: { lines: [{ number: 12, text: "rm -rf \"$STAGING/var\"", truncated: false }] }
+          }
+        ]
+      }
+    ]);
+  });
+
+  it("survives a malformed blocking list rather than crashing while reading a refusal", async () => {
+    // The worst failure on this path would be an exception thrown while
+    // decoding the refusal: the operator would get "this page could not
+    // read the answer" in place of a reason the service actually gave.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        headers: new Headers(),
+        json: async () => ({
+          error: { code: "WORKFLOW_SCRIPT_REJECTED", message: "not saved" },
+          blocking_scripts: [
+            null,
+            "nonsense",
+            // An excerpt that is a string, and a finding whose excerpt
+            // holds a number: the two shapes a hand-written proxy or a
+            // later build could produce, on the path where throwing would
+            // replace a refusal's reason with "this page could not read
+            // the answer".
+            {
+              parse_error_excerpt: "not an object",
+              findings: [42, { severity: "error", excerpt: { lines: [7] } }]
+            }
+          ]
+        })
+      })
+    );
+
+    const refusal = (await httpApi
+      .patchWorkflowSettings({ beforeDir: "/srv/hooks/before" })
+      .then(() => null)
+      .catch((e: unknown) => e)) as BackupdError;
+
+    expect(refusal.api.message).toBe("not saved");
+    // The one entry that was an object survives, with every field
+    // defaulted; the two that were not are dropped rather than rendered
+    // as a script named "".
+    expect(refusal.api.blockingScripts).toEqual([
+      {
+        scriptName: "",
+        dir: "",
+        scope: "",
+        phase: "",
+        backupSetId: undefined,
+        parseError: undefined,
+        parseErrorLine: undefined,
+        parseErrorCol: undefined,
+        parseErrorExcerpt: { lines: [] },
+        findings: [{ code: "", severity: "error", line: 0, col: 0, message: "", excerpt: { lines: [] } }]
+      }
+    ]);
+  });
 });

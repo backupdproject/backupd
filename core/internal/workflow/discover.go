@@ -283,6 +283,41 @@ type Script struct {
 	path string
 }
 
+// Read returns this script's bytes, held to exactly the custody rules a
+// capture holds them to, and without spooling anything.
+//
+// # Why this exists beside Snapshot, which also reads the bytes
+//
+// Because #906 made a passing static verification a PRECONDITION OF
+// SAVING a workflow, and a save is not a run. Snapshot is what a run
+// does: it mints a run id, takes a spool directory, writes a copy of
+// every script into it and hashes the plan, because a run has to be able
+// to re-execute the exact bytes it verified. A configuration write has
+// nothing to recover and no state directory guarantee, so asking it to
+// build a spool in order to look at a file would make `settings workflow
+// patch` fail on a deployment where the verification is precisely what
+// is wanted.
+//
+// What it must NOT be is a second reader. Every rule about what this
+// process may vouch for -- no symbolic link, no fifo, nothing another
+// account can write, an owner this process trusts, a bounded size, a
+// file that grew mid-read refused rather than truncated -- lives in
+// readScriptBytes, and this is that function with the spool left out. A
+// verification that accepted a file a run would refuse, or the reverse,
+// would be worse than none.
+//
+// maxSize is the deployment's configured bound
+// (config.EffectiveMaxScriptSize), so the answer about "is this file too
+// big" is the same answer a run would give.
+//
+// The bytes are returned and the PATH still is not: Script.path stays
+// unexported for the reason its own field doc gives, and a caller that
+// wants to look at a script gets what it contained when this process
+// read it rather than a path it could re-open later.
+func (s Script) Read(maxSize int64) ([]byte, error) {
+	return readScriptBytes(s.path, maxSize)
+}
+
 // Discover lists the scripts in one resolved stage directory, in the
 // documented order, or refuses the directory's contents.
 //

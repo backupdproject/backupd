@@ -214,18 +214,116 @@ type workflowFindingBody struct {
 	Target   string `json:"target"`
 }
 
+// workflowLintFindingBody is one thing backupd's own shell rules
+// reported about one hook script.
+//
+// This product's own checks and its own BSH codes, and NOT ShellCheck:
+// ShellCheck is GPL-3.0 and this product is Apache-2.0, so the analysis
+// is implemented against a Go shell parser's syntax tree rather than
+// shipped as somebody else's tool. Nothing here is a translation of a
+// core/service value: the code and the severity travel as the rule wrote
+// them, so an operator reading a code in a browser and grepping the same
+// code in `validate workflow` meets one vocabulary.
+type workflowLintFindingBody struct {
+	Code     string                    `json:"code"`
+	Col      int                       `json:"col"`
+	Excerpt  workflowSourceExcerptBody `json:"excerpt"`
+	Line     int                       `json:"line"`
+	Message  string                    `json:"message"`
+	Severity string                    `json:"severity"`
+}
+
+// workflowSourceExcerptBody is a few of a script's own lines, beside the
+// position that names one of them.
+//
+// The lines arrive already inert -- control characters removed, length
+// bounded -- from internal/workflowlint, over the bytes the validation
+// hashed. Sanitising here instead would be a sanitiser every other
+// surface that draws a script would need its own copy of, and a copy one
+// of them would be missing.
+type workflowSourceExcerptBody struct {
+	Lines []workflowSourceLineBody `json:"lines"`
+}
+
+// workflowSourceLineBody is one line of a hook script, numbered as an
+// editor numbers it.
+type workflowSourceLineBody struct {
+	Number    int    `json:"number"`
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated"`
+}
+
+// workflowScriptLintBody is what the verification established about one
+// script's bytes.
+//
+// The three states are kept apart on the wire for the reason
+// core/service keeps them apart: examined and parsed, examined and
+// refused, and NOT EXAMINED. A client that folded the third into either
+// of the others would render a pass nobody proved or a fault nobody
+// found.
+type workflowScriptLintBody struct {
+	Examined          bool                      `json:"examined"`
+	Findings          []workflowLintFindingBody `json:"findings"`
+	NotExaminedReason string                    `json:"not_examined_reason"`
+	ParseError        string                    `json:"parse_error"`
+	ParseErrorCol     int                       `json:"parse_error_col"`
+	ParseErrorExcerpt workflowSourceExcerptBody `json:"parse_error_excerpt"`
+	ParseErrorLine    int                       `json:"parse_error_line"`
+	Parsed            bool                      `json:"parsed"`
+}
+
 // workflowValidatedScriptBody is one discovered hook.
 type workflowValidatedScriptBody struct {
-	ExecutionConnectionRef string `json:"execution_connection_ref"`
-	Order                  int    `json:"order"`
-	Phase                  string `json:"phase"`
-	Scope                  string `json:"scope"`
-	ScriptName             string `json:"script_name"`
-	Sha256                 string `json:"sha256"`
-	SizeBytes              int64  `json:"size_bytes"`
-	StepID                 string `json:"step_id"`
-	Target                 string `json:"target"`
-	TimeoutMs              int64  `json:"timeout_ms"`
+	ExecutionConnectionRef string                 `json:"execution_connection_ref"`
+	Lint                   workflowScriptLintBody `json:"lint"`
+	Order                  int                    `json:"order"`
+	Phase                  string                 `json:"phase"`
+	Scope                  string                 `json:"scope"`
+	ScriptName             string                 `json:"script_name"`
+	Sha256                 string                 `json:"sha256"`
+	SizeBytes              int64                  `json:"size_bytes"`
+	StepID                 string                 `json:"step_id"`
+	Target                 string                 `json:"target"`
+	TimeoutMs              int64                  `json:"timeout_ms"`
+}
+
+// workflowRefusedScriptBody is one script that refused a workflow
+// configuration write.
+//
+// Only the BLOCKING half: a parse error, or the error-severity findings.
+// A refusal that also listed the warnings would read as though they had
+// refused it, and the whole point of the documented threshold is that
+// they do not.
+type workflowRefusedScriptBody struct {
+	BackupSetID       string                    `json:"backup_set_id"`
+	Dir               string                    `json:"dir"`
+	Findings          []workflowLintFindingBody `json:"findings"`
+	ParseError        string                    `json:"parse_error"`
+	ParseErrorCol     int                       `json:"parse_error_col"`
+	ParseErrorExcerpt workflowSourceExcerptBody `json:"parse_error_excerpt"`
+	ParseErrorLine    int                       `json:"parse_error_line"`
+	Phase             string                    `json:"phase"`
+	Scope             string                    `json:"scope"`
+	ScriptName        string                    `json:"script_name"`
+}
+
+// workflowScriptRejectedResponse is the WORKFLOW_SCRIPT_REJECTED 409
+// body.
+//
+// It extends the error envelope with the blocking scripts as structured
+// fields, and it is the second body in this package to do that
+// (configRevisionStaleResponse is the first) on the same argument that
+// one makes: the positions would otherwise exist only inside the
+// human-readable message, which this package's own documentation
+// describes as free to change without notice, so a client drawing "line
+// 4, column 1" beside the save it refused would be parsing prose nobody
+// promised to keep stable.
+type workflowScriptRejectedResponse struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+	BlockingScripts []workflowRefusedScriptBody `json:"blocking_scripts"`
 }
 
 // workflowValidationResponse is one set's whole report.
@@ -508,6 +606,18 @@ func (h *handlers) getBackupSetWorkflowValidation(w http.ResponseWriter, r *http
 // says nothing about err and records it under the response's correlation
 // id instead (refusal.go).
 func (h *handlers) writeWorkflowConfigError(w http.ResponseWriter, r *http.Request, err error, internal string) {
+	// #906's save gate, first, because it is the one refusal here that
+	// carries STRUCTURE. It is matched by TYPE rather than by sentinel --
+	// errors.As, not errors.Is -- since the fields are the answer: a
+	// client drawing which script and which line refused the save cannot
+	// get those out of a sentinel.
+	var rejected *service.WorkflowScriptRefusal
+	if errors.As(err, &rejected) {
+		h.writeWorkflowScriptRejected(w, r, rejected)
+
+		return
+	}
+
 	switch {
 	case errors.Is(err, service.ErrBackupSetNotFound):
 		h.logRefusal(r, http.StatusNotFound, "BACKUP_SET_NOT_FOUND",
@@ -724,6 +834,7 @@ func toWorkflowValidationBody(v service.WorkflowValidation) workflowValidationRe
 			SizeBytes:              s.Size,
 			TimeoutMs:              s.TimeoutMillis,
 			ExecutionConnectionRef: s.ExecutionConnectionRef,
+			Lint:                   toWorkflowScriptLintBody(s.Lint),
 		})
 	}
 	for _, f := range v.Findings {
@@ -739,4 +850,104 @@ func toWorkflowValidationBody(v service.WorkflowValidation) workflowValidationRe
 	}
 
 	return out
+}
+
+// toWorkflowScriptLintBody renders one script's verification onto the
+// wire.
+//
+// The slice is allocated at length zero rather than left nil, so a clean
+// script serialises "findings": [] instead of null: one shape for a
+// client to render rather than two, which is this package's rule for
+// every list it returns.
+func toWorkflowScriptLintBody(l service.WorkflowScriptLint) workflowScriptLintBody {
+	out := workflowScriptLintBody{
+		Examined:          l.Examined,
+		NotExaminedReason: l.NotExaminedReason,
+		Parsed:            l.Parsed,
+		ParseError:        l.ParseError,
+		ParseErrorLine:    l.ParseErrorLine,
+		ParseErrorCol:     l.ParseErrorCol,
+		Findings:          toWorkflowLintFindingBodies(l.Findings),
+		ParseErrorExcerpt: toWorkflowSourceExcerptBody(l.ParseErrorExcerpt),
+	}
+
+	return out
+}
+
+// toWorkflowSourceExcerptBody renders one excerpt.
+//
+// The slice is allocated at length zero rather than left nil, so a
+// finding with no excerpt serialises "lines": [] instead of null: one
+// shape for a client to render rather than two.
+func toWorkflowSourceExcerptBody(e service.WorkflowSourceExcerpt) workflowSourceExcerptBody {
+	out := workflowSourceExcerptBody{Lines: make([]workflowSourceLineBody, 0, len(e.Lines))}
+	for _, l := range e.Lines {
+		out.Lines = append(out.Lines, workflowSourceLineBody{
+			Number:    l.Number,
+			Text:      l.Text,
+			Truncated: l.Truncated,
+		})
+	}
+
+	return out
+}
+
+func toWorkflowLintFindingBodies(findings []service.WorkflowLintFinding) []workflowLintFindingBody {
+	out := make([]workflowLintFindingBody, 0, len(findings))
+	for _, f := range findings {
+		out = append(out, workflowLintFindingBody{
+			Code:     f.Code,
+			Severity: f.Severity,
+			Line:     f.Line,
+			Col:      f.Col,
+			Message:  f.Message,
+			Excerpt:  toWorkflowSourceExcerptBody(f.Excerpt),
+		})
+	}
+
+	return out
+}
+
+// writeWorkflowScriptRejected answers a refused workflow write with the
+// blocking scripts as fields.
+//
+// The MESSAGE is core/service's own multi-line sentence, echoed on that
+// package's guarantee about what it may contain: script basenames, stage
+// directories as configured, positions, and a rule's own prose. Nothing
+// on the path that produces it resolves a secret, and the structured
+// fields carry the same strings, so a client has no reason to parse the
+// message and a terminal has no reason to parse the fields.
+func (h *handlers) writeWorkflowScriptRejected(w http.ResponseWriter, r *http.Request, refusal *service.WorkflowScriptRefusal) {
+	body := workflowScriptRejectedResponse{
+		BlockingScripts: make([]workflowRefusedScriptBody, 0, len(refusal.Scripts)),
+	}
+	// The literal, and not apicontract's constant: the registry test
+	// that proves every code a handler emits is declared by the contract
+	// scans this package's source for exactly this spelling, and a code
+	// reached through an identifier would be a code that check cannot
+	// see (contract_test.go's assignedCode).
+	body.Error.Code = "WORKFLOW_SCRIPT_REJECTED"
+	body.Error.Message = refusal.Error()
+
+	for _, s := range refusal.Scripts {
+		body.BlockingScripts = append(body.BlockingScripts, workflowRefusedScriptBody{
+			ScriptName:        s.ScriptName,
+			Dir:               s.Dir,
+			Scope:             s.Scope,
+			Phase:             s.Phase,
+			BackupSetID:       s.BackupSetID,
+			ParseError:        s.ParseError,
+			ParseErrorLine:    s.ParseErrorLine,
+			ParseErrorCol:     s.ParseErrorCol,
+			ParseErrorExcerpt: toWorkflowSourceExcerptBody(s.ParseErrorExcerpt),
+			Findings:          toWorkflowLintFindingBodies(s.Findings),
+		})
+	}
+
+	// Logged as a refusal like every other 409 this file answers, so the
+	// correlation id an operator quotes names the same event in the
+	// process's own log.
+	h.logRefusal(r, http.StatusConflict, body.Error.Code, responseCorrelationID(w), refusal)
+
+	writeJSON(w, http.StatusConflict, body)
 }
