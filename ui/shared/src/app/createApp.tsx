@@ -7,7 +7,10 @@
  * threw is a provider itself, the platform provider comes before the API
  * one because auth is what decides whether anything under it should
  * render at all, and the router is innermost because it is the only part
- * that pages read on every navigation.
+ * that pages read on every navigation. The tooltip layer (#874) is
+ * inside the router and around everything routed, because it is a
+ * delegated listener over the whole application's markup and has to
+ * survive every navigation without re-installing itself.
  *
  * The API default is the one place the mock is chosen, keyed on the dev
  * build. A provider shell that wants something else passes it, which is
@@ -24,6 +27,7 @@ import { httpApi } from "@shared/api/client";
 import { createMockApi, scenarioFromLocation } from "@shared/api/mock";
 import type { BackupdApi } from "@shared/api/contracts";
 import type { PlatformBridge } from "@shared/types/platform";
+import { TooltipAutoAttach } from "@shared/tooltips/TooltipAutoAttach";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 /** The single mount path every provider shell calls. A provider supplies its
@@ -40,7 +44,9 @@ export function createApp(
         <PlatformProvider bridge={bridge}>
           <ApiProvider api={api}>
             <BrowserRouter>
-              <App />
+              <TooltipAutoAttach>
+                <App />
+              </TooltipAutoAttach>
             </BrowserRouter>
           </ApiProvider>
         </PlatformProvider>

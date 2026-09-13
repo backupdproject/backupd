@@ -40,6 +40,34 @@
  * naming an id that is not in the registry does not compile, which is the
  * only check that scales to the number of call sites #834 creates: there
  * is no run of the app, and no test sweep, that visits every tooltip.
+ *
+ * # The two doors, and which one to use (issue #874)
+ *
+ * `<InfoTooltip id="…">` is the TYPED door and the default. Use it
+ * wherever a component is being written: the id is checked, the wrapped
+ * control is described by the copy whether or not the pop-up is open, and
+ * the pop-up can be pinned and closed. An id it names cannot be deleted
+ * from this file without breaking the build, which is the property that
+ * keeps the registry honest.
+ *
+ * `data-tip="<id>"` is the RUN-TIME door (tooltips/TooltipAutoAttach.tsx,
+ * one delegated layer at the app root). Use it where the compiler cannot
+ * help anyway:
+ *
+ *   - the id is data — a health state, a backend kind, a route name —
+ *     and is only an id once the page has the value;
+ *   - the element is deep in dense markup (a table cell, a chip in a
+ *     row) where wrapping every one of them in a host is more JSX than
+ *     the explanation is worth;
+ *   - copy is being rolled out across a screen and the ids are landing
+ *     in this file as it goes.
+ *
+ * It is fail-silent by design: an id this registry does not define shows
+ * NOTHING. That is what the attribute buys and what it costs — nothing
+ * tells you the id was wrong, so an element that must be explained, and
+ * must stay explained, wants the typed host instead. The two never
+ * double up: the delegated layer leaves any element inside an
+ * `<InfoTooltip>` to its host.
  */
 import registry from "./tooltips.json";
 
