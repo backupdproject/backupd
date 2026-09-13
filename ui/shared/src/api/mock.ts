@@ -322,7 +322,13 @@ const SETS: BackupSet[] = [
 const PRISTINE_SETS: BackupSet[] = SETS.map((set) => ({
   ...set,
   includePatterns: [...set.includePatterns],
-  excludePatterns: [...set.excludePatterns]
+  excludePatterns: [...set.excludePatterns],
+  // The incremental block is copied too (issue #788), because
+  // updateBackupSet writes THROUGH it: a shared reference would mean the
+  // first test that saves a verification budget edits the pristine copy
+  // as well, and resetMockFixtures would restore the edit it was called
+  // to undo. Null stays null — an artifact set has no block to copy.
+  incremental: set.incremental === null ? null : { ...set.incremental }
 }));
 
 /**
@@ -337,13 +343,19 @@ const PRISTINE_SETS: BackupSet[] = SETS.map((set) => ({
  * absent.
  *
  * The clone is deep enough for what these fixtures hold: the arrays are
- * arrays of strings, so copying them is what stops a patch that replaces
- * includePatterns leaking into the pristine copy.
+ * arrays of strings and the incremental block is flat, so copying those
+ * three is what stops a patch that replaces includePatterns, or one that
+ * raises a verification level, leaking into the pristine copy.
  */
 export function resetMockFixtures(): void {
   SETS.length = 0;
   for (const set of PRISTINE_SETS) {
-    SETS.push({ ...set, includePatterns: [...set.includePatterns], excludePatterns: [...set.excludePatterns] });
+    SETS.push({
+      ...set,
+      includePatterns: [...set.includePatterns],
+      excludePatterns: [...set.excludePatterns],
+      incremental: set.incremental === null ? null : { ...set.incremental }
+    });
   }
 }
 
@@ -2553,6 +2565,29 @@ export function createMockApi(scenario: Scenario = "default"): BackupdApi {
         // override the set polls at whatever the deployment does.
         found.pollIntervalSeconds = patch.pollIntervalSeconds === 0 ? null : patch.pollIntervalSeconds;
         found.effectivePollIntervalSeconds = found.pollIntervalSeconds ?? 15 * 60;
+      }
+      // EPIC K's four editable incremental settings (issue #788),
+      // applied for the reason every field above is: a configuration
+      // card that sent the wrong field, or sent one it should have left
+      // alone, has to be visible in the dev server and in the browser
+      // suite rather than echoed back as though it had worked. An
+      // artifact set has no block to write them into and is left alone —
+      // the real service refuses that patch with
+      // BACKUP_SET_NOT_INCREMENTAL, and a mock that invented a block
+      // would make a page that sends one look correct.
+      if (found.incremental) {
+        const incremental = found.incremental;
+        if (patch.sourceConsistency !== undefined) incremental.sourceConsistency = patch.sourceConsistency;
+        if (patch.verificationLevel !== undefined) incremental.verificationLevel = patch.verificationLevel;
+        if (patch.verificationSamplePercent !== undefined) {
+          incremental.verificationSamplePercent = patch.verificationSamplePercent;
+        }
+        if (patch.verificationFullEverySeconds !== undefined) {
+          incremental.verificationFullEverySeconds = patch.verificationFullEverySeconds;
+        }
+        if (patch.verificationRestoreDrillEverySeconds !== undefined) {
+          incremental.verificationRestoreDrillEverySeconds = patch.verificationRestoreDrillEverySeconds;
+        }
       }
       return delay({ ...found });
     },

@@ -25,6 +25,28 @@
 import { StatusBadge } from "@shared/components/StatusBadge";
 import type { BackupEngine, SnapshotVerificationStatus, VerificationLevel } from "@shared/types/snapshot";
 
+/**
+ * The six things every backup set in one repository domain shares with
+ * every other set in it (`model.RepositoryBoundaries`).
+ *
+ * Six statements rather than one sentence about "a shared store", because
+ * the co-tenancy decision is made in two places — the wizard's domain step
+ * and the deployment's define-a-domain screen — and both of them have to
+ * make the same argument. An operator joining a domain is accepting all
+ * six; an operator isolating one is refusing all six. It is stated where
+ * the decision is made rather than in a help page, because joining a
+ * shared domain is the one configuration choice in this product whose
+ * consequences land on OTHER backup sets.
+ */
+export const DOMAIN_BOUNDARIES: readonly { title: string; detail: string }[] = [
+  { title: "One encryption key", detail: "whoever can open the store can read every set in it" },
+  { title: "One credential", detail: "a rotated passphrase changes access for all of them at once" },
+  { title: "One maintenance owner", detail: "compaction and reclamation run for the domain, not per set" },
+  { title: "One deduplication pool", detail: "content in common is stored once, which is the benefit" },
+  { title: "One corruption blast radius", detail: "damage to the store is damage to every set in it" },
+  { title: "One storage location", detail: "they fill the same disk or bucket, and its space is shared" }
+];
+
 /** The operator-facing name of each engine, and the sentence that says
  *  what choosing it means. Exported because the wizard, the per-set
  *  configuration page and the deployment overview all state it, and three
