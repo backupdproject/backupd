@@ -19,6 +19,14 @@ import { WireField } from "@shared/components/Definitions";
  * argument: every choice this product offers an operator is between
  * things with consequences, and a radio with a bare label is one they
  * will pick by guessing.
+ *
+ * `tip` is the registry id (#834) of what PICKING this option commits the
+ * configuration to, which is a different sentence from `detail`: the
+ * detail describes the option, the tooltip says what it does to
+ * everything else. It wraps the whole card the way `Toggle` does, so the
+ * pop-up is reachable by hover anywhere on the option rather than only
+ * over its radio — and so the copy lands on the <label> as a description
+ * instead of being read into the option's own name.
  */
 export function Choice({
   name,
@@ -29,6 +37,7 @@ export function Choice({
   defaultChecked,
   onChange,
   disabled,
+  tip,
   children
 }: {
   name: string;
@@ -41,10 +50,11 @@ export function Choice({
   defaultChecked?: boolean;
   onChange?(): void;
   disabled?: boolean;
+  tip?: TooltipId;
   children?: ReactNode;
 }) {
   const selected = checked ?? defaultChecked ?? false;
-  return (
+  const card = (
     <label
       style={{
         display: "flex",
@@ -79,6 +89,20 @@ export function Choice({
         {children}
       </span>
     </label>
+  );
+  // A one-cell grid, and both properties are load-bearing (measured in a
+  // browser, not assumed). These cards are grid items that stretch to the
+  // widest and tallest of their row; an interposed host has to hand that
+  // width and height straight through, and `.tooltip`'s own
+  // `align-items: center` would otherwise leave the card at its content
+  // size inside a full-size host — narrower than the card beside it and
+  // floating in the middle of its own row.
+  return tip ? (
+    <InfoTooltip id={tip} style={{ display: "grid", alignItems: "stretch" }}>
+      {card}
+    </InfoTooltip>
+  ) : (
+    card
   );
 }
 
