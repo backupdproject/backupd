@@ -5,12 +5,17 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/backupdproject/backupd/core/internal/backupengine"
@@ -608,6 +613,310 @@ func TestS3CredentialsAreNeverWrittenToTheStateDirectory(t *testing.T) {
 	}
 }
 
+// TestS3SecretsNeverReachTheLifecycleReports is the report-sink half of
+// FR-33 for a bucket repository, and it is the half this suite was
+// missing.
+//
+// The two leak tests above cover what an open repository SAYS about
+// itself (health, stats, a lookup that found nothing) and what it WRITES
+// DOWN (the state directory). Neither runs the operations an operator
+// actually asks for, and those are the ones that build a report out of a
+// live, authenticated, credential-bearing connection: a snapshot, a
+// verification, a restore and maintenance. A credential that reached one
+// of those would travel much further than a log line, because these are
+// the structs the API serialises, the journal records and the UI renders,
+// so each one is checked here and so is the error each one can return
+// while the credential is still in hand.
+//
+// Every surface is rendered three ways, because a leak one rendering
+// hides another shows: %+v is what a log line or a wrapped error does,
+// %#v reaches fields that a verb-specific rendering or a Stringer can
+// cover for, and encoding/json is what the API surface does with the
+// same value.
+func TestS3SecretsNeverReachTheLifecycleReports(t *testing.T) {
+	fixture := machines.Start(t).Medium(t)
+	ctx := context.Background()
+
+	loc := s3Location(t, fixture, bucketName(t, fixture), "production")
+	eng := kopia.New()
+
+	if err := eng.CreateRepository(ctx, loc); err != nil {
+		t.Fatalf("CreateRepository: %v", err)
+	}
+
+	rep, err := eng.OpenRepository(ctx, loc)
+	if err != nil {
+		t.Fatalf("OpenRepository: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := rep.Close(context.Background()); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	srcDir := filepath.Join(t.TempDir(), "source")
+	if err := os.MkdirAll(filepath.Join(srcDir, "runs"), 0o750); err != nil {
+		t.Fatalf("creating the source tree: %v", err)
+	}
+
+	for name, body := range map[string]string{
+		"index.txt":     "a file to snapshot, verify and restore\n",
+		"runs/db.dump":  "a second file, in a subdirectory\n",
+		"runs/notes.md": "a third, so a restore has a tree to walk\n",
+	} {
+		if err := os.WriteFile(filepath.Join(srcDir, filepath.FromSlash(name)), []byte(body), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+
+	src := backupengine.Source{Host: "nas-01", User: "backupd", Path: srcDir}
+
+	snap, err := rep.Snapshot(ctx, backupengine.SnapshotRequest{
+		Source:      src,
+		Description: "the report-sink row",
+		Tags: map[string]string{
+			backupengine.TagKeyBackupSet: "nas-01/reports",
+			backupengine.TagKeyDomain:    "production",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	verified, err := rep.Verify(ctx, snap.ID, backupengine.VerifyRequest{Level: model.LevelContentFull})
+	if err != nil {
+		t.Fatalf("Verify: %v (findings: %v)", err, verified.Errors)
+	}
+
+	restored, err := rep.Restore(ctx, snap.ID, backupengine.RestoreRequest{
+		TargetPath:    filepath.Join(t.TempDir(), "restored"),
+		SkipOwners:    true,
+		VerifyContent: true,
+	})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	if !restored.Complete {
+		t.Fatalf("Restore did not complete, so the report below is not the one an operator would be shown: %+v", restored)
+	}
+
+	quick, err := rep.Maintain(ctx, backupengine.MaintenanceQuick)
+	if err != nil {
+		t.Fatalf("quick Maintain: %v", err)
+	}
+
+	full, err := rep.Maintain(ctx, backupengine.MaintenanceFull)
+	if err != nil {
+		t.Fatalf("full Maintain: %v", err)
+	}
+
+	// The error paths, every one of them built while the credential is
+	// live: three refusals from the authenticated connection above, and
+	// one from an endpoint that has just rejected a signature made with a
+	// real-but-wrong secret, which is the moment the material is most
+	// available to a message.
+	_, verifyErr := rep.Verify(ctx, backupengine.SnapshotID("no-such-snapshot"), backupengine.VerifyRequest{Level: model.LevelContentFull})
+	if verifyErr == nil {
+		t.Fatal("Verify of a snapshot that was never written returned no error")
+	}
+
+	_, restoreErr := rep.Restore(ctx, snap.ID, backupengine.RestoreRequest{SkipOwners: true})
+	if restoreErr == nil {
+		t.Fatal("Restore with no destination returned no error")
+	}
+
+	_, snapshotErr := rep.Snapshot(ctx, backupengine.SnapshotRequest{
+		Source:      backupengine.Source{Host: "nas-01", User: "backupd", Path: filepath.Join(srcDir, "not-there")},
+		Description: "a source that is not on this host",
+	})
+	if snapshotErr == nil {
+		t.Fatal("Snapshot of a path that does not exist returned no error")
+	}
+
+	wrongSecret := loc
+	wrongSecret.StateDir = filepath.Join(t.TempDir(), "rejected-state")
+	wrongSecret.S3.Credentials = credentialsFile(t, fixture.AccessKeyID, "not-the-real-secret")
+
+	createErr := eng.CreateRepository(ctx, wrongSecret)
+	if createErr == nil {
+		t.Fatal("CreateRepository with the wrong secret access key was accepted by the endpoint")
+	}
+
+	for _, surface := range []struct {
+		label  string
+		value  any
+		report bool
+	}{
+		{label: "the snapshot report", value: snap, report: true},
+		{label: "the verify report", value: verified, report: true},
+		{label: "the restore report", value: restored, report: true},
+		{label: "the quick maintenance report", value: quick, report: true},
+		{label: "the full maintenance report", value: full, report: true},
+		{label: "a verification of a snapshot that is not there", value: verifyErr},
+		{label: "a restore with no destination", value: restoreErr},
+		{label: "a snapshot of a source that is not there", value: snapshotErr},
+		{label: "a create the endpoint rejected the signature of", value: createErr},
+	} {
+		for _, rendering := range renderings(t, surface.value) {
+			label := surface.label + " rendered " + rendering.how
+
+			assertNoSecretMaterial(t, fixture, label, rendering.text)
+
+			// A report is held to the stronger rule: it must not even
+			// have a FIELD a credential fits in. That is the only way to
+			// cover the session token this fixture cannot have (MinIO
+			// rejects a bogus one before anything is reported) and the
+			// only check that survives a vendor upgrade adding a field
+			// nobody here has read yet. An error string is exempt: it is
+			// prose, and prose about a missing snapshot may legitimately
+			// use any word.
+			if surface.report {
+				assertNoCredentialShapedField(t, label, rendering.text)
+			}
+		}
+	}
+}
+
+// TestS3SecretsNeverReachACapturedLogAcrossAWholeLifecycle is the same
+// question asked of the process's own output rather than of one value.
+//
+// A report is a struct a caller chose to render. A log is everything the
+// program said while it worked, including whatever a vendor package
+// decided to print on a path nobody here wrote, and it is the one sink
+// that is written without any of this project's types in the way. So this
+// row taps the three places a line can actually leave this process --
+// os.Stdout and os.Stderr, the standard library's own logger, and
+// log/slog's default handler -- runs one complete create, snapshot,
+// verify, maintain, restore and delete cycle against a real endpoint with
+// live credentials, and reads the bytes.
+//
+// The capture proves itself first. A tap that silently caught nothing
+// would pass this test on an empty buffer forever, so a canary line is
+// written through each of the three and each has to be FOUND before the
+// absence of a secret in the same bytes means anything. That is what
+// makes this row an assertion rather than a comment: the three taps are
+// demonstrated live, in the same window, against the same buffer.
+//
+// What it cannot see, stated rather than implied: a library that captured
+// os.Stderr into a private field before this test swapped it, and
+// anything written after the window closes. The canary covers the first
+// for the standard library's logger (which does exactly that, hence the
+// explicit log.SetOutput), and the cycle below is entirely inside the
+// window.
+func TestS3SecretsNeverReachACapturedLogAcrossAWholeLifecycle(t *testing.T) {
+	fixture := machines.Start(t).Medium(t)
+	ctx := context.Background()
+
+	loc := s3Location(t, fixture, bucketName(t, fixture), "production")
+	eng := kopia.New()
+
+	logs := captureProcessOutput(t)
+
+	// The canary, written through all three taps before the work starts.
+	fmt.Fprintln(os.Stderr, canaryMarker, "stderr")
+	fmt.Fprintln(os.Stdout, canaryMarker, "stdout")
+	log.Println(canaryMarker, "stdlib logger")
+	slog.Default().Info(canaryMarker + " slog default")
+
+	// --- the whole lifecycle, inside the window ---------------------------
+
+	if err := eng.CreateRepository(ctx, loc); err != nil {
+		t.Fatalf("CreateRepository: %v", err)
+	}
+
+	// The two refusals that handle secret material directly, so the
+	// window contains the paths most likely to print one.
+	wrongPass := loc
+	wrongPass.StateDir = filepath.Join(t.TempDir(), "wrong-pass-state")
+	wrongPass.Passphrase = passphraseFile(t, "definitely-not-the-passphrase")
+
+	if _, err := eng.OpenRepository(ctx, wrongPass); !errors.Is(err, backupengine.ErrPassphrase) {
+		t.Fatalf("OpenRepository with the wrong passphrase: got %v, want ErrPassphrase", err)
+	}
+
+	wrongSecret := loc
+	wrongSecret.StateDir = filepath.Join(t.TempDir(), "wrong-secret-state")
+	wrongSecret.S3.Credentials = credentialsFile(t, fixture.AccessKeyID, "not-the-real-secret")
+
+	if _, err := eng.OpenRepository(ctx, wrongSecret); err == nil {
+		t.Fatal("OpenRepository with the wrong secret access key was accepted")
+	}
+
+	rep, err := eng.OpenRepository(ctx, loc)
+	if err != nil {
+		t.Fatalf("OpenRepository: %v", err)
+	}
+
+	srcDir := filepath.Join(t.TempDir(), "source")
+	if err := os.MkdirAll(srcDir, 0o750); err != nil {
+		t.Fatalf("creating the source tree: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(srcDir, "index.txt"), []byte("one file through a whole cycle\n"), 0o600); err != nil {
+		t.Fatalf("writing the source file: %v", err)
+	}
+
+	src := backupengine.Source{Host: "nas-01", User: "backupd", Path: srcDir}
+
+	snap, err := rep.Snapshot(ctx, backupengine.SnapshotRequest{
+		Source:      src,
+		Description: "the log-capture row",
+		Tags: map[string]string{
+			backupengine.TagKeyBackupSet: "nas-01/logs",
+			backupengine.TagKeyDomain:    "production",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	if _, err := rep.Verify(ctx, snap.ID, backupengine.VerifyRequest{Level: model.LevelContentFull}); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	if _, err := rep.Maintain(ctx, backupengine.MaintenanceQuick); err != nil {
+		t.Fatalf("quick Maintain: %v", err)
+	}
+
+	if _, err := rep.Restore(ctx, snap.ID, backupengine.RestoreRequest{
+		TargetPath: filepath.Join(t.TempDir(), "restored"),
+		SkipOwners: true,
+	}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	if _, err := rep.Health(ctx); err != nil {
+		t.Fatalf("Health: %v", err)
+	}
+
+	if err := rep.DeleteSnapshot(ctx, snap.ID); err != nil {
+		t.Fatalf("DeleteSnapshot: %v", err)
+	}
+
+	if _, err := rep.Maintain(ctx, backupengine.MaintenanceFull); err != nil {
+		t.Fatalf("full Maintain: %v", err)
+	}
+
+	if err := rep.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// --- read the window --------------------------------------------------
+
+	captured := logs.text(t)
+
+	for _, tap := range []string{"stderr", "stdout", "stdlib logger", "slog default"} {
+		if !strings.Contains(captured, canaryMarker+" "+tap) {
+			t.Fatalf("the %s tap caught nothing, so the absence of a secret in this capture is evidence of nothing; captured %d byte(s)",
+				tap, len(captured))
+		}
+	}
+
+	assertNoSecretMaterial(t, fixture, "the captured log of a whole snapshot lifecycle", captured)
+}
+
 // assertNoCredentials fails when text carries any part of the fixture's
 // credentials.
 //
@@ -624,6 +933,231 @@ func assertNoCredentials(t *testing.T, fixture *machines.Medium, label, text str
 	if strings.Contains(text, fixture.AccessKeyID) {
 		t.Errorf("%s carries the bucket's access key id: %s", label, text)
 	}
+}
+
+// assertNoSecretMaterial is assertNoCredentials plus the repository's own
+// key material: the passphrase this suite created the repository with.
+//
+// They are one helper because FR-33's rule is one rule over the whole set
+// of secrets a bucket repository handles, and a row that checked the
+// credential and forgot the passphrase would pass while disclosing the
+// thing that actually decrypts the backups.
+func assertNoSecretMaterial(t *testing.T, fixture *machines.Medium, label, text string) {
+	t.Helper()
+
+	assertNoCredentials(t, fixture, label, text)
+
+	if strings.Contains(text, repositoryPassphrase) {
+		t.Errorf("%s carries the repository passphrase: %s", label, text)
+	}
+}
+
+// credentialShapedFields are the names of the fields a credential lands
+// in, lowercased for a case-insensitive scan.
+//
+// The names are the vendor's own for the S3 provider's options struct,
+// plus the two this project's own location type uses. They are checked as
+// NAMES rather than values for the reason the state-directory test gives:
+// this fixture cannot have a session token (MinIO rejects a bogus one
+// before anything is reported) and a value check therefore covers it not
+// at all, whereas a report with no field one fits in cannot carry one
+// however the graph is upgraded.
+var credentialShapedFields = []string{
+	"accesskeyid",
+	"secretaccesskey",
+	"sessiontoken",
+	"passphrase",
+	"encryptionkey",
+	"masterkey",
+}
+
+// assertNoCredentialShapedField fails when a rendered report has a field
+// a secret would be reported in.
+func assertNoCredentialShapedField(t *testing.T, label, text string) {
+	t.Helper()
+
+	lower := strings.ToLower(text)
+
+	for _, field := range credentialShapedFields {
+		if strings.Contains(lower, field) {
+			t.Errorf("%s has a %q field, which is where a secret ends up in a report: %s", label, field, text)
+		}
+	}
+}
+
+// rendering is one way a value can be written down, with the name of the
+// path that would do it.
+type rendering struct {
+	how  string
+	text string
+}
+
+// renderings is the three ways a report or an error actually leaves this
+// process: a log line or a wrapped error (%+v), a debug dump that reaches
+// past a Stringer (%#v), and the API surface (encoding/json).
+//
+// A value encoding/json refuses is rendered the other two ways rather
+// than failing the test, because "this type is not serialisable" is not
+// this row's question. An error is the case that hits it: json.Marshal of
+// one produces "{}" rather than its message, so the %+v rendering is the
+// one that carries an error's prose and the JSON rendering is kept only
+// because a future error type with exported fields would be serialised by
+// an API that logs it.
+func renderings(t *testing.T, value any) []rendering {
+	t.Helper()
+
+	out := []rendering{
+		{how: "with %+v", text: fmt.Sprintf("%+v", value)},
+		{how: "with %#v", text: fmt.Sprintf("%#v", value)},
+	}
+
+	if asJSON, err := json.Marshal(value); err == nil {
+		out = append(out, rendering{how: "as JSON", text: string(asJSON)})
+	}
+
+	return out
+}
+
+// credentialsFile writes a shared-credentials file in the format the
+// medium fixture writes, and returns the reference to it.
+//
+// It exists so a test can address the endpoint with a REAL key id and a
+// wrong secret, which is the refusal where the material is most available
+// to a message: the resolver has read the file, the provider has signed a
+// request with it, and the endpoint has just said no.
+func credentialsFile(t *testing.T, accessKeyID, secretAccessKey string) secretref.Ref {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "credentials")
+	body := fmt.Sprintf("[default]\naws_access_key_id = %s\naws_secret_access_key = %s\n", accessKeyID, secretAccessKey)
+
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing a credentials file: %v", err)
+	}
+
+	return secretref.Ref{File: path}
+}
+
+// canaryMarker is the string the log-capture row writes through every tap
+// it installs, so an empty capture is a failure rather than a pass.
+const canaryMarker = "backupd-log-capture-canary"
+
+// processOutput is a live capture of everywhere a line can leave this
+// process, and the restoration of all four taps when the window closes.
+type processOutput struct {
+	mu  sync.Mutex
+	buf []byte
+
+	// The pipe standing in for os.Stdout and os.Stderr, and the signal
+	// that everything written into it has reached buf.
+	reader *os.File
+	writer *os.File
+	copied chan struct{}
+
+	// What was in place before, put back by restore.
+	realStdout   *os.File
+	realStderr   *os.File
+	realLogWrite io.Writer
+	realLogFlags int
+	realSlog     *slog.Logger
+
+	once sync.Once
+}
+
+// Write implements io.Writer for the standard library's logger and for
+// slog's handler, both of which write from whatever goroutine logged.
+func (p *processOutput) Write(b []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.buf = append(p.buf, b...)
+
+	return len(b), nil
+}
+
+// restore closes the window: it puts all four taps back, then closes the
+// pipe and WAITS for the copier.
+//
+// The wait is what makes a read of buf deterministic under -race. A pipe
+// copier only finishes once its write end is closed, so a reader that
+// skipped this would be racing the last lines of the very output it is
+// about to make a claim about, and would do it by reading a buffer while
+// another goroutine appends to it.
+//
+// It is idempotent because both the cleanup and text call it: the test
+// reads the capture, and a test that fails before reading it still has to
+// get os.Stdout back.
+func (p *processOutput) restore() {
+	p.once.Do(func() {
+		os.Stdout, os.Stderr = p.realStdout, p.realStderr
+		log.SetOutput(p.realLogWrite)
+		log.SetFlags(p.realLogFlags)
+		slog.SetDefault(p.realSlog)
+
+		_ = p.writer.Close()
+		<-p.copied
+		_ = p.reader.Close()
+	})
+}
+
+// text closes the window and returns everything caught in it.
+func (p *processOutput) text(t *testing.T) string {
+	t.Helper()
+
+	p.restore()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return string(p.buf)
+}
+
+// captureProcessOutput redirects os.Stdout, os.Stderr, the standard
+// library's logger and log/slog's default handler into one buffer for the
+// rest of the test, and puts all four back afterwards.
+//
+// All four, because they are four different ways a line leaves a Go
+// process and a capture of one says nothing about the others. The
+// standard library's logger is the one that has to be redirected
+// explicitly: it captured os.Stderr's value at package initialisation, so
+// swapping os.Stderr does not reach it.
+//
+// Nothing here is safe beside a parallel test, and nothing in this suite
+// is parallel: a test that later called t.Parallel() would have its own
+// output swallowed by this window. That is why this is a helper in this
+// file rather than something shared.
+func captureProcessOutput(t *testing.T) *processOutput {
+	t.Helper()
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("opening the capture pipe: %v", err)
+	}
+
+	out := &processOutput{
+		reader:       reader,
+		writer:       writer,
+		copied:       make(chan struct{}),
+		realStdout:   os.Stdout,
+		realStderr:   os.Stderr,
+		realLogWrite: log.Writer(),
+		realLogFlags: log.Flags(),
+		realSlog:     slog.Default(),
+	}
+
+	go func() {
+		defer close(out.copied)
+
+		_, _ = io.Copy(out, reader)
+	}()
+
+	os.Stdout, os.Stderr = writer, writer
+	log.SetOutput(out)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	t.Cleanup(out.restore)
+
+	return out
 }
 
 // bucketName gives each test its own bucket on the one server, so a

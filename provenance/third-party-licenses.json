@@ -20,6 +20,42 @@
   "projectLicense": "Apache-2.0",
   "components": [
     {
+      "name": "github.com/Azure/azure-sdk-for-go/sdk/azcore",
+      "version": "v1.22.0",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE.txt",
+      "licenseSha256": "646f8936b8ddcd14e13e578ff6857e368780b0d1a4f6066bee89211923a373e2",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/Azure/azure-sdk-for-go/sdk/internal",
+      "version": "v1.12.0",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE.txt",
+      "licenseSha256": "646f8936b8ddcd14e13e578ff6857e368780b0d1a4f6066bee89211923a373e2",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/Azure/azure-sdk-for-go/sdk/storage/azblob",
+      "version": "v1.8.0",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE.txt",
+      "licenseSha256": "a096a435e19bb6b631da46992c011a39be563e97ce7366879ad516c772904632",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "github.com/IBM/go-sdk-core/v5",
       "version": "v5.23.1",
       "ecosystem": "go",
@@ -69,7 +105,7 @@
     },
     {
       "name": "github.com/aws/aws-sdk-go-v2",
-      "version": "v1.42.1",
+      "version": "v1.43.7",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE.txt",
@@ -81,7 +117,7 @@
     },
     {
       "name": "github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream",
-      "version": "v1.7.14",
+      "version": "v1.7.18",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE.txt",
@@ -141,7 +177,7 @@
     },
     {
       "name": "github.com/aws/aws-sdk-go-v2/internal/configsources",
-      "version": "v1.4.30",
+      "version": "v1.4.38",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE.txt",
@@ -153,7 +189,7 @@
     },
     {
       "name": "github.com/aws/aws-sdk-go-v2/internal/endpoints/v2",
-      "version": "v2.7.30",
+      "version": "v2.7.38",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE.txt",
@@ -165,7 +201,7 @@
     },
     {
       "name": "github.com/aws/aws-sdk-go-v2/internal/v4a",
-      "version": "v1.4.31",
+      "version": "v1.4.39",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE.txt",
@@ -177,7 +213,7 @@
     },
     {
       "name": "github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding",
-      "version": "v1.13.13",
+      "version": "v1.13.17",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE.txt",
@@ -189,7 +225,7 @@
     },
     {
       "name": "github.com/aws/aws-sdk-go-v2/service/internal/checksum",
-      "version": "v1.9.23",
+      "version": "v1.9.31",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE.txt",
@@ -201,7 +237,7 @@
     },
     {
       "name": "github.com/aws/aws-sdk-go-v2/service/internal/presigned-url",
-      "version": "v1.13.30",
+      "version": "v1.13.38",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE.txt",
@@ -213,7 +249,7 @@
     },
     {
       "name": "github.com/aws/aws-sdk-go-v2/service/internal/s3shared",
-      "version": "v1.19.31",
+      "version": "v1.19.39",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE.txt",
@@ -225,7 +261,7 @@
     },
     {
       "name": "github.com/aws/aws-sdk-go-v2/service/s3",
-      "version": "v1.105.2",
+      "version": "v1.107.3",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE.txt",
@@ -285,7 +321,7 @@
     },
     {
       "name": "github.com/aws/smithy-go",
-      "version": "v1.27.4",
+      "version": "v1.27.8",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE",
@@ -344,6 +380,18 @@
       ]
     },
     {
+      "name": "github.com/chmduquesne/rollinghash",
+      "version": "v4.0.0+incompatible",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE.txt",
+      "licenseSha256": "6aec9a25b79730543306fe400a57d2737710149ff37730f93bd551d0d63a2a41",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "github.com/clipperhouse/uax29/v2",
       "version": "v2.7.0",
       "ecosystem": "go",
@@ -369,7 +417,7 @@
     },
     {
       "name": "github.com/coreos/go-systemd/v22",
-      "version": "v22.6.0",
+      "version": "v22.7.0",
       "ecosystem": "go",
       "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE",
@@ -386,6 +434,18 @@
       "licenseId": "MIT",
       "licenseFile": "LICENSE",
       "licenseSha256": "a973b4498c13eb74baa2a8e5c351426a6826f2fcdd909916dbe53ee2e755fd71",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/edsrzf/mmap-go",
+      "version": "v1.2.0",
+      "ecosystem": "go",
+      "licenseId": "BSD-3-Clause",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "c2eba69f20d05414538c3a5df7694dde392e065ff70882e1625e90f5d6659fff",
       "linkedInto": [
         "backupd",
         "backupd-web"
@@ -410,6 +470,30 @@
       "licenseId": "MIT",
       "licenseFile": "LICENSE",
       "licenseSha256": "a2d51b7515acfaff2f7a88688650f2fc4fd99561383e72bba2305e3db59a1647",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/go-logr/logr",
+      "version": "v1.4.3",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/go-logr/stdr",
+      "version": "v1.2.2",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
       "linkedInto": [
         "backupd",
         "backupd-web"
@@ -488,12 +572,36 @@
       ]
     },
     {
+      "name": "github.com/gofrs/flock",
+      "version": "v0.13.0",
+      "ecosystem": "go",
+      "licenseId": "BSD-3-Clause",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "f4c7b0fbdba9660126feab6388ceed10ff744b2c772a63132f64f9ab2ee5fa29",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "github.com/google/uuid",
       "version": "v1.6.0",
       "ecosystem": "go",
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
       "licenseSha256": "0a8d61ed3cbfd5312326e8126c31ce9c627a283adc99131b56896d29ada04b2d",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/hashicorp/cronexpr",
+      "version": "v1.1.3",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
       "linkedInto": [
         "backupd",
         "backupd-web"
@@ -536,12 +644,72 @@
       ]
     },
     {
+      "name": "github.com/klauspost/compress",
+      "version": "v1.19.0",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "0d9e582ee4bff57bf1189c9e514e6da7ce277f9cd3bc2d488b22fbb39a6d87cf",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "github.com/klauspost/cpuid/v2",
       "version": "v2.4.0",
       "ecosystem": "go",
       "licenseId": "MIT",
       "licenseFile": "LICENSE",
       "licenseSha256": "5d966570d7a442d4e969892860a914e542c97f262c873baee8f0aa48e1f40212",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/klauspost/crc32",
+      "version": "v1.3.0",
+      "ecosystem": "go",
+      "licenseId": "BSD-3-Clause",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "dd26a7abddd02e2d0aba97805b31f248ef7835d9e10da289b22e3b8ab78b324d",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/klauspost/pgzip",
+      "version": "v1.2.6",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "7709cc030f078b17809884f92f33a2016944e1180312dc3f1371b02313d313ed",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/klauspost/reedsolomon",
+      "version": "v1.14.0",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "345aa942daa8c117669a85bd75f44a8364faceee962812ddb5a576977e0610ee",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/kopia/kopia",
+      "version": "v0.23.1",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "cd83acc95b12c0ee2a9271950b7f23be45294483b9e12869ef0d31fc9e8248f8",
       "linkedInto": [
         "backupd",
         "backupd-web"
@@ -632,6 +800,42 @@
       ]
     },
     {
+      "name": "github.com/minio/crc64nvme",
+      "version": "v1.1.1",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/minio/md5-simd",
+      "version": "v1.1.2",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/minio/minio-go/v7",
+      "version": "v7.2.1",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "github.com/mitchellh/go-homedir",
       "version": "v1.1.0",
       "ecosystem": "go",
@@ -650,6 +854,18 @@
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
       "licenseSha256": "aa1376b9bc5dea6f30cdefde40c176a254f247d2814d0a9929395138631b2ae0",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/natefinch/atomic",
+      "version": "v1.0.1",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "3934f170f0645318a578cc3d3d79b4a03d5eed2764fd8d9ec908aeee4f23389b",
       "linkedInto": [
         "backupd",
         "backupd-web"
@@ -680,12 +896,48 @@
       ]
     },
     {
+      "name": "github.com/petar/GoLLRB",
+      "version": "v0.0.0-20210522233825-ae3b015fd3e9",
+      "ecosystem": "go",
+      "licenseId": "BSD-3-Clause",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "d92be025a93a34b7909098630f07243a03e6f6e79d0dd6e3eebd6593aeba21d8",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "github.com/peterh/liner",
       "version": "v1.2.2",
       "ecosystem": "go",
       "licenseId": "MIT",
       "licenseFile": "COPYING",
       "licenseSha256": "f941d86a7e3e2d58c4e6467b81298def48917bbf6773de80ef59a7431b8c3c74",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/philhofer/fwd",
+      "version": "v1.2.0",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE.md",
+      "licenseSha256": "430da36bd967b28fc662f05e9245306da10941e93911052114a20ef10e4410f8",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/pkg/errors",
+      "version": "v0.9.1",
+      "ecosystem": "go",
+      "licenseId": "BSD-2-Clause",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "8d427fd87bc9579ea368fde3d49f9ca22eac857f91a9dec7e3004bdfab7dee86",
       "linkedInto": [
         "backupd",
         "backupd-web"
@@ -765,7 +1017,7 @@
     },
     {
       "name": "github.com/rclone/rclone",
-      "version": "v1.75.0",
+      "version": "v1.75.1",
       "ecosystem": "go",
       "licenseId": "MIT",
       "licenseFile": "COPYING",
@@ -800,6 +1052,18 @@
       ]
     },
     {
+      "name": "github.com/rs/xid",
+      "version": "v1.6.0",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "c480873f0ff2b7e2c539bdd84fb4da4178d8d02479c94924f7bffeafb7add358",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "github.com/shirou/gopsutil/v4",
       "version": "v4.26.6",
       "ecosystem": "go",
@@ -818,6 +1082,18 @@
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
       "licenseSha256": "b8514c577c1c4b46cee454d5a882b15fa411e72c5bd7f801f241591789fce61a",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "github.com/tinylib/msgp",
+      "version": "v1.6.4",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "17df22e31ef6a84f70909eed5185f41443a03dd05b14e8dec319d5c2bd7d7b3b",
       "linkedInto": [
         "backupd",
         "backupd-web"
@@ -884,6 +1160,78 @@
       ]
     },
     {
+      "name": "go.opentelemetry.io/auto/sdk",
+      "version": "v1.2.1",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "go.opentelemetry.io/otel",
+      "version": "v1.44.0",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "1ae07514be1d7bb33f0698f8d91fb51b8b9fe1463157ec1c72081a49b9bc6f40",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "go.opentelemetry.io/otel/metric",
+      "version": "v1.44.0",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "1ae07514be1d7bb33f0698f8d91fb51b8b9fe1463157ec1c72081a49b9bc6f40",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "go.opentelemetry.io/otel/trace",
+      "version": "v1.44.0",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "1ae07514be1d7bb33f0698f8d91fb51b8b9fe1463157ec1c72081a49b9bc6f40",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "go.uber.org/multierr",
+      "version": "v1.11.0",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE.txt",
+      "licenseSha256": "dcdabe03bef2382a130640d1c3a4cd5ec42aba1035095c38272fde694eb72405",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "go.uber.org/zap",
+      "version": "v1.28.0",
+      "ecosystem": "go",
+      "licenseId": "MIT",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "c2b97b3281be272711909076c8402499b4b5a3216196af47a25b1d3674d86152",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "go.yaml.in/yaml/v2",
       "version": "v2.4.4",
       "ecosystem": "go",
@@ -896,19 +1244,19 @@
       ]
     },
     {
-      "name": "golang.org/x/crypto",
-      "version": "v0.55.0",
+      "name": "go.yaml.in/yaml/v3",
+      "version": "v3.0.4",
       "ecosystem": "go",
-      "licenseId": "BSD-3-Clause",
+      "licenseId": "Apache-2.0",
       "licenseFile": "LICENSE",
-      "licenseSha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+      "licenseSha256": "d18f6323b71b0b768bb5e9616e36da390fbd39369a81807cca352de4e4e6aa0b",
       "linkedInto": [
         "backupd",
         "backupd-web"
       ]
     },
     {
-      "name": "golang.org/x/net",
+      "name": "golang.org/x/crypto",
       "version": "v0.57.0",
       "ecosystem": "go",
       "licenseId": "BSD-3-Clause",
@@ -920,8 +1268,32 @@
       ]
     },
     {
+      "name": "golang.org/x/exp",
+      "version": "v0.0.0-20260709172345-9ea1abe57597",
+      "ecosystem": "go",
+      "licenseId": "BSD-3-Clause",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "golang.org/x/net",
+      "version": "v0.58.0",
+      "ecosystem": "go",
+      "licenseId": "BSD-3-Clause",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "golang.org/x/sync",
-      "version": "v0.22.0",
+      "version": "v0.23.0",
       "ecosystem": "go",
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
@@ -933,7 +1305,7 @@
     },
     {
       "name": "golang.org/x/sys",
-      "version": "v0.47.0",
+      "version": "v0.48.0",
       "ecosystem": "go",
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
@@ -945,7 +1317,7 @@
     },
     {
       "name": "golang.org/x/term",
-      "version": "v0.45.0",
+      "version": "v0.46.0",
       "ecosystem": "go",
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
@@ -957,7 +1329,7 @@
     },
     {
       "name": "golang.org/x/text",
-      "version": "v0.41.0",
+      "version": "v0.42.0",
       "ecosystem": "go",
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
@@ -980,12 +1352,48 @@
       ]
     },
     {
+      "name": "google.golang.org/genproto/googleapis/rpc",
+      "version": "v0.0.0-20260715232425-e75dac1f907d",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "google.golang.org/grpc",
+      "version": "v1.84.0-dev.0.20260723093437-b6eac429d7b6",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
       "name": "google.golang.org/protobuf",
       "version": "v1.36.11",
       "ecosystem": "go",
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
       "licenseSha256": "4835612df0098ca95f8e7d9e3bffcb02358d435dbb38057c844c99d7f725eb20",
+      "linkedInto": [
+        "backupd",
+        "backupd-web"
+      ]
+    },
+    {
+      "name": "gopkg.in/ini.v1",
+      "version": "v1.67.3",
+      "ecosystem": "go",
+      "licenseId": "Apache-2.0",
+      "licenseFile": "LICENSE",
+      "licenseSha256": "f6918bd93ffe07f4b2c61b8287c32cb3122e08aed0be50f1c7d0eddc87877a8f",
       "linkedInto": [
         "backupd",
         "backupd-web"
@@ -1005,7 +1413,7 @@
     },
     {
       "name": "modernc.org/libc",
-      "version": "v1.74.4",
+      "version": "v1.75.6",
       "ecosystem": "go",
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
@@ -1029,7 +1437,7 @@
     },
     {
       "name": "modernc.org/memory",
-      "version": "v1.11.0",
+      "version": "v1.12.1",
       "ecosystem": "go",
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
@@ -1041,7 +1449,7 @@
     },
     {
       "name": "modernc.org/sqlite",
-      "version": "v1.57.0",
+      "version": "v1.58.0",
       "ecosystem": "go",
       "licenseId": "BSD-3-Clause",
       "licenseFile": "LICENSE",
