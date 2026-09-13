@@ -45,7 +45,6 @@
   },
   "known_asymmetries": [
     "storage_mediums[].path (a local_volume's directory) is configurable in the web UI through the manifest-driven destination wizard and has NO CLI flag at all: `medium add`/`medium edit` parse --type, --region, --endpoint, --bucket, --prefix, --storage-class, --upload-verification and the four credential spellings, and nothing else. The gap is the CLI's, not the UI's.",
-    "A per-backup-set poll_interval override (#845) does not exist in the schema at all yet, so it is neither UI- nor CLI-configurable; it is a field to be added, not a gap to be closed.",
     "poll_interval is configurable in the web UI, at two scopes, and has no CLI flag at either (#845): Settings > Service behaviour writes the deployment-wide default, and a backup set's own Edit form writes or clears its override. The gap is the CLI's, not the UI's."
   ],
   "fields": [

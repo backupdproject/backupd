@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/backupdproject/backupd/core/internal/config"
@@ -19,12 +20,12 @@ import (
 // proof, and replaces it with a lock somebody has to remember to take.
 //
 // So the loop stays single and sequential, and the cadence moves inward:
-// the loop wakes at the tightest interval anything is entitled to
-// (config.PollWakeInterval), and each wake asks, per set, whether ENOUGH
-// TIME HAS PASSED since that set was last attempted
+// the loop sleeps until the earliest moment any enabled set is due
+// (NextPollWake below), and each wake asks, per set, whether ENOUGH TIME
+// HAS PASSED since that set was last attempted
 // (config.EffectivePollInterval). A set that is not due is skipped for
 // this wake; nothing else about the pass changes. A wake where no set is
-// due does nothing at all, which is what makes waking often cheap.
+// due does nothing at all, which is what makes waking cheap.
 //
 // # Attempted, not succeeded
 //
@@ -75,18 +76,76 @@ func IsScheduledCycle(ctx context.Context) bool {
 	return v
 }
 
-// pollDue reports whether a scheduled cycle should process bs now: never
-// polled by this schedule, or at least this set's effective poll interval
-// has passed since the last attempt.
+// pollSchedule is when each backup set was last attempted, and the one
+// piece of this package's state that OUTLIVES the Service holding it.
+//
+// It is a struct with its own lock, shared by pointer, rather than a map
+// a reload copies. core/service rebuilds the whole app.Service on every
+// configuration write (configreload.go) while the scheduling loop may be
+// inside a cycle recording attempts, so a copy has two failure modes at
+// once: attempts recorded after the copy are lost, and the loop and the
+// copier disagree about which map is the live one. One object, pointed at
+// by both Services, has neither -- the new Service adopts the same
+// schedule the old one is still writing, and every write is under the
+// same mutex.
+type pollSchedule struct {
+	mu       sync.Mutex
+	attempts map[model.BackupSetID]time.Time
+}
+
+func newPollSchedule() *pollSchedule {
+	return &pollSchedule{attempts: make(map[model.BackupSetID]time.Time)}
+}
+
+// lastAttempt is when a pass over set last started, and whether one ever
+// has.
+func (p *pollSchedule) lastAttempt(set model.BackupSetID) (time.Time, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	at, ok := p.attempts[set]
+	return at, ok
+}
+
+func (p *pollSchedule) record(set model.BackupSetID, now time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.attempts == nil {
+		p.attempts = make(map[model.BackupSetID]time.Time)
+	}
+	p.attempts[set] = now
+}
+
+// pollScheduleState is this Service's schedule, created on first use.
+//
+// New fills the field in, so the lazy path is for a Service built as a
+// struct literal, which every test double in this package is. It is
+// guarded by s.mu because AdoptPollSchedule writes the same pointer from
+// whichever goroutine is reloading the configuration.
+func (s *Service) pollScheduleState() *pollSchedule {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.schedule == nil {
+		s.schedule = newPollSchedule()
+	}
+	return s.schedule
+}
+
+// pollDue reports whether a scheduled cycle should process bs at the
+// instant now: never polled by this schedule, or at least this set's
+// effective poll interval has passed since the last attempt.
 //
 // A set with no recorded attempt is due, which is what makes a freshly
 // started process poll everything once immediately -- FR-1's "runs
 // RunCycle once immediately, then again every interval" applied per set
 // rather than to the loop as a whole.
+//
+// now is passed in rather than read here, and that is the whole reason
+// this takes an argument: one cycle answers this question twice (for its
+// progress denominator and for the loop itself) and both answers have to
+// come from the same instant, or a long pass over an early set quietly
+// draws a later one into a wake it was not due for. See RunCycle.
 func (s *Service) pollDue(bs config.BackupSet, now time.Time) bool {
-	s.mu.Lock()
-	last, ok := s.lastPollAttempt[bs.ID]
-	s.mu.Unlock()
+	last, ok := s.pollScheduleState().lastAttempt(bs.ID)
 	if !ok {
 		return true
 	}
@@ -101,14 +160,78 @@ func (s *Service) pollDue(bs config.BackupSet, now time.Time) bool {
 // scheduled attempts -- would send the loop back at a source an operator
 // polled by hand seconds ago, which is the one situation where a poll is
 // certainly redundant.
+//
+// It is written before the pass runs and whatever the pass finds, which
+// is what keeps a source that is DOWN on its own cadence: a schedule
+// keyed on success would read a failing set as never polled and retry it
+// on every wake, aiming this product's fastest retries at the host least
+// able to answer them.
 func (s *Service) recordPollAttempt(set model.BackupSetID, now time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.lastPollAttempt == nil {
-		s.lastPollAttempt = make(map[model.BackupSetID]time.Time)
-	}
-	s.lastPollAttempt[set] = now
+	s.pollScheduleState().record(set, now)
 }
+
+// NextPollWake is how long a scheduling loop should sleep before its next
+// scheduled cycle: until the EARLIEST moment any enabled backup set
+// becomes due, measured from when each one was last attempted.
+//
+// # Why not simply sleep the tightest configured interval
+//
+// That was the first shape and it aliases. A loop that wakes every 5
+// minutes reaches a 7 minute set on the 10 minute boundary, so an
+// operator who asked for 7 got 10, and the further two cadences are from
+// dividing each other the worse it reads. Deadlines do not alias: each
+// set is visited the first time the loop is awake at or after its own
+// deadline, and the loop is awake exactly then because that deadline is
+// what it slept to.
+//
+// # The bounds
+//
+// A deployment with no enabled set sleeps the deployment-wide interval:
+// there is no deadline to aim at, and waking at the configured cadence is
+// what makes a set that appears in the meantime (a create, a re-enable)
+// picked up by a loop that also listens for that change.
+//
+// A deadline already in the past returns minPollWake rather than zero.
+// Every set the cycle actually visits records an attempt and moves its
+// own deadline forward, so a past deadline means a set the cycle SKIPPED
+// for another reason -- an edit hold, most likely -- and a zero sleep
+// would turn that into a spin for as long as the hold is held.
+func (s *Service) NextPollWake(now time.Time) time.Duration {
+	schedule := s.pollScheduleState()
+
+	var earliest time.Time
+	for _, src := range s.Config.Sources {
+		for _, bs := range src.BackupSets {
+			if bs.Disabled {
+				continue
+			}
+			deadline := now
+			if last, ok := schedule.lastAttempt(bs.ID); ok {
+				deadline = last.Add(s.Config.EffectivePollInterval(bs))
+			}
+			if earliest.IsZero() || deadline.Before(earliest) {
+				earliest = deadline
+			}
+		}
+	}
+
+	if earliest.IsZero() {
+		return s.Config.PollInterval.Duration()
+	}
+	if wake := earliest.Sub(now); wake > minPollWake {
+		return wake
+	}
+	return minPollWake
+}
+
+// minPollWake is the shortest sleep NextPollWake will ask for.
+//
+// It is not a cadence -- config.MinPollInterval is, and it is a minute.
+// This is the floor under a loop that has just been told something is
+// already overdue, which only happens for a set the cycle could not
+// visit, and it is what keeps "cannot visit it yet" from becoming a busy
+// loop.
+const minPollWake = 5 * time.Second
 
 // AdoptPollSchedule carries the poll schedule from the Service a
 // configuration reload is replacing onto this one, the way AdoptAlerts
@@ -121,6 +244,14 @@ func (s *Service) recordPollAttempt(set model.BackupSetID, now time.Time) {
 // deployment whose operator is editing configuration is exactly when that
 // would happen most.
 //
+// The two Services SHARE the schedule rather than one copying the
+// other's. A reload does not stop the cycle loop, so between a copy and
+// the swap there is a window in which the old Service is still recording
+// attempts nothing would carry forward -- and those are precisely the
+// sets a long cycle is working through, so the losses would cluster on
+// the slowest sources. Sharing removes the window instead of narrowing
+// it.
+//
 // The schedule stays in memory and nothing writes it down, so a process
 // restart does poll everything once. That is the same promise Daemon has
 // always made (one cycle immediately at start) and the safe direction:
@@ -129,14 +260,8 @@ func (s *Service) AdoptPollSchedule(prev *Service) {
 	if prev == nil {
 		return
 	}
-	prev.mu.Lock()
-	carried := make(map[model.BackupSetID]time.Time, len(prev.lastPollAttempt))
-	for id, at := range prev.lastPollAttempt {
-		carried[id] = at
-	}
-	prev.mu.Unlock()
-
+	shared := prev.pollScheduleState()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.lastPollAttempt = carried
+	s.schedule = shared
 }

@@ -561,9 +561,11 @@ func toUpdateSettingsRequest(body settingsRequest) (service.UpdateSettingsReques
 	}
 
 	if body.Service != nil {
-		out.Service = &service.ServiceUpdate{
-			PollInterval: secondsPointerToDuration(body.Service.PollIntervalSeconds),
+		pollInterval, err := checkedSecondsPointerToDuration(body.Service.PollIntervalSeconds, "service.poll_interval_seconds")
+		if err != nil {
+			return service.UpdateSettingsRequest{}, err
 		}
+		out.Service = &service.ServiceUpdate{PollInterval: pollInterval}
 	}
 
 	return out, nil

@@ -81,6 +81,18 @@ type BackupService struct {
 	// of this contract.
 	state atomic.Pointer[configState]
 
+	// configChanged wakes the scheduler loop when a configuration write
+	// lands, so a cadence saved through Settings takes effect on a loop
+	// that is ALREADY ASLEEP rather than at the end of the sleep it
+	// started before the save (scheduler.go, adoptConfig).
+	//
+	// It is buffered to one and signalled without blocking: the loop
+	// needs to know THAT the configuration moved, never how many times,
+	// and a write path must never wait on a scheduler that is busy
+	// running a cycle. A pending signal a loop has not read yet already
+	// says everything the next one would.
+	configChanged chan struct{}
+
 	journal *state.Journal
 	logger  *obs.Logger
 
@@ -269,6 +281,7 @@ func New(cfg *config.Config, journal *state.Journal, tr transport.Transport, log
 		ctx:            ctx,
 		cancel:         cancel,
 		retentionPlans: make(map[string]retentionPlanRecord),
+		configChanged:  make(chan struct{}, 1),
 		progress:       newLiveProgress(),
 		holds:          newEditHolds(),
 		cycleWatch:     newCycleWatch(),

@@ -427,6 +427,13 @@ func (e *fakeEngine) updateBackupSet(w http.ResponseWriter, r *http.Request, id 
 		d := time.Duration(*body.StaleAfterSeconds) * time.Second
 		req.StaleAfter = &d
 	}
+	// Issue #845's per-set cadence, carried for the reason the fixture
+	// carries everything else: a fake that silently ignored the field
+	// would make a route that never sent it look correct.
+	if body.PollIntervalSeconds != nil {
+		d := time.Duration(*body.PollIntervalSeconds) * time.Second
+		req.PollInterval = &d
+	}
 	if body.ValidatorID != nil {
 		v := service.ValidatorID(*body.ValidatorID)
 		req.ValidatorID = &v
@@ -485,6 +492,10 @@ func (e *fakeEngine) updateSettings(w http.ResponseWriter, r *http.Request) {
 			SafetyMarginBytes: body.Capacity.SafetyMarginBytes,
 		}
 	}
+	if body.Service != nil && body.Service.PollIntervalSeconds != nil {
+		d := time.Duration(*body.Service.PollIntervalSeconds) * time.Second
+		req.Service = &service.ServiceUpdate{PollInterval: &d}
+	}
 	settings, err := e.svc.UpdateSettings(r.Context(), req)
 	if err != nil {
 		refuseServiceError(w, "updateSettings", err)
@@ -510,6 +521,10 @@ func toContractSettings(s service.Settings) apicontract.SettingsResponse {
 			SafetyMarginBytes:    s.Capacity.SafetyMarginBytes,
 			BackupRoot:           s.Capacity.BackupRoot,
 			BackupRootConfigured: s.Capacity.BackupRootConfigured,
+		},
+		// The service-behaviour section, as the real host serves it.
+		Service: apicontract.ServiceSettings{
+			PollIntervalSeconds: int(s.Service.PollInterval / time.Second),
 		},
 	}
 	for _, t := range s.Retention.Tiers {

@@ -84,9 +84,15 @@ export function ServiceBehaviourCard({ readOnly }: { readOnly: boolean }) {
 /** Minutes as the box holds them: text, not a number, so a cleared or
  *  half-typed field stays exactly what was typed rather than being
  *  coerced into something nobody entered — the same reason CapacityCard's
- *  byte fields hold strings. */
+ *  byte fields hold strings.
+ *
+ *  It divides rather than rounds. The wire is seconds and the floor is
+ *  sixty of them, so a hand-edited config.yaml can legally say ninety,
+ *  and a box that rounded that to "2" would be dirty the instant it
+ *  loaded: the next Save would write 120 seconds over a cadence nobody
+ *  had touched, and report success for it. */
 function minutesDraft(seconds: number): string {
-  return String(Math.round(seconds / 60));
+  return String(seconds / 60);
 }
 
 function ServiceBehaviourEditor({
@@ -107,14 +113,23 @@ function ServiceBehaviourEditor({
   const [saved, setSaved] = useState(false);
 
   const typed = Number(minutes.trim());
-  const seconds = Math.round(typed * 60);
+  // The wire carries SECONDS, so that is what this box is held to: a
+  // value is legal here when it lands on a whole number of them and
+  // clears the server's floor. Requiring whole MINUTES instead would
+  // refuse an interval the engine accepts and this very card had just
+  // loaded, which is how a form ends up unable to re-save what it was
+  // shown.
+  const exactSeconds = typed * 60;
+  const seconds = Math.round(exactSeconds);
+  const wholeSeconds = Math.abs(exactSeconds - seconds) < 1e-6;
   const minMinutes = Math.max(1, Math.round(minSeconds / 60));
   const invalid =
-    minutes.trim() === "" || !Number.isInteger(typed) || seconds < minSeconds;
+    minutes.trim() === "" || !Number.isFinite(typed) || !wholeSeconds || seconds < minSeconds;
   const error = invalid
-    ? "Enter a whole number of minutes, at least " +
+    ? "Enter an interval of at least " +
       minMinutes +
-      (minMinutes === 1 ? " minute." : " minutes.")
+      (minMinutes === 1 ? " minute" : " minutes") +
+      ", as a number of minutes that lands on whole seconds."
     : undefined;
   const dirty = !invalid && seconds !== baselineSeconds;
 
@@ -163,7 +178,7 @@ function ServiceBehaviourEditor({
                 className="input"
                 type="number"
                 min={minMinutes}
-                step={1}
+                step="any"
                 aria-describedby={helpId}
                 value={minutes}
                 disabled={readOnly}

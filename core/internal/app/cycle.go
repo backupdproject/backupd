@@ -287,7 +287,7 @@ func (s *Service) RunCycle(ctx context.Context) CycleReport {
 	// now because it is a count of the configuration snapshot the cycle
 	// started with. Reassigning ctx keeps cancellation flowing exactly as
 	// before; this only adds a value to it.
-	ctx = beginCycle(ctx, s.enabledBackupSetCount(ctx))
+	ctx = beginCycle(ctx, s.enabledBackupSetCount(ctx, start))
 
 	report := CycleReport{StartedAt: start}
 
@@ -295,6 +295,14 @@ func (s *Service) RunCycle(ctx context.Context) CycleReport {
 	// (issue #845), read once: it decides which sets this pass is even
 	// allowed to visit, and reading it per set would invite a future
 	// edit to make the answer vary inside one cycle.
+	//
+	// The INSTANT that question is answered at is frozen the same way,
+	// at `start`, and for a sharper reason: a pass over one set takes
+	// real time, so a clock read per set would let a slow early set
+	// carry a later one over its own deadline and into a wake it was not
+	// due for -- a set the denominator above (counted before the loop)
+	// has already excluded, making progress read "2 of 1" and making
+	// membership of a wake depend on the order sets sit in the file.
 	scheduled := IsScheduledCycle(ctx)
 
 sourcesLoop:
@@ -333,7 +341,7 @@ sourcesLoop:
 			// The attempt is recorded whether or not the pass then
 			// succeeds, and before it runs, so a source that is failing
 			// is retried at its interval rather than on every wake.
-			if scheduled && !s.pollDue(bs, s.now()) {
+			if scheduled && !s.pollDue(bs, start) {
 				continue
 			}
 			s.recordPollAttempt(bs.ID, s.now())
@@ -596,13 +604,13 @@ func (s *Service) processBackupSet(ctx context.Context, src config.Source, bs co
 // included a set nothing will process would stop one short of finishing
 // every time.
 //
-// It takes ctx for that second exclusion alone: whether a set is due is a
-// property of this cycle, not of the configuration, and a denominator
-// that ignored it would report a scheduled wake with one due set as
-// one-of-nine done forever.
-func (s *Service) enabledBackupSetCount(ctx context.Context) int {
+// It takes ctx for that second exclusion, and `now` with it: whether a
+// set is due is a property of this cycle rather than of the
+// configuration, and it has to be decided at the SAME instant the loop
+// decides it, or the denominator and the loop disagree about the wake
+// they are both describing. RunCycle passes its start instant to both.
+func (s *Service) enabledBackupSetCount(ctx context.Context, now time.Time) int {
 	scheduled := IsScheduledCycle(ctx)
-	now := s.now()
 	n := 0
 	for _, src := range s.Config.Sources {
 		for _, bs := range src.BackupSets {

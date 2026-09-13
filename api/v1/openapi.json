@@ -1113,9 +1113,11 @@
             "x-go-omitempty": true
           },
           "poll_interval_seconds": {
-            "type": "integer",
-            "description": "This backup set's own poll-interval override, or NULL when it inherits the deployment default. Null is a real answer: a form must not put the deployment's number in the box, because saving it would pin this set to today's default and detach it from one it was tracking.",
-            "x-go-pointer": true
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "This backup set's own poll-interval override, or NULL when it inherits the deployment default. Null is a real answer: a form must not put the deployment's number in the box, because saving it would pin this set to today's default and detach it from one it was tracking."
           },
           "effective_poll_interval_seconds": {
             "type": "integer",
@@ -1140,6 +1142,7 @@
           "stale_after_seconds",
           "retention_is_override",
           "ssh_key_id",
+          "poll_interval_seconds",
           "effective_poll_interval_seconds"
         ]
       },

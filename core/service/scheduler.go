@@ -48,25 +48,53 @@ import (
 // immediately rather than at the next restart.
 //
 // It is the DEPLOYMENT's default, not the loop's cadence: since issue
-// #845 a backup set may poll on its own interval, so the loop wakes at
-// pollWakeInterval below and decides per set what is due. Nothing drives
-// a schedule off this value any more; it is reported for surfaces that
-// want to show the operator what the default is.
+// #845 a backup set may poll on its own interval, so the loop sleeps to
+// the earliest deadline across the sets (nextPollWake below) and decides
+// per set what is due. Nothing drives a schedule off this value any
+// more; it is reported for surfaces that want to show the operator what
+// the default is.
 func (b *BackupService) PollInterval() time.Duration {
 	return b.state.Load().inner.Config.PollInterval.Duration()
 }
 
-// pollWakeInterval is how long the loop below sleeps between wakes: the
-// tightest cadence any enabled backup set is entitled to
-// (config.PollWakeInterval), re-read from the live configuration on every
-// pass so an edited interval takes effect without a restart.
+// nextPollWake is how long the loop below sleeps before its next pass:
+// the earliest moment any enabled backup set is due again
+// (internal/app's NextPollWake), read from the live configuration and
+// the live schedule on every pass.
+//
+// Deadlines rather than a fixed sleep of the tightest configured
+// interval, for the reason NextPollWake's own doc gives: a fixed sleep
+// rounds every other cadence up to a multiple of itself, so a set asking
+// for 7 minutes under a 5 minute wake is polled every 10.
 //
 // Re-reading is the whole reason this is a method rather than a value
 // captured when the loop started. "Editable in Settings" has to mean the
 // cadence changes, and a loop holding the number it was born with would
 // have answered 200 to the save and gone on ticking at the old rate.
-func (b *BackupService) pollWakeInterval() time.Duration {
-	return b.state.Load().inner.Config.PollWakeInterval()
+func (b *BackupService) nextPollWake() time.Duration {
+	return b.state.Load().inner.NextPollWake(now())
+}
+
+// notifyConfigChanged tells a sleeping loop that the configuration it
+// computed its current sleep from is no longer the running one. It never
+// blocks: see BackupService.configChanged.
+func (b *BackupService) notifyConfigChanged() {
+	select {
+	case b.configChanged <- struct{}{}:
+	default:
+	}
+}
+
+// scheduleTimer is the loop's sleep, as a seam.
+//
+// A test asserting that a save reaches a SLEEPING loop has to be able to
+// see a sleep abandoned, and the sleeps this loop takes are measured in
+// minutes and hours: waiting one out is not an option, and shortening
+// every fixture until it is would be testing a cadence no deployment
+// runs.
+var scheduleTimer = func(d time.Duration) (<-chan time.Time, func() bool) {
+	timer := time.NewTimer(d)
+	return timer.C, timer.Stop
 }
 
 // RunOnSchedule repeats one internal/app.Service.RunCycle pass until ctx
@@ -115,12 +143,20 @@ func (b *BackupService) pollWakeInterval() time.Duration {
 // It used to be an argument, and cannot be any more: a backup set may
 // override the deployment-wide poll_interval, so the cadence is a
 // property of the whole configuration rather than one number a caller
-// could hold. The loop sleeps pollWakeInterval, re-read from the live
-// configuration every pass, and each pass is marked as a scheduled cycle
-// so internal/app decides per set which ones are actually due. Two
-// consequences worth stating: a poll_interval saved through
-// UpdateSettings takes effect on the very next wake rather than at the
-// next restart, and a wake on which no set is due does nothing at all.
+// could hold. Each pass is marked as a scheduled cycle so internal/app
+// decides per set which ones are due, and the sleep between passes is
+// the earliest of those sets' deadlines (nextPollWake above), recomputed
+// every pass. A wake on which no set is due does nothing at all.
+//
+// # A save reaches a sleeping loop
+//
+// The sleep is abandoned when the configuration changes, rather than run
+// out first. This is what the Settings page's "in effect now, with no
+// restart" means for the cadence specifically: a deployment moved from
+// daily to hourly has a loop sitting in a timer that is up to a day
+// long, and waiting that out before honouring the save would make the
+// page's sentence false for exactly as long as the old interval. So
+// adoptConfig signals (configreload.go) and this loop recomputes.
 func (b *BackupService) RunOnSchedule(ctx context.Context) error {
 	if interval := b.PollInterval(); interval <= 0 {
 		return fmt.Errorf("service: RunOnSchedule needs a positive poll_interval, got %s", interval)
@@ -152,12 +188,36 @@ func (b *BackupService) RunOnSchedule(ctx context.Context) error {
 			return nil
 		}
 
-		timer := time.NewTimer(b.pollWakeInterval())
+		if !b.sleepUntilDue(ctx) {
+			return nil
+		}
+	}
+}
+
+// sleepUntilDue waits out the gap to the next due backup set, and reports
+// false when ctx ended instead. A configuration change does not end the
+// wait: it restarts it, against the configuration that just landed,
+// because the sleep in hand was computed from one that is no longer
+// running.
+//
+// Re-arming rather than returning is what keeps a settings page from
+// driving cycles. The Web UI saves a box at a time, so a single visit is
+// several configuration writes in a row, and a loop that ran a pass for
+// each of them would turn editing a form into a burst of scheduled
+// cycles. Nothing is lost by not running one here: if the new
+// configuration has made a set due, the sleep this computes is the floor
+// (NextPollWake's minimum) and the pass follows in seconds.
+func (b *BackupService) sleepUntilDue(ctx context.Context) bool {
+	for {
+		fire, stop := scheduleTimer(b.nextPollWake())
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-			return nil
-		case <-timer.C:
+			stop()
+			return false
+		case <-b.configChanged:
+			stop()
+		case <-fire:
+			return true
 		}
 	}
 }

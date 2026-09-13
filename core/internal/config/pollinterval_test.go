@@ -143,38 +143,3 @@ func TestEffectivePollInterval(t *testing.T) {
 		t.Errorf("EffectivePollInterval(override) = %s, want %s", got, want)
 	}
 }
-
-// TestPollWakeInterval pins the base granularity the daemon loop sleeps
-// on: the smallest cadence anything configured is entitled to, so a set
-// polling every 5m is reached on time in a deployment whose default is
-// 15m -- and never anything smaller than what is configured, so a
-// deployment that overrides nothing keeps exactly today's loop.
-func TestPollWakeInterval(t *testing.T) {
-	cfg := validConfig()
-	cfg.PollInterval = Duration(15 * time.Minute)
-	if got, want := cfg.PollWakeInterval(), 15*time.Minute; got != want {
-		t.Errorf("PollWakeInterval(no overrides) = %s, want %s", got, want)
-	}
-
-	five := Duration(5 * time.Minute)
-	cfg.Sources[0].BackupSets[0].PollInterval = &five
-	if got, want := cfg.PollWakeInterval(), 5*time.Minute; got != want {
-		t.Errorf("PollWakeInterval(5m override) = %s, want %s", got, want)
-	}
-
-	// A longer override does not slow the loop down: the other sets
-	// still poll on the deployment's own default.
-	day := Duration(24 * time.Hour)
-	cfg.Sources[0].BackupSets[0].PollInterval = &day
-	if got, want := cfg.PollWakeInterval(), 15*time.Minute; got != want {
-		t.Errorf("PollWakeInterval(24h override) = %s, want %s", got, want)
-	}
-
-	// A disabled set is not polled at all, so its cadence must not be
-	// what the loop wakes on.
-	cfg.Sources[0].BackupSets[0].PollInterval = &five
-	cfg.Sources[0].BackupSets[0].Disabled = true
-	if got, want := cfg.PollWakeInterval(), 15*time.Minute; got != want {
-		t.Errorf("PollWakeInterval(disabled 5m override) = %s, want %s", got, want)
-	}
-}

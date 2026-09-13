@@ -96,7 +96,7 @@ describe("issue #845: a backup set's own polling interval", () => {
     expect(patch).toEqual({ pollIntervalSeconds: 0 });
   });
 
-  it("refuses a fraction of a minute here rather than sending one", async () => {
+  it("refuses an interval under the floor rather than sending one", async () => {
     const api = createMockApi();
     const updateBackupSet = vi.spyOn(api, "updateBackupSet");
     const sets = await api.listSets();
@@ -104,12 +104,49 @@ describe("issue #845: a backup set's own polling interval", () => {
     if (!inheriting) throw new Error("the fixture has no inheriting set");
 
     await openEditMode(api, inheriting);
+    // Half a minute is thirty seconds, under the engine's own floor.
     fireEvent.change(box(), { target: { value: "0.5" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save polling interval (minutes)" }));
     });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/whole number of minutes/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/at least 1 minute/i);
     expect(updateBackupSet).not.toHaveBeenCalled();
+  });
+
+  it("keeps an override that is not a whole number of minutes exactly as it is", async () => {
+    // config.yaml is hand-edited, and the engine's floor is sixty
+    // seconds, so a set really can poll every ninety. Drawing that as
+    // "2" made the box disagree with the configuration, and a Save of
+    // this field then rewrote a cadence nobody had touched.
+    const api = createMockApi();
+    const updateBackupSet = vi.spyOn(api, "updateBackupSet");
+    const sets = await api.listSets();
+    const target = sets.find((s) => s.pollIntervalSeconds === null);
+    if (!target) throw new Error("the fixture has no inheriting set");
+    await api.updateBackupSet(target.source, target.set, { pollIntervalSeconds: 90 });
+    updateBackupSet.mockClear();
+
+    await openEditMode(api, target);
+    expect(box().value).toBe("1.5");
+
+    // Saved back untouched it writes nothing at all, so the cadence on
+    // disk is still ninety seconds rather than the two minutes a rounded
+    // box would have sent.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save polling interval (minutes)" }));
+    });
+    expect(updateBackupSet).not.toHaveBeenCalled();
+
+    // The positive control: an edit the operator actually makes still
+    // reaches the wire, so the assertion above is about the loaded value
+    // and not about a Save that never works.
+    fireEvent.change(box(), { target: { value: "2" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save polling interval (minutes)" }));
+    });
+    await waitFor(() => expect(updateBackupSet).toHaveBeenCalledTimes(1));
+    const [, , patch] = updateBackupSet.mock.calls[0];
+    expect(patch).toEqual({ pollIntervalSeconds: 120 });
   });
 });

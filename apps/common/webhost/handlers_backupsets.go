@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -823,6 +824,12 @@ func (h *handlers) updateBackupSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pollInterval, err := checkedSecondsPointerToDuration(body.PollIntervalSeconds, "poll_interval_seconds")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+
 	req := service.UpdateBackupSetRequest{
 		Host:               body.Host,
 		Port:               body.Port,
@@ -833,7 +840,7 @@ func (h *handlers) updateBackupSet(w http.ResponseWriter, r *http.Request) {
 		CompletionStrategy: body.CompletionStrategy,
 		StableFor:          secondsPointerToDuration(body.StableForSeconds),
 		StaleAfter:         secondsPointerToDuration(body.StaleAfterSeconds),
-		PollInterval:       secondsPointerToDuration(body.PollIntervalSeconds),
+		PollInterval:       pollInterval,
 		SSHKeyID:           body.SSHKeyID,
 		KnownHostsLine:     body.KnownHostsLine,
 
@@ -882,4 +889,34 @@ func secondsPointerToDuration(s *int) *time.Duration {
 	}
 	d := secondsToDuration(*s)
 	return &d
+}
+
+// maxDurationSeconds is the largest whole number of seconds a
+// time.Duration can carry: it is nanoseconds in an int64, so anything
+// above this overflows.
+const maxDurationSeconds = int64(math.MaxInt64 / int64(time.Second))
+
+// checkedSecondsPointerToDuration is secondsPointerToDuration for a field
+// where the multiplication itself can lie.
+//
+// A JSON body may carry any number the decoder accepts, and seconds ×
+// 1e9 wraps silently: 2^55 seconds lands on exactly zero, and zero is
+// not a rejected value on a poll interval -- it is the spelling of
+// "inherit the deployment's interval again", so the largest number a
+// client can send would quietly CLEAR an operator's override and be
+// answered 200. Other values wrap to short, entirely plausible cadences,
+// which is the same failure pointed at the operator's sources.
+//
+// So the bound is checked before the multiply, and the refusal names the
+// number rather than the internal type: an operator who typed too many
+// zeroes needs to see that, not "invalid request".
+func checkedSecondsPointerToDuration(s *int, field string) (*time.Duration, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if int64(*s) > maxDurationSeconds || int64(*s) < -maxDurationSeconds {
+		return nil, fmt.Errorf("%s is %d seconds, which is longer than this engine can express as an interval (at most %d seconds)", field, *s, maxDurationSeconds)
+	}
+	d := secondsToDuration(*s)
+	return &d, nil
 }

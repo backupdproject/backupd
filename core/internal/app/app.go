@@ -229,6 +229,16 @@ type Service struct {
 	// "as of" instant). Nil means time.Now.
 	Now func() time.Time
 
+	// newTimer is the Daemon loop's sleep, injectable for Now's reason
+	// and only useful beside it: the schedule this loop keeps is measured
+	// in minutes and hours, and a test that had to wait them out could
+	// not assert on it at all. Nil means a real time.NewTimer.
+	//
+	// It returns the fire channel and a stop function rather than a
+	// *time.Timer so a test can grant a sleep instantly instead of
+	// pretending to be one.
+	newTimer func(d time.Duration) (<-chan time.Time, func() bool)
+
 	// Capacity is FR-21's thresholds, consulted before every transfer
 	// begins (see pipeline.go's admitCapacity).
 	//
@@ -301,22 +311,27 @@ type Service struct {
 	// reads lastPollAt and lastRetentionAt for every backup set, while the
 	// cycle is writing them for the set it is on.
 	//
-	// All three are in memory and nothing persists them, which is why a
-	// short-lived `status` process reports them as unknown rather than
-	// inventing a value; BuildHealthReport's doc carries the consequence
-	// and the follow-up it needs. lastPollAttempt is carried across a
-	// configuration reload by AdoptPollSchedule (pollschedule.go), which
-	// the other two are not: it decides when work HAPPENS, so losing it
-	// changes behaviour rather than a report.
+	// lastPoll and lastRetention are in memory and nothing persists them,
+	// which is why a short-lived `status` process reports them as unknown
+	// rather than inventing a value; BuildHealthReport's doc carries the
+	// consequence and the follow-up it needs.
 	mu       sync.Mutex
 	lastPoll map[model.BackupSetID]time.Time
 
-	// lastPollAttempt is when a pass over each backup set last STARTED
-	// (issue #845), which is what the per-set poll cadence is measured
-	// from. Distinct from lastPoll, which is when discovery last
-	// SUCCEEDED; see pollschedule.go for why a schedule keyed on success
-	// would retry a broken source hardest.
-	lastPollAttempt map[model.BackupSetID]time.Time
+	// schedule is when a pass over each backup set last STARTED (issue
+	// #845), which is what the per-set poll cadence is measured from.
+	// Distinct from lastPoll, which is when discovery last SUCCEEDED; see
+	// pollschedule.go for why a schedule keyed on success would retry a
+	// broken source hardest.
+	//
+	// It is a pointer to an object with its own lock, and s.mu guards
+	// only the pointer. A configuration reload hands the SAME schedule to
+	// the Service it builds (AdoptPollSchedule), because a schedule that
+	// restarted there would send the next wake at every source in the
+	// deployment for no reason but a settings save. That sharing is why
+	// this one is not a plain map beside the two above: they describe
+	// what happened, and this decides what happens next.
+	schedule *pollSchedule
 
 	lastRetention map[model.BackupSetID]time.Time
 }

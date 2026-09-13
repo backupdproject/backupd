@@ -4,6 +4,25 @@
 
 ### Added
 
+- **How often a source is checked is a setting, at two scopes** (#845). Settings
+  gains a **Service behaviour** card holding the deployment-wide polling
+  interval, and a backup set's own Edit form can override it for that set alone;
+  an empty box there means "follow the deployment's", which is what the set does
+  unless it says otherwise. Both scopes are refused below one minute, wherever
+  they are written — a web form, the HTTP API or a hand-edited `config.yaml` —
+  because below that a poll stops being a schedule and becomes pressure on
+  somebody's NAS.
+
+  The scheduling loop sleeps until the earliest moment any enabled set is
+  actually due, rather than at a fixed granularity: a set asking for seven
+  minutes beside one asking for five is polled every seven, not rounded up to
+  ten. A set is timed from when it was last ATTEMPTED, so a source that is down
+  is retried on its own interval instead of on every wake. A save takes effect
+  on the running process immediately, including on a loop already asleep in a
+  long interval, and it carries the existing schedule across rather than
+  restarting it — saving a setting is not a reason to go and knock on every
+  backup source in the deployment.
+
 - **The administrator account is recoverable, and enrolment is where that is
   arranged** (#830). The one-time enrolment form now also takes a recovery email
   address and the SMTP details to reach it, and the server sends a confirmation

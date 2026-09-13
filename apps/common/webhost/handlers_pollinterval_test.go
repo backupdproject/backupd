@@ -2,6 +2,7 @@ package webhost
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -138,6 +139,47 @@ func TestPatchBackupSet_CarriesThePollIntervalOverride(t *testing.T) {
 		}
 		if got := tr.backend.lastUpdate().PollInterval; got != nil {
 			t.Errorf("PollInterval = %v for a body that never mentioned it, want nil", got)
+		}
+	})
+}
+
+// TestAPollIntervalTooLargeToBeADurationIsRefused is the arithmetic this
+// boundary does before anything else sees the number.
+//
+// A time.Duration is nanoseconds in an int64, so seconds above
+// MaxInt64/1e9 do not fit. Multiplying first is what makes that
+// dangerous rather than merely wrong: 2^55 seconds wraps to exactly
+// zero, and zero is not a rejected value on either of these fields -- it
+// is the SPELLING of "inherit the deployment's interval again" on a
+// backup set, so a number far too large to mean anything would quietly
+// clear an operator's override and report 200. Other values wrap to
+// short, plausible-looking cadences, which is worse: the deployment
+// starts hammering its sources at an interval nobody chose.
+func TestAPollIntervalTooLargeToBeADurationIsRefused(t *testing.T) {
+	// 2^55 seconds: the value that lands on exactly zero nanoseconds.
+	const wrapsToZero = int64(1) << 55
+
+	t.Run("per set", func(t *testing.T) {
+		tr := newBackupSetsTestRouter(t)
+		seedSet(t, tr, "api/postgres-primary")
+		body := fmt.Sprintf(`{"poll_interval_seconds":%d}`, wrapsToZero)
+		rec := patchBackupSet(t, tr.router, "api/postgres-primary", body, true)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400, body: %s", rec.Code, rec.Body.String())
+		}
+		if got := tr.backend.lastUpdate().PollInterval; got != nil {
+			t.Errorf("the backend was asked for a poll interval of %s; 2^55 seconds reached it as a duration", *got)
+		}
+	})
+
+	t.Run("deployment wide", func(t *testing.T) {
+		tr := newSettingsTestRouter(t)
+		rec := tr.patch(t, fmt.Sprintf(`{"service":{"poll_interval_seconds":%d}}`, wrapsToZero))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400, body: %s", rec.Code, rec.Body.String())
+		}
+		if tr.backend.updateCalls != 0 {
+			t.Error("a poll interval too large to be a duration reached the backend")
 		}
 	})
 }

@@ -309,7 +309,13 @@ export const EDIT_FIELDS: EditField[] = [
     // deployment's number, because a box pre-filled with the inherited
     // value would turn the next Save into an explicit override and
     // detach this set from a default it was tracking.
-    read: (s) => (s.pollIntervalSeconds === null ? "" : String(Math.round(s.pollIntervalSeconds / 60))),
+    // It divides rather than rounds, for the same reason it does not
+    // pre-fill: the box has to hold what this set is actually
+    // configured with. The wire is seconds and the engine's floor is
+    // sixty of them, so ninety is a legal override a hand-edited file
+    // can carry, and a box that drew it as "2" would rewrite it to 120
+    // the next time this field was saved.
+    read: (s) => (s.pollIntervalSeconds === null ? "" : String(s.pollIntervalSeconds / 60)),
     // The placeholder is what tells an operator what inheriting
     // currently gets them. It is read off the set's own effective
     // interval, which for an inheriting set IS the deployment's, so the
@@ -323,13 +329,16 @@ export const EDIT_FIELDS: EditField[] = [
       if (trimmed === "") return { patch: { pollIntervalSeconds: 0 } };
       const value = Number(trimmed);
       // Caught here because there is no request that expresses it: a
-      // fractional or negative number of minutes is not a cadence, and
-      // NaN would serialise as null and read as "leave it alone", which
-      // is a silent no-op reported as a success.
-      if (!Number.isInteger(value) || value < 1) {
-        return { error: "Enter a whole number of minutes, at least 1 — or clear the box to follow the deployment's interval." };
+      // value that does not land on whole seconds cannot cross a wire
+      // that carries seconds, one under the engine's own floor is
+      // refused there anyway, and NaN would serialise as null and read
+      // as "leave it alone", which is a silent no-op reported as a
+      // success.
+      const seconds = Math.round(value * 60);
+      if (!Number.isFinite(value) || Math.abs(value * 60 - seconds) > 1e-6 || seconds < 60) {
+        return { error: "Enter an interval of at least 1 minute that lands on whole seconds — or clear the box to follow the deployment's interval." };
       }
-      return { patch: { pollIntervalSeconds: value * 60 } };
+      return { patch: { pollIntervalSeconds: seconds } };
     }
   }
 ];

@@ -168,4 +168,27 @@ describe("Settings: service behaviour", () => {
     expect(field().value).toBe("60");
     expect(save()).toHaveProperty("disabled", true);
   });
+
+  it("leaves an interval that is not a whole number of minutes exactly as it is", async () => {
+    // A minute and a half is a legal interval: the server's floor is
+    // sixty seconds, and config.yaml is hand-edited. Rounding it for
+    // display used to make the form dirty the moment it loaded, so the
+    // next Save quietly rewrote 90 seconds as 120 -- a cadence nobody
+    // asked for, changed by opening a page.
+    const { updateSettings } = await renderSettings({ settings: settingsFixture(90) });
+
+    expect(field().value).toBe("1.5");
+    expect(save()).toHaveProperty("disabled", true);
+
+    // The positive control: a real edit still saves, so the assertion
+    // above is about the loaded value rather than a button that never
+    // enables.
+    fireEvent.change(field(), { target: { value: "2" } });
+    expect(save()).toHaveProperty("disabled", false);
+    fireEvent.click(save());
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    const req = updateSettings.mock.calls[0][0] as UpdateSettingsRequest;
+    expect(req.service?.pollIntervalSeconds).toBe(120);
+  });
 });
