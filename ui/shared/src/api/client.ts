@@ -1228,8 +1228,6 @@ function fromWireHealth(body: WireHealthResponse, now: number): SystemHealth {
   let lastCompleted: string | null = null;
   let quarantined = 0;
   let readOnlyRetained = 0;
-  let freeBytes = 0;
-  let totalBytes = 0;
   let unavailable = 0;
   let worstStorage = 0; // index into STORAGE_ORDER
   let oldestFreshnessHours: number | null = 0;
@@ -1241,12 +1239,13 @@ function fromWireHealth(body: WireHealthResponse, now: number): SystemHealth {
     quarantined += set.quarantined_count + set.quarantined_lost_count;
     readOnlyRetained += set.read_only_retained_count;
 
-    if (set.free_bytes_known) {
-      freeBytes += set.free_bytes ?? 0;
-      totalBytes += set.total_bytes ?? 0;
-    } else {
-      unavailable += 1;
-    }
+    // Counted, never summed (issue #842): a set's free_bytes describes
+    // the VOLUME its destination sits on, and nothing on the wire says
+    // which volume that is, so two sets under one mount report one
+    // reading twice. Adding them up produced "21.6 TB free" on a 13.9 TB
+    // disk. The deduped figure is GET /api/v1/system/storage's, which
+    // measures each volume once.
+    if (!set.free_bytes_known) unavailable += 1;
     worstStorage = Math.max(worstStorage, STORAGE_ORDER.indexOf(set.storage_level ?? "OK"));
 
     if (oldestFreshnessHours !== null) {
@@ -1278,8 +1277,6 @@ function fromWireHealth(body: WireHealthResponse, now: number): SystemHealth {
     setsFailing: counts.failing,
     quarantinedCount: quarantined,
     readOnlyRetainedCount: readOnlyRetained,
-    storageFreeBytes: freeBytes,
-    storageTotalBytes: totalBytes,
     storageState: STORAGE_STATE[STORAGE_ORDER[worstStorage]],
     storageReadingsUnavailable: unavailable
   };

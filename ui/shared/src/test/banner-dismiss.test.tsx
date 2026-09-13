@@ -679,8 +679,6 @@ const IDLE_HEALTH: SystemHealth = {
   setsFailing: 0,
   quarantinedCount: 0,
   readOnlyRetainedCount: 0,
-  storageFreeBytes: 1,
-  storageTotalBytes: 2,
   storageState: "nominal",
   storageReadingsUnavailable: 0
 };

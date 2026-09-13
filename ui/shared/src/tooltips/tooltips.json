@@ -675,10 +675,6 @@
     "label": "Oldest set freshness",
     "html": "How long ago the least fresh set produced its newest verified backup, which is the worst case rather than an average. Where no figure is given, some set has never produced a verified backup at all, rather than one a very long time ago."
   },
-  "dashboard.health.free-space": {
-    "label": "Free space",
-    "html": "Room left at the measured destination as the service last read it. It falls as backups are retained and rises again only when retention deletes them."
-  },
   "dashboard.health.capacity-unreadable": {
     "label": "Capacity unreadable",
     "html": "How many destinations returned no capacity reading at all, most often a mount that has gone away. While this is above zero, those destinations cannot be judged against any threshold."

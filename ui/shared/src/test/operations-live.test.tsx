@@ -74,8 +74,6 @@ const HEALTH: SystemHealth = {
   setsFailing: 0,
   quarantinedCount: 0,
   readOnlyRetainedCount: 0,
-  storageFreeBytes: 1.8e12,
-  storageTotalBytes: 6.2e12,
   storageState: "nominal",
   storageReadingsUnavailable: 0
 };

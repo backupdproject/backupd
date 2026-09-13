@@ -1586,8 +1586,12 @@ describe("httpApi maps the wire shapes onto the domain types", () => {
     expect(got.setsHealthy).toBe(1);
     expect(got.setsFailing).toBe(1);
     expect(got.quarantinedCount).toBe(2);
-    expect(got.storageFreeBytes).toBe(105);
-    expect(got.storageTotalBytes).toBe(2000);
+    // The storage VERDICT survives the collapse because it is a max.
+    // No byte count does (issue #842): these two sets could be one
+    // volume seen twice, and 105 free bytes was this mapper claiming
+    // otherwise. Free space comes from GET /api/v1/system/storage.
+    expect("storageFreeBytes" in got).toBe(false);
+    expect("storageTotalBytes" in got).toBe(false);
     expect(got.storageState).toBe("critical");
     expect(got.newestVerifiedBackupAt).toBe("2026-08-30T09:00:00Z");
     expect(got.storageReadingsUnavailable).toBe(0);
@@ -1609,10 +1613,10 @@ describe("httpApi maps the wire shapes onto the domain types", () => {
 
     expect(got.oldestSetFreshnessHours).toBeNull();
     expect(got.setsDegraded).toBe(1);
-    // A capacity reading that could not be taken is counted, not reported
-    // as zero free bytes.
+    // A capacity reading that could not be taken is counted. It is not
+    // reported as free bytes of any kind, zero included.
     expect(got.storageReadingsUnavailable).toBe(1);
-    expect(got.storageFreeBytes).toBe(0);
+    expect(Object.keys(got).filter((k) => k.endsWith("Bytes"))).toEqual([]);
   });
 
   it("says so when nothing is configured, rather than declaring an empty deployment healthy in silence", async () => {
