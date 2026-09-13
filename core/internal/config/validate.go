@@ -201,6 +201,16 @@ func (c *Config) Validate() error {
 	v.validateCapacity(&c.Capacity)
 	v.validateKeyEncryption(&c.KeyEncryption)
 	v.validateIncrementalEngine()
+	v.validateWorkflows(c)
+
+	// Phase 2 for validateEngineReferences' reason, one axis over (EPIC
+	// L, #808): whether a set may configure a hook directory at all
+	// depends on whether the deployment declared a workflow root, and
+	// merging a set's environment needs the deployment's own block to
+	// have been validated first. A set checked during phase 1 would be
+	// checked against a global block nothing had looked at yet.
+	v.validateBackupSetWorkflows(c)
+	c.resolveBackupSetWorkflowEnvironments(v)
 
 	return v.err()
 }

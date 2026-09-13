@@ -599,11 +599,33 @@ func writeRichTestConfigFile(t *testing.T) string {
 		// edit would silently move that set back onto the deployment's
 		// cadence, and a fixture that omitted the key could not tell.
 		"        poll_interval: 5m\n" +
+		// EPIC L's per-set workflow block and environment (#808), set
+		// for the reason every field above is: an applier that dropped
+		// an operator's hook directories on an unrelated edit would
+		// silently stop running the scripts that quiesce their
+		// database, and a fixture that omitted the keys could not tell.
+		"        workflow:\n" +
+		"          before_dir: db-before\n" +
+		"          after_dir: db-after\n" +
+		"          script_timeout: 45s\n" +
+		"          remote_exec_connection_ref: production/postgres-primary\n" +
+		"        environment:\n" +
+		"          - name: PGDATABASE\n            value: orders\n" +
 		"        validation:\n          hash: sha256\n          validator_id: trailer-marker\n" +
 		"        retention:\n" +
 		"          daily_days: 90\n" +
 		"          weekly_months: 24\n" +
 		"          monthly_months: 60\n" +
+		// The deployment-wide half of EPIC L. A per-set workflow block
+		// is refused without a declared root (the root is the approved
+		// tree every hook must live inside), so this is what makes the
+		// per-set keys above a legal configuration rather than a
+		// fixture that cannot load.
+		"workflows:\n" +
+		"  root: /workflows\n" +
+		"  global:\n" +
+		"    before_dir: global-before\n" +
+		"    after_dir: global-after\n" +
 		"retention:\n" +
 		"  timezone: UTC\n" +
 		"  week_starts_on: monday\n" +
@@ -701,6 +723,13 @@ var exemptFromIsolationFixture = map[string]string{
 	"ReadOnly":     "the RESOLVED answer, filled in by Validate from ReadOnlyConfig; the override is what the fixture sets",
 	"Disabled":     "a bool whose zero value IS its ordinary state (an enabled set), so \"non-zero\" cannot be required of it. UpdateBackupSetRequest cannot reach it either: enabling and disabling is POST /enabled's own route",
 	"Revalidation": "issue #315's re-check schedule, which no update-path request field can reach and which config.Validate does not require",
+
+	// EPIC L (#808). The merged environment a hook actually runs with,
+	// filled in by Validate from three layers and carrying yaml:"-", so
+	// it is never on disk to compare -- the same footing as Retention
+	// and ReadOnly above. The two keys it is merged FROM, `workflow` and
+	// `environment`, are both written out by the fixture.
+	"WorkflowEnvironment": "the RESOLVED environment, merged by Validate from the sanitized baseline, the deployment block and the set's own, and carrying yaml:\"-\", so it is never on disk to compare",
 
 	// One level down, and every one of these is a field that CANNOT be
 	// set alongside what the fixture already sets, rather than one nobody

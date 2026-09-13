@@ -1,0 +1,58 @@
+poll_interval: 15m0s
+state:
+    database: /var/lib/backupd/state.db
+sources:
+    - id: production
+      backup_sets:
+        - id: postgres-primary
+          remote:
+            type: sftp
+            host: production.example.internal
+            port: 22
+            user: backup
+            key_file: /run/secrets/backup_ssh_key
+            key:
+                file: /run/secrets/backup_ssh_key
+                env: ""
+                command: []
+                passphrase:
+                    file: ""
+                    env: ""
+                    command: []
+            known_hosts: /etc/backupd/known_hosts
+            sensitive_endpoint: true
+            max_connections: 2
+          remote_path: /backups/postgres
+          local_path: /backups/production/postgres
+          include:
+            - '*.dump.zst'
+          completion:
+            strategy: stable
+            stable_for: 10m0s
+            delete_safety_delay: 1h0m0s
+            manifest_marker: ""
+          stale_after: 30h0m0s
+          disabled: false
+          validation:
+            hash: sha256
+            validator_id: ""
+            command:
+                executable: /usr/local/bin/validate-postgres-backup
+                timeout: 10m0s
+          revalidation:
+            interval: 720h0m0s
+            max_per_cycle: 5
+            hash: true
+            command:
+                executable: /usr/local/bin/validate-postgres-backup
+                timeout: 10m0s
+retention:
+    timezone: America/Vancouver
+    week_starts_on: monday
+    daily_days: 7
+    weekly_months: 3
+    monthly_months: 12
+    protect_last_known_good: true
+alerts:
+    enabled: true
+    repeated_failure_threshold: 3

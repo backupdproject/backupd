@@ -134,3 +134,12 @@ go.work.sum
 # which is exactly when they are least likely to look at what `git add -A`
 # picked up. It has been committed once already.
 /core/harness
+
+# core/internal/workflow's custody fixtures. That suite cannot use
+# t.TempDir: on Linux it lands under /tmp, which is mode 1777, and the
+# package (rightly) refuses a hook directory or a script spool with a
+# world-writable ancestor whether or not the sticky bit is set. So the
+# fixtures are built under the package directory, whose ancestry is the
+# checkout's, and removed again by t.Cleanup. The name is hidden so the Go
+# tool and the format checks skip whatever an interrupted run leaves.
+/core/internal/workflow/.wf-custody-*

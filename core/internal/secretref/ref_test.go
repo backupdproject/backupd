@@ -40,11 +40,12 @@ func writeFile(t *testing.T, name, contents string) string {
 //
 // An operator declares a secret in exactly one shape in config.yaml
 // (file/env/command). config.MediumCredentials, config.Passphrase and
-// transport.MediumCredentials all say it; this package resolves it. A
-// fourth field appearing on one of them and not the others would be a
-// source an operator can write and this resolver silently ignores, which
-// is the failure mode that makes a "no parallel secret store" claim stop
-// being true.
+// config.SecretSource all say it, transport.MediumCredentials carries it
+// across the medium plane, and this package resolves it. A fourth field
+// appearing on one of them and not the others would be a source an
+// operator can write and this resolver silently ignores, which is the
+// failure mode that makes a "no parallel secret store" claim stop being
+// true.
 func TestRefFieldSetMatchesTheConfiguredOnes(t *testing.T) {
 	t.Parallel()
 
@@ -57,6 +58,11 @@ func TestRefFieldSetMatchesTheConfiguredOnes(t *testing.T) {
 		{"transport.MediumCredentials", reflect.TypeFor[transport.MediumCredentials]()},
 		{"config.MediumCredentials", reflect.TypeFor[config.MediumCredentials]()},
 		{"config.Passphrase", reflect.TypeFor[config.Passphrase]()},
+		// EPIC L's workflow environment (#808). A secret-backed
+		// environment variable is the same declaration again, and it
+		// reaches a hook's environment rather than a repository, which
+		// is the case a fourth field would be most tempting on.
+		{"config.SecretSource", reflect.TypeFor[config.SecretSource]()},
 	} {
 		if got := fieldShape(other.typ); got != want {
 			t.Errorf("%s has fields %s; secretref.Ref has %s. These are the same declaration in two places, "+
