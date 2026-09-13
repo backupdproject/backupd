@@ -8,6 +8,7 @@ import (
 
 	"github.com/backupdproject/backupd/core/cliecho"
 	"github.com/backupdproject/backupd/core/internal/app"
+	"github.com/backupdproject/backupd/core/internal/config"
 	"github.com/backupdproject/backupd/core/internal/lifecycle"
 )
 
@@ -17,11 +18,65 @@ import (
 // --dry-run does and does not do (it never touches the journal at all;
 // without the flag, Fetch runs the same reconcile/discover/transfer/
 // verify/commit/delete sequence RunCycle would for this one backup set).
+//
+// # --skip-workflow-scripts is REFUSED here, and that is the honest answer
+//
+// EPIC L (#813) gives a per-set run the ability to take the backup and
+// run none of that set's hook scripts, for one situation: a hook is
+// broken at three in the morning and somebody needs tonight's backup. It
+// is an administrator action, it is refused on a scheduled run, it is
+// refused outright for a set with an unresolved interruption, and every
+// bypass is recorded twice -- bypassed=1 on the durable workflow run row
+// and a warn-level event naming the actor
+// (service.RunBackupSetRequest.SkipWorkflowScripts).
+//
+// None of that can happen here, and the reason is structural rather than
+// a missing wire-up. This command reaches internal/app.Service.Fetch
+// through openService, which builds that service directly from a loaded
+// configuration and a journal; the five-stage lifecycle is installed on
+// an app.Service only by core/service's own BackupService, in
+// installWorkflowLifecycle, and only after ReconcileWorkflows has
+// succeeded. So the pass this command performs runs NO hooks at all --
+// app.Service.Workflow is nil, which app/workflow.go documents as "every
+// deployment that configures no hook scripts, and every use of this
+// package written before EPIC L" -- and there is nothing here for a skip
+// to skip.
+//
+// Three things follow, and the flag exists to say the first two out loud:
+//
+//   - Accepting it silently would be the worst available outcome. The
+//     command would exit 0, no hook would have run, and the operator
+//     would have learned that `fetch` normally runs hooks and that this
+//     flag is how you stop it. Both halves of that are false, and the
+//     belief is exactly what #813's audit trail exists to prevent: a flag
+//     somebody added to a cron line months ago while everybody went on
+//     believing the hooks ran.
+//
+//   - Implementing it here would mean bypassing something. The route
+//     that really runs a set's hooks is the serving engine's per-set run
+//     (core/service.SubmitRunBackupSet), which is a durable,
+//     idempotency-keyed operation on that process's own single-flight
+//     lock. Turning this command into a submission against that would
+//     change what `fetch` IS -- its output, its exit status, its
+//     --dry-run, and which process moves the bytes -- and every one of
+//     those is pinned by FR-35. That is a piece of work with its own
+//     issue, not a flag.
+//
+//   - So the flag is declared, refused with a sentence that says where a
+//     bypass really lives, and exits 2. A refusal an operator can read is
+//     worth having where a silent no-op is not.
+//
+// What --dry-run does instead is report the workflow a real run of this
+// set WOULD execute, which is the question somebody reaching for the flag
+// is usually actually asking. It resolves it from the configuration and
+// executes nothing at all: see reportResolvedWorkflow below.
 func cmdFetch(args []string) int {
 	fs, cfgPath := newFlagSet("fetch")
 	sourceFlag := fs.String("source", "", "the source to fetch (required unless --backup-set names it)")
 	setFlag := fs.String("backup-set", "", "the backup set to fetch, named <source/backup-set> or with --source (required)")
 	dryRun := fs.Bool("dry-run", false, "list what discovery would find, without transferring or recording anything")
+	skipWorkflow := fs.Bool("skip-workflow-scripts", false,
+		"refused here, and never ignored: this command's pass runs none of a backup set's hook scripts in the first place, so there is nothing to skip. See this command's own doc for why, and for where a real bypass is performed and recorded")
 	// parseFlagsAroundOperands rather than a bare fs.Parse, and then a
 	// refusal, because this command takes no operand at all: both of its
 	// subjects arrive in flags. fs.Parse stops at the first argument that
@@ -77,8 +132,20 @@ func cmdFetch(args []string) int {
 		return usageError("fetch requires --source and --backup-set")
 	}
 
+	// Refused before anything is opened, because the command line is what
+	// is wrong and it is wrong on every deployment: no configuration has
+	// to be read to know that this process runs no hooks. That is the
+	// line usage()'s exit-code table draws between 2 and 1, and it is why
+	// this is a usage refusal rather than a service one. It is settled
+	// after the id above so the sentence can name the set the operator
+	// meant rather than echoing two half-filled flags back at them.
+	if *skipWorkflow {
+		return usageError("fetch: --skip-workflow-scripts cannot be honoured by this command, and is refused rather than ignored. A fetch pass runs in your own shell and installs no workflow lifecycle, so it runs none of %s/%s's hook scripts and there is nothing here to skip. A bypass is an administrator action performed BY the process serving this deployment, which records it durably on the run row and in a warn-level event naming who asked, and %s workflow run list is where a bypassed run shows up. To see what a real run of this set would execute without running any of it, pass --dry-run, or run %s validate workflow %s/%s",
+			source, set, cliecho.Binary, cliecho.Binary, source, set)
+	}
+
 	ctx := context.Background()
-	svc, _, cleanup, err := openService(ctx, *cfgPath, true)
+	svc, cfg, cleanup, err := openService(ctx, *cfgPath, true)
 	if err != nil {
 		return fail(err)
 	}
@@ -123,6 +190,8 @@ func cmdFetch(args []string) int {
 			fmt.Println("`" + cliecho.Binary + " status` names them and what to run; `" + cliecho.Binary +
 				" retry <artifact-id>` puts one back in the pipeline.")
 		}
+		reportResolvedWorkflow(cfg, source, set)
+
 		return 0
 	}
 
@@ -151,4 +220,99 @@ func cmdFetch(args []string) int {
 	// reconcile errors `run` now shares with it. Neither difference was
 	// deliberate and no test covered either.
 	return cycleExit(os.Stderr, result.Verdict())
+}
+
+// reportResolvedWorkflow says what hooks a real run of this set would
+// execute, and executes none of them.
+//
+// # Why --dry-run reports this at all
+//
+// Because --dry-run's promise is "what would a real run do", and since
+// EPIC L a real run of a configured set does more than transfer: it runs
+// a five-stage workflow around the pass, and a hook that quiesces a
+// database is the most consequential thing in the whole invocation. A
+// preview that listed the objects and said nothing about the stages was
+// answering a narrower question than the flag asks.
+//
+// It is also the answer to the request --skip-workflow-scripts is
+// refused for: an operator reaching for that flag wants to know what the
+// hooks are before they run anything.
+//
+// # Why it resolves from the configuration and nothing else
+//
+// The stages are config.Config.WorkflowStagesFor's, which is
+// workflow.PlanStages under a different name, so the ORDER printed here
+// is the order a run would use rather than this file's opinion about
+// unwinding. What it deliberately does not do is walk those directories:
+// discovering, ordering, size-bounding and hashing the scripts is
+// workflow.Snapshot's job, it captures bytes into a spool to do it, and
+// `validate workflow` is the verb that performs exactly that and reports
+// it. Re-deriving a plan here would be a second implementation that can
+// disagree with the one a run uses, which is the failure
+// core/service.ValidateWorkflow's own doc refuses to introduce.
+//
+// # Why it says this invocation runs none of them
+//
+// Because it does not, and nothing else on this screen would say so. See
+// cmdFetch's own doc: the lifecycle is installed by core/service on the
+// process that serves the deployment, and this command is not it. An
+// operator reading a dry run that listed five stages would otherwise
+// reasonably conclude that dropping --dry-run runs them.
+func reportResolvedWorkflow(cfg *config.Config, source, set string) {
+	if cfg == nil {
+		return
+	}
+	if !cfg.WorkflowsConfigured() {
+		fmt.Println("workflow: this deployment configures no workflow root, so a run of this backup set would run no hook scripts")
+
+		return
+	}
+
+	bs := configuredBackupSetFor(cfg, source, set)
+	stages := cfg.WorkflowStagesFor(bs)
+	if len(stages) == 0 {
+		fmt.Printf("workflow: neither this deployment nor %s/%s configures a stage directory, so a run of it would run no hook scripts\n", source, set)
+
+		return
+	}
+
+	// The root is named beside the stages because a stage directory is
+	// configured RELATIVE to it (config.Workflows.Root, and
+	// workflow.Root.ResolveStage is what joins them), so a list of bare
+	// names like "global-before" is not something an operator can go and
+	// look at.
+	fmt.Printf("workflow: a run of %s/%s would execute %d stage(s) under %s, in this order, with a %s bound per script:\n",
+		source, set, len(stages), cfg.Workflows.Root, cfg.EffectiveScriptTimeout(bs))
+	for _, st := range stages {
+		fmt.Printf("  %-10s %-7s %s\n", st.Scope, st.Phase, st.Dir)
+	}
+	fmt.Println("  this dry run executed none of them, and neither does a fetch without --dry-run: hooks are run by the process serving this deployment, which is not this one")
+	fmt.Printf("  `%s validate workflow %s/%s` lists the individual scripts, their order, their hashes and what is wrong with them, and runs no hook either\n",
+		cliecho.Binary, source, set)
+}
+
+// configuredBackupSetFor finds the set the pass just previewed, so the
+// stage resolution above can read its own overrides.
+//
+// A nil return is a set this configuration does not carry, which
+// WorkflowStagesFor and EffectiveScriptTimeout both accept and read as
+// "the deployment's values, with nothing pinned over them". That cannot
+// happen on this path -- svc.Fetch has already looked the same set up and
+// failed if it was not there -- and returning nil rather than refusing
+// keeps this a reporting function: a preview that had already printed
+// every object on the remote must not end in an error about a lookup
+// nobody asked for.
+func configuredBackupSetFor(cfg *config.Config, source, set string) *config.BackupSet {
+	for si := range cfg.Sources {
+		if cfg.Sources[si].Name != source {
+			continue
+		}
+		for bi := range cfg.Sources[si].BackupSets {
+			if cfg.Sources[si].BackupSets[bi].Name == set {
+				return &cfg.Sources[si].BackupSets[bi]
+			}
+		}
+	}
+
+	return nil
 }

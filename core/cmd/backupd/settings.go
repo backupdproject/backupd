@@ -95,7 +95,27 @@ import (
 // does the wire type, so accepting the file and applying the rest would
 // report success for a chain that never changed. They are sugar for the
 // default chain, so the chain is what to write.
+//
+// # The workflow block is dispatched before any of this parses
+//
+// `settings workflow ...` (EPIC L, #813, settingsworkflow.go) is a form
+// of this noun with a flag set of its own -- --root, --before-dir,
+// --value, --secret-env -- so it is found and dispatched before the
+// flags below are parsed, exactly as `backup-set` finds `retention`
+// (backupSetVerbs' own doc). Parsing those against this flag set would
+// fail with "flag provided but not defined" before any dispatcher ran,
+// which is a refusal about the wrong thing.
+//
+// The whole argument list is handed over, its own word included, so a
+// flag written before it (`settings --config X workflow`) reaches the
+// same parse it would anywhere else.
 func cmdSettings(args []string) int {
+	for _, a := range args {
+		if a == settingsWorkflowOperand {
+			return cmdSettingsWorkflow(args)
+		}
+	}
+
 	fs, cfgPath := newFlagSet("settings")
 	timezone := fs.String("timezone", "", "patch only; ignored otherwise: retention.timezone (an IANA name)")
 	weekStartsOn := fs.String("week-starts-on", "", "patch only; ignored otherwise: retention.week_starts_on (a weekday name)")
