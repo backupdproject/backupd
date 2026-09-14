@@ -497,7 +497,23 @@ function StepRow({
         textAlign: "left",
         cursor: "pointer",
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+        // `minmax(min(130px, 100%), 1fr)` and not `minmax(130px, 1fr)`,
+        // and #916 is what the difference costs. Under min-content
+        // sizing an auto-fit track list resolves to one column per item
+        // and each column's floor is that 130px, so this row's
+        // min-content width was 130px times however many facts a step
+        // has -- around 1170px. The shell's <main> is `overflow: auto`
+        // with `minWidth: 0`, so it did not clip that: it took the
+        // width, and every descendant inherited it. In a 940px window
+        // the step log terminal below measured 1178px and the page
+        // scrolled sideways.
+        //
+        // `min(130px, 100%)` lets each track shrink to the container
+        // when the container is the smaller of the two, which is what
+        // auto-fit was supposed to buy. Nothing changes at desktop
+        // width, where 100% has always been the larger.
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(130px, 100%), 1fr))",
+        maxWidth: "100%",
         gap: "6px 12px",
         alignItems: "center",
         padding: "9px 11px",
