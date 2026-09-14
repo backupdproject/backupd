@@ -267,7 +267,7 @@ TESTS_REPO_URL=https://github.com/backupdproject/backupd-tests.git
 # #624, so #60's three cases are red over there until it moves to whatever
 # commit this branch merges as. That is the same manual half every paragraph
 # above keeps flagging.
-TESTS_REPO_SHA=b4f62eb83b68e4fdc4427bf9f0567a2cc24a1ff0
+TESTS_REPO_SHA=859be9631a2d9da99996b6515371d9b82f6ce81b
 #
 # Moved to bccd71c, backupd-tests#65, off their merged main and not
 # off the branch, for the reason the paragraph about a794c38 above already
@@ -417,3 +417,30 @@ TESTS_REPO_SHA=b4f62eb83b68e4fdc4427bf9f0567a2cc24a1ff0
 # Still red, and still not this pin's business: the 28 product/suite
 # drift cases tracked in #913, which are red at every pin this file has
 # ever named, including the one before this.
+#
+# 859be963 is the sha #816 merged on, and the last thing to move in it
+# was the recovery pair becoming one case: "a crashed run is held, and
+# both ways out of the hold work". Two cases each crashing the engine
+# meant two waits for the slowest set in the deployment, and the second
+# one starved -- a set with an unsettled hold is a set the scheduler
+# will not run again, so the case that needed a live hook to crash into
+# never got one. One crash, both settlements asserted against the one
+# hold, is not a weaker claim: it is the same two exits from the same
+# hold, proved against a run that was genuinely interrupted rather than
+# against two that had to be manufactured in sequence.
+#
+# The other thing this pin records is worth more than the diff. Its
+# remote-hook case requires the host the SCRIPT printed to appear in the
+# executor the PRODUCT names, and when it went red it quoted both:
+#
+#   the hook printed that it ran on "exechost" and the product says it
+#   executed on "Remote · exec-host", so one of them is describing a
+#   different machine
+#
+# That was a fixture defect wearing a product defect's clothes -- two
+# names for one machine, in this repository's rig, at a moment when the
+# obvious reading was that remote execution was still broken. An
+# assertion that had only checked for "some hostname" would have passed
+# and proved nothing; one that compared against a literal would have
+# failed without saying why. The evidence was in the failure text, and
+# that is the argument for assertions that print what they saw.
