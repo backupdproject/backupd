@@ -267,7 +267,7 @@ TESTS_REPO_URL=https://github.com/backupdproject/backupd-tests.git
 # #624, so #60's three cases are red over there until it moves to whatever
 # commit this branch merges as. That is the same manual half every paragraph
 # above keeps flagging.
-TESTS_REPO_SHA=627d9284dac825ff4a9f56ca7aa3aceda2e96963
+TESTS_REPO_SHA=b9d3c40610c8d06d00a7805e6c99494aeaf57aca
 #
 # Moved to bccd71c, backupd-tests#65, off their merged main and not
 # off the branch, for the reason the paragraph about a794c38 above already
@@ -379,3 +379,41 @@ TESTS_REPO_SHA=627d9284dac825ff4a9f56ca7aa3aceda2e96963
 #   than to ask for one, and that is a change on their side. It is
 #   written up in #816 rather than worked around here, because a rig that
 #   opened that gate would be a rig proving something no operator can do.
+#
+# ---------------------------------------------------------------------
+#
+# b9d3c40 is the sha #816 was proved against, and it is the first pin in
+# this file with NO workflow case blocked behind an issue number.
+#
+# What moved between 5ff2ef5 and here was not the suite drifting: it was
+# four defects the rig found in a browser, each of which had to be fixed
+# in the product before the case that found it could assert rather than
+# skip.
+#
+#   #916  the step log terminal measured 1178px in a 940px window and
+#         the page scrolled sideways, with wrapping ON. Two halves: the
+#         terminal was not capped at its column, and the run page's step
+#         rows were a `repeat(auto-fit, minmax(130px, 1fr))` grid whose
+#         min-content width was 130px times the facts a step carries --
+#         about 1170px -- which the shell's `overflow: auto` main took
+#         rather than clipped.
+#   #917  coming back to a step re-read its log from the engine even
+#         though the viewer still held the whole page, so the bounded
+#         cache was an optimisation of memory alone.
+#   #919  no remote hook had run since L2/L3. The engine passed the
+#         step id as remoteexec's token, step ids carry a tilde, the
+#         token rule refuses one before a session opens, and the
+#         refusal was reported as transport_lost -- while the
+#         token-less capability preflight said the connection was fine.
+#         Fixed in #920.
+#   and the validation spool this PR fixes, which reported every set
+#   with a NAME.local.sh hook as having invalid hooks.
+#
+# Every one of those needed a real runner, a real exec-capable sshd and
+# a real browser at once. That is the whole argument for this file
+# existing, and it is the first time the argument has been paid back
+# four times in one bump.
+#
+# Still red, and still not this pin's business: the 28 product/suite
+# drift cases tracked in #913, which are red at every pin this file has
+# ever named, including the one before this.
