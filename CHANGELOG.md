@@ -18,11 +18,10 @@
   `ui/shared`'s own dev server and its in-memory fixture API, never a real
   deployment, with the clock, the timezone, the locale and the port pinned, and
   one line of output per clip so a diff of a re-record says which picture moved
-  and what it cost. Re-running it reproduces them. While adding it, `Clip.write`
-  in the shared harness turned out to reference an unbound `FFMPEG` identifier,
-  so every GIF encode on that path raised `ReferenceError` and none of the four
-  existing capture scripts could have re-recorded anything; it now calls the
-  `ffmpeg()` resolver that was already there and unused.
+  and what it cost. Re-running it reproduces them; on the machine they were
+  taken on, three consecutive runs produced byte-identical files. Recording the
+  first one required fixing the shared harness, which is its own entry under
+  **Fixed** below.
 
   **The recovery hold has an operator procedure on both surfaces.**
   `docs/recovery.md` gains the terminal path for a set blocked at
@@ -703,6 +702,28 @@
   issued the current one.
 
 ### Fixed
+
+- **The docs-site capture harness can encode a GIF again** (#817). Every
+  animated clip on the documentation site is written by `Clip.write` in
+  `docs/site/tools/harness.mjs`, and that function named a binding, `FFMPEG`,
+  that does not exist anywhere in the module — twice, once to spawn the encoder
+  and once in the error message about failing to spawn it. In an ES module that
+  is a `ReferenceError` on the first encode, so **none of the four capture
+  scripts could have re-recorded a GIF**: `capture-web-ui.mjs`,
+  `capture-ssh.mjs`, `capture-first-run.mjs` and `capture-reference.mjs` were
+  all reaching the same dead line. The resolver it was supposed to use,
+  `ffmpeg()`, was sitting three hundred lines above it, complete with its
+  candidate-path search, its `FFMPEG` environment override and a `console.log`
+  saying which binary it took, and nothing called it.
+
+  This is the failure mode `docs/epic-checklist.md` section 10 exists to
+  predict: regenerating the screenshots is an ungated step, so a break in the
+  tool that does it stays invisible until somebody tries to take a picture. It
+  was found by trying, while adding `capture-workflows.mjs` for EPIC L.
+
+  An existing deployment sees nothing; this is repository tooling. Anybody
+  re-recording site media sees it work, and sees `encoding with <path>` naming
+  the encoder that was chosen.
 
 - **The step log terminal fits the window it is read in** (EPIC L, #916). In a
   940px window it measured 1178px and the page scrolled sideways — with
