@@ -763,13 +763,14 @@ export class Clip {
     writeFileSync(listFile, list.join("\n") + "\n");
 
     const out = resolve(SCREENS, this.name + ".gif");
+    const bin = ffmpeg();
     const filter =
       "scale=" + this.width + ":-2:flags=lanczos,split[a][b];" +
       "[a]palettegen=max_colors=" + this.colors + ":stats_mode=diff[p];" +
       "[b][p]paletteuse=dither=none:diff_mode=rectangle";
 
     const r = spawnSync(
-      FFMPEG,
+      bin,
       [
         "-y", "-hide_banner", "-loglevel", "error",
         "-f", "concat", "-safe", "0", "-i", listFile,
@@ -782,7 +783,7 @@ export class Clip {
     );
     if (r.error) {
       throw new Error(
-        "could not run ffmpeg at " + FFMPEG + ". Set FFMPEG to its path and re-run.\n" + r.error.message
+        "could not run ffmpeg at " + bin + ". Set FFMPEG to its path and re-run.\n" + r.error.message
       );
     }
     if (r.status !== 0) throw new Error("ffmpeg failed on " + this.name);

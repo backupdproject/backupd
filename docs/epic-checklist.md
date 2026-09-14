@@ -27,16 +27,18 @@ these in it, and once at each phase exit gate.
   section, the way `docs/EPIC-E-alternative-storage.md` does. Deferred work
   becomes the next epic, not a third phase.
 - [ ] **An org-unique epic letter**, and sub-issues titled `<letter><phase>.<n>`
-  (`E1.2`, `E2.4`). *(Ungated.)* A, B, D and E are taken.
+  (`E1.2`, `E2.4`). *(Ungated.)* A, B, D, E, K and L are taken.
 - [ ] **The spec lives at `docs/EPIC-<letter>-<slug>.md`** with the Status block
-  the existing two carry: type, repository, parent epics, primary implementation
-  root, tracker issue with its sub-issue range, and an explicit FR-numbering
-  sentence. *(Ungated.)*
+  the existing three carry: type, repository, parent epics, primary
+  implementation root, tracker issue with its sub-issue range, and an explicit
+  FR-numbering sentence. *(Ungated.)* EPIC L's was written at the END of the
+  epic, in #817, which is how long an ungated item can go missing while every
+  gated one stays green.
 - [ ] **FR numbers continue the global series and renumber nothing.** *(Ungated.)*
-  The next free number is **FR-36**. FR-1 to FR-24 are in `docs/EPIC.md`, FR-26 is
-  the `version` command, FR-27 to FR-35 are EPIC E. FR-25 is an unclaimed hole:
-  leave it alone rather than filling it, because anything citing "FR-25" today is
-  citing nothing.
+  The next free number is **FR-49**. FR-1 to FR-24 are in `docs/EPIC.md`, FR-26 is
+  the `version` command, FR-27 to FR-35 are EPIC E, FR-36 to FR-48 are EPIC L.
+  FR-25 is an unclaimed hole: leave it alone rather than filling it, because
+  anything citing "FR-25" today is citing nothing.
 - [ ] **A five-expert adversarial review section**, initial verdicts and consensus
   position, before implementation starts. *(Ungated.)*
 - [ ] **Entry gate and exit gate per phase**, written as checkable claims rather
@@ -212,10 +214,12 @@ synology, truenas, ugos, unraid, zimaos.
 
 - [ ] **`README.md`**: the install block, the subcommand list and "What the browser
   looks like while it works". *(Ungated.)*
-- [ ] **The site**, all five pages, whichever the change touches:
-  `docs/site/index.html`, `web-ui.html`, `reference.html`, `first-run.html`,
-  `ssh.html`. *(Partly gated:* only `reference.html`'s command table is held to the
-  binary.*)*
+- [ ] **The site**, all six pages, whichever the change touches:
+  `docs/site/index.html`, `web-ui.html`, `workflows.html`, `reference.html`,
+  `first-run.html`, `ssh.html`. *(Partly gated:* only `reference.html`'s command
+  table is held to the binary. A new page is picked up by the site-wide
+  dead-fragment check in `scripts/install/test_install_docker_host.py` the
+  moment it lands, so every `#anchor` it cites has to resolve.*)*
 - [ ] **The site's "What has not been proven" section** (`index.html#honest`) says
   honestly what the epic did and did not demonstrate, including on hardware nobody
   here owns. *(Ungated.)*
@@ -235,8 +239,8 @@ synology, truenas, ugos, unraid, zimaos.
 
 - [ ] **Regenerate `docs/site/screens/`** with the capture scripts in
   `docs/site/tools/`: `capture-first-run.mjs`, `capture-reference.mjs`,
-  `capture-ssh.mjs`, `capture-web-ui.mjs`. *(Ungated.)* 44 files today, 10 of them
-  animated.
+  `capture-ssh.mjs`, `capture-web-ui.mjs`, `capture-workflows.mjs`.
+  *(Ungated.)* 54 files today, 20 of them animated.
 - [ ] **A new screen or interaction gets a capture step added to the right
   script**, never a picture taken by hand. *(Ungated.)* A hand-taken image is one
   nobody can reproduce after the UI moves.

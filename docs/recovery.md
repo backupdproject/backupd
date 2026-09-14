@@ -333,6 +333,206 @@ The one thing it refuses is a backup whose backup set is no longer in the config
 Sending it back to a set no cycle walks would leave it somewhere nothing picks up and no
 recovery path reaches. Create a backup set with the same source and name first.
 
+## Step 8: a backup set is refusing to run and says its workflow needs recovery
+
+This one is not about an artifact. Nothing in `artifacts` is wrong, and every query above
+will report the set as healthy right up to the moment its next backup does not happen.
+
+What you see is a refusal: a manual run of the set is refused, the scheduler stops visiting
+it, and a `WorkflowRecoveryRequired` condition is raised naming the set and the run. Any
+command that opens the data plane — `backupd fetch`, `backupd daemon` — says so once on the
+way up, before it does anything:
+
+```
+backupd: 2 workflow cleanup(s) from an interrupted run are outstanding; the affected backup sets refuse to run until each is resumed or acknowledged (`backupd workflow recovery show`)
+```
+
+`backupd status` will not tell you. It has no workflow section at all; it reports the set's
+artifacts, and they are fine. The command that answers is:
+
+```
+backupd workflow recovery show
+```
+
+One block per outstanding scope: the run id, the backup set, whether it is the global or the
+set-scoped half, when that scope was entered and how long ago that is by this host's clock,
+where the scripts a resume would execute are retained, and the two commands that end it.
+Beside a serving engine it asks that process, because the refusal a run will actually meet
+lives in that process's memory as well as in the journal; with nothing serving the
+deployment it reads the durable rows instead.
+
+**What it means.** A workflow run has five stages around the backup — global before, this
+set's before, the backup, this set's after, global after — and the "after" stages are the
+ones that put the machine back: thaw the database, unmount the snapshot, restart what was
+stopped. This product records that it has ENTERED a scope before it runs the first hook in
+that scope, and then the process died. On the next start, reconciliation found a step still
+sitting at `running`, whose exit status nobody observed and nobody ever will, and recorded
+it as `interrupted` rather than `failed`. Those are not the same finding: "this script
+reported failure" and "this script's outcome is unknown and its side effects may be
+half-applied" lead to different next moves, and `core/internal/workflow/states.go` keeps
+them apart deliberately. The run moved to `recovery_required`, its captured script bytes
+were retained instead of being reclaimed, the backup set was blocked, and **nothing was
+replayed**. No hook ran. That is the whole of what the restart did.
+
+So the source machine may be sitting quiesced right now, with a perfectly good backup beside
+it. That pairing — a healthy artifact and a machine that was never put back — is why this is
+a hold rather than a warning, and why no amount of waiting clears it.
+
+It is worth knowing what this is *not*. A cleanup that ran and failed is a different row and
+blocks nothing: the obligation was attempted and what happened is recorded, so it is
+discharged (`ObligationFailed` in `core/internal/workflow/obligation.go`), the run is
+`cleanup_failed`, and the set keeps running. That case still means the machine may not be
+back the way the workflow found it — it just means a person, not this product, is the only
+one who can decide that, and there is no hold to lift afterwards.
+
+**What to do.** There are exactly two exits and no third. There is no dismiss, no "ignore",
+and `--skip-workflow-scripts` is not a way past it: a run carrying that flag is refused for
+a blocked set exactly as an ordinary run is, and even where it does run it leaves the
+obligations exactly as it found them, which is what stops a flag from settling a recovery
+it knows nothing about (`core/internal/state/workflowlifecycle.go`).
+
+1. **Read the hold.** `backupd workflow recovery show`, above. If you want it out of the
+   journal instead — because nothing is serving the deployment, or because you do not trust
+   a summary:
+
+   ```bash
+   sqlite3 /path/to/state.db "
+     SELECT o.backup_set_id, o.run_id, o.scope, o.entered_at, r.script_spool_ref
+     FROM workflow_cleanup_obligations o
+     JOIN workflow_runs r ON r.run_id = o.run_id
+     WHERE o.state = 'recovery_required'
+     ORDER BY o.entered_at ASC;
+   "
+   ```
+
+   `entered_at` is the column to read first. It is when the scope was entered, which is the
+   nearest thing the journal has to "how long has this database been left quiesced". Oldest
+   first, for that reason.
+
+2. **Find out what was actually left half-done**, which is a question about the steps:
+
+   ```bash
+   sqlite3 /path/to/state.db "
+     SELECT step_order, step_id, scope, phase, target, script_name, state, started_at, exit_code
+     FROM workflow_steps
+     WHERE run_id = 'wfr_01HX...'
+     ORDER BY step_order ASC;
+   "
+   ```
+
+   The `interrupted` row is the script that was mid-flight. `exit_code` is NULL for it and
+   that is not a gap in the record: no process status ever reached this product, and NULL and
+   0 are emphatically different answers here. `pending` rows after it are hooks that never
+   started. `backupd workflow run log <run-id> --step <step-id>` prints whatever that script
+   managed to say before the process went away, which is usually the fastest way to find out
+   how far it got.
+
+3. **Resume the cleanup**, if the right answer is for this product to finish what it owes:
+
+   ```
+   backupd workflow recovery resume-cleanup wfr_01HX...
+   ```
+
+   It runs only the eligible "after" stages, out of that run's own captured bytes, each one
+   re-verified against the sha256 recorded when the plan was taken. The hooks are told
+   `BACKUPD_RECOVERY=1` and `BACKUPD_CLEANUP_REASON=interrupted_run`, so a script that wants
+   to be careful about a half-applied state can tell this apart from an ordinary unwind. It
+   exits non-zero if the run is still not settled afterwards, because then the backup set is
+   still blocked. Beside a serving engine it is handed to that process, and beside one this
+   command cannot reach it is refused rather than performed here — a resume in a second
+   process would write the journal and leave the serving engine still refusing the set it
+   just unblocked.
+
+4. **Or acknowledge it**, if you have already put the machine back by hand:
+
+   ```
+   backupd workflow recovery acknowledge wfr_01HX... --reason "thawed the database and unmounted /snap by hand"
+   ```
+
+   This executes nothing. It records that a person took responsibility, unblocks the set, and
+   the reason is required — a blank one is refused. That is not ceremony: the entire value of
+   an acknowledgement is answering, six months later, why a backup set was unblocked without
+   its cleanup ever having run. It is stored beside the run, with the actor the surface that
+   took it knows about, and you can read it back:
+
+   ```bash
+   sqlite3 /path/to/state.db "
+     SELECT run_id, scope, acknowledged_at, acknowledged_by, acknowledge_reason
+     FROM workflow_cleanup_obligations
+     WHERE state = 'manually_acknowledged'
+     ORDER BY acknowledged_at DESC;
+   "
+   ```
+
+The run's own row is the other half of the picture, and the two axes on it are separate on
+purpose — a run can be terminal with its recovery still outstanding, which is exactly the
+pair the spool must not be reclaimed under:
+
+```bash
+sqlite3 /path/to/state.db "
+  SELECT run_id, backup_set_id, state, recovery_state,
+         backup_status, workflow_status, cleanup_status,
+         started_at, finished_at, script_spool_ref
+  FROM workflow_runs
+  WHERE recovery_state IN ('required', 'in_progress');
+"
+```
+
+Mind the two spellings, because they are easy to misread as a typo: the run's `state` is
+`recovery_required`, and the `recovery_state` beside it is `required`. The schema is
+`core/migrations/0012_workflow_runs.sql` and `core/migrations/0013_workflow_lifecycle.sql`;
+every one of these vocabularies is plain TEXT with no CHECK constraint, enforced in Go on the
+write path, so a typo in a `WHERE` clause here gets you an empty result rather than an error.
+
+What a resume does not do, and what it cannot promise:
+
+- **It does not re-run the backup.** Only the "after" stages that are still owed.
+- **It does not read `/workflows`, and it does not pick up a config edit made while the
+  daemon was down.** Everything it executes comes out of that run's own spool, verified
+  against the hashes taken when the plan was made, with the environment the run was planned
+  with and its secret references re-resolved. Editing a hook script after the interruption
+  changes nothing about what a recovery executes. If the hook itself is what is broken, a
+  resume will faithfully run the broken one again; fix the machine by hand and acknowledge
+  instead.
+- **A resume that cannot account for everything lands back at `recovery_required`**, durably,
+  and the set stays blocked. It does not half-settle and it does not give up quietly.
+- **Two processes cannot unwind one run at once.** A scope moves to `in_progress` durably
+  before a hook runs, and a second caller that finds it there is refused.
+- **A hook that deliberately detached a child is outside the termination guarantee.**
+  `nohup`, `setsid`, a double fork: such a process is outside the group the reaper can reach,
+  so the step records termination as `unconfirmed` rather than claiming a clean stop, and the
+  per-step working directory is deliberately kept as the forensic record of what may still be
+  writing in there. See `docs/ssh-setup.md` and `docs/adr/0021-remote-ssh-exec.md`.
+
+The hard case this whole mechanism was built for is a power cut, or anything else that
+kills the host outright. It is worth spelling out end to end, because the sequence is not
+obvious from the outside:
+
+1. The machine comes back and `backupd` starts. Its first act on the data plane is the
+   workflow reconciliation, and a failure there ends the invocation rather than proceeding —
+   a process that cannot work out which sets are blocked must not take a backup over a
+   machine that may still be quiesced.
+2. Every run that was in flight is marked, its interrupted steps recorded as `interrupted`,
+   its unsettled scopes moved to `recovery_required`, its spool retained. Sets with an
+   outstanding scope are blocked; every other set runs normally. The startup line quoted at
+   the top of this step is printed once.
+3. Go and look at the source machines named by `backupd workflow recovery show` **before**
+   you clear anything. The journal can tell you which hooks never ran; it cannot tell you
+   what state the other end is actually in. A `df`, a `mount`, and whatever the "before" hook
+   does in reverse is the check.
+4. Clear each hold with one of the two exits above — resume if the scripts should finish the
+   job, acknowledge with a reason if you did it yourself. That is the only way recovery state
+   is ever cleared: nothing ages out, no restart settles anything, and a clean run of the set
+   cannot happen in the meantime because the set is refused.
+
+What this product does **not** promise is that the machine was put back. Power-loss cleanup
+is not guaranteed and cannot be: the hooks that would have un-quiesced the source were never
+going to run with the power off. What is guaranteed is that the fact is durable, that the set
+stops rather than taking a backup over a half-applied state, and that clearing it takes a
+person saying so. If the "after" hooks are load-bearing for your source — a database left in
+backup mode, a filesystem left frozen — the source's own startup is where that has to be made
+safe, not here.
+
 ## Quick reference
 
 | Symptom in the journal | Meaning | What to do |
@@ -344,3 +544,6 @@ recovery path reaches. Create a backup set with the same source and name first.
 | Newest good row is `QUARANTINED` | Content suspect, source may still exist | Manual re-fetch or re-run reconciliation yourself |
 | `REMOTE_DELETE_PENDING` stuck, `remote_delete_error` set | Expected refusal under a hardened SFTP account | Monitor remote disk directly; this is not corrupting anything |
 | `Keep: false` from GFS but the file is still there | Expected; a verdict is not a deletion, and nothing applies one on a timer | Apply a retention plan through the API if the space is needed |
+| A `workflow_cleanup_obligations` row is `recovery_required` | An interrupted run's cleanup is unaccounted for, and that set is blocked | `backupd workflow recovery show`, then resume or acknowledge (Step 8) |
+| A `workflow_steps` row is `interrupted`, `exit_code` NULL | Nobody saw that script exit; its side effects may be half-applied | Look at the source machine before clearing anything (Step 8) |
+| Run is `cleanup_failed`, `recovery_state` is `none` | The cleanup ran and did not succeed; nothing is blocked and the machine may not be back | Read the step's log and put the machine back yourself; there is no hold to lift |

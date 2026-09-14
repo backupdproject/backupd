@@ -50,6 +50,10 @@
         <span class="nav-label nav-label-full">The web interface</span>
         <span class="nav-label nav-label-short">Web UI</span>
       </a>
+      <a href="workflows.html" class="nav-item">
+        <span class="nav-label nav-label-full">Scripted workflows</span>
+        <span class="nav-label nav-label-short">Workflows</span>
+      </a>
       <a href="ssh.html" class="nav-item">
         <span class="nav-label nav-label-full">SSH &amp; connections</span>
         <span class="nav-label nav-label-short">SSH</span>
@@ -102,14 +106,17 @@
   <section>
     <span class="step-eyebrow">Reference</span>
     <h1>Every screen, every command, every flag</h1>
-    <p>This page is the whole surface in one place: every screen of the web interface, the three destination surfaces that live inside one of them, and the terminal docked under them all; the twenty-two commands of the <code>backupd</code> command line; and every subcommand and flag of the installer. <a href="first-run.html">The first-run tutorial</a> walks the one path a new install takes; this one does not walk anything, it enumerates.</p>
+    <p>This page is the whole surface in one place: every screen of the web interface, the three destination surfaces that live inside one of them, and the terminal docked under them all; the twenty-four commands of the <code>backupd</code> command line; and every subcommand and flag of the installer. <a href="first-run.html">The first-run tutorial</a> walks the one path a new install takes; this one does not walk anything, it enumerates. <a href="workflows.html">Scripted workflows</a> have a guide of their own, because the hook lifecycle needs prose around its pictures rather than a table of controls.</p>
 
     <div class="toc">
       <ol>
         <li><a href="#web">The web interface</a></li>
         <li><a href="#web-dashboard">Dashboard</a></li>
         <li><a href="#web-sets">Backup sets</a></li>
+        <li><a href="#web-set-detail">Backup set detail</a></li>
         <li><a href="#web-backups">Backups</a></li>
+        <li><a href="#web-backup-detail">Backup detail</a></li>
+        <li><a href="#web-workflow-run">Workflow run</a></li>
         <li><a href="#web-snapshots">Snapshots</a></li>
         <li><a href="#web-snapshot-detail">Snapshot detail</a></li>
         <li><a href="#web-snapshot-restore">Restore from a snapshot</a></li>
@@ -272,6 +279,7 @@
     <p>Reached from the <strong>Workflow</strong> panel on <a href="#web-set-detail">a backup set</a>, at <code>/workflow-runs/{run}</code>. One run of the hook lifecycle wrapped around one backup: all five stages in execution order, including the ones that had no directory to run, because &ldquo;the global after stage did not run&rdquo; and &ldquo;this deployment has no global after directory&rdquo; are opposite facts when a database has been left quiesced.</p>
     <p><strong>Three statuses, side by side, none derived from the others</strong> &mdash; backup, workflow and cleanup &mdash; since &ldquo;the backup succeeded and the cleanup did not&rdquo; means a machine may still be sitting quiesced with a good backup beside it. A failed workflow names the script that ended it. A run whose hooks were bypassed reports its workflow status as skipped and says so, rather than showing a verdict for scripts nothing executed. Each step carries a read-only terminal of exactly what that hook printed, streamed by cursor while the run is live. A step killed on its timeout whose exit was never confirmed is called out at the top of the page, because the consequence is a process that may still be running on a machine this product cannot reach. The equivalent commands are <code>backupd workflow run show</code>, <code>workflow run steps</code> and <code>workflow run log --step</code>.</p>
     <p>A run left needing recovery keeps the set refused and offers exactly the two ways out the API has: resume the cleanup from that run's own retained spool, or acknowledge it in words that are recorded. There is no dismiss.</p>
+    <p>This page enumerates the screen. What the five stages mean, what a <code>.local.sh</code> hook is for, which credential a <code>.remote.sh</code> hook needs, how the environment is built and what the six <code>BSH</code> rules refuse a save over are on <a href="workflows.html">the scripted workflows guide</a>, with clips of each of these surfaces in motion.</p>
 
     <h3 id="web-activity">Activity</h3>
     <figure>

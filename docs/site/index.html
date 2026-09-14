@@ -56,6 +56,10 @@
         <span class="nav-label nav-label-full">The web interface</span>
         <span class="nav-label nav-label-short">Web UI</span>
       </a>
+      <a href="workflows.html" class="nav-item">
+        <span class="nav-label nav-label-full">Scripted workflows</span>
+        <span class="nav-label nav-label-short">Workflows</span>
+      </a>
       <a href="ssh.html" class="nav-item">
         <span class="nav-label nav-label-full">SSH &amp; connections</span>
         <span class="nav-label nav-label-short">SSH</span>
@@ -193,14 +197,20 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
 
   <a href="first-run.html" class="clipping">
     <span class="clipping-tag">Tutorial</span>
-    <p>Setting one up for the first time means a one-time enrolment link the install hands you, an administrator account that is not your NAS login &mdash; with a recovery email address and the SMTP details to reach it, both proved by a confirmation message before the account exists &mdash; and a six-step wizard whose answers become a <code>config.yaml</code> you will live with. The first-run walkthrough shows every screen, with an example for every field and a sentence on what that entry actually causes the product to do.</p>
+    <p>Setting one up for the first time means a one-time enrolment link the install hands you, an administrator account that is not your NAS login &mdash; with a recovery email address and the SMTP details to reach it, both proved by a confirmation message before the account exists &mdash; and an eight-step wizard whose answers become a <code>config.yaml</code> you will live with. The first-run walkthrough shows every screen, with an example for every field and a sentence on what that entry actually causes the product to do.</p>
     <span class="clipping-read">Walk the first run &rarr;</span>
   </a>
 
   <a href="reference.html" class="clipping">
     <span class="clipping-tag">Reference</span>
-    <p>Every screen of the web interface with a picture and a table of what each control does, every one of the twenty <code>backupd</code> commands, and every subcommand and flag of the installer with its default. The command table and the flag table are both checked against the code on every run of the gate, so a command or a flag that lands without a row fails the build rather than going quietly stale.</p>
+    <p>Every screen of the web interface with a picture and a table of what each control does, every one of the twenty-four <code>backupd</code> commands, and every subcommand and flag of the installer with its default. The command table and the flag table are both checked against the code on every run of the gate, so a command or a flag that lands without a row fails the build rather than going quietly stale.</p>
     <span class="clipping-read">Read the reference &rarr;</span>
+  </a>
+
+  <a href="workflows.html" class="clipping">
+    <span class="clipping-tag">Guide</span>
+    <p>Bash scripts around every backup: the five stages and the one order they run in, why a <code>.local.sh</code> hook executes outside the engine's container, why a <code>.remote.sh</code> hook needs a credential your SFTP account deliberately is not, the environment and secret model, the shell verification that refuses a save rather than a run, and what a crash leaves behind &mdash; a blocked backup set with two ways out and no dismiss.</p>
+    <span class="clipping-read">Read the workflows guide &rarr;</span>
   </a>
 
 
@@ -304,6 +314,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
     <p>This section exists because the README has one, and a documentation site that quietly drops the uncomfortable half is worse than no site.</p>
     <ul>
       <li><strong>Nothing destructive can be done over HTTP, in any deployment that exists.</strong> The API's destructive operations are behind a deployment-level gate, and the only implementation of that gate this repository ships is <code>NotYetImplementedGate</code>, whose <code>Passed()</code> returns false unconditionally (<code>apps/common/webhost/gate.go:114</code>). There is no flag, environment variable or constructor argument that makes it true. So every destructive route fails closed everywhere, by construction rather than by configuration, until issue #92 supplies a real gate.</li>
+      <li><strong>No workflow run can be started from a browser, so none of the ones that were tested was.</strong> The gate above is why: <code>run_backup_set</code> is a destructive operation, so every workflow run the end-to-end suite observed was one the <em>scheduler</em> started, and the hook-bypass an administrator is allowed in principle lives on that same refused route. Remote hooks are worse than untested-looking: they had never executed at all between the feature landing and issue #919 being found by that suite and fixed, because the engine handed the remote-exec channel a step id its own token rule refused, and the refusal was mislabelled as a lost connection while a token-less capability probe went on reporting the channel healthy. <a href="workflows.html#honest">The workflows guide</a> lists the rest, including the two things the feature explicitly does not guarantee.</li>
       <li><strong>The 0.4.0 image is not on the registry.</strong> This release is cut and not pushed: <code>canonical.json</code> records <code>image.published: false</code> and the release manifest records a null digest per architecture, which are held together so neither can move alone. <code>0.3.3</code> is the newest tag that resolves, and it is signed. Until 0.4.0 is pushed, install it by building the image yourself or side-loading one.</li>
       <li><strong>No acceptance procedure has been run on real hardware.</strong> The procedures for TrueNAS, Unraid, OpenMediaVault, Synology and Proxmox VE are written, reviewed and specific, and nobody working on the repository has one of those machines to execute them on. Every one of those platforms is build-supported and uncertified.</li>
       <li><strong>There is no restore execution.</strong> <code>backupd restore</code> asks a storage provider to make an archived copy readable again, which is a different thing. Getting a backup back onto a server is a documented manual procedure, and that procedure is the whole of it.</li>

@@ -48,6 +48,10 @@
         <span class="nav-label nav-label-full">The web interface</span>
         <span class="nav-label nav-label-short">Web UI</span>
       </a>
+      <a href="workflows.html" class="nav-item">
+        <span class="nav-label nav-label-full">Scripted workflows</span>
+        <span class="nav-label nav-label-short">Workflows</span>
+      </a>
       <a href="ssh.html" class="nav-item">
         <span class="nav-label nav-label-full">SSH &amp; connections</span>
         <span class="nav-label nav-label-short">SSH</span>
@@ -195,6 +199,28 @@
   <section>
     <h2 id="icons">The icons</h2>
     <p>Everything drawn as an icon is Font Awesome Free 6.7.2, compiled into the bundle as paths rather than fetched, under CC-BY-4.0 and reproduced unmodified. Before <a href="https://github.com/backupdproject/backupd/issues/621">#621</a> they were Unicode glyphs, which means the navigation looked different on every operating system and sometimes rendered as an emoji. The typeface went the same way in <a href="https://github.com/backupdproject/backupd/issues/631">#631</a>: IBM Plex is vendored into the image and served from it, so an isolated deployment with no route to Google Fonts keeps the face it was designed in instead of silently falling back.</p>
+  </section>
+
+  <section>
+    <h2 id="workflows">The workflow surfaces have their own page</h2>
+    <p>Scripted backup workflows added four screens' worth of moving parts &mdash; a run timeline through five stages, a read-only terminal per script, a validation report with line numbers, and a hold that blocks a backup set until somebody resumes or acknowledges it &mdash; and every one of them is a thing that happens rather than a thing that sits still. They are on <a href="workflows.html">their own page</a> with their own clips, because the feature needs the prose around the pictures: what the five stages mean, why a local hook runs outside the engine's container, and why a crash leaves a blocked set rather than a retry.</p>
+    <div class="cards">
+      <a href="workflows.html#stages" class="clipping">
+        <span class="clipping-tag">Clip</span>
+        <p>The run timeline through all five stages, including the ones that had nothing to run.</p>
+        <span class="clipping-read">Watch it &rarr;</span>
+      </a>
+      <a href="workflows.html#terminals" class="clipping">
+        <span class="clipping-tag">Clip</span>
+        <p>One script selected, one terminal mounted, streaming what that hook printed.</p>
+        <span class="clipping-read">Watch it &rarr;</span>
+      </a>
+      <a href="workflows.html#recovery" class="clipping">
+        <span class="clipping-tag">Clip</span>
+        <p>A run needing recovery, and the two ways out of it.</p>
+        <span class="clipping-read">Watch it &rarr;</span>
+      </a>
+    </div>
   </section>
 
   <section>

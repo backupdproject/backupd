@@ -4,6 +4,58 @@
 
 ### Added
 
+- **Scripted backup workflows are documented, with clips taken by a committed
+  script rather than by hand** (EPIC L, #817, over everything #808 through #816
+  shipped). The feature had a conformance matrix, a performance record, four
+  ADRs and reference-page rows, and no page that told an operator what the five
+  stages are, which machine each hook runs on, or what to do about a backup set
+  that has stopped running because a workflow needs recovering. There is one
+  now: `docs/site/workflows.html`, in the topbar and on the home page.
+
+  **The pictures are reproducible or they are not evidence.**
+  `docs/site/tools/capture-workflows.mjs` records ten clips of the workflow
+  surfaces the same way the rest of the site's clips are recorded: against
+  `ui/shared`'s own dev server and its in-memory fixture API, never a real
+  deployment, with the clock, the timezone, the locale and the port pinned, and
+  one line of output per clip so a diff of a re-record says which picture moved
+  and what it cost. Re-running it reproduces them. While adding it, `Clip.write`
+  in the shared harness turned out to reference an unbound `FFMPEG` identifier,
+  so every GIF encode on that path raised `ReferenceError` and none of the four
+  existing capture scripts could have re-recorded anything; it now calls the
+  `ffmpeg()` resolver that was already there and unused.
+
+  **The recovery hold has an operator procedure on both surfaces.**
+  `docs/recovery.md` gains the terminal path for a set blocked at
+  `recovery_required` — what reconcile did, why an interrupted step is not a
+  failed one, the journal queries, and the two exits — and
+  `docs/recovery-without-a-terminal.md` gains the browser-only counterpart,
+  because the hold is raised in a UI that offers exactly `Resume cleanup` and
+  `Acknowledge` and deliberately no dismiss. `install.md`,
+  `runtime-contract.md` and `ssh-setup.md` already carried the runner, the
+  container contract and the exec credential, and are cross-referenced rather
+  than restated.
+
+  **The epic has a spec, late, and it says so.**
+  `docs/EPIC-L-scripted-backup-workflows.md` carries the Status block,
+  FR-36 through FR-48, the five-expert adversarial review and its consensus,
+  entry and exit gates per phase, and a Definition-of-Done section that names
+  the proof for each line and whether that proof is gated or ungated. It was
+  written at the end of the epic instead of the start, which is a process
+  defect recorded in the file rather than smoothed over, and its closing
+  section states what has NOT been proven: that no deployment this repository
+  builds lets a browser start a backup run (#92), so every run the end-to-end
+  suite observed is the scheduler's and the hook bypass is unreachable over
+  HTTP; that remote hooks had never actually executed until #919 was found by
+  the e2e rig and fixed in #920; and that the web-UI suite carries pre-existing
+  product-to-suite drift tracked in #913 which is not a workflow failure.
+
+  Nothing in this entry changes behaviour. An existing deployment sees new
+  documentation, three corrected wizard step names in the TrueNAS,
+  OpenMediaVault and Unraid acceptance procedures (#788 renamed those steps and
+  the procedures kept naming a step that no longer exists), and a reference page
+  whose command count finally matches the twenty-four commands the binary
+  registers.
+
 - **The workflow feature is now proved in a browser against a real
   deployment** (EPIC L, #816). `scripts/e2e/three-machine-web-ui.sh` stands
   up what EPIC L actually needs and what no mock can stand in for: a **Host

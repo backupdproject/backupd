@@ -142,8 +142,8 @@ takes. On a reinstall the same command would rewrite the retained backup store.
 > packaging fix for three things.
 >
 > Nothing else here survives that fix: once the mount is writable, the key is
-> pasted into the setup flow's Authentication step, the host key is probed and
-> confirmed on its Verify server step, and no `config.yaml` is written by hand
+> pasted into the setup flow's Connection test step, the host key is probed and
+> confirmed on that same step, and no `config.yaml` is written by hand
 > at all.
 
 `/backupd-web serve` starts without a `config.yaml` and serves the
