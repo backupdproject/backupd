@@ -958,8 +958,8 @@ func TestEveryPlatformUsesLocalAuthOnly(t *testing.T) {
 				if err != nil {
 					t.Fatalf("read bridge: %v", err)
 				}
-				if !strings.Contains(string(bridge), `mode: "`+c.AuthMode+`"`) {
-					t.Errorf("the frontend bridge does not report auth mode %q", c.AuthMode)
+				if ok, why := BridgeReportsAuthMode(string(bridge), c.AuthMode); !ok {
+					t.Errorf("the frontend bridge does not report auth mode %q: %s", c.AuthMode, why)
 				}
 				if strings.Contains(string(bridge), "nativeAuth: true") {
 					t.Error("the frontend bridge claims native auth; only UGOS has a native session adapter")
@@ -977,6 +977,64 @@ func TestEveryPlatformUsesLocalAuthOnly(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTheAuthModeCheckFollowsTheSharedReaderRatherThanTrustingIt is the
+// falsification for the delegated half of the auth-mode line, and it
+// exists because issue #795 already broke this check once by moving a
+// literal.
+//
+// Six bridges used to spell `mode: "local-account"` themselves; #795
+// collapsed the six copies into one shared module and the grep that
+// read them stayed pointed at the bridge files, so the gate reported
+// six providers with the wrong auth mode while the product's auth mode
+// had not moved. Following the delegation fixes that, and it is only an
+// improvement if the thing at the end of the delegation is read rather
+// than assumed -- which is what the last three cases watch fail.
+func TestTheAuthModeCheckFollowsTheSharedReaderRatherThanTrustingIt(t *testing.T) {
+	const delegating = `import { readLocalAccountSession } from "@shared/platform/localSession";
+export const bridge = { getAuthContext: readLocalAccountSession };`
+
+	t.Run("a bridge that spells the mode itself", func(t *testing.T) {
+		if ok, why := BridgeReportsAuthMode(`{ mode: "native-session" }`, "native-session"); !ok {
+			t.Errorf("want reported, got %q", why)
+		}
+	})
+
+	t.Run("a bridge that delegates to the real shared reader", func(t *testing.T) {
+		if ok, why := BridgeReportsAuthMode(delegating, "local-account"); !ok {
+			t.Errorf("ui/shared's reader reports local-account and this refused it: %s", why)
+		}
+	})
+
+	t.Run("a bridge that reads its own session", func(t *testing.T) {
+		own := `export const bridge = { async getAuthContext() { return { authenticated: false }; } };`
+		if ok, _ := BridgeReportsAuthMode(own, "local-account"); ok {
+			t.Error("a bridge that neither reports the mode nor delegates was accepted")
+		}
+	})
+
+	t.Run("a bridge that imports the reader and wires something else", func(t *testing.T) {
+		half := `import { readLocalAccountSession } from "@shared/platform/localSession";
+export const bridge = { getAuthContext: readVendorSession };`
+		if ok, _ := BridgeReportsAuthMode(half, "local-account"); ok {
+			t.Error("an unused import counted as delegation, so the bridge's own reader went unread")
+		}
+	})
+
+	t.Run("a shared reader that grew a mode of its own", func(t *testing.T) {
+		grown := `const SIGNED_OUT = { mode: "local-account" };
+const VENDOR = { mode: "native-session" };`
+		if ok, _ := sharedReaderReportsAuthMode(grown, "local-account"); ok {
+			t.Error("a shared reader that also reports a native session was accepted, which would make every delegating provider's cell a claim nobody checked")
+		}
+	})
+
+	t.Run("a shared reader that reports nothing", func(t *testing.T) {
+		if ok, _ := sharedReaderReportsAuthMode("export async function readLocalAccountSession() {}", "local-account"); ok {
+			t.Error("a shared reader with no auth mode at all was accepted")
+		}
+	})
 }
 
 // TestEveryVariableAProfileDeclaresIsActuallyRead is the guard for a knob

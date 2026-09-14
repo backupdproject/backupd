@@ -102,33 +102,70 @@ in section 68's own words. A green matrix proves the packaging metadata is
 well-formed and mutually consistent. It proves nothing about how any of these
 platforms behaves. `docs/acceptance/` is where that gets decided.
 
-## This region is stale, and was not rubber-stamped (#877)
+## What the review of this region found (#881)
 
-The generated region below no longer matches a fresh run, and it was already
-out of date before issue #877 touched it. A run today reports twenty `FAIL`
-cells that predate this work: the `./workflows` mount that no canonical
-storage rule describes yet, the bridges' auth-mode reading, and two acceptance
-procedures whose upgrade and removal steps capture no baseline to compare
-against.
+The region below was left stale on purpose twice — at #871 and at #872 — because
+a blind `CONFORMANCE_UPDATE=1` would have written a run's `FAIL` cells into a
+checked-in report as though somebody had verified them, and
+`docs/epic-checklist.md`'s rule is that nothing is green because nobody looked.
+#881 is the review that owed. It is recorded here rather than in a commit
+message because the next person to distrust this region will read this file.
 
-Regenerating the region would record all of those as reviewed, which is the
-one thing this report must not do — `docs/epic-checklist.md`'s own rule is that
-nothing is green because nobody looked. So the region is left as it stands
-except for the one row #877 adds, spliced in by hand with the outcomes a real
-run produces for it:
+Three of the four stale findings the issue named had already been fixed
+underneath it by the time it was reviewed, and a run confirms it: the
+`./workflows` mount now has a canonical storage role (#871 — `HostPlaneRoles`,
+known and optional), and the two acceptance procedures capture the upgrade and
+removal baselines they were missing (#872). Nothing was regenerated to make
+those go green; they were already green and the report had not caught up.
 
-| Provider | Outcome | Why |
-|---|---|---|
-| Generic Docker, OpenMediaVault, Proxmox VE | `PASS` | Their deployments sit on a Linux host the operator administers, so the Host Workflow Runner can be provisioned and the documents say how. |
-| Synology DSM, TrueNAS, Unraid, UGOS Pro | `UNSUP` | Appliance platforms. Provisioning a host unit or granting the Docker socket's group would be the host-management-plane modification §4A/§75 forbids, so local hooks are refused rather than run. |
-| CasaOS, Portainer CE, Dockge, ZimaOS | `N/A` | They ship no bridge and no runtime profile, so they report the generic profile's capabilities and have no per-provider runtime answer. Theirs is stated in their acceptance procedures, which `distribution/packaging/workflowruntime_test.go:TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead` holds over all eleven columns. |
+The fourth was not stale, and it was not a product fault either. Six columns
+failed `auth-mode-explicit` with "the bridge does not report auth mode
+`local-account`", and the auth mode had not moved: issue #795 collapsed six
+byte-identical copies of the session read into one shared module
+(`ui/shared/src/platform/localSession.ts`), which took the literal out of every
+bridge file while the check kept grepping the bridge for it. So the check was
+fixed to follow the delegation rather than the string, and the delegated answer
+is read rather than assumed — a shared reader that grew a second mode fails the
+check, which is what
+`TestTheAuthModeCheckFollowsTheSharedReaderRatherThanTrustingIt` watches. Six
+`FAIL` cells would have been a claim about this product that is false, and
+recording them would have been the same failure as rubber-stamping a `PASS`.
 
-The falsification is recorded rather than asserted: flipping ZimaOS's column to
-`available` fails the Go matrix and the frontend suite together, and a document
-that omits any one of the three prerequisites (the unit, the group grant, the
-hook image) fails
-`TestTheLocalHookDocRequirementWouldNoticeASilentDocument`. An honest review
-and regeneration of the rest of the region is tracked separately.
+One finding sat outside this region and is fixed in the same pass, for the same
+reason: the §170 equivalence gate demanded the workflow runner's three mounts of
+CasaOS, Portainer and ZimaOS, which is the rule #871 had already decided against
+for every other adapter. Host-plane mounts are optional to carry and not
+optional to carry correctly, and
+`TestAHostPlaneMountIsOptionalToCarryAndNotOptionalToCarryCorrectly` holds both
+halves: an adapter that mounts nothing for the runner is equivalent, and one
+that mounts `/workflows` writable is still reported.
+
+Relaxing that comparison is also where the review found the one genuine product
+gap, and it is filed as **#921** rather than written into this region as a
+`FAIL`. Host-plane mounts being optional is right for a provider that deploys no
+runner; it is wrong for one that declares `localHooks: available`, and four
+profiles do both at once — OpenMediaVault, Proxmox VE, Portainer CE and CasaOS
+mount no `/workflows`, no `/data/run` and no runner token, so an operator who
+follows their documents and provisions the runner still has an engine with no
+socket to dial. Three rules pass over that combination, each correctly on its
+own terms, and none of them reads the declaration and the mounts together. It is
+not this report's `FAIL` to record: the `local-workflow-hooks` row decides
+whether three declarations agree, and they do. It is a missing rule and four
+profiles, which is what #921 says.
+
+What the regeneration itself then changed is small, which is the outcome an
+honest review wants: the eight `Local workflow hooks` reason rows the #877
+hand-splice could not write, and the UGOS cell count. The per-capability table
+and every total came back byte-identical, so the row #877 spliced in by hand was
+the row a real run produces. Its falsification still holds: flipping ZimaOS's
+column to `available` fails the Go matrix and the frontend suite together, and a
+document that omits any one of the three prerequisites (the unit, the group
+grant, the hook image) fails
+`TestTheLocalHookDocRequirementWouldNoticeASilentDocument`.
+
+No cell in this region records a `FAIL`, and none is suppressed into one of the
+softer outcomes either. The run that produced it decided every cell of every
+column.
 
 <!-- BEGIN GENERATED MATRIX -->
 
@@ -204,7 +241,7 @@ cannot be cited afterwards.
 **Met.** Every cell of every one of those columns was decided, and none of them failed.
 
 **UGOS Pro is EPIC D's column** (work package 4.2).
-All 23 of its cells are decided by the same runner, on the same terms as every
+All 24 of its cells are decided by the same runner, on the same terms as every
 other column, and reported in full below; 16 are blocked today, on #83.
 None of them is in either verdict above. A capability EPIC D owns cannot hold
 EPIC B's Phase 4 or its Phase 6 release qualification open, and an EPIC D
@@ -236,6 +273,7 @@ why.
 | Embedded window | BLOCKED | #83 — Section 12's embedded provider window is delivered by the UPK, which is exactly what ui-launch above says. Declaring this supported while blocking ui-launch on the same sentence was a contradiction: both rows are the same missing package. |
 | App-store packaging | BLOCKED | #83 — The bridge claims it, and section 4A promises it, but no UPK exists in this repository yet. Passing on the bridge flag alone would be exactly the kind of claim the store-artifact half of this check exists to refuse. |
 | Storage picker | BLOCKED | #83 — Same as native-auth: declared in a bridge no shipped artifact loads. |
+| Local workflow hooks (Host Workflow Runner + container hooks) | UNSUP | UGOS Pro is a closed appliance: it offers no supported way to install a host unit or to add an account to the Docker socket's group. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS. |
 
 #### CasaOS (Tier B, gated by EPIC B's Phase 6)
 
@@ -253,6 +291,7 @@ why.
 | Embedded window | UNSUP | The app tile opens the published port in a browser tab; CasaOS hosts no third-party application window. |
 | App-store packaging | N/A | The store artifact exists and is real: the compose file carries the x-casaos block CasaOS builds the app tile and the install dialog from. What this capability actually decides is whether the SHIPPED BUNDLE tells the user they installed from a store, and it cannot, because this adapter ships no bridge (see provider-identity). The store metadata itself is checked by name, in both directions against the services beside it. |
 | Storage picker | UNSUP | No host volume API a compose app can browse. The store install dialog shows the five fixed mounts and nothing selects among them. |
+| Local workflow hooks (Host Workflow Runner + container hooks) | N/A | This provider ships no frontend bridge and no runtime profile of its own: it selects the generic profile (canonical.json's uiBridge "none"), so the running process reports generic's capabilities and cannot tell this host apart from any other Docker host. There is therefore no per-provider runtime answer for the contract to hold it to. CasaOS is an application layer installed onto an ordinary Linux distribution, which keeps its own systemd and its own docker group, so that host's administrator can run the runner installer beside the store install, and the acceptance procedure says so by name. |
 
 #### Portainer CE (Tier B, gated by EPIC B's Phase 6)
 
@@ -271,6 +310,7 @@ why.
 | Embedded window | UNSUP | Portainer's stack view links out to the published port; it hosts no third-party application window. |
 | App-store packaging | N/A | The store artifact exists and is real: templates.json is a Portainer App Template and an operator does install this from Portainer's own catalogue. What this capability actually decides is whether the SHIPPED BUNDLE tells the user so, and it cannot, because this adapter ships no bridge (see provider-identity). Declaring it supported would be a claim about the UI that the UI does not make. The template itself is checked by name. |
 | Storage picker | UNSUP | No host volume API a stack can browse. Paths are typed into the App Template's form. |
+| Local workflow hooks (Host Workflow Runner + container hooks) | N/A | This provider ships no frontend bridge and no runtime profile of its own: it selects the generic profile (canonical.json's uiBridge "none"), so the running process reports generic's capabilities and cannot tell this host apart from any other Docker host. There is therefore no per-provider runtime answer for the contract to hold it to. The answer an operator needs is still decided and still written down: Portainer runs on an ordinary Docker host, so that host's administrator can run the runner installer beside the stack, and the acceptance procedure says so by name. |
 
 #### Synology DSM (Tier B, gated by EPIC B's Phase 4)
 
@@ -287,6 +327,7 @@ why.
 | Native authentication | UNSUP | Tier B. Section 4A makes DSM SSO a follow-on capability; the initial package uses section 13A local auth. |
 | Native notifications | UNSUP | Tier B. No DSM notification adapter in v1; webhooks instead. |
 | Storage picker | UNSUP | Tier B. The shared folder is chosen once at install time through DSM, not browsed from inside the app. |
+| Local workflow hooks (Host Workflow Runner + container hooks) | UNSUP | A DSM package cannot install a systemd unit or grant a supplementary group, and Container Manager's socket is root-owned; either step would be the host-management-plane modification §4A/§75 forbids. That holds for both ways of installing on DSM, the .spk and the Container Manager project. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS. |
 
 #### TrueNAS (Tier B, gated by EPIC B's Phase 4)
 
@@ -302,6 +343,7 @@ why.
 | Native notifications | UNSUP | Tier B. Webhooks instead of TrueNAS alerts. |
 | Embedded window | UNSUP | Tier B. The Apps portal link opens the UI in a normal browser tab. |
 | Storage picker | UNSUP | Tier B. questions.yaml asks for the dataset paths at install time; the running app does not browse pools. |
+| Local workflow hooks (Host Workflow Runner + container hooks) | UNSUP | TrueNAS's host is vendor-managed: applications run under the middleware's own container runtime, a third-party systemd unit is unsupported and does not survive an upgrade, and there is no supported way to add an account to the Docker socket's group. Provisioning the Host Workflow Runner anyway would be the host-management-plane modification §4A/§75 forbids this product, and host-management-plane-untouched is a capability this same column already claims. So local hooks are refused out loud instead: the capability contract answers unavailable for this platform, and the engine refuses a NAME.local.sh step that has no host workflow runner behind it (core/internal/workflowrun/engine.go) rather than skipping it. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS. |
 
 #### Unraid (Tier B, gated by EPIC B's Phase 4)
 
@@ -317,6 +359,7 @@ why.
 | Native notifications | UNSUP | Tier B. Webhooks instead of Unraid notifications, which would need a plugin. |
 | Embedded window | UNSUP | Tier B. The WebUI link opens a normal browser tab. |
 | Storage picker | UNSUP | Tier B. Community Applications collects the paths at install time; the app does not browse shares. |
+| Local workflow hooks (Host Workflow Runner + container hooks) | UNSUP | Unraid rebuilds its operating system from the flash device on every boot, so there is no persistent host unit for the runner to be, and its Docker runs everything as root while the runner refuses to run as root at all. Two independent reasons, either one sufficient. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS. |
 
 #### ZimaOS (Tier B, gated by EPIC B's Phase 6)
 
@@ -334,6 +377,7 @@ why.
 | Embedded window | UNSUP | The app tile opens the published port in a browser tab; ZimaOS hosts no third-party application window. |
 | App-store packaging | N/A | The store artifact exists and is real: the compose file carries the x-casaos block ZimaOS builds the app tile and the install dialog from. What this capability actually decides is whether the SHIPPED BUNDLE tells the user they installed from a store, and it cannot, because this adapter ships no bridge (see provider-identity). The store metadata itself is checked by name, in both directions against the services beside it. |
 | Storage picker | UNSUP | No host volume API a compose app can browse. The store install dialog shows the five fixed mounts and nothing selects among them. |
+| Local workflow hooks (Host Workflow Runner + container hooks) | N/A | This provider ships no frontend bridge and no runtime profile of its own: it selects the generic profile (canonical.json's uiBridge "none"), so the running process reports generic's capabilities and cannot tell this host apart from any other Docker host. There is therefore no per-provider runtime answer for the contract to hold it to. ZimaOS is where that matters most: it ships as a complete appliance OS rather than as a layer over a distribution the operator administers, so unlike CasaOS there is no host session in which to install a unit or grant a group, and the running process cannot tell the difference. Its acceptance procedure is the only place that answer can be given, and it gives it: local hooks are unavailable here. A workflow step with a remote target still runs: it goes over SSH (docs/adr/0021-remote-ssh-exec.md) and needs no Docker on the NAS. |
 
 #### Dockge (Tier C, gated by EPIC B's Phase 6)
 
@@ -353,6 +397,7 @@ why.
 | Embedded window | UNSUP | Dockge links out to a stack's published port; it hosts no third-party application window. |
 | App-store packaging | UNSUP | Dockge has no application store or catalogue at all. It manages compose stacks in a directory, which is why this adapter is supported by compatibility and ships no packaging: apps/dockge/ holds documentation and nothing else, and a runtime definition appearing there is a red test. |
 | Storage picker | UNSUP | No host volume API. Paths are typed into the stack's .env. |
+| Local workflow hooks (Host Workflow Runner + container hooks) | N/A | This provider ships no frontend bridge and no runtime profile of its own: it selects the generic profile (canonical.json's uiBridge "none"), so the running process reports generic's capabilities and cannot tell this host apart from any other Docker host. There is therefore no per-provider runtime answer for the contract to hold it to. Dockge imports the canonical stack onto an ordinary Docker host, so that host's administrator can run the runner installer beside it, and the acceptance procedure says so by name. |
 
 #### Generic Docker (Tier C, gated by EPIC B's Phase 4)
 

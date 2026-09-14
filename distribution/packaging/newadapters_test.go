@@ -3,6 +3,7 @@ package packaging
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -140,6 +141,62 @@ func TestEveryNewAdapterIsSemanticallyEquivalentToTheCanonicalStack(t *testing.T
 				t.Errorf("this adapter's runtime is not the canonical runtime:\n%s", FormatDivergence(d))
 			}
 		})
+	}
+}
+
+// TestAHostPlaneMountIsOptionalToCarryAndNotOptionalToCarryCorrectly is
+// the control for the one asymmetry in equivalentMounts. Both halves
+// matter and only one of them is the exemption: an adapter that mounts
+// nothing for the workflow runner is equivalent, and an adapter that
+// mounts its script directory WRITABLE is not, because the engine
+// executes what it reads out of there.
+//
+// Without the second half the exemption reads as "the workflow mounts
+// are not compared", which would let a store profile hand the container
+// a writable /workflows and pass a gate whose whole job is to notice.
+func TestAHostPlaneMountIsOptionalToCarryAndNotOptionalToCarryCorrectly(t *testing.T) {
+	c := MustLoad()
+	want := canonicalRuntime(t, c)
+
+	workflows, ok := c.ContainerPaths.ByRole("workflows")
+	if !ok || workflows == "" {
+		t.Fatal("canonical.json declares no container path for the workflows role, so this control has nothing to mount")
+	}
+	if !slices.Contains(HostPlaneRoles, "workflows") {
+		t.Fatal(`"workflows" is not a host-plane role any more, so the exemption this control guards is not the one under test`)
+	}
+
+	base, drift := ReduceToRoles("casaos", newAdapter{id: "casaos", compose: "compose/backupd.yml"}.services(t), c)
+	if len(drift) > 0 {
+		t.Fatalf("could not reduce the fixture adapter to roles: %s", FormatDrift(drift))
+	}
+	if mountModes(base.Engine)[workflows] != "" {
+		t.Fatalf("this fixture already mounts %s, so the carries-nothing half below proves nothing", workflows)
+	}
+	if d := CheckStackEquivalence(base, want); len(d) > 0 {
+		t.Errorf("an adapter that carries no workflow-runner mount is still the canonical runtime, and this reported:\n%s", FormatDivergence(d))
+	}
+
+	writable := AdapterRuntime{Platform: base.Platform, Others: base.Others}
+	engine := copyService(*base.Engine)
+	webUI := copyService(*base.WebUI)
+	engine.Mounts = append(engine.Mounts, Mount{
+		Role:          "workflows",
+		HostPath:      "/srv/backupd/workflows",
+		ContainerPath: workflows,
+		ReadOnly:      false,
+	})
+	writable.Engine, writable.WebUI = &engine, &webUI
+
+	found := CheckStackEquivalence(writable, want)
+	named := false
+	for _, d := range found {
+		if d.Property == PropContainerMounts && strings.Contains(d.Detail, workflows) {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("an adapter that mounts %s writable against a read-only canonical mount was not reported:\n%s", workflows, FormatDivergence(found))
 	}
 }
 
