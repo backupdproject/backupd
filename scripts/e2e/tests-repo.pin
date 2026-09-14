@@ -267,7 +267,7 @@ TESTS_REPO_URL=https://github.com/backupdproject/backupd-tests.git
 # #624, so #60's three cases are red over there until it moves to whatever
 # commit this branch merges as. That is the same manual half every paragraph
 # above keeps flagging.
-TESTS_REPO_SHA=c30523caea37cec3e412ef49aed586bde19c14e1
+TESTS_REPO_SHA=0b691c59aebbc7bf891417975974c45e3df471fc
 #
 # Moved to bccd71c, backupd-tests#65, off their merged main and not
 # off the branch, for the reason the paragraph about a794c38 above already
@@ -474,3 +474,31 @@ TESTS_REPO_SHA=c30523caea37cec3e412ef49aed586bde19c14e1
 # No assertion was relaxed and no budget grew, which is the only reason
 # this pin is worth having: what changed is the arrangement, not the
 # claim.
+#
+# 0b691c59 is the last move, and it is a WHEN rather than a what. The
+# run before this one proved the shape from both ends: the deployment
+# was asked for its facts on connect and answered "0 recovery hold(s)",
+# and the same suite's reporter ended the run with "still holding 2
+# workflow run(s) for recovery: e2e/workflow-crash,
+# e2e/workflow-crash" -- two rows being one interrupted run held at
+# both scopes, global and set, which is exactly what this rig produces
+# by hand. So the hold was real, and every attempt to settle it had
+# looked for it BEFORE it existed: an interrupted run does not raise
+# its hold until it finalises, which is after the case that caused the
+# outage has moved on and after a clear that ran once at another case's
+# entry.
+#
+# Both ends now settle at a moment the hold can actually be found: the
+# crash case acknowledges any hold on its own set on a callback while
+# it waits, so a hold appearing mid-wait is a legitimate starting state
+# rather than a race it lost, and the runner-outage case settles
+# deployment-wide at its file's end, by which time the run it
+# interrupted has finalised. Nothing waits longer and no assertion
+# moved.
+#
+# The reason this is worth a paragraph rather than a line: every red in
+# this sequence was diagnosed from a message a suite printed about what
+# it saw -- the executor names that disagreed, the hold count at
+# connect, the hold list at exit. None of it came from a debugger, and
+# none of it would have existed if the assertions had been written to
+# be easy to satisfy.
