@@ -1883,6 +1883,25 @@ YAML
     [ -z "$before" ] || args+=(--before-dir "$before")
     [ -z "$after" ] || args+=(--after-dir "$after")
     [ -z "$conn" ] || args+=(--exec-connection "$conn")
+    # The crash fixture gets a SHORT per-set bound, and the last run is
+    # why. Its before hook holds for forty-five seconds on purpose, and
+    # the bound it inherits is the built-in five minutes -- so a step
+    # this rig interrupts (the runner taken away, the engine killed)
+    # sits unresolved for up to five minutes, the run stays IN
+    # PROGRESS, and the scheduler correctly starts no new run for a set
+    # that already has one. A browser waiting to catch a live hook then
+    # sees neither a run nor a hold, which is exactly what the run
+    # before this one reported: "the scheduler did not run this set,
+    # with no hold on it to explain why" -- while the same run ended
+    # with the deployment holding two rows for that set, raised when
+    # the interrupted run finally finalised.
+    #
+    # Ninety seconds is twice what that hook needs to finish cleanly,
+    # so a run nobody interrupts is unaffected, and an interruption
+    # resolves inside a browser's patience rather than outside it. A
+    # per-set script_timeout exists precisely so a set whose hooks are
+    # not like the others can say so.
+    [ "$name" != "$wf_set_crash" ] || args+=(--script-timeout 90s)
     oneshot none "${args[@]}" >/dev/null \
       || die "configuring the hooks of $name failed." \
              "Its stage directories are ${before:-none} and ${after:-none} under /workflows, seeded above."
