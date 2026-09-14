@@ -261,6 +261,20 @@ synology, truenas, ugos, unraid, zimaos.
   running a real installation against a real SFTP source. Never substitute a mock
   there. If the epic changes a screen a store listing shows, the row goes back to
   outstanding rather than quietly keeping the old picture.
+- [ ] **Run the capture script you did not change, once, before you believe the
+  ones you did.** *(Ungated, and this is the item that failed.)* EPIC L's docs
+  pass (#817) found two unrelated breaks in this tooling in a single afternoon:
+  `Clip.write` in `harness.mjs` named an unbound `FFMPEG` identifier, so every
+  GIF encode raised `ReferenceError` and none of the four then-existing scripts
+  could have re-recorded anything; and `EXAMPLE.port` was the placeholder
+  string `"<your-ssh-port>"`, which #864 turned from a value the wizard coerced
+  into one the wizard refuses, making every picture after the Source step
+  unreachable. Neither break was visible until somebody tried to take a
+  picture, and the second one was caused by a product change nobody connected
+  to a capture script. Two unrelated breaks in one tool in one pass is an
+  unguarded surface rather than bad luck, and this tooling reads the shipped
+  UI's own rules — `isPort`, the rail labels, the field help — so a product
+  change invalidates it silently. Gating it is #926.
 
 ## 11. Compliance and supply chain
 
