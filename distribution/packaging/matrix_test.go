@@ -594,8 +594,8 @@ func checkAuthModeExplicit(p providerUnderTest) (bool, string) {
 		}
 		return true, "claims a native session and reports one"
 	}
-	if !strings.Contains(text, `mode: "`+p.canonical.AuthMode+`"`) {
-		return false, fmt.Sprintf("the bridge does not report auth mode %q", p.canonical.AuthMode)
+	if ok, why := BridgeReportsAuthMode(text, p.canonical.AuthMode); !ok {
+		return false, why
 	}
 	if ok, detail := p.scan(ScanForBespokeAuth); !ok {
 		return false, "wires authentication of its own: " + detail

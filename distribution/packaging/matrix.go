@@ -769,6 +769,78 @@ func BridgeDeclaresCapability(bridgePath, key string) (bool, error) {
 	return bridgeCapabilityRe(key).Match(data), nil
 }
 
+// The delegation issue #795 introduced, and the reason this helper is
+// here rather than inline in two greps.
+//
+// Six provider bridges each held a byte-identical copy of the session
+// read, and every copy spelled `mode: "local-account"` itself. #795
+// collapsed them into one shared module, which took that literal out of
+// all six bridge files -- so a check that greps a bridge for it stopped
+// following the product and started reporting six FAIL cells about an
+// auth mode nothing had changed. The mode is still local-account; it is
+// read out of one file now instead of six.
+//
+// So the question this answers is the one the gate means: does this
+// provider's bridge report the canonical auth mode. A bridge answers it
+// either by spelling the mode itself (UGOS's native-session adapter
+// does) or by delegating to the shared reader.
+const (
+	sharedLocalSessionModule = "ui/shared/src/platform/localSession.ts"
+	localSessionReader       = "readLocalAccountSession"
+)
+
+var (
+	// authModeLiteralRe captures every auth mode a module reports.
+	authModeLiteralRe = regexp.MustCompile(`\bmode:\s*"([a-z-]+)"`)
+	// delegatesSessionRe is the bridge wiring the shared reader up as
+	// its own getAuthContext, which is what makes the shared module's
+	// answer this provider's answer.
+	delegatesSessionRe = regexp.MustCompile(`getAuthContext:\s*` + localSessionReader + `\b`)
+	// importsSessionRe is the other half: wiring a name that is not the
+	// shared module's is a bridge with a session reader of its own.
+	importsSessionRe = regexp.MustCompile(`import\s*\{[^}]*\b` + localSessionReader + `\b[^}]*\}\s*from\s*"@shared/platform/localSession"`)
+)
+
+// BridgeReportsAuthMode reports whether bridgeText reports want as its
+// auth mode, and says how it decided.
+//
+// The delegated case is followed rather than trusted: the shared module
+// has to exist, it has to report want, and it must not report anything
+// else. That last clause is the falsification. A shared reader that
+// grew a second mode -- a native-session path, a "mode: unknown"
+// fallback -- would make every delegating bridge's cell a claim nobody
+// checked, and it fails here instead.
+func BridgeReportsAuthMode(bridgeText, want string) (bool, string) {
+	if strings.Contains(bridgeText, `mode: "`+want+`"`) {
+		return true, "the bridge reports it directly"
+	}
+	if !delegatesSessionRe.MatchString(bridgeText) || !importsSessionRe.MatchString(bridgeText) {
+		return false, fmt.Sprintf("the bridge neither reports auth mode %q nor delegates to %s from %s", want, localSessionReader, sharedLocalSessionModule)
+	}
+	data, err := os.ReadFile(Path(sharedLocalSessionModule))
+	if err != nil {
+		return false, fmt.Sprintf("the bridge delegates to %s and %s cannot be read: %v", localSessionReader, sharedLocalSessionModule, err)
+	}
+	return sharedReaderReportsAuthMode(string(data), want)
+}
+
+// sharedReaderReportsAuthMode is the delegated half on its own, so the
+// one branch that cannot be reached by editing a bridge -- the shared
+// module reporting a mode of its own -- has a control that watches it
+// fail without rewriting a file six providers depend on.
+func sharedReaderReportsAuthMode(sharedText, want string) (bool, string) {
+	found := authModeLiteralRe.FindAllStringSubmatch(sharedText, -1)
+	if len(found) == 0 {
+		return false, fmt.Sprintf("the bridge delegates to %s and %s reports no auth mode at all", localSessionReader, sharedLocalSessionModule)
+	}
+	for _, m := range found {
+		if m[1] != want {
+			return false, fmt.Sprintf("%s reports auth mode %q, and this platform's is %q", sharedLocalSessionModule, m[1], want)
+		}
+	}
+	return true, fmt.Sprintf("delegates to %s, which reports %q and nothing else", localSessionReader, want)
+}
+
 // procedureLineRe matches the lines of an acceptance procedure that
 // represent a step an operator actually performs: a heading, or a
 // checklist box. Matching those rather than the whole document is what

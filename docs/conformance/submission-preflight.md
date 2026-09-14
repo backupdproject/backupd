@@ -102,6 +102,7 @@ Why each target reads the way it does:
 | No self-update mechanism in the shipped package | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
 | No floating image tag | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
 | No privileged mode requested by the package | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
+| No container access to the Docker daemon requested by the package | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
 | No mandatory telemetry endpoint | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
 | Drift gate: image reference | N/A | PASS | PASS | N/A | PASS | PASS | PASS | N/A | N/A | PASS | PASS |
 | Drift gate: required mounts | N/A | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
@@ -127,10 +128,10 @@ Why each target reads the way it does:
 
 | Outcome | Cells |
 |---|---|
-| PASS | 173 |
+| PASS | 183 |
 | PENDING_OPERATOR | 15 |
 | UNSUPPORTED | 0 |
-| NOT_APPLICABLE | 65 |
+| NOT_APPLICABLE | 66 |
 | BLOCKED | 0 |
 | FAIL | 0 |
 
@@ -158,6 +159,7 @@ below, with why.
 | No self-update mechanism in the shipped package | N/A | EPIC D's #83 has not produced the .UPK, so there is no UGREEN artifact to preflight. Recorded as not yet applicable rather than as a failing check, per this work package's own rule that a UGREEN row can never block Phase 5; the same mechanism decides this row the day #83 lands, with no edit here. |
 | No floating image tag | N/A | EPIC D's #83 has not produced the .UPK, so there is no UGREEN artifact to preflight. Recorded as not yet applicable rather than as a failing check, per this work package's own rule that a UGREEN row can never block Phase 5; the same mechanism decides this row the day #83 lands, with no edit here. |
 | No privileged mode requested by the package | N/A | EPIC D's #83 has not produced the .UPK, so there is no UGREEN artifact to preflight. Recorded as not yet applicable rather than as a failing check, per this work package's own rule that a UGREEN row can never block Phase 5; the same mechanism decides this row the day #83 lands, with no edit here. |
+| No container access to the Docker daemon requested by the package | N/A | EPIC D's #83 has not produced the .UPK, so there is no UGREEN artifact to preflight. Recorded as not yet applicable rather than as a failing check, per this work package's own rule that a UGREEN row can never block Phase 5; the same mechanism decides this row the day #83 lands, with no edit here. |
 | No mandatory telemetry endpoint | N/A | EPIC D's #83 has not produced the .UPK, so there is no UGREEN artifact to preflight. Recorded as not yet applicable rather than as a failing check, per this work package's own rule that a UGREEN row can never block Phase 5; the same mechanism decides this row the day #83 lands, with no edit here. |
 | Drift gate: image reference | N/A | EPIC D's #83 has not produced the .UPK, so there is no UGREEN artifact to preflight. Recorded as not yet applicable rather than as a failing check, per this work package's own rule that a UGREEN row can never block Phase 5; the same mechanism decides this row the day #83 lands, with no edit here. |
 | Drift gate: required mounts | N/A | EPIC D's #83 has not produced the .UPK, so there is no UGREEN artifact to preflight. Recorded as not yet applicable rather than as a failing check, per this work package's own rule that a UGREEN row can never block Phase 5; the same mechanism decides this row the day #83 lands, with no edit here. |

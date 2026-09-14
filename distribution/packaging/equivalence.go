@@ -2,6 +2,7 @@ package packaging
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -203,16 +204,32 @@ func withoutProfile(argv []string) []string {
 // the adapter handing the container a piece of the host nothing in the
 // canonical definition asked for, which no comparison of the canonical
 // list against the adapter's would ever see.
+//
+// The host-plane roles are the one asymmetry, and it is the same
+// distinction HostPlaneRoles draws for CheckRequiredMounts: the canonical
+// stack mounts the workflow runner's socket directory, its token and its
+// script directory, and a store profile that deploys no runner has no
+// business being told it is missing storage. Demanding them here made
+// exactly three of ten adapters -- the three this file compares -- carry
+// a runner the other seven are never asked about. So a host-plane path
+// the adapter does not mount is not a divergence; one it DOES mount is
+// held to the canonical write mode like any other, which is the half
+// that matters, because the engine executes what it reads out of
+// /workflows.
 func equivalentMounts(role string, got, want *Service) []Divergence {
 	why := whyFor(PropContainerMounts)
 	var out []Divergence
 
 	gotMounts := mountModes(got)
 	wantMounts := mountModes(want)
+	optional := hostPlaneMountPaths(want)
 
 	for _, path := range sortedMountPaths(wantMounts) {
 		mode, ok := gotMounts[path]
 		if !ok {
+			if optional[path] {
+				continue
+			}
 			out = append(out, Divergence{PropContainerMounts, role,
 				fmt.Sprintf("mounts nothing at %s, and the canonical stack mounts it %s", path, wantMounts[path]), why})
 			continue
@@ -226,6 +243,21 @@ func equivalentMounts(role string, got, want *Service) []Divergence {
 		if _, ok := wantMounts[path]; !ok {
 			out = append(out, Divergence{PropContainerMounts, role,
 				fmt.Sprintf("mounts %s, and the canonical stack's %s role mounts nothing there", path, role), why})
+		}
+	}
+	return out
+}
+
+// hostPlaneMountPaths is the set of container paths on the canonical side
+// that belong to a host-plane role. The role is read off the mount rather
+// than looked up from canonical.json a second time: ReadCompose already
+// resolved it from the container path, which is the only side of a mount
+// the binaries fix.
+func hostPlaneMountPaths(svc *Service) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range svc.Mounts {
+		if slices.Contains(HostPlaneRoles, m.Role) {
+			out[m.ContainerPath] = true
 		}
 	}
 	return out
