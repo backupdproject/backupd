@@ -124,7 +124,7 @@
     <ol>
       <li><strong>The host directories exist and the container can write them.</strong> The runtime image is distroless with no root step, and a bind mount does not chown its source, so create the state, backup and config directories on the NAS and chown them to the container's uid and gid yourself. The config directory is mounted as a writable <em>directory</em>, not a read-only file, which is exactly what lets setup write <code>config.yaml</code> into it.</li>
       <li><strong>The config directory is empty.</strong> Setup is a one-time door. If anything is already at <code>/etc/backupd/config/config.yaml</code>, however it got there, the first-run write refuses rather than overwriting it, and the instance serves the ordinary application instead of the setup flow.</li>
-      <li><strong>The remote server has an account to pull from.</strong> A dedicated, shell-less, chrooted SFTP account is what the project's own <a href="https://github.com/backupdproject/backupd/blob/main/docs/ssh-setup.md">SSH setup guide</a> recommends, and it has a consequence worth knowing before you get to step 5: against that account shape a remote checksum cannot be computed at all, so verification is transfer verification, not a remote-versus-local hash comparison.</li>
+      <li><strong>The remote server has an account to pull from.</strong> A dedicated, shell-less, chrooted SFTP account is what the project's own <a href="https://github.com/backupdproject/backupd/blob/main/docs/ssh-setup.md">SSH setup guide</a> recommends, and it has a consequence worth knowing before you get to step 6: against that account shape a remote checksum cannot be computed at all, so verification is transfer verification, not a remote-versus-local hash comparison.</li>
       <li><strong>You have working SMTP details in front of you.</strong> Enrolment asks for a recovery email address and for the mail server to reach it through, and it proves both by sending a confirmation message before it will create the account. Server, port, transport security, the sender address the server will accept, and a username and password if it wants them. A provider's app-password page is the usual place to get them; whatever you use, it has to work from the NAS, because that is where the connection is made from.</li>
     </ol>
   </section>
@@ -137,11 +137,13 @@
         <li><a href="#enrol">Create the administrator</a></li>
         <li><a href="#unconfigured">The application with nothing in it</a></li>
         <li><a href="#step1">Step 1: Source</a></li>
-        <li><a href="#step2">Step 2: Authentication</a></li>
-        <li><a href="#step3">Step 3: Verify server</a></li>
-        <li><a href="#step4">Step 4: Backup discovery</a></li>
-        <li><a href="#step5">Step 5: Storage and validation</a></li>
-        <li><a href="#step6">Step 6: Review, and Finish setup</a></li>
+        <li><a href="#step2">Step 2: Connection test</a></li>
+        <li><a href="#step3">Step 3: Engine</a></li>
+        <li><a href="#step4">Step 4: Repository domain</a></li>
+        <li><a href="#step5">Step 5: Source consistency</a></li>
+        <li><a href="#step6">Step 6: Completion and validation</a></li>
+        <li><a href="#step7">Step 7: Storage, retention and holds</a></li>
+        <li><a href="#step8">Step 8: Review, and Finish setup</a></li>
         <li><a href="#after">What you get next</a></li>
         <li><a href="#again">Coming back later</a></li>
         <li><a href="#forgot">Forgetting the password</a></li>
@@ -216,7 +218,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
     </div>
 
     <figure>
-      <img src="screens/01-enrolment-empty.png" alt="The Create Backupd administrator form, empty, with Username, Password and Confirm password fields and a disabled Create administrator button" loading="lazy">
+      <img src="screens/01-enrolment-empty.png" alt="The Create Backupd administrator form, empty, with the username and password fields, the Account recovery block of mail settings, the ATTENTION banner and a disabled Create administrator button" loading="lazy">
       <figcaption>The enrolment form as the link lands on it. The Create administrator button stays disabled until every field is valid, so there is no way to submit a half-filled form.</figcaption>
     </figure>
 
@@ -277,13 +279,13 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
     </figure>
 
     <figure>
-      <img src="screens/03-enrolment-ready.png" alt="The enrolment form with all three fields filled and the Create administrator button enabled" loading="lazy">
+      <img src="screens/03-enrolment-ready.png" alt="The enrolment form with every field filled, the SMTP username and password left empty, and the Create administrator button enabled" loading="lazy">
       <figcaption>Every field valid. Pressing Create administrator sends the username, the password, the recovery address, the mail settings and the token from the URL; the server sends the confirmation message, and only then writes the record and signs you in.</figcaption>
     </figure>
 
     <div class="note">
-      <span class="note-label">What these three pictures do not show</span>
-      <p>They were taken before <a href="https://github.com/backupdproject/backupd/issues/830">#830</a> added the recovery address and the mail settings, so the form in them is the three-field one and the table above is longer than the screenshots. The fields are described rather than pictured because a screenshot of this page is re-shot from the product's own fixtures, and a picture is the one thing this page will not invent. Everything else on the screen is unchanged: same card, same disabled-until-valid button, same inline messages.</p>
+      <span class="note-label">Two of these fields are photographed empty on purpose</span>
+      <p><strong>SMTP username</strong> and <strong>SMTP password</strong> are blank in the pictures above, and that is a real configuration rather than an unfinished screenshot: the fixture these are shot against submits without a credential, and a placeholder in a password field is the one kind of placeholder somebody copies into production. Fill both in if your own server asks for them. <strong>Security</strong> is likewise left on its default of STARTTLS.</p>
     </div>
 
     <div class="note ok">
@@ -325,18 +327,23 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
   </section>
 
   <section>
-    <span class="step-eyebrow">Screen 3 &middot; wizard step 1 of 6</span>
+    <span class="step-eyebrow">Screen 3 &middot; wizard step 1 of 8</span>
     <h2 id="step1">Step 1: Source</h2>
-    <p>Six steps, and the tracker across the top ticks each one off as it becomes valid. You can go back to any step you have reached.</p>
+    <p>Eight steps, and the tracker across the top ticks each one off as it becomes valid. You can go back to any step you have reached; you cannot jump forward past one you have not answered, because the tracker refuses it and so does Continue. The footer says which step you are on out of how many, so the count on screen is the count this page walks.</p>
+
+    <div class="note">
+      <span class="note-label">Two names for the same step</span>
+      <p>The tracker names each step in a word or two, and the step itself opens with a fuller heading. Where the two differ this page uses the tracker's label to tell you where to click and the step's own heading to describe what you are looking at: step 4 is <strong>Repository</strong> on the tracker and &ldquo;Repository domain&rdquo; at the top of the card, step 5 is <strong>Consistency</strong> and &ldquo;Source consistency&rdquo;, step 7 is <strong>Retention</strong> and &ldquo;Storage, retention and holds&rdquo;. One of them changes with the engine rather than being merely shorter: step 6 always reads <strong>Verification</strong> on the tracker, while the card reads &ldquo;Completion and validation&rdquo; for the artifact engine this tutorial uses and &ldquo;Verification&rdquo; for the incremental one. That is the product asking two engines the same question, not a mistake on this page.</p>
+    </div>
 
     <figure>
-      <img src="screens/05-wizard-step-1-source.png" alt="The Add backup set wizard on step 1 Source, with a six-step tracker and four empty fields" loading="lazy">
+      <img src="screens/05-wizard-step-1-source.png" alt="The Add backup set wizard on step 1 Source, with an eight-step tracker and six fields carrying the fixture's example values" loading="lazy">
       <figcaption>Step 1 with the product's own example values in place. Everything visible here is a text field you are expected to overwrite.</figcaption>
     </figure>
 
     <figure>
-      <img src="screens/06-wizard-step-1-filled.png" alt="Step 1 Source filled in with a backup set name, a hostname, a placeholder SSH port and a username" loading="lazy">
-      <figcaption>Step 1 filled in for the worked example. The SSH port shown is a placeholder, not a real port; put your own number there. See the warning below about what happens if you leave text in that field.</figcaption>
+      <img src="screens/06-wizard-step-1-filled.png" alt="Step 1 Source filled in with a backup set name, a hostname, port 22, a username, a directory and a filename pattern" loading="lazy">
+      <figcaption>Step 1 filled in for the worked example, and the tracker already showing ticks on steps 3 to 6: those steps have defaults, and a tick means &ldquo;this step's own answers are in&rdquo; rather than &ldquo;you have been here&rdquo;. Step 2 has no default and no tick, which is why nothing past it is reachable yet.</figcaption>
     </figure>
 
     <table class="fields">
@@ -345,41 +352,59 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
         <tr>
           <td><strong>Backup set name</strong></td>
           <td>api-server-nightly</td>
-          <td>Becomes the backup set's <code>id</code> in <code>config.yaml</code>, and half of its permanent identity: a backup set is identified by source plus set, never by the set name alone. <span class="does">It also becomes part of a filename on disk</span>, because the trust anchor from step 3 is written to <code>known_hosts.d/&lt;source&gt;_&lt;name&gt;_known_hosts</code>, so keep it to something filename-shaped.</td>
+          <td>Becomes the backup set's <code>id</code> in <code>config.yaml</code>, and half of its permanent identity: a backup set is identified by source plus set, never by the set name alone. <span class="does">It also becomes part of a filename on disk</span>, because the trust anchor from step 2 is written to <code>known_hosts.d/&lt;source&gt;_&lt;name&gt;_known_hosts</code>, so keep it to something filename-shaped.</td>
         </tr>
         <tr>
           <td><strong>Server hostname</strong></td>
           <td>api-server.example.net</td>
-          <td>The VPS this NAS pulls from. <span class="does">Editing it after you have trusted a host key on step 3 revokes that trust</span>, deliberately, so that trusting server A cannot leave server B showing as trusted.</td>
+          <td>The VPS this NAS pulls from. <span class="does">Editing it after you have trusted a host key on step 2 revokes that trust</span>, deliberately, so that trusting server A cannot leave server B showing as trusted. It also un-proves the connection test, which locks every step after step 2 again until you run it against the machine now named here.</td>
         </tr>
         <tr>
           <td><strong>SSH port</strong></td>
-          <td>your own port</td>
-          <td>Written to <code>remote.port</code>. <span class="does">Anything that is not a number becomes 22.</span> The wizard converts this field with a numeric coercion that falls back to 22, silently, so a typo here does not produce an error, it produces a connection attempt against the wrong port.</td>
+          <td>22</td>
+          <td>Written to <code>remote.port</code>. <span class="does">The step will not let you leave it until this is a whole number between 1 and 65535.</span> The port shown in the pictures is the SSH default, which is also what the field's own help offers as its example; put your own number there. The save path still falls back to 22 for anything that is not a port, and the gate is what stops you ever handing it one &mdash; see below.</td>
         </tr>
         <tr>
           <td><strong>Username</strong></td>
           <td>backup-agent</td>
-          <td>The SFTP account on the remote server. <span class="does">This account only ever needs read access plus the right to delete the artifacts it produced</span>, because the manager pulls and then removes the source. It is never given write access to your data.</td>
+          <td>The SFTP account on the remote server. <span class="does">This account only ever needs read access to the directory below plus the right to delete the artifacts it produced</span>, because the manager pulls and then removes the source. It is never given write access to your data.</td>
+        </tr>
+        <tr>
+          <td><strong>Directory to back up</strong></td>
+          <td>/var/backups/</td>
+          <td>Becomes <code>remote_path</code>, and it has to be absolute. <span class="does">This is the directory on the VPS that gets emptied.</span> Every file directly under it that matches a pattern and passes the completion check is pulled and then deleted from the VPS, so point it at a directory whose only job is holding finished backups, never at a working directory. It is asked for here rather than three steps later because step 2's connection test lists this very directory: asking afterwards would mean testing before anything had said what to test.</td>
+        </tr>
+        <tr>
+          <td><strong>Filename patterns to back up</strong></td>
+          <td>*.tar.zst</td>
+          <td>Becomes <code>include</code>, a list. Comma-separated here, split and trimmed on save, and each pattern is matched against a remote file's own name only and never its path, so a pattern cannot contain a slash. <span class="does">A file that matches nothing is invisible to the manager: it is never pulled and never deleted</span>, which is the safe direction but also means a producer that changes its output extension quietly stops being backed up.</td>
         </tr>
       </tbody>
     </table>
 
     <div class="note danger">
       <span class="note-label">The port is the one field to double-check</span>
-      <p>Because a non-numeric port silently becomes 22, and because 22 will usually be reachable on a VPS, a mistyped port can produce a wizard that appears to work while pointing somewhere you did not intend. Check <code>remote.port</code> in the written <code>config.yaml</code> once setup finishes.</p>
+      <p>A non-numeric port used to become 22 silently, and because 22 will usually be reachable on a VPS, a typo produced a wizard that appeared to work while pointing somewhere you did not intend. That coercion is still in the save path and is now unreachable through the wizard: the step is unfinished until the field holds a real port, so Continue and the tracker both refuse to move. What the gate cannot catch is a port that is a number and the wrong one, so check <code>remote.port</code> in the written <code>config.yaml</code> once setup finishes.</p>
+    </div>
+
+    <div class="note">
+      <span class="note-label">There is no exclusion control, on this step or anywhere else</span>
+      <p>The patterns above say what to back up. Nothing on any screen says what to leave out. The configuration file does have a field for it &mdash; <code>exclude_paths</code>, a list of directory paths under the remote folder &mdash; and it is deliberately not the same kind of thing as the patterns above: a pattern is a filename and may not contain a slash, a path is a path and prunes the walk itself rather than filtering what the walk found. Set it by editing <code>config.yaml</code>. The backup-set detail page draws an <strong>Exclude</strong> row and it reads as empty on every real deployment whatever the file says, because the API response carries no field for it and the client fills that row with an empty list.</p>
     </div>
   </section>
 
   <section>
-    <span class="step-eyebrow">Screen 4 &middot; wizard step 2 of 6</span>
-    <h2 id="step2">Step 2: Authentication</h2>
-    <p>Three options are offered. <strong>Only one of them can save.</strong></p>
+    <span class="step-eyebrow">Screen 4 &middot; wizard step 2 of 8</span>
+    <h2 id="step2">Step 2: Connection test</h2>
+    <p>One step, and three questions that used to be two steps and a panel on the last one: which key this set authenticates with, which machine it is allowed to talk to, and what those two can actually <em>do</em> right now. It is second in the flow on purpose. Its answer constrains the steps after it &mdash; the write probe in its own report is what decides whether step 7 may offer to delete from the remote server at all &mdash; and nothing past it is reachable until the test has come back clean.</p>
 
     <figure>
-      <img src="screens/07-wizard-step-2-authentication.png" alt="Step 2 Authentication with three key-source choices and Generate dedicated SSH key selected, showing a public key to copy" loading="lazy">
-      <figcaption>The default selection, &ldquo;Generate dedicated SSH key&rdquo;, shows a public key and offers to copy it. In this build the key shown is a fixed example string and generation on save is not implemented, so choosing this option and pressing Finish setup on step 6 returns an error telling you to import a key instead.</figcaption>
+      <img src="screens/07-wizard-step-2-connection-test.png" alt="Step 2 Connection test as it opens: three key-source choices with Generate selected, an information banner, the fetched host-key fingerprint marked not yet trusted, and a connection panel saying nothing has been proven" loading="lazy">
+      <figcaption>The step as it opens. The host key has already been fetched &mdash; opening the step asks the server for it &mdash; and nothing has been trusted, tested or saved. The footer reads Step 2 of 8 and Continue is refused.</figcaption>
     </figure>
+
+    <h3 id="credentials">Credentials</h3>
+    <p>Three options are offered, and the default is the one that cannot finish.</p>
 
     <table class="fields">
       <thead><tr><th>Choice</th><th>State today</th><th>What it does</th></tr></thead>
@@ -387,17 +412,17 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
         <tr>
           <td><strong>Generate dedicated SSH key</strong></td>
           <td>not implemented</td>
-          <td>Marked &ldquo;Recommended&rdquo; and selected by default, but saving with it selected fails with &ldquo;Generating a key on save isn't available yet&rdquo;. <span class="does">The public key it displays is a hardcoded example, so do not install it on your server.</span></td>
+          <td>Marked &ldquo;Recommended&rdquo; and selected by default, and saving with it selected is refused. <span class="does">Picking it draws an information banner on this step saying so</span> and pointing at the two options beside it, which is a change worth knowing: the banner used to send you to an &ldquo;Authentication&rdquo; step that no longer exists, for controls that are directly below it. It no longer shows a public key to install, because the key it used to show was a fixed example string for a path that cannot be saved.</td>
         </tr>
         <tr>
           <td><strong>Use managed key</strong></td>
-          <td>not implemented</td>
-          <td>The dropdown lists example entries. Saving with it selected fails the same way.</td>
+          <td>works, once you pick one</td>
+          <td>Lists the keys this deployment already holds, each with its fingerprint and the backup sets currently using it &mdash; a real read of the key store, not a sample list, so on a default install the key the installer generated is already sitting here. A key that needs a passphrase to be resolvable, or whose public half could not be read, is listed and disabled with the reason on it. <span class="does">Saving is refused until one of them is actually selected</span>; with one selected it saves like an imported key, because from the save's point of view it is one.</td>
         </tr>
         <tr>
           <td><strong>Import key</strong></td>
           <td>works</td>
-          <td><span class="does">The only choice that produces a saveable configuration.</span> Paste the private key of an account you have already installed the matching public key for.</td>
+          <td><span class="does">Paste the private key of an account you have already installed the matching public key for.</span> This is the path the rest of this page walks.</td>
         </tr>
       </tbody>
     </table>
@@ -419,23 +444,15 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
       <img src="screens/09-wizard-step-2-key-imported.png" alt="Step 2 showing a green Key imported banner with an algorithm and fingerprint, and a Replace button" loading="lazy">
       <figcaption>After import: the algorithm and fingerprint of what was stored, and a note that the pasted material has already been discarded. Check this fingerprint against <code>ssh-keygen -lf</code> on your own copy of the key before continuing.</figcaption>
     </figure>
-  </section>
 
-  <section>
-    <span class="step-eyebrow">Screen 5 &middot; wizard step 3 of 6</span>
-    <h2 id="step3">Step 3: Verify server</h2>
-    <p>This step fetches the remote server's host key and asks you to trust it. It is the step people click through, and it is the one that decides whether a future man-in-the-middle is caught or ignored.</p>
+    <h3 id="hostkey">Host key</h3>
+    <p>The same step then fetches the remote server's host key and asks you to trust it. This is the half people click through, and it is the one that decides whether a future man-in-the-middle is caught or ignored. The fingerprint in the pictures is the development fixture's; yours will be your server's.</p>
 
-    <figure>
-      <img src="screens/10-wizard-step-3-verify-server.png" alt="Step 3 Verify server showing host, algorithm, fingerprint and Not yet trusted, with Trust host and Re-fetch fingerprint buttons" loading="lazy">
-      <figcaption>The probe result for the host and port from step 1. The fingerprint in this picture is the development fixture's; yours will be your server's. Changing the hostname or port on step 1 re-probes automatically and drops any trust already granted.</figcaption>
-    </figure>
-
-    <p>The instruction on the screen is the whole point of the step: <em>confirm this fingerprint through a channel other than this connection</em>. Run <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> on the VPS itself, over a session you already trust, and compare. A fingerprint that only ever came down the connection you are trying to authenticate proves nothing.</p>
+    <p>The instruction on the screen is the whole point of it: <em>confirm this fingerprint through a channel other than this connection</em>. Run <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> on the VPS itself, over a session you already trust, and compare. A fingerprint that only ever came down the connection you are trying to authenticate proves nothing.</p>
 
     <figure>
-      <img src="screens/11-wizard-step-3-host-trusted.png" alt="Step 3 after pressing Trust host, showing a trusted timestamp and the button now reading Host trusted" loading="lazy">
-      <figcaption>After Trust host. The button is now inert and the record shows when trust was granted.</figcaption>
+      <img src="screens/10-wizard-step-2-host-trusted.png" alt="Step 2 after pressing Trust host, showing a trusted timestamp, the button now reading Host trusted, and the connection panel ready to test" loading="lazy">
+      <figcaption>After Trust host. The button is now inert, the record shows when trust was granted, and <strong>Test connection</strong> at the bottom of the step has become available: it needs a key and a trusted host before it can check anything.</figcaption>
     </figure>
 
     <table class="fields">
@@ -449,51 +466,98 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
         <tr>
           <td><strong>Re-fetch fingerprint</strong></td>
           <td>after a legitimate server rebuild</td>
-          <td>Re-runs the probe. It does not grant trust; you still have to press Trust host, and if the key has changed the button becomes a destructive-confirm variant reading &ldquo;Trust new fingerprint&rdquo;.</td>
+          <td>Re-runs the probe against the same host. It does not grant trust; you still have to press Trust host, and if the key has changed the button becomes a destructive-confirm variant reading &ldquo;Trust new fingerprint&rdquo;. Changing the hostname or port on step 1 re-probes on its own and drops any trust already granted.</td>
         </tr>
       </tbody>
     </table>
 
     <div class="note danger">
       <span class="note-label">What a changed host key costs later</span>
-      <p>If this fingerprint ever changes, the backup set halts. Backup operations for it stop, and remote artifact deletion is blocked, until an administrator verifies the new fingerprint independently. That is the intended behaviour and it is why this step exists: the alternative is a manager that keeps deleting remote originals while talking to a server that is no longer yours.</p>
+      <p>If this fingerprint ever changes, the backup set halts. Backup operations for it stop, and remote artifact deletion is blocked, until an administrator verifies the new fingerprint independently. That is the intended behaviour and it is why this half of the step exists: the alternative is a manager that keeps deleting remote originals while talking to a server that is no longer yours.</p>
     </div>
 
     <p>Host-key verification cannot be switched off. A configuration that names a <code>known_hosts</code> value which would disable it is refused outright at load time, so there is no accepted spelling of &ldquo;skip this&rdquo;.</p>
+
+    <h3 id="proof">The connection has to be proven before anything is written</h3>
+    <p>This is <a href="https://github.com/backupdproject/backupd/issues/624">#624</a>, and it closed a gap that had been open since the wizard existed. Saving used to be gated on a pinned <code>known_hosts</code> line and an imported key, and both of those settle host <em>identity</em>: which machine answered. Neither says whether the key authenticates or whether the account can read the folder. So a backup set could be created, enabled and put on a schedule against a connection nobody had ever made.</p>
+    <p>The check used to sit on the review step, because that was the first point at which everything it needs had been answered. It is here now, and the reordering is the point: its answer is available to every step that depends on it, rather than arriving after the engine, the domain and the retention chain had already been chosen.</p>
+
+    <figure>
+      <img src="screens/11-wizard-step-2-connection-proven.png" alt="The connection panel after Test connection, listing seven named checks all passed, the sentence This source has been proven, and a green write-permission verdict" loading="lazy">
+      <figcaption>Seven named checks, in a fixed order, and never a single verdict. The key resolves and its permissions are unchanged, the hostname resolves, the socket opens, the host key matches what this set trusts, the server accepts the key, the folder lists with a count of what is in it, and a probe file is created under it and removed again. <a href="ssh.html#proof">Why it is a result per check and not one verdict</a>. The detail text beside each check is the fixture's own, so it names the fixture's host rather than the values on this form.</figcaption>
+    </figure>
+
+    <p>The last of those seven is <a href="https://github.com/backupdproject/backupd/issues/852">#852</a>'s write probe, and it is stated here rather than only where it takes effect. <span class="does">A source that proves writable arms the source-deletion behaviour on step 7; one that does not disables it there and says why.</span> Read-only is a perfectly good posture for a backup account, and the recommended one unless you want Backupd to free space on the server for you: backups still run, because reading is all a backup needs. An operator who reads this line is never surprised by a disabled control five steps later.</p>
+    <p>Editing the host, the port or anything else the test was run against takes the result back to unproven and re-locks every step after this one. A green tick standing for a connection nobody made to the machine now named on step 1 is the defect the whole gate exists for.</p>
   </section>
 
   <section>
-    <span class="step-eyebrow">Screen 6 &middot; wizard step 4 of 6</span>
-    <h2 id="step4">Step 4: Backup discovery</h2>
-    <p>Where artifacts appear, which of them are yours, and how the manager knows one has finished being written.</p>
+    <span class="step-eyebrow">Screen 5 &middot; wizard step 3 of 8</span>
+    <h2 id="step3">Step 3: Engine</h2>
+    <p>The one answer that cannot be changed later, asked once there is enough context to answer it. It has a default, so the step is &ldquo;answered&rdquo; from the moment it exists; what the step is for is making sure the default was read.</p>
 
     <figure>
-      <img src="screens/12-wizard-step-4-discovery.png" alt="Step 4 Backup discovery with remote folder, include patterns and three completion-method choices" loading="lazy">
-      <figcaption>Step 4 filled in for the worked example. There is no exclude field: the configuration schema has none, and the step no longer draws one that could not be sent.</figcaption>
+      <img src="screens/12-wizard-step-3-engine.png" alt="Step 3 Engine with two choices, Artifact selected, and a banner headed Why it is permanent" loading="lazy">
+      <figcaption>Step 3, with the default in place. The wire value is printed under each choice, because it is what ends up in a configuration file and in an API call.</figcaption>
     </figure>
 
     <table class="fields">
-      <thead><tr><th>Field</th><th>Example</th><th>What the entry does</th></tr></thead>
+      <thead><tr><th>Choice</th><th>Written as</th><th>What it does</th></tr></thead>
       <tbody>
         <tr>
-          <td><strong>Remote folder</strong></td>
-          <td>/var/backups/</td>
-          <td>Becomes <code>remote_path</code>. <span class="does">This is the directory on the VPS that gets emptied.</span> Every file in it that matches an include pattern and passes the completion check is pulled and then deleted from the VPS, so point it at a directory whose only job is holding finished backups, never at a working directory.</td>
+          <td><strong>Artifact</strong></td>
+          <td><code>engine=artifact</code></td>
+          <td>The default, and what this tutorial configures. <span class="does">Pulls finished files a producer leaves for you and keeps each one whole, verified on arrival.</span> One file in, one backup kept. Steps 4 and 5 do not apply to it and step 6 asks the artifact form of its question.</td>
         </tr>
         <tr>
-          <td><strong>Include patterns</strong></td>
-          <td>*.tar.zst</td>
-          <td>Becomes <code>include</code>, a list. Comma-separated here, split and trimmed on save. <span class="does">A file that matches nothing is invisible to the manager: it is never pulled and never deleted</span>, which is the safe direction but also means a producer that changes its output extension quietly stops being backed up.</td>
+          <td><strong>Incremental</strong></td>
+          <td><code>engine=kopia</code></td>
+          <td><span class="does">Snapshots a whole directory tree every run and stores only content the repository does not already hold.</span> Every run keeps a full restore point and only what changed is stored. This is the engine that makes steps 4, 5 and 6 into real questions, and it is out of scope for this page.</td>
         </tr>
       </tbody>
     </table>
+
+    <div class="note danger">
+      <span class="note-label">A set's history belongs to its engine</span>
+      <p>Snapshots and whole-file backups are different objects in different places. Switching a set that has run would leave everything it has collected behind and start again from nothing, so Backupd asks you to create a new set instead &mdash; and the edit form for a saved set has no field for this at all. This is the step to slow down on.</p>
+    </div>
+  </section>
+
+  <section>
+    <span class="step-eyebrow">Screen 6 &middot; wizard step 4 of 8</span>
+    <h2 id="step4">Step 4: Repository domain</h2>
+    <p>The encrypted store an incremental set's snapshots live in. For the artifact engine this tutorial uses there is nothing here to choose, and the step says so rather than disappearing.</p>
+
+    <figure>
+      <img src="screens/13-wizard-step-4-repository-domain.png" alt="Step 4 Repository domain showing a panel reading Not asked for an Artifact set" loading="lazy">
+      <figcaption>Step 4 for an artifact set: &ldquo;A repository domain is where snapshots live. An artifact set keeps whole files instead, so there is nothing here to choose.&rdquo;</figcaption>
+    </figure>
+
+    <p>A rail that changed length under you as you filled the form in would teach nothing, and a step that is simply skipped teaches nothing either. A step that explains itself teaches the difference between the two engines at the moment it matters, which is why both this step and the next one are still there, still numbered, and complete rather than blocking: the tracker ticks them because an artifact set has no answer to give, not because one was given.</p>
+  </section>
+
+  <section>
+    <span class="step-eyebrow">Screen 7 &middot; wizard step 5 of 8</span>
+    <h2 id="step5">Step 5: Source consistency</h2>
+    <p>What you have arranged on the server for the duration of a run &mdash; a live tree, a quiesced one, or a snapshot taken outside Backupd. It is recorded rather than detected, and a run that contradicts it is reported. Like step 4 it is an incremental-engine question, and like step 4 it says so.</p>
+
+    <figure>
+      <img src="screens/14-wizard-step-5-consistency.png" alt="Step 5 Source consistency showing a panel reading Not asked for an Artifact set" loading="lazy">
+      <figcaption>Step 5 for an artifact set: &ldquo;Consistency describes a tree being walked. An artifact set keeps whole files instead, so there is nothing here to choose.&rdquo; A finished file a producer has closed is not a tree being walked, so the question does not arise.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <span class="step-eyebrow">Screen 8 &middot; wizard step 6 of 8</span>
+    <h2 id="step6">Step 6: Completion and validation</h2>
+    <p>This is the step whose heading changes with the engine: <strong>Verification</strong> on the tracker, &ldquo;Completion and validation&rdquo; on the card for an artifact set and &ldquo;Verification&rdquo; for an incremental one. They are the same question &mdash; how hard is a backup checked before it counts &mdash; and a whole-file backup answers it with how completion is signalled and what validates the file on arrival.</p>
 
     <h3 id="completion">Completion method, and why it is the consequential choice on this step</h3>
     <p>A backup artifact that is still being written looks exactly like one that is finished. Getting this wrong means pulling a half-written archive, verifying the half, and then deleting the remote original. The three answers are not equivalent.</p>
 
     <figure>
-      <img src="screens/13-wizard-step-4-completion-atomic-rename.png" alt="Step 4 with Atomic rename selected under the Recommended heading" loading="lazy">
-      <figcaption>Atomic rename selected. The two options under &ldquo;Recommended&rdquo; both require the producer to signal completion; the one under &ldquo;Advanced&rdquo; infers it.</figcaption>
+      <img src="screens/15-wizard-step-6-completion-atomic-rename.png" alt="Step 6 Completion and validation with Atomic rename selected under the Recommended heading, transfer verification marked always on, and an application validation dropdown" loading="lazy">
+      <figcaption>Step 6 for the worked example, with Atomic rename chosen; the default is the completion marker. The two options under &ldquo;Recommended&rdquo; both require the producer to signal completion; the one under &ldquo;Advanced&rdquo; infers it.</figcaption>
     </figure>
 
     <div class="scroll-x">
@@ -522,35 +586,15 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
     <div class="note warn">
       <span class="note-label">If you choose stable size</span>
       <p>Two different timers apply, and conflating them is the mistake to avoid. <code>stable_for</code> answers &ldquo;has this looked done long enough to start processing it&rdquo;, and the wizard sends one hour for it. A separate <code>delete_safety_delay</code>, defaulting to one hour and applied only to this strategy, answers a different and more dangerous question: &ldquo;has it looked done long enough to destroy the only other copy&rdquo;. The remote delete waits for that second timer on top of everything else.</p>
-      <p>The other two strategies carry a producer-provided completion signal, so they do not need it.</p>
+      <p>The other two strategies carry a producer-provided completion signal, so they do not need it, and the wizard sends a zero for both timers when you choose one of them.</p>
     </div>
 
-    <p>One field on this step has no control at all: <code>stale_after</code>, which decides when a backup set with no fresh artifact starts reporting as stale, is set to 48 hours for every set the wizard creates. Change it by editing <code>config.yaml</code> if your producer runs less often than that.</p>
-  </section>
-
-  <section>
-    <span class="step-eyebrow">Screen 7 &middot; wizard step 5 of 6</span>
-    <h2 id="step5">Step 5: Storage and validation</h2>
-    <p>Where the NAS copy lives, and how it is proven good. This step used to carry a row of retention controls that were drawn and never sent, and they are gone: retention is a deployment-wide policy with an editor of its own, and asking for it while a first backup set is being created was asking the wrong question at the wrong time.</p>
-
-    <figure>
-      <img src="screens/14-wizard-step-5-storage-validation.png" alt="Step 5 showing a NAS destination field with a Validate path button, transfer verification marked always on, and an application validation dropdown" loading="lazy">
-      <figcaption>Step 5 for the worked example. Three controls, and every one of them reaches the request.</figcaption>
-    </figure>
+    <h3 id="validation">Validation</h3>
+    <p>Two controls, one of which is not a control.</p>
 
     <table class="fields">
       <thead><tr><th>Control</th><th>Example</th><th>What the entry does</th></tr></thead>
       <tbody>
-        <tr>
-          <td><strong>NAS destination</strong></td>
-          <td>/data/backups/api-server/</td>
-          <td>Becomes <code>local_path</code>. <span class="does">This is a path inside the container, not on the NAS filesystem.</span> The Compose file mounts your NAS backup share at <code>/data/backups</code>, so this example lands at <code>&lt;your BACKUP_DIR&gt;/api-server/</code> on the NAS. Give each backup set its own subdirectory: this path also becomes the containment root that the local prune refuses to delete outside of.</td>
-        </tr>
-        <tr>
-          <td><strong>Validate path</strong></td>
-          <td>none to give</td>
-          <td>On a platform with no native storage picker the button is labelled this way rather than pretending to offer a browser the integration does not have. The hint below the field names the mounted path for you.</td>
-        </tr>
         <tr>
           <td><strong>Transfer verification</strong></td>
           <td>none to give</td>
@@ -570,8 +614,59 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
       <p>If your SFTP account is <em>not</em> hardened that way and does support hashing, set <code>validation.hash: sha256</code> by hand in <code>config.yaml</code>.</p>
     </div>
 
+    <p>One field this step has no control for at all: <code>stale_after</code>, which decides when a backup set with no fresh artifact starts reporting as stale, is set to 48 hours for every set the wizard creates. Change it by editing <code>config.yaml</code> if your producer runs less often than that.</p>
+  </section>
+
+  <section>
+    <span class="step-eyebrow">Screen 9 &middot; wizard step 7 of 8</span>
+    <h2 id="step7">Step 7: Storage, retention and holds</h2>
+    <p>Where the NAS copy lives, how long backups are kept, and whether Backupd may free space on the remote server. The retention half used to be a row of controls that were drawn and never sent, and they are gone: retention is a deployment-wide policy with an editor of its own, and this step reads it back rather than offering a second place to set it.</p>
+
+    <figure>
+      <img src="screens/16-wizard-step-7-storage-retention.png" alt="Step 7 showing a NAS destination field with a Validate path button, the retention chain unavailable, and the remote source handling box with its acknowledgement unticked" loading="lazy">
+      <figcaption>Step 7 for the worked example, before the acknowledgement. Continue is refused until that box is ticked, which is why this is the last step that can block you.</figcaption>
+    </figure>
+
+    <table class="fields">
+      <thead><tr><th>Control</th><th>Example</th><th>What the entry does</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>NAS destination</strong></td>
+          <td>/data/backups/api-server/</td>
+          <td>Becomes <code>local_path</code>, and it has to be absolute. <span class="does">This is a path inside the container, not on the NAS filesystem.</span> The Compose file mounts your NAS backup share at <code>/data/backups</code>, so this example lands at <code>&lt;your BACKUP_DIR&gt;/api-server/</code> on the NAS. Give each backup set its own subdirectory: this path also becomes the containment root that the local prune refuses to delete outside of.</td>
+        </tr>
+        <tr>
+          <td><strong>Validate path</strong></td>
+          <td>none to give</td>
+          <td>On a platform with no native storage picker the button is labelled this way rather than pretending to offer a browser the integration does not have. The hint below the field names the mounted path for you.</td>
+        </tr>
+        <tr>
+          <td><strong>This source is read-only</strong></td>
+          <td>leave it unticked for the worked example</td>
+          <td>Declares that Backupd may pull from the remote server but must never delete the original. <span class="does">Ticking it replaces the acknowledgement below with a sentence saying every remote copy is kept for good.</span> If the write probe on step 2 proved these credentials cannot write to the source, this is ticked and disabled for you, with the reason beside it: Backupd will not offer to remove a file it has not proved it can remove.</td>
+        </tr>
+        <tr>
+          <td><strong>The acknowledgement</strong></td>
+          <td>tick it</td>
+          <td>&ldquo;I understand the remote backup will be removed only after the NAS copy has been safely committed.&rdquo; <span class="does">Unticked, this step is unfinished: the review step is unreachable and every save is refused.</span> It is asked here, where the page already explains what deleting the remote source means, rather than as an unexplained toggle earlier in the flow.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>The box those last two controls live in is the product stating its own most dangerous behaviour before you agree to it, and the chain it draws is the real order of operations: <em>discovered, transferred, verified, committed, safe state persisted, remote artifact deleted</em>. The delete is last and the journal write is before it, so a crash in between leaves two copies rather than none.</p>
+
+    <figure>
+      <img src="screens/17-wizard-step-7-acknowledged.png" alt="Step 7 with the acknowledgement ticked and Continue now available" loading="lazy">
+      <figcaption>Acknowledged. This is the step that unlocks the review step: with it ticked, every step behind you is answered and the tracker is finally green all the way across.</figcaption>
+    </figure>
+
+    <div class="note">
+      <span class="note-label">During first run this step cannot read the retention chain</span>
+      <p>Where the picture above says the deployment's retention chain could not be read, that is the real first-run state rather than a fault: an instance with no configuration does not serve the retention route at all, and the wizard is the one surface that runs before there is a configuration. It changes nothing about the set being created &mdash; it will still be retained under whatever the policy says once there is one &mdash; and the same step on an ordinary Add backup set reads the chain back and shows it. What the chain actually is, on this deployment and after setup, is below.</p>
+    </div>
+
     <h3 id="retention">What actually decides deletion</h3>
-    <p>Retention is not asked for on this step and it is not per backup set by default. It is a deployment-wide policy, editable under Settings, which any individual set can override with one of its own. It governs deletion of the <em>NAS</em> copies and is unrelated to the remote delete, which is gated by the lifecycle rule and happens as soon as a verified local copy is durable.</p>
+    <p>Retention is not asked for on this step and it is not per backup set by default. It is a deployment-wide policy, editable under Settings, which any individual set can override with one of its own. It governs deletion of the <em>NAS</em> copies and is unrelated to the remote delete, which is gated by the lifecycle rule and happens as soon as a verified local copy is durable. A hold placed on a backup later overrides all of it: a held snapshot is never expired, by any tier, until the hold is released.</p>
     <p>Since 0.3.3 each tier in that policy also says <em>where</em> its copies live, and the drive on this machine is one of the choices rather than an unnamed default. <a href="reference.html#web-settings">The reference page</a> covers the destinations, the picker and the connection test behind it.</p>
     <p>A wizard-created configuration is written with the default chain, three tiers:</p>
     <div class="scroll-x">
@@ -592,35 +687,23 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
   </section>
 
   <section>
-    <span class="step-eyebrow">Screen 8 &middot; wizard step 6 of 6</span>
-    <h2 id="step6">Step 6: Review, prove the connection, and Finish setup</h2>
+    <span class="step-eyebrow">Screen 10 &middot; wizard step 8 of 8</span>
+    <h2 id="step8">Step 8: Review, and Finish setup</h2>
+    <p>Nothing is typed here. What makes this step finished is that the flow can actually be committed, which is the same question the save buttons answer.</p>
 
     <figure>
-      <img src="screens/15-wizard-step-6-review.png" alt="Step 6 Review showing a summary grid, a connection panel saying nothing has been proven yet, and disabled save buttons" loading="lazy">
-      <figcaption>The review summary, and the connection panel before anything has been checked. None of the save buttons is available yet, and the panel says why in words rather than leaving a greyed button to be interpreted.</figcaption>
-    </figure>
-
-    <h3 id="proof">The connection has to be proven before anything is written</h3>
-    <p>This is <a href="https://github.com/backupdproject/backupd/issues/624">#624</a>, and it closed a gap that had been open since the wizard existed. Saving used to be gated on a pinned <code>known_hosts</code> line and an imported key, and both of those settle host <em>identity</em>: which machine answered. Neither says whether the key authenticates or whether the account can read the folder. So a backup set could be created, enabled and put on a schedule against a connection nobody had ever made.</p>
-
-    <figure>
-      <img src="screens/16-wizard-step-6-connection-proven.png" alt="The connection panel after Test connection, listing six named steps all passed and the sentence This source has been proven" loading="lazy">
-      <figcaption>Six named steps, in a fixed order. The key resolves and its permissions are unchanged, the hostname resolves, the socket opens, the host key matches what this set trusts, the server accepts the key, and the folder lists with a count of what is in it. <a href="ssh.html#proof">Why it is six results and not one</a>.</figcaption>
+      <img src="screens/18-wizard-step-8-review.png" alt="Step 8 Review showing a nine-cell summary grid and two save buttons, Finish setup and Save disabled" loading="lazy">
+      <figcaption>The review summary, with the connection already proven back on step 2 and the save buttons available. During first run there are two of them, not three.</figcaption>
     </figure>
 
     <p>The summary grid reads back what will be written. Check three things in it specifically, because they are the three the earlier steps make easy to get wrong:</p>
     <ul>
-      <li><strong>Source</strong> shows the hostname and the remote folder. It does not show the port, so verify that separately after the write.</li>
-      <li><strong>Host trust</strong> must read &ldquo;Trusted&rdquo;. If it reads &ldquo;Not yet trusted&rdquo;, go back to step 3; saving will refuse.</li>
-      <li><strong>Validation</strong> lists the completion method you chose, spelled out, alongside the verification terms.</li>
+      <li><strong>Source</strong> shows the hostname and the directory to back up. It does not show the port, so verify that separately after the write.</li>
+      <li><strong>Host trust</strong> must read &ldquo;Trusted&rdquo;. If it does not, go back to step 2; saving will refuse.</li>
+      <li><strong>Validation</strong> lists the completion method you chose, spelled out, alongside the verification terms, and <strong>Delete from source</strong> says in words whether this set will remove the remote original.</li>
     </ul>
 
-    <p>The panel below the summary is the product stating its own most dangerous behaviour before you agree to it, and the chain it draws is the real order of operations: <em>discovered, transferred, verified, committed, safe state persisted, remote artifact deleted</em>. The delete is last and the journal write is before it, so a crash in between leaves two copies rather than none.</p>
-
-    <figure>
-      <img src="screens/17-wizard-step-6-acknowledged.png" alt="Step 6 with the acknowledgement ticked and both Finish setup and Save disabled buttons enabled" loading="lazy">
-      <figcaption>Acknowledged. During first run there are two buttons, not three: &ldquo;Save, enable &amp; run&rdquo; is deliberately absent, because there is no running service to submit a run to yet.</figcaption>
-    </figure>
+    <p>The two steps this tutorial's engine does not use are in the grid too, as <code>not applicable</code> rather than as a blank: a summary that quietly omitted them would read the same as one where they had been answered.</p>
 
     <table class="fields">
       <thead><tr><th>Button</th><th>When to use it</th><th>What it does</th></tr></thead>
@@ -638,7 +721,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
       </tbody>
     </table>
 
-    <p>If a button is disabled, the sentence beside it names the reason: an un-imported key, an untrusted host, or the unticked acknowledgement each get their own message rather than a single generic one.</p>
+    <p>If a button is disabled, the sentence beside it names the reason: an un-imported key, an untrusted host, a host key that has changed since it was trusted, a connection nobody has tested and the unticked acknowledgement each get their own message rather than a single generic one, and each names the step to fix it on.</p>
 
     <h3 id="written">What lands on disk</h3>
     <p>Everything that can fail happens before anything is persisted: the request is validated, the key is resolved, the whole assembled configuration goes through the same validation a hand-edited file goes through at boot, the state directory is checked, and any chosen validator is resolved. Only then is the file created. A configuration the process refuses to finish is never the configuration left behind.</p>
@@ -653,7 +736,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
           <span class="key">remote</span>:
             <span class="key">type</span>: sftp
             <span class="key">host</span>: api-server.example.net
-            <span class="key">port</span>: 22            <span class="cm"># whatever you typed on step 1</span>
+            <span class="key">port</span>: 22            <span class="cm"># the port you entered on step 1</span>
             <span class="key">user</span>: backup-agent
             <span class="key">key_file</span>: /etc/backupd/config/ssh_keys/6f2a1c92-7d40-4b18-9a6e-1e0c5f3b77aa
             <span class="key">key</span>:
@@ -691,17 +774,18 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
     <span class="key">enabled</span>: <span class="num">false</span>
     <span class="key">repeated_failure_threshold</span>: <span class="num">3</span></code></pre>
 
-    <p>Four things in that file are worth noticing, none of which any screen mentioned:</p>
+    <p>Five things in that file are worth noticing, none of which any screen mentioned:</p>
     <ul>
       <li><strong>Your backup set is grouped under a source called <code>api</code>.</strong> The wizard has no concept of a source, so everything it creates lands under that one name. The set's real identity is <code>api/api-server-nightly</code>.</li>
       <li><strong><code>key_file</code> and <code>key.file</code> both appear</strong>, holding the same path. The first is a deprecated alias kept in step with the second so an older binary can still read the file.</li>
+      <li><strong>There is no <code>exclude_paths</code> key.</strong> The wizard never writes one, because no screen asks for one. Add it by hand if you need the remote walk pruned.</li>
       <li><strong>The retention numbers are written out, not left blank.</strong> Validation resolves the defaults in place before the file is marshalled, so 7/3/12, UTC and monday are frozen into your configuration rather than tracking whatever the product's defaults become later.</li>
       <li><strong>Alerting is off.</strong> <code>alerts.enabled: false</code> means nothing notifies you about a stale backup, a repeated failure, a changed host key or critical storage pressure. Turn it on by hand if you want any of that.</li>
     </ul>
   </section>
 
   <section>
-    <span class="step-eyebrow">Screen 9</span>
+    <span class="step-eyebrow">Screen 11</span>
     <h2 id="after">What you get next</h2>
     <p>The configuration is durably on disk the moment Finish setup returns. The instance then tries to bring a real service up against it in the same process, so you do not have to restart a container you just installed, and on success it takes you to the backup sets list, which is the page that now has something on it.</p>
 
@@ -711,7 +795,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
     </div>
 
     <figure>
-      <img src="screens/18-configured-backup-sets.png" alt="The backup sets list with four sets, each with its state, its last run and per-set controls" loading="lazy">
+      <img src="screens/19-configured-backup-sets.png" alt="The backup sets list with four sets, each with its state, its last run and per-set controls" loading="lazy">
       <figcaption>The application after setup completes, rendering the development fixture's data. Structurally accurate, factually fictional. Each card carries the controls for that set, and the run buttons are covered in <a href="web-ui.html#runs">the interface guide</a>.</figcaption>
     </figure>
 
@@ -725,12 +809,12 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
   </section>
 
   <section>
-    <span class="step-eyebrow">Screen 10</span>
+    <span class="step-eyebrow">Screen 12</span>
     <h2 id="again">Coming back later</h2>
     <p>Once an administrator exists, the enrolment page is closed and this is what the address answers with.</p>
 
     <figure>
-      <img src="screens/19-sign-in.png" alt="The Backupd sign-in page with username and password fields and a link reading First time here? Create the administrator account" loading="lazy">
+      <img src="screens/20-sign-in.png" alt="The Backupd sign-in page with username and password fields and a link reading First time here? Create the administrator account" loading="lazy">
       <figcaption>The sign-in page. It is deliberately not styled like a NAS system login, and it says so, because an operator must never believe they are handing NAS operating-system credentials to this application.</figcaption>
     </figure>
 
@@ -739,7 +823,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
   </section>
 
   <section>
-    <span class="step-eyebrow">Screen 11</span>
+    <span class="step-eyebrow">Screen 13</span>
     <h2 id="forgot">Forgetting the password</h2>
     <p>Enrolment is still a one-time door, and it is still not reopened by losing the password. The way back in is the recovery address, and it starts with <strong>Forgot password?</strong> on the sign-in page. Two screens, both reached without being signed in: <strong>Reset your password</strong> at <code>/forgot-password</code>, which asks for the <strong>Username</strong> and has one button, <strong>Email a reset link</strong>; and <strong>Choose a new password</strong> at <code>/reset-password</code>, reached only from the link in the mail, with <strong>New password</strong>, <strong>Confirm new password</strong> and <strong>Set password</strong>.</p>
     <p>The first of them asks for the username and nothing else, and it answers the same way whatever you type &mdash; a confirmation that a message has been sent, if one was due &mdash; because an endpoint that answered differently would tell anyone who can reach the port what the account is called. The page is not where you find out whether you got the name right. The mailbox is.</p>
@@ -753,7 +837,7 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
   </section>
 
   <section>
-    <span class="step-eyebrow">Screen 12</span>
+    <span class="step-eyebrow">Screen 14</span>
     <h2 id="verify-email">Verifying the recovery address</h2>
     <p>The message enrolment sends is not a receipt. It is a <strong>verification link</strong>, and the account it belongs to is provisional until somebody opens it: <code>/verify-email?token=&lt;a long random string&gt;</code>, one page, no fields, reached from whatever device holds the mailbox &mdash; a phone that has never signed into this deployment opens it just as well as the browser you enrolled from, because the token in the link is the credential and nothing else is asked for.</p>
     <p>Three facts about it, in the order they matter:</p>
@@ -768,10 +852,11 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
   <section>
     <h2 id="second-vps">Adding the second VPS</h2>
     <p>First run configures exactly one backup set, because the point of it is to turn an unconfigured instance into a serviceable one, not to finish the whole deployment. The second VPS is an ordinary addition afterwards.</p>
-    <p>Go to <strong>Backup sets</strong>, press <strong>Add backup set</strong>, and you get the same six steps you have just walked, with two differences:</p>
+    <p>Go to <strong>Backup sets</strong>, press <strong>Add backup set</strong>, and you get the same eight steps you have just walked, with three differences:</p>
     <ul>
-      <li>There is a third button on step 6, <strong>Save, enable &amp; run</strong>, which starts a cycle immediately. If the save succeeds but the run does not start, the page says so and stays put rather than navigating away and letting you believe a backup is running.</li>
-      <li>The connection check on step 6 is the same one, and it gates the save the same way.</li>
+      <li>There is a third button on step 8, <strong>Save, enable &amp; run</strong>, which starts a cycle immediately. If the save succeeds but the run does not start, the page says so and stays put rather than navigating away and letting you believe a backup is running. The other two read <strong>Save &amp; enable</strong> and <strong>Save disabled</strong>; &ldquo;Finish setup&rdquo; is the first-run label for the middle one, because during first run that is what it finishes.</li>
+      <li>The connection check on step 2 is the same one, and it gates the save the same way.</li>
+      <li>Step 7 can read the deployment's retention chain now, and shows it, because there is a configuration to read it out of.</li>
     </ul>
     <p>Give the second set its own <code>local_path</code>, for example <code>/data/backups/cicd/</code>. Two backup sets sharing a destination directory would put two prune containment roots on the same tree, which is not a configuration worth having.</p>
     <p>Both sets will land under the same <code>api</code> source, so their identities become <code>api/api-server-nightly</code> and <code>api/&lt;your second set&gt;</code>. Retention stays a single global policy applied to both.</p>
@@ -783,8 +868,8 @@ backupd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enr
     <ul>
       <li><strong>A failed enrolment.</strong> The fixture's enrolment call always succeeds, so the error banner cannot be reached locally. Since <a href="https://github.com/backupdproject/backupd/issues/274">#274</a> it distinguishes a token that has expired or been used from a password the server would not accept, rather than blaming your password for a problem with the link.</li>
       <li><strong>&ldquo;Configuration saved&rdquo;, the restart-required screen.</strong> Reached when the configuration is written but the instance cannot start serving it in the same process. It reads: &ldquo;Your configuration has been written and is safe. This instance could not start serving it without a restart, so restart the Backupd container or service and open this page again. You do not need to enter any of it a second time.&rdquo; The fixture always reports that activation succeeded, so this state is unreachable locally. If you see it, restart the container and sign back in; do not run the wizard again.</li>
-      <li><strong>The real post-setup backup sets list.</strong> One backup set, no artifacts, nothing in the activity feed. See the warning on <a href="#after">screen 9</a>.</li>
-      <li><strong>&ldquo;Choose a new password&rdquo;, the page the reset link lands on.</strong> Reached only from a link in a real email, which is the one thing a fixture cannot produce: the development mock has no mail server and mints no reset token for a page to honour. The token travels in the URL exactly as the enrolment one does, and pressing <strong>Set password</strong> lands you on the sign-in page rather than in the application, because a reset revokes every session including the one that asked. <a href="#forgot">Screen 11</a> walks both halves.</li>
+      <li><strong>The real post-setup backup sets list.</strong> One backup set, no artifacts, nothing in the activity feed. See the warning on <a href="#after">screen 11</a>.</li>
+      <li><strong>&ldquo;Choose a new password&rdquo;, the page the reset link lands on.</strong> Reached only from a link in a real email, which is the one thing a fixture cannot produce: the development mock has no mail server and mints no reset token for a page to honour. The token travels in the URL exactly as the enrolment one does, and pressing <strong>Set password</strong> lands you on the sign-in page rather than in the application, because a reset revokes every session including the one that asked. <a href="#forgot">Screen 13</a> walks both halves.</li>
       <li><strong>The Account recovery card in Settings.</strong> Where the recovery address and the SMTP details are changed afterwards, with <strong>Send test email</strong> beside them. This page walks first run and stops at the dashboard, so Settings is not on it at all; <a href="reference.html#web-settings">the reference page</a> enumerates the card's controls, and its own Settings capture predates the card.</li>
     </ul>
     <div class="note">

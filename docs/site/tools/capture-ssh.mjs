@@ -137,8 +137,10 @@ await withDevServer(async (app) => {
     await fill("Username", EXAMPLE.user);
     // On Source since #788, and the connection test below lists this very
     // directory, which is why step 1 asks for it rather than a later step.
+    // The patterns field carries #928's label, not the exclude-sounding
+    // one it shipped with (#927).
     await fill("Directory to back up", EXAMPLE.remoteFolder);
-    await fill("Ignore paths matching", EXAMPLE.include);
+    await fill("Filename patterns to back up", EXAMPLE.include);
 
     // One step for all of it now: the key, the host key and the check.
     await railStep("Connection test").click();
@@ -155,14 +157,20 @@ await withDevServer(async (app) => {
     await page.getByRole("button", { name: "Trust host" }).click();
     await page.getByRole("button", { name: "Host trusted" }).waitFor();
 
-    await page.getByRole("button", { name: "Test connection" }).scrollIntoViewIfNeeded();
+    // `exact`, because hovering this button is one of the frames below and
+    // the tooltip it opens carries its own "Close help for Test
+    // connection" button — and getByRole matches an accessible name by
+    // substring unless told not to, so the second frame would make every
+    // locator after it ambiguous.
+    const testConnection = page.getByRole("button", { name: "Test connection", exact: true });
+    await testConnection.scrollIntoViewIfNeeded();
     await settle(page, 700);
 
     const clip = new Clip(page, "ssh-source-proof", { width: WIDTH });
     await clip.frame(3.4);
-    await page.getByRole("button", { name: "Test connection" }).hover();
+    await testConnection.hover();
     await clip.frame(1.2);
-    await page.getByRole("button", { name: "Test connection" }).click();
+    await testConnection.click();
     await page.getByText("This source has been proven").waitFor();
     await settle(page, 600);
     await clip.frame(4.4);

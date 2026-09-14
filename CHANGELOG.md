@@ -48,6 +48,22 @@
   the e2e rig and fixed in #920; and that the web-UI suite carries pre-existing
   product-to-suite drift tracked in #913 which is not a workflow failure.
 
+  **The first-run walkthrough describes the wizard that shipped.** #788 took the
+  add-backup-set wizard from six steps to eight, collapsed `Authentication` and
+  `Verify server` into one `Connection test` step and moved it to position two,
+  deleted `Backup discovery` outright — its directory and pattern fields moved
+  onto `Source` and its completion-method radios became the artifact engine's
+  branch of step six — and split `Storage & validation`. `docs/site/first-run.html`
+  still walked the six-step flow, and `capture-first-run.mjs` and
+  `capture-ssh.mjs` still clicked their way through steps that no longer exist.
+  The page now describes the eight that do, with twenty re-recorded stills and
+  both SSH clips; eleven pictures of deleted steps are retired as
+  `.superseded` rather than deleted. The page also says why it names a step one
+  way and describes it another: the rail labels four of the eight steps more
+  briefly than the step itself does, and one of those titles depends on the
+  engine, so a new set on the default artifact engine meets a step titled
+  "Completion and validation" where the rail says "Verification".
+
   Nothing in this entry changes behaviour. An existing deployment sees new
   documentation, three corrected wizard step names in the TrueNAS,
   OpenMediaVault and Unraid acceptance procedures (#788 renamed those steps and
@@ -703,23 +719,44 @@
 
 ### Fixed
 
-- **The docs-site capture harness can encode a GIF again** (#817). Every
-  animated clip on the documentation site is written by `Clip.write` in
-  `docs/site/tools/harness.mjs`, and that function named a binding, `FFMPEG`,
-  that does not exist anywhere in the module — twice, once to spawn the encoder
-  and once in the error message about failing to spawn it. In an ES module that
-  is a `ReferenceError` on the first encode, so **none of the four capture
-  scripts could have re-recorded a GIF**: `capture-web-ui.mjs`,
-  `capture-ssh.mjs`, `capture-first-run.mjs` and `capture-reference.mjs` were
-  all reaching the same dead line. The resolver it was supposed to use,
-  `ffmpeg()`, was sitting three hundred lines above it, complete with its
-  candidate-path search, its `FFMPEG` environment override and a `console.log`
-  saying which binary it took, and nothing called it.
+- **The docs-site capture tooling works again, in four separate places** (#817).
+  Nothing in this repository checks that the scripts which take the
+  documentation site's screenshots and clips still run, and by the time EPIC L
+  went to take some, four unrelated things had broken.
 
-  This is the failure mode `docs/epic-checklist.md` section 10 exists to
-  predict: regenerating the screenshots is an ungated step, so a break in the
-  tool that does it stays invisible until somebody tries to take a picture. It
-  was found by trying, while adding `capture-workflows.mjs` for EPIC L.
+  **`Clip.write` could not encode anything.** It named a binding, `FFMPEG`,
+  that does not exist anywhere in `docs/site/tools/harness.mjs` — twice, once
+  to spawn the encoder and once in the error message about failing to spawn it.
+  In an ES module that is a `ReferenceError` on the first encode, so **none of
+  the four capture scripts could have re-recorded a GIF**: `capture-web-ui.mjs`,
+  `capture-ssh.mjs`, `capture-first-run.mjs` and `capture-reference.mjs` were
+  all reaching the same dead line. The resolver it was meant to use, `ffmpeg()`,
+  sat three hundred lines above it with its candidate-path search, its `FFMPEG`
+  environment override and a `console.log` naming the binary it took, and
+  nothing called it.
+
+  **Three more were caused by product changes nobody connected to a capture
+  script.** `EXAMPLE.port` was the placeholder `"<your-ssh-port>"`, which #864
+  turned from a value the wizard coerced into one the wizard refuses, so the
+  first-run capture could not leave the Source step and every picture after it
+  was unreachable; it is now `"22"`, which is the product's own shipped example
+  for that field, so the picture agrees with the tooltip beside it.
+  `getByLabel("Username")` became ambiguous when #830 added an SMTP username to
+  the enrolment form. And the enrolment card's selector, `#root > div > div`,
+  stopped matching a card when #874's delegated-tooltip layer inserted a
+  `display: contents` wrapper into that chain.
+
+  That last one is the one worth remembering, because it did not throw. It
+  silently photographed the whole 1280-pixel window instead of the 484-pixel
+  card, so the only thing standing between it and a shipped set of wrong
+  pictures was somebody looking at the output. A tooling break that produces a
+  plausible wrong answer is not caught by running the tool.
+
+  `docs/epic-checklist.md` section 10 now names all four and the follow-up that
+  would gate this surface (#926), because the argument is no longer
+  hypothetical: this tooling reads the shipped UI's own rules — `isPort`, the
+  rail labels, the accessible names, the field help, the DOM shape — so the
+  product invalidates it without knowing it exists.
 
   An existing deployment sees nothing; this is repository tooling. Anybody
   re-recording site media sees it work, and sees `encoding with <path>` naming

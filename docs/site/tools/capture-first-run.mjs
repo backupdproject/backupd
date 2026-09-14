@@ -217,10 +217,13 @@ await withDevServer(async (app) => {
   await fill("Username", EXAMPLE.user);
   // Both of these were the "Backup discovery" step's until #788 moved
   // them onto Source, which is also why nothing here fills a field called
-  // "Remote folder" or "Include patterns" any more: the labels on the
-  // shipped step are these two.
+  // "Remote folder" or "Include patterns" any more. The second one is
+  // "Filename patterns to back up" since #928 renamed it (#927): it had
+  // been labelled as an exclude list while being an include list in every
+  // other respect, and the symptom was an empty backup rather than an
+  // error, so the picture below is worth re-shooting for the label alone.
   await fill("Directory to back up", EXAMPLE.remoteFolder);
-  await fill("Ignore paths matching", EXAMPLE.include);
+  await fill("Filename patterns to back up", EXAMPLE.include);
   await take("06-wizard-step-1-filled", MAIN);
 
   // ------------------------------------------------------- connection test
