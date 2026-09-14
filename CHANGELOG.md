@@ -744,6 +744,34 @@
   underneath: a handler reachable by any other route must not save a set
   whose connection nothing proved.
 
+- **A remote hook that ran is reported by its exit status, not as a
+  connection that failed** (EPIC L, #915). A remote workflow step died
+  `transport_lost` in ~72ms on a connection that had just proven itself
+  exec-capable, and the sshd on the far side showed the hook's session
+  opening and closing cleanly — because the hook had in fact run, exited,
+  and reported a status this product then threw away.
+
+  The script reaches the far side on the exec channel's stdin, written
+  BESIDE the wait rather than before it, so that a peer which reads nothing
+  is reached by the step's own timeout instead of blocking for ever. A hook
+  stops reading that payload the moment it exits — an early `exit 0`, a
+  script shorter than the stdin behind it — so the remote closes its end
+  under a write that is still going and the write fails on the hook's own
+  ending. That failure was returned in place of the exit status, which made
+  a hook that succeeded indistinguishable from a connection that dropped:
+  `transport_lost` means the side effects may be half applied and the exit
+  code is nil, and an operator reading it about a hook that quiesced a
+  database has been told the opposite of what happened.
+
+  A reported exit status is now authoritative, and the payload write is
+  drained rather than allowed to overrule it. Nothing is weakened by that:
+  a transport that really did drop the script leaves NO status behind, and
+  a channel that closes without one is still transport loss with a nil exit
+  code, as #810 requires. The capability probe and the other internal
+  sessions are unchanged — a proof taken over a PREFIX of a script is not a
+  proof about the script, so there an incomplete write still fails the
+  session.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added

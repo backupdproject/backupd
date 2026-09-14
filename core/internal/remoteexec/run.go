@@ -243,6 +243,9 @@ func (c *Client) Run(ctx context.Context, req Request) (Result, error) {
 	// payload as it parses, so a remote side that has stopped reading
 	// blocks this write on the channel window with no deadline of its own;
 	// with the wait already running, the step's own bound reaches it.
+	//
+	// Whether that write succeeded does not decide the step. The hook's
+	// own account of how it ended does; see the wait branch below.
 	writeDone := make(chan error, 1)
 	go func() { writeDone <- writePayload(stdin, payload) }()
 
@@ -260,9 +263,22 @@ func (c *Client) Run(ctx context.Context, req Request) (Result, error) {
 		result.FinishedAt = time.Now()
 		result.Chunks = capture.Sequence()
 		result.Certainty = workflowexec.TerminationNotRequested
-		if writeErr := settleWrite(session, writeDone); writeErr != nil {
-			return result, writeErr
-		}
+		// The write is drained -- to unblock one still parked on the
+		// channel window, and so it cannot outlive the step -- and
+		// its verdict is DISCARDED. A hook stops reading its payload
+		// the moment it exits: an early "exit 0", a script that ends
+		// before its stdin does, a hook killed on the far side. The
+		// remote closes the channel's stdin under a write that is
+		// still going, and the write fails on the hook's own ending.
+		// Reporting that as transport loss threw away the exit status
+		// sitting right here and reported a hook that ran, and said
+		// how it ended, as an outcome nobody observed (#915).
+		//
+		// Nothing is lost by discarding it: a transport that really
+		// did drop the script leaves NO exit status, and finish()
+		// classifies the *ssh.ExitMissingError -- or the connection
+		// error -- that comes back instead as exactly that loss.
+		_ = drainWrite(session, writeDone)
 
 		return c.finish(result, waitErr)
 
@@ -282,8 +298,7 @@ func (c *Client) Run(ctx context.Context, req Request) (Result, error) {
 	}
 }
 
-// settleWrite collects the payload write's verdict once the session has
-// ended.
+// drainWrite unblocks the payload write and collects what it reported.
 //
 // The channel is closed first, deliberately: a write still blocked on a
 // remote side that stopped reading fails the moment the channel goes, so
@@ -291,8 +306,15 @@ func (c *Client) Run(ctx context.Context, req Request) (Result, error) {
 // that will never open. The timer is the bound on a transport that will
 // not even do that, and it reports transport loss rather than success,
 // because a payload whose delivery nobody can account for is a script
-// nobody can say ran whole.
-func settleWrite(session *ssh.Session, writeDone <-chan error) error {
+// nobody can say arrived whole.
+//
+// What that verdict MEANS is the caller's, and the two callers answer
+// differently. runOnce is worth nothing without the whole payload -- a
+// capability proved over a PREFIX of the script is not a proof about the
+// script -- so there a failed write fails the session. Run has the hook's
+// own exit status, which is authoritative over a write that the hook's
+// ending is what broke.
+func drainWrite(session *ssh.Session, writeDone <-chan error) error {
 	_ = session.Close()
 
 	timer := time.NewTimer(writeSettle)
@@ -645,7 +667,10 @@ func (c *Client) runOnce(ctx context.Context, timeout time.Duration, command str
 
 	select {
 	case waitErr := <-done:
-		if writeErr := settleWrite(session, writeDone); writeErr != nil {
+		// Unlike a hook (see Run), an internal session's answer is
+		// only worth having if the whole payload reached the far
+		// side, so here the write's verdict still fails the session.
+		if writeErr := drainWrite(session, writeDone); writeErr != nil {
 			return 0, writeErr
 		}
 		if waitErr == nil {
