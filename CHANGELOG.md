@@ -45,8 +45,15 @@
   builds lets a browser start a backup run (#92), so every run the end-to-end
   suite observed is the scheduler's and the hook bypass is unreachable over
   HTTP; that remote hooks had never actually executed until #919 was found by
-  the e2e rig and fixed in #920; and that the web-UI suite carries pre-existing
-  product-to-suite drift tracked in #913 which is not a workflow failure.
+  the e2e rig and fixed in #920; that the web-UI suite carries pre-existing
+  product-to-suite drift tracked in #913 which is not a workflow failure; and
+  that the one red EPIC L owns is the browser half of the recovery path,
+  because a hook whose Host Workflow Runner vanishes mid-step is not bounded
+  by `script_timeout` (#931) — so the run sits in progress, the set stops
+  being scheduled, and there is no hold to explain why until a later restart
+  reconciles it. Nobody has yet pressed Resume cleanup or Acknowledge in a
+  browser against a real deployment and watched the hold settle, and the
+  document says so rather than counting the surrounding greens.
 
   **The first-run walkthrough describes the wizard that shipped.** #788 took the
   add-backup-set wizard from six steps to eight, collapsed `Authentication` and
