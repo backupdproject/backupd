@@ -1595,16 +1595,23 @@ if [ "$workflows" = 1 ]; then
   # the missing ones INSIDE the container, so the fixture's private host
   # keys never touch this host -- the same rule the deployment's own
   # keypair follows, and the reason the VPS mounts none either.
+  #
+  # --hostname, because the remote hooks PRINT the name of the machine
+  # they ran on and the suite compares it with the executor the product
+  # names. Docker's default is the container's short id: evidence that
+  # changes every run is evidence nobody can pin, and it cannot agree
+  # with the exec connection's host. The same string as the network
+  # alias and as that connection's host, which is the name everything
+  # else in this rig calls this machine.
+  #
+  # And the comment lives HERE rather than among the arguments below,
+  # which is how this broke once already: a `#` line spliced into a
+  # backslash-continued command comments out the rest of the joined
+  # logical line, so `docker run` was handed no image at all.
   docker run -d \
     --name "$c_exec" \
     --network "$net_backhaul" \
     --network-alias exechost \
-    # The hostname the remote hooks PRINT, and it has to be a name
-    # rather than Docker's default short container id: the suite
-    # reads that line as evidence that a hook ran on the far side,
-    # and evidence that changes every run is evidence nobody can
-    # pin. Same string as the network alias, which is the name
-    # everything else in this rig calls this machine.
     --hostname exechost \
     --label "$label" \
     -v "$run_dir/authorized_keys/engine.pub:/etc/ssh/authorized/backupd.pub:ro" \
