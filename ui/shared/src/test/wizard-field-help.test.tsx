@@ -96,7 +96,7 @@ describe("the wizard's honest fields are wired to their own copy", () => {
     // source happens, and left the completion method on the step that
     // asks how an artifact is proven good.
     expectHelp(screen.getByLabelText("Directory to back up"), FIELD_HELP.wizardRemoteFolder);
-    expectHelp(screen.getByLabelText("Ignore paths matching"), FIELD_HELP.wizardIncludePatterns);
+    expectHelp(screen.getByLabelText("Filename patterns to back up"), FIELD_HELP.wizardIncludePatterns);
 
     await proveTheSource();
 
@@ -104,9 +104,14 @@ describe("the wizard's honest fields are wired to their own copy", () => {
     // A <fieldset> is role "group", named by its own <legend>.
     expectHelp(screen.getByRole("group", { name: "Completion method" }), FIELD_HELP.wizardCompletionMethod);
 
-    // Exclude patterns was removed entirely by #299 (config.BackupSet has
-    // no exclude field, and nothing read it) — see wizard-decorative-
-    // fields.test.tsx for the proof it's gone. Nothing to explain here.
+    // Exclude patterns was removed entirely by #299, and there is still
+    // nothing for the wizard to send one to: the API exposes `include`
+    // and no exclude of any kind. (config.BackupSet did later gain
+    // `exclude_paths` for #737, but that names DIRECTORIES to skip
+    // walking and is config-file-only.) See wizard-decorative-
+    // fields.test.tsx for the proof the field is gone, and
+    // wizard-include-label.test.tsx (#927) for the proof the include
+    // field that remains is not labelled as if it were the exclude one.
   });
 
   it("on the Retention and Verification steps", async () => {

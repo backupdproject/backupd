@@ -949,8 +949,21 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                   label="Directory to back up" value={remoteFolder} onChange={setRemoteFolder} mono span
                   help={FIELD_HELP.wizardRemoteFolder}
                 />
+                {/* Issue #927: this said "Ignore paths matching" while
+                    being, in every other respect, an INCLUDE list — the
+                    state, the `include` it is sent as, its own field help
+                    and the two other surfaces that draw the same data
+                    ("Include patterns" on the edit form, "Include" on the
+                    detail page) all agree. An operator who believed the
+                    label and typed `*.tmp` here got a set that backs up
+                    only `*.tmp`: discovery drops a non-matching basename
+                    with a bare `continue`, so nothing refuses the save and
+                    no run reports an error — the symptom is empty backups,
+                    noticed days later. The wording is editSetInclude's own
+                    ("filename patterns to back up"), which also keeps it
+                    parallel to the directory field above it. */}
                 <Field
-                  label="Ignore paths matching" value={includePatterns} onChange={setIncludePatterns} mono
+                  label="Filename patterns to back up" value={includePatterns} onChange={setIncludePatterns} mono
                   help={FIELD_HELP.wizardIncludePatterns}
                 />
               </div>
