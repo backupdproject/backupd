@@ -25,6 +25,21 @@
 // proven. The second clip is the check that closes that, on the step
 // where it now blocks the save.
 //
+// That step is no longer Review. #788 rebuilt the add-backup-set rail
+// into eight steps and folded the credentials, the host key and this
+// check into one "Connection test" step, second in the flow, because its
+// answer constrains the steps after it — the write probe in the same
+// report is what decides whether step 7 may offer to delete from the
+// source at all. So the second clip is recorded on step 2, where the
+// panel lives and where the gate bites, rather than on step 8. The three
+// save buttons it used to show in the same frame are six steps away now;
+// what stands in for them is the panel's own sentence, which goes from
+// "Nothing has been proven yet" to "This source has been proven. Saving
+// is enabled." The first clip is unaffected: the SSH authentication
+// dialog is its own four-step wizard (components/SSHAuthWizard.tsx) and
+// #788 did not touch it, which is why its "Next: …" buttons below are
+// still the shipped names.
+//
 // # No key material is ever in frame
 //
 // The paste box is photographed empty and the candidate that gets picked
@@ -95,10 +110,11 @@ await withDevServer(async (app) => {
 
   // ------------------------- a source is proven before a set relies on it
   //
-  // #624, on the step where it bites. Before the check runs the panel
-  // says nothing has been proven and all three save buttons are off;
-  // after it comes back clean the same panel says the source has been
-  // proven and saving is enabled.
+  // #624, on the step where it bites: step 2, "Connection test". Before
+  // the check runs the panel says nothing has been proven; after it comes
+  // back clean the same panel says the source has been proven and saving
+  // is enabled, and adds #852's write-permission verdict, which is the
+  // thing that arms the source-deletion control on step 7.
   {
     const { page } = await openApp(app, { path: "/sets/new", viewport: WINDOW });
     await settle(page, 1000);
@@ -109,30 +125,36 @@ await withDevServer(async (app) => {
       await field.fill(value);
       await field.blur();
     };
+    /** A rail button, by the step label that is its accessible name,
+     *  narrowed with the `data-complete` only the rail's buttons carry:
+     *  the docked terminal's filter toolbar shares a name with one of the
+     *  steps, so the label alone is ambiguous on this page. */
+    const railStep = (label) =>
+      page.getByRole("button", { name: label }).and(page.locator("[data-complete]"));
     await fill("Backup set name", EXAMPLE.setName);
     await fill("Server hostname", EXAMPLE.host);
     await fill("SSH port", EXAMPLE.port);
     await fill("Username", EXAMPLE.user);
+    // On Source since #788, and the connection test below lists this very
+    // directory, which is why step 1 asks for it rather than a later step.
+    await fill("Directory to back up", EXAMPLE.remoteFolder);
+    await fill("Ignore paths matching", EXAMPLE.include);
 
-    await page.getByRole("button", { name: "Authentication" }).click();
+    // One step for all of it now: the key, the host key and the check.
+    await railStep("Connection test").click();
+    await page.getByRole("heading", { name: "Connection test", level: 2 }).waitFor();
     await page.getByRole("radio", { name: /Import key/ }).check();
     await page.getByLabel(/Private key/).fill(EXAMPLE.fakeKey);
     await page.getByRole("button", { name: "Import key" }).click();
     await page.getByText("Key imported").waitFor();
 
-    await page.getByRole("button", { name: "Verify server" }).click();
+    // "Trust host" stays disabled until the host-key probe the step fired
+    // on open resolves, so wait for the fingerprint it fetched to be on
+    // screen rather than clicking a control that is not live yet.
+    await page.getByText(/SHA256:/).first().waitFor();
     await page.getByRole("button", { name: "Trust host" }).click();
     await page.getByRole("button", { name: "Host trusted" }).waitFor();
 
-    await page.getByRole("button", { name: "Discovery" }).click();
-    await fill("Remote folder", EXAMPLE.remoteFolder);
-    await fill("Include patterns", EXAMPLE.include);
-
-    await page.getByRole("button", { name: "Storage & validation" }).click();
-    await fill("NAS destination", EXAMPLE.destination);
-
-    await page.getByRole("button", { name: "Review" }).click();
-    await page.getByRole("heading", { name: "Review", level: 2 }).waitFor();
     await page.getByRole("button", { name: "Test connection" }).scrollIntoViewIfNeeded();
     await settle(page, 700);
 
