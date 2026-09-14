@@ -593,7 +593,21 @@ wf_sets=(
 # all is what the quiet empty surface renders, and a global stage would
 # make that state unreachable for every set at once, which is why none is
 # configured here either.
-exec_connection="exec-host"
+
+# The declared execution connection's id, and it is the exec host's
+# HOSTNAME rather than a prettier "exec-host" on purpose. The product
+# reports a remote step's executor as "Remote · <connection id>", and the
+# hook itself prints the machine it ran on, and a suite proving far-side
+# execution compares the two: a hook that had quietly run on the manager
+# would print the engine's host while the product named something else.
+# With the id spelled differently from the hostname, that cross-check
+# read "the hook printed that it ran on exechost and the product says it
+# executed on Remote · exec-host, so one of them is describing a
+# different machine" -- which was true of the NAMES and false of the
+# machine. One name for one machine: the container's hostname, its
+# network alias, the connection's host and the connection's id are all
+# `exechost`.
+exec_connection="exechost"
 exec_user="hookuser"
 wf_stages=(
   "$wf_set_happy|happy-before|happy-after|"
