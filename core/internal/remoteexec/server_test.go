@@ -19,6 +19,7 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/backupdproject/backupd/core/internal/workflow"
 	"github.com/backupdproject/backupd/core/internal/workflowexec"
 )
 
@@ -674,6 +675,102 @@ func TestAnExecChannelThatClosesWithoutAStatusIsStillTransportLoss(t *testing.T)
 	}
 	if res.ExitCode != nil {
 		t.Errorf("a step whose channel reported no status produced exit code %d", *res.ExitCode)
+	}
+}
+
+// TestAHookWhoseTokenCameFromARealStepIDRunsToCompletion is #919, and it
+// is a DIFFERENT failure from #915 and #918: there the channel opened, the
+// hook ran and a status came back that this product then mishandled. Here
+// no channel was ever opened. The engine handed Run a workflow step id as
+// the token, tokenRule refused it for the tilde that identity reserves,
+// and Request.validate returned before the preflight -- so every remote
+// workflow hook in the product was reported as a failure having never been
+// attempted at all.
+//
+// The assertions are therefore about the SESSION and not only the exit
+// status: the fixture records every command it was asked to run, so "a
+// session carrying this step's token was opened" is observed rather than
+// inferred from an absent error. Pass the raw step id here instead of the
+// derived token and this test fails with no such session and
+// ErrConnection, which is exactly what production did.
+func TestAHookWhoseTokenCameFromARealStepIDRunsToCompletion(t *testing.T) {
+	stepID := workflow.StepID(2, workflow.ScopeSet, workflow.PhaseBefore, "10-quiesce.remote.sh")
+	token := StepToken("wfr_2f1c9a54-8a1e-4c77-9f1b-7c3d2e5a6b90", stepID)
+
+	quiesce := func(t *testing.T, s *fakeSession) {
+		t.Helper()
+		s.ReadAll(t)
+		s.Print(t, "quiesced\n")
+		s.Exit(0)
+	}
+	server := startFakeSSHD(t, answerInternalSessions(quiesce))
+	client := connectTo(t, server)
+
+	sink := &collectingSink{}
+	res, err := client.Run(t.Context(), Request{
+		Token:   token,
+		Script:  []byte("printf 'quiescing\\n'\n"),
+		Sink:    sink,
+		Timeout: 30 * time.Second,
+	})
+
+	if err != nil {
+		t.Fatalf("a hook whose token was derived from step %q failed: %v", stepID, err)
+	}
+
+	opened := false
+	for _, command := range server.commands() {
+		if strings.HasSuffix(command, " -s "+token) {
+			opened = true
+		}
+	}
+	if !opened {
+		t.Fatalf("no session carried this step's token, so the hook never started; the server was asked to run %q", server.commands())
+	}
+
+	if res.ExitCode == nil {
+		t.Fatalf("the hook left no exit code, which is how this product spells \"nobody saw a status\"")
+	}
+	if *res.ExitCode != 0 {
+		t.Errorf("exit code %d, want 0", *res.ExitCode)
+	}
+	if !strings.Contains(sink.text, "quiesced") {
+		t.Errorf("the hook's output was not captured: %q", sink.text)
+	}
+}
+
+// TestARawStepIDNeverReachesTheServer is the control, and the reason
+// StepToken has to exist rather than tokenRule being widened to admit a
+// tilde. The token is interpolated unquoted into a command a shell on the
+// far side parses, so the refusal is right -- what was wrong was handing
+// it a string it must refuse and reporting the refusal as a connection
+// that had failed.
+//
+// Nothing reaches the server: not the probe, not the syntax check, not the
+// hook. That is the fact that separates this from every other remote
+// failure mode in this package.
+func TestARawStepIDNeverReachesTheServer(t *testing.T) {
+	stepID := workflow.StepID(2, workflow.ScopeSet, workflow.PhaseBefore, "10-quiesce.remote.sh")
+
+	refuseToRun := func(t *testing.T, s *fakeSession) {
+		t.Helper()
+		t.Errorf("the fixture was asked to run %q for a token no shell may be handed", s.command)
+		s.Exit(0)
+	}
+	server := startFakeSSHD(t, answerInternalSessions(refuseToRun))
+	client := connectTo(t, server)
+
+	sink := &collectingSink{}
+	if _, err := client.Run(t.Context(), Request{
+		Token:   stepID,
+		Script:  []byte("printf 'quiescing\\n'\n"),
+		Sink:    sink,
+		Timeout: 30 * time.Second,
+	}); !errors.Is(err, ErrConnection) {
+		t.Fatalf("a raw step id as the token = %v, want ErrConnection", err)
+	}
+	if commands := server.commands(); len(commands) != 0 {
+		t.Errorf("the server was asked to run %q for a step that was refused before it started", commands)
 	}
 }
 

@@ -2,6 +2,8 @@ package remoteexec
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -78,6 +80,95 @@ const (
 // tokenRule is what a step token must look like before it may become part
 // of the remote command string. See Request.Token.
 var tokenRule = regexp.MustCompile(`^[A-Za-z0-9._-]{1,120}$`)
+
+const (
+	// tokenMaxLen is tokenRule's own length ceiling, named here because
+	// StepToken has to build WITHIN it rather than find out afterwards
+	// that it did not.
+	tokenMaxLen = 120
+
+	// tokenDigestHex is how much of the pair's digest is appended to a
+	// token that had to be cut short. Four bytes is what distinguishes
+	// two steps whose names agree for the first hundred characters,
+	// which is the only case it is reached in.
+	tokenDigestHex = 8
+)
+
+// StepToken is the token for one step of one run, BUILT to satisfy
+// tokenRule rather than offered to it and refused.
+//
+// It exists because the identifiers this product already has cannot be
+// handed over as they are. A workflow step id is
+// "0010~set~pre~10-quiesce.sh" (workflow.StepID), where the tilde is the
+// separator that identity reserves -- and a token is interpolated
+// UNQUOTED into the fixed remote command (Client.remoteCommand), which a
+// shell on somebody else's host then parses, where a tilde is a word that
+// shell may rewrite and a LEADING tilde is a home directory. That is why
+// tokenRule refuses such a string instead of quoting it, and handing a
+// step id straight to it anyway was #919: Request.validate failed in
+// microseconds, before a session was opened or a capability proven, so no
+// remote hook ran at all -- and the refusal was then reported as a
+// connection this product had lost.
+//
+// BOTH identifiers go in because the token is also the reaper's only
+// handle on the far side. It is matched there as a whole operand after
+// "-s" in the remote process list (groupScript), which is this product
+// reading back a string it wrote, so a token naming only the step would be
+// shared by every run of the same workflow: terminating one run's step
+// would find, and kill, a hook running normally in another.
+//
+// Every byte outside tokenRule's class becomes a dash, which is lossy in
+// general and is not ambiguous for what this product mints -- a run id is
+// "wfr_" and a uuid, and a step id's parts are digits, a scope, a phase
+// and a script name ScriptNamePattern has already restricted to this same
+// class, so the tilde is the only byte the map touches. Beyond the
+// ceiling the pair's own digest carries the distinction instead, because
+// a long script name is exactly where two steps' tokens would otherwise
+// be cut down to the same string.
+func StepToken(runID, stepID string) string {
+	// One allocation for the whole token: the map is per BYTE and not
+	// per rune deliberately, so a multi-byte character becomes that many
+	// dashes and the length arithmetic below is exact.
+	token := make([]byte, 0, len(runID)+1+len(stepID))
+	token = appendTokenSafe(token, runID)
+	token = append(token, '.')
+	token = appendTokenSafe(token, stepID)
+
+	// The dot means a token is never empty, whatever it was given, so
+	// there is always a first byte -- and a leading dash is PREFIXED
+	// rather than replaced: the token is a WORD in "exec bash
+	// --noprofile --norc -s <token>", and a word beginning with a dash
+	// is read by that bash as options of its own.
+	if token[0] == '-' {
+		token = append([]byte{'0'}, token...)
+	}
+
+	if len(token) > tokenMaxLen {
+		// The NUL is what keeps the digest about the PAIR: without it
+		// ("wfr_a", "b") and ("wfr_ab", "") would hash alike.
+		sum := sha256.Sum256([]byte(runID + "\x00" + stepID))
+		token = append(token[:tokenMaxLen-tokenDigestHex-1], '-')
+		token = hex.AppendEncode(token, sum[:tokenDigestHex/2])
+	}
+
+	return string(token)
+}
+
+// appendTokenSafe appends s with every byte outside tokenRule's character
+// class replaced by a dash.
+func appendTokenSafe(dst []byte, s string) []byte {
+	for i := range len(s) {
+		switch c := s[i]; {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
+			c == '.', c == '_', c == '-':
+			dst = append(dst, c)
+		default:
+			dst = append(dst, '-')
+		}
+	}
+
+	return dst
+}
 
 // Client is one SSH connection to one execution connection's host.
 //

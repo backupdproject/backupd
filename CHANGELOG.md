@@ -772,6 +772,43 @@
   proof about the script, so there an incomplete write still fails the
   session.
 
+- **A remote workflow hook runs at all** (EPIC L, #919). Every
+  `NAME.remote.sh` step in the product was refused before anything of it
+  happened. The engine handed the remote executor the step's own id as its
+  step token, and the token rule refuses the `~` that a step id is built out
+  of (`0002~set~before~10-quiesce.remote.sh`) — correctly, because the token
+  is interpolated UNQUOTED into the fixed remote command a shell on the far
+  side parses, where a tilde is a word that shell rewrites and a leading one
+  is a home directory. The refusal landed in about fifteen microseconds,
+  before a connection was opened, a capability proven or a session asked
+  for, and was then reported as `transport_lost` — which told an operator
+  the link to a host had dropped mid-step, about a hook whose bytes had
+  never left this machine. The two rules had been mutually unsatisfiable
+  since the day both existed, so no remote hook had ever run.
+
+  **The token is derived now, not borrowed** (`remoteexec.StepToken`). It is
+  built to satisfy that rule rather than offered to it: every byte outside
+  letters, digits, dot, dash and underscore becomes a dash, a leading dash
+  is prefixed away because the token is a WORD the receiving bash would
+  otherwise read as options of its own, and a pair too long for the
+  120-character ceiling is cut short and carries its own digest — so two
+  steps whose script names agree for a hundred characters cannot be reduced
+  to one token. The token names the RUN as well as the step, which closes a
+  collision nobody had reached yet: the reaper finds a step's process group
+  by matching the token as a whole operand in the remote process list, so a
+  token naming only the step would let one run's termination find, and kill,
+  another run's healthy hook. The rule itself is unchanged and deliberately
+  not widened, and `workflow.StepID` keeps its separator: it is also the
+  name of the step's spool file.
+
+  **This is not #915.** There a channel opened, the hook ran and exited, and
+  the status it reported was thrown away. Here no channel was ever opened,
+  which is why the fix is proven by asserting that a session carrying the
+  step's token WAS opened on a fixture sshd rather than by an absent error.
+  A step refused before it starts also reports `not_attempted` now instead
+  of `transport_lost`: nothing of it ran, so there are no half-applied side
+  effects for anyone to go looking for.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added

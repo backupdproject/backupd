@@ -71,6 +71,12 @@ type Request struct {
 	// A token is safe to publish there -- it identifies a run, not a
 	// credential -- which is exactly why an environment value or a secret
 	// never may be.
+	//
+	// It is BUILT with StepToken and not taken from an identifier a
+	// caller already has: it has to satisfy tokenRule, and every
+	// identifier this product mints -- a step id above all -- contains
+	// characters that rule refuses. Handing one over unchanged was #919,
+	// and the refusal arrives before a session is ever opened.
 	Token string
 
 	// Environ is the step's fully resolved environment as NAME=VALUE
