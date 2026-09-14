@@ -414,7 +414,7 @@ describe("one viewer, a hundred steps", () => {
     expect(api.callsFor("step-1")).toHaveLength(readsOfOne);
   });
 
-  it("switches back to a step already read without replaying its log", async () => {
+  it("switches back to a step already read without reading it again", async () => {
     const api = new FakeApi();
     api.put("step-1", [line(1, "alpha"), line(2, "beta")]);
     api.put("step-2", [line(3, "gamma")]);
@@ -422,16 +422,35 @@ describe("one viewer, a hundred steps", () => {
       <StepLogTerminal runId="run-7" stepId="step-1" step={step({ stepId: "step-1" })} api={api} />
     );
     await screen.findByText("beta");
+    const readsWhileFirstSelected = api.callsFor("step-1").length;
 
     rerender(<StepLogTerminal runId="run-7" stepId="step-2" step={step({ stepId: "step-2" })} api={api} />);
     await screen.findByText("gamma");
     rerender(<StepLogTerminal runId="run-7" stepId="step-1" step={step({ stepId: "step-1" })} api={api} />);
 
-    // The history is on screen immediately, and the re-read resumes from
-    // the cursor it had rather than from the beginning.
+    // The history is on screen at once, because it never left: this is
+    // what the kept scrollback is FOR.
     expect(screen.getByText("beta")).toBeInTheDocument();
-    await waitFor(() => expect(api.callsFor("step-1").length).toBeGreaterThan(1));
-    expect(api.callsFor("step-1").slice(1).every((call) => call.after === 2)).toBe(true);
+
+    // And it costs nothing durable. This assertion used to require the
+    // opposite -- `toBeGreaterThan(1)`, a re-read on every return -- and
+    // #916/#917's browser evidence is what settled which of the two the
+    // cache is supposed to mean: a complete page held in full is
+    // rendered from memory, so an operator comparing a failure with the
+    // step before it pays one read per step and not one per click. A
+    // step still running, or one whose page ended mid-log, is not held
+    // "in full" and resumes its follower -- which the running-step cases
+    // in this file cover.
+    await act(async () => {
+      // `new Promise` rather than Promise.withResolvers, because this
+      // package's TypeScript lib target predates it (tsc: "Property
+      // 'withResolvers' does not exist ... Try changing the 'lib'
+      // compiler option to 'es2024' or later") and the test above this
+      // one waits the same way.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+    expect(api.callsFor("step-1")).toHaveLength(readsWhileFirstSelected);
+
     // And no line is on screen twice.
     expect(screen.getAllByText("beta")).toHaveLength(1);
   });
