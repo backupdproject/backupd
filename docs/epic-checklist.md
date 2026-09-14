@@ -234,6 +234,19 @@ synology, truenas, ugos, unraid, zimaos.
   (`scripts/docs/package-doc.baseline`). *(Gated.)*
 - [ ] **Comments the change falsified are fixed.** *(Ungated.)* Several defects
   here came from trusting a comment that had quietly stopped being true.
+- [ ] **When a step, screen or field is removed rather than renamed, sweep for
+  what it was SPLIT into, not for its old name.** *(Ungated, and it has cost
+  three separate repairs.)* #788 is the worked example. It reads as a rename —
+  six wizard steps became eight, `Authentication` and `Verify server` became
+  `Connection test` — and a name-substitution sweep gets most of it. But
+  `Backup discovery` was **deleted**: its directory and pattern fields moved
+  onto `Source` and its completion-method radios became the artifact engine's
+  branch of a later step. There is no new name to substitute, so a sweep
+  searching for old names finds nothing to fix and reports itself done, while
+  every sentence, picture and test fixture that described the deleted step
+  survives intact. The wreckage was still being found three passes later, in
+  #872, in #923/#924, and in this file's own capture scripts. Ask what the
+  removed thing's contents became and follow each piece, one at a time.
 
 ## 10. Screenshots and GIFs for the site
 
