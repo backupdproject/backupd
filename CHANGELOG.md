@@ -4,6 +4,80 @@
 
 ### Added
 
+- **Scripted backup workflows are documented, with clips taken by a committed
+  script rather than by hand** (EPIC L, #817, over everything #808 through #816
+  shipped). The feature had a conformance matrix, a performance record, four
+  ADRs and reference-page rows, and no page that told an operator what the five
+  stages are, which machine each hook runs on, or what to do about a backup set
+  that has stopped running because a workflow needs recovering. There is one
+  now: `docs/site/workflows.html`, in the topbar and on the home page.
+
+  **The pictures are reproducible or they are not evidence.**
+  `docs/site/tools/capture-workflows.mjs` records ten clips of the workflow
+  surfaces the same way the rest of the site's clips are recorded: against
+  `ui/shared`'s own dev server and its in-memory fixture API, never a real
+  deployment, with the clock, the timezone, the locale and the port pinned, and
+  one line of output per clip so a diff of a re-record says which picture moved
+  and what it cost. Re-running it reproduces them; on the machine they were
+  taken on, three consecutive runs produced byte-identical files. Recording the
+  first one required fixing the shared harness, which is its own entry under
+  **Fixed** below.
+
+  **The recovery hold has an operator procedure on both surfaces.**
+  `docs/recovery.md` gains the terminal path for a set blocked at
+  `recovery_required` — what reconcile did, why an interrupted step is not a
+  failed one, the journal queries, and the two exits — and
+  `docs/recovery-without-a-terminal.md` gains the browser-only counterpart,
+  because the hold is raised in a UI that offers exactly `Resume cleanup` and
+  `Acknowledge` and deliberately no dismiss. `install.md`,
+  `runtime-contract.md` and `ssh-setup.md` already carried the runner, the
+  container contract and the exec credential, and are cross-referenced rather
+  than restated.
+
+  **The epic has a spec, late, and it says so.**
+  `docs/EPIC-L-scripted-backup-workflows.md` carries the Status block,
+  FR-36 through FR-48, the five-expert adversarial review and its consensus,
+  entry and exit gates per phase, and a Definition-of-Done section that names
+  the proof for each line and whether that proof is gated or ungated. It was
+  written at the end of the epic instead of the start, which is a process
+  defect recorded in the file rather than smoothed over, and its closing
+  section states what has NOT been proven: that no deployment this repository
+  builds lets a browser start a backup run (#92), so every run the end-to-end
+  suite observed is the scheduler's and the hook bypass is unreachable over
+  HTTP; that remote hooks had never actually executed until #919 was found by
+  the e2e rig and fixed in #920; that the web-UI suite carries pre-existing
+  product-to-suite drift tracked in #913 which is not a workflow failure; and
+  that the one red EPIC L owns is the browser half of the recovery path,
+  because a hook whose Host Workflow Runner vanishes mid-step is not bounded
+  by `script_timeout` (#931) — so the run sits in progress, the set stops
+  being scheduled, and there is no hold to explain why until a later restart
+  reconciles it. Nobody has yet pressed Resume cleanup or Acknowledge in a
+  browser against a real deployment and watched the hold settle, and the
+  document says so rather than counting the surrounding greens.
+
+  **The first-run walkthrough describes the wizard that shipped.** #788 took the
+  add-backup-set wizard from six steps to eight, collapsed `Authentication` and
+  `Verify server` into one `Connection test` step and moved it to position two,
+  deleted `Backup discovery` outright — its directory and pattern fields moved
+  onto `Source` and its completion-method radios became the artifact engine's
+  branch of step six — and split `Storage & validation`. `docs/site/first-run.html`
+  still walked the six-step flow, and `capture-first-run.mjs` and
+  `capture-ssh.mjs` still clicked their way through steps that no longer exist.
+  The page now describes the eight that do, with twenty re-recorded stills and
+  both SSH clips; eleven pictures of deleted steps are retired as
+  `.superseded` rather than deleted. The page also says why it names a step one
+  way and describes it another: the rail labels four of the eight steps more
+  briefly than the step itself does, and one of those titles depends on the
+  engine, so a new set on the default artifact engine meets a step titled
+  "Completion and validation" where the rail says "Verification".
+
+  Nothing in this entry changes behaviour. An existing deployment sees new
+  documentation, three corrected wizard step names in the TrueNAS,
+  OpenMediaVault and Unraid acceptance procedures (#788 renamed those steps and
+  the procedures kept naming a step that no longer exists), and a reference page
+  whose command count finally matches the twenty-four commands the binary
+  registers.
+
 - **The workflow feature is now proved in a browser against a real
   deployment** (EPIC L, #816). `scripts/e2e/three-machine-web-ui.sh` stands
   up what EPIC L actually needs and what no mock can stand in for: a **Host
@@ -651,6 +725,49 @@
   issued the current one.
 
 ### Fixed
+
+- **The docs-site capture tooling works again, in four separate places** (#817).
+  Nothing in this repository checks that the scripts which take the
+  documentation site's screenshots and clips still run, and by the time EPIC L
+  went to take some, four unrelated things had broken.
+
+  **`Clip.write` could not encode anything.** It named a binding, `FFMPEG`,
+  that does not exist anywhere in `docs/site/tools/harness.mjs` — twice, once
+  to spawn the encoder and once in the error message about failing to spawn it.
+  In an ES module that is a `ReferenceError` on the first encode, so **none of
+  the four capture scripts could have re-recorded a GIF**: `capture-web-ui.mjs`,
+  `capture-ssh.mjs`, `capture-first-run.mjs` and `capture-reference.mjs` were
+  all reaching the same dead line. The resolver it was meant to use, `ffmpeg()`,
+  sat three hundred lines above it with its candidate-path search, its `FFMPEG`
+  environment override and a `console.log` naming the binary it took, and
+  nothing called it.
+
+  **Three more were caused by product changes nobody connected to a capture
+  script.** `EXAMPLE.port` was the placeholder `"<your-ssh-port>"`, which #864
+  turned from a value the wizard coerced into one the wizard refuses, so the
+  first-run capture could not leave the Source step and every picture after it
+  was unreachable; it is now `"22"`, which is the product's own shipped example
+  for that field, so the picture agrees with the tooltip beside it.
+  `getByLabel("Username")` became ambiguous when #830 added an SMTP username to
+  the enrolment form. And the enrolment card's selector, `#root > div > div`,
+  stopped matching a card when #874's delegated-tooltip layer inserted a
+  `display: contents` wrapper into that chain.
+
+  That last one is the one worth remembering, because it did not throw. It
+  silently photographed the whole 1280-pixel window instead of the 484-pixel
+  card, so the only thing standing between it and a shipped set of wrong
+  pictures was somebody looking at the output. A tooling break that produces a
+  plausible wrong answer is not caught by running the tool.
+
+  `docs/epic-checklist.md` section 10 now names all four and the follow-up that
+  would gate this surface (#926), because the argument is no longer
+  hypothetical: this tooling reads the shipped UI's own rules — `isPort`, the
+  rail labels, the accessible names, the field help, the DOM shape — so the
+  product invalidates it without knowing it exists.
+
+  An existing deployment sees nothing; this is repository tooling. Anybody
+  re-recording site media sees it work, and sees `encoding with <path>` naming
+  the encoder that was chosen.
 
 - **The step log terminal fits the window it is read in** (EPIC L, #916). In a
   940px window it measured 1178px and the page scrolled sideways — with

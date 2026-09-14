@@ -11,8 +11,10 @@ answers questions the interface does not ask. Neither page replaces the other. I
 a terminal, read that one; if you do not, everything below is reachable from the interface
 and none of it needs one.
 
-Three failures account for almost every message this project receives. Each gets a section
-below: what you see, what it actually means, and what to do about it in the interface.
+Three failures account for almost every message this project receives, and a fourth —
+rarer, and the only one here that stops a backup set until you act — arrives with the
+scripted workflows. Each gets a section below: what you see, what it actually means, and
+what to do about it in the interface.
 
 ---
 
@@ -153,6 +155,105 @@ The set is stale and getting staler, and everything already retained is untouche
 still verified. You are losing new protection, not existing protection, which is why it is
 safe to spend a day getting the fingerprint verified properly rather than clearing the pin
 in the first ten minutes.
+
+---
+
+## 4. A backup set will not run until a workflow is accounted for
+
+### What you see
+
+The set's page carries a red banner headed **Workflow recovery**: *This backup set will not
+run until a workflow run is accounted for*. It names the run, says the run stopped before
+its "after" hooks finished, and gives two facts underneath — how long the hold has stood,
+and where that run's scripts are being kept. The banner cannot be dismissed.
+
+While it is there, the set's own run control is unavailable rather than merely
+unsuccessful, and hovering it says why. Scheduled runs for this set stop happening. Every
+other set carries on as normal; this is one set's problem, not the application's.
+
+The same banner appears on the run's own page, which you reach from the run history in the
+set's Workflow panel.
+
+### What it means
+
+A backup with hooks runs in five stages: two before the backup, the backup, then two after
+it. The "after" stages are the ones that put the source machine back — thaw the database,
+release the snapshot, restart whatever was stopped for the copy.
+
+The application writes down that it has entered a stage before it runs the first script in
+that stage. Then the engine stopped: a restart, a crash, the NAS losing power. Coming back
+up, it found a script that had been running with nobody left to observe how it ended, and
+recorded that as *interrupted* rather than as *failed*. Those are different findings and
+the difference is the whole reason you are reading this: "the script reported failure" and
+"nobody knows how the script ended, and it may have half-done its work" call for different
+things next.
+
+So it blocked the set, kept that run's scripts exactly as they were, and **ran nothing**.
+Nothing was replayed, and no hook was retried on your behalf. That is deliberate: the
+source machine may be quiesced, mounted or paused right at this moment, and it may have a
+perfectly good backup sitting beside it. A healthy backup and a machine nobody put back is
+exactly the combination that would be hidden by carrying on.
+
+### What to do
+
+1. Open the set and read the banner. The **held since** time is the number that matters: it
+   is how long the source may have been left in that state, and it is the difference
+   between a NAS that rebooted four minutes ago and a database that has been frozen since
+   Tuesday.
+2. Open the run from the Workflow panel's run history. It draws all five stages and every
+   script in them, so you can see which one was interrupted and which ones never started.
+   Selecting a step shows the output it managed to produce before the process went away,
+   which is the closest thing there is to knowing how far it got.
+3. **Go and look at the source machine before you clear anything.** The application can
+   tell you which hooks never ran. It cannot tell you what state the other end is in, and
+   that is the question.
+4. Then choose one of the two controls on the banner. There are deliberately only two.
+   - **Resume cleanup** runs the "after" scripts that run still owes, from the copies kept
+     with the run itself, each one checked against the fingerprint taken when the run was
+     planned. Nothing anybody edited in the meantime decides what executes. What it costs:
+     it runs those scripts against the source machine now, so it is the right choice when
+     the scripts should finish the job and the machine is reachable and in one piece. If it
+     cannot account for everything afterwards, the hold comes straight back and the set
+     stays blocked, which is the honest outcome rather than a failure of the button.
+   - **Acknowledge** opens a box headed *What was done about this run*, and a **Record
+     acknowledgement** button underneath it. It executes nothing and changes nothing on the
+     source machine. What it does is unblock the set and record that a person took
+     responsibility. Words are required: the button stays unavailable until you write some.
+     What it costs: backups of this set start happening again with nothing having confirmed
+     the machine was put back, so this is the choice *after* you have put it back yourself,
+     not instead of doing so.
+5. There is no third control, and the absence is on purpose. No dismiss, no ignore, no
+   snooze. The alternative to those two is a source machine left in a state the application
+   cannot see, and a button that hid the banner would be a button that hid that.
+
+### Why the acknowledgement asks for words
+
+Because it is the only way a backup set is ever unblocked without its cleanup having run,
+and the question it has to answer is not today's. It is the one somebody asks six months
+later, reading the record: why did this set start backing up again when the application had
+said it could not account for the machine?
+
+What you write is kept with the run. You do not type a name — the acknowledgement is filed
+against the administrator whose session recorded it, which is the only attribution worth
+having.
+
+### Confirming it is clear
+
+The banner disappears and the set goes back to its schedule. That is the confirmation; the
+next scheduled run appearing in the set's history is the proof.
+
+Do not try to confirm it by starting a run from the interface. On every deployment this
+project packages, a backup started from a browser is refused outright — the interface can
+configure, inspect and unblock, and the engine's own schedule is what takes backups (issue
+#92). A refusal there tells you nothing about whether the hold is gone.
+
+### While it is unresolved
+
+Unlike a stale set, this one is not safe to leave for a day. Nothing already retained is at
+risk — every artifact is on your own storage and still verified — and no new backup of this
+set is being taken, which is the same loss staleness costs you. What is different is the
+other end: if the interrupted hook had stopped a database or frozen a filesystem, that is
+still true, and it is true for as long as the banner says *held since*.
 
 ---
 

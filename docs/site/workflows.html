@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scripted backup workflows: backupd</title>
+  <meta name="description" content="Bash hook scripts around every backup: the five stages, local and remote targets, the environment and secret model, the shell verification that gates a save, per-script terminals, and the recovery hold a crash leaves behind.">
+  <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+  <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="topbar.css">
+  <script src="topbar.js" defer></script>
+</head>
+<body>
+<header class="topbar" id="topbar">
+  <div class="topbar-content">
+    <a class="topbar-brand" href="index.html">
+      <img src="assets/logo-mark-light.svg" alt="backupd mark: a broken ring standing for a transfer cycle in progress">
+      <h1 class="brand-name">backup<span class="brand-dash">d</span></h1>
+    </a>
+  </div>
+
+  <button class="topbar-burger" id="topbarBurger" type="button"
+          aria-label="Toggle menu" aria-expanded="false" aria-controls="topbar-menu">
+    <span class="burger-icon" aria-hidden="true"></span>
+  </button>
+
+  <nav class="topbar-menu" id="topbar-menu" aria-hidden="true">
+    <div class="topbar-menu-inner">
+      <a href="index.html" class="nav-item nav-item-home">
+        <svg class="nav-icon nav-icon-home" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+          <path d="M12 3 2 12h3v8h5v-5h4v5h5v-8h3L12 3z"/>
+        </svg>
+        <span class="nav-label nav-label-full">Home</span>
+      </a>
+
+      <a href="first-run.html" class="nav-item">
+        <span class="nav-label nav-label-full">First-run tutorial</span>
+        <span class="nav-label nav-label-short">First run</span>
+      </a>
+      <a href="web-ui.html" class="nav-item">
+        <span class="nav-label nav-label-full">The web interface</span>
+        <span class="nav-label nav-label-short">Web UI</span>
+      </a>
+      <a href="workflows.html" class="nav-item is-current">
+        <span class="nav-label nav-label-full">Scripted workflows</span>
+        <span class="nav-label nav-label-short">Workflows</span>
+      </a>
+      <a href="ssh.html" class="nav-item">
+        <span class="nav-label nav-label-full">SSH &amp; connections</span>
+        <span class="nav-label nav-label-short">SSH</span>
+      </a>
+      <a href="reference.html" class="nav-item">
+        <span class="nav-label nav-label-full">Reference</span>
+        <span class="nav-label nav-label-short">Ref</span>
+      </a>
+
+      <a href="https://github.com/backupdproject/backupd" target="_blank" rel="noopener" class="nav-item nav-item-github" aria-label="GitHub repository">
+        <svg class="nav-icon nav-icon-github" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        <span class="nav-label nav-label-full">GitHub</span>
+      </a>
+
+      <a href="https://github.com/backupdproject/backupd/blob/main/README.md" target="_blank" rel="noopener" class="nav-item">
+        <span class="nav-label nav-label-full">README</span>
+      </a>
+      <a href="https://github.com/backupdproject/backupd/blob/main/docs/deployment.md" target="_blank" rel="noopener" class="nav-item">
+        <span class="nav-label nav-label-full">Deployment</span>
+        <span class="nav-label nav-label-short">Deploy</span>
+      </a>
+      <a href="https://github.com/backupdproject/backupd/issues" target="_blank" rel="noopener" class="nav-item">
+        <span class="nav-label nav-label-full">Issues</span>
+      </a>
+
+      <hr class="menu-divider">
+
+      <button type="button" class="topbar-theme-toggle" id="themeToggle" role="switch" aria-checked="false" aria-label="Toggle theme">
+        <span class="theme-glyph" aria-hidden="true">&#9790;</span>
+        <span class="theme-label">Dark mode</span>
+        <span class="theme-slider" aria-hidden="true">
+          <span class="theme-slider-track">
+            <span class="theme-slider-sun">&#9728;</span>
+            <span class="theme-slider-moon">&#9790;</span>
+            <span class="theme-slider-knob"></span>
+          </span>
+        </span>
+      </button>
+    </div>
+  </nav>
+</header>
+
+<main>
+
+  <section>
+    <span class="step-eyebrow">Guide</span>
+    <h2 id="top" style="font-size:1.75rem;border:none;padding-bottom:0;margin-bottom:0.5rem;">Scripted backup workflows</h2>
+    <p>The useful backup of a live system is taken with the system in a state somebody put it in: a database quiesced, a snapshot taken, a cache flushed, an application stopped. Every deployment already does that, with cron and a wrapper script, and the wrapper script is where the failures live. It keeps no record of what it ran. It cannot tell you which step failed. It has no answer at all to the case where the machine died between quiescing the database and unquiescing it.</p>
+    <p>This is that wrapper script, with the parts a wrapper script cannot have. An operator puts Bash files in a directory and backupd runs them as ordered, individually observable steps around every backup-set run, with one durable record of what ran, what it printed, and what is still owed. It is deliberately <strong>not</strong> a CI engine: no DAGs, no parallel steps, no per-step images, no plugins, no YAML pipelines, no browser script editor.</p>
+
+    <div class="cards">
+      <a href="#stages" class="clipping">
+        <span class="clipping-tag">Clip</span>
+        <p>The five stages, in the one order they run, including the ones that had nothing to run.</p>
+        <span class="clipping-read">Watch it &rarr;</span>
+      </a>
+      <a href="#statuses" class="clipping">
+        <span class="clipping-tag">Clip</span>
+        <p>Three verdicts, side by side, because a good backup beside a machine still quiesced is not one answer.</p>
+        <span class="clipping-read">Watch it &rarr;</span>
+      </a>
+      <a href="#recovery" class="clipping">
+        <span class="clipping-tag">Clip</span>
+        <p>What a crash leaves behind, and the two ways out of it. There is no dismiss.</p>
+        <span class="clipping-read">Watch it &rarr;</span>
+      </a>
+    </div>
+  </section>
+
+  <section>
+    <h2 id="stages">The five stages, and what &ldquo;global&rdquo; means</h2>
+    <p>Every backup-set execution is one <em>workflow run</em> with five stages, in one order, serially:</p>
+    <div class="scroll-x">
+      <table>
+        <thead><tr><th>Stage</th><th>What it is for</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Global before</strong></td><td>What every backup set on this deployment needs doing first.</td></tr>
+          <tr><td><strong>Backup-set before</strong></td><td>What this one set needs: quiesce this database, snapshot this volume.</td></tr>
+          <tr><td><strong>The backup</strong></td><td>The existing run, unchanged. Not a hook step.</td></tr>
+          <tr><td><strong>Backup-set after</strong></td><td>Undo what this set's before stage did.</td></tr>
+          <tr><td><strong>Global after</strong></td><td>Undo the deployment-wide part, and notify.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>&ldquo;Global&rdquo; means inherited by every individual backup-set run</strong>, not once per batch. A pass over three sets runs the global before stage three times, once wrapped around each of them, and the global hooks get the same merged environment as the set they are wrapping. That definition was chosen over &ldquo;once per batch&rdquo; deliberately, because the two produce different cleanup obligations from the same directory and only one of them can be reasoned about per set.</p>
+    <p>The after stages unwind in the reverse of the order the before stages were entered. Entering a stage's <em>scope</em> is its own durable write, made before the first side-effecting command in it, and that write is what the cleanup is owed against. So a global-before failure leaves the global after stage eligible and the backup-set after stage never eligible &mdash; the set's scope was never entered, and nothing in it is owed an undo. A backup-set-before failure leaves both after stages eligible.</p>
+  <figure class="wide">
+    <img src="screens/wf-run-timeline.gif" alt="A workflow run page: five stages listed in execution order, each with its scripts, progressing as the run advances" loading="lazy">
+    <figcaption><span class="clip-tag">clip</span>All five stages, in execution order, <em>including the ones that had no directory to run</em>. &ldquo;The global after stage did not run&rdquo; and &ldquo;this deployment has no global after stage&rdquo; are opposite facts when a database has been left quiesced, so the page never omits a stage to save a row.</figcaption>
+  </figure>
+    <div class="note">
+      <span class="note-label">Configured and empty is not the same as not configured</span>
+      <p>An unset stage directory means the stage is disabled. A configured directory that <em>exists and is empty</em> still enters its scope, so its after stage still runs. A configured directory that is <strong>missing</strong> is a refusal rather than a stage that silently runs nothing, because a stage that quietly does nothing is how an unquiesce disappears.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2 id="root">The workflow root, and the names of things</h2>
+    <p>Hook scripts live under one approved absolute directory, <code>workflows.root</code>. A stage is a directory <em>name</em> inside it, so moving the root re-points every backup set's hooks at once &mdash; which is why a root change is verified against every set before it saves.</p>
+    <p>The root itself may be a symlink, because on a NAS it is usually a mount point an operator declared. A <em>stage</em> directory may not: the permissions protecting a link say nothing about the ones protecting its target, so this product will not execute scripts it found through one. Declare the target instead.</p>
+
+    <h3 id="names">A script's name says where it runs</h3>
+    <div class="scroll-x">
+      <table>
+        <thead><tr><th>Name</th><th>Runs on</th></tr></thead>
+        <tbody>
+          <tr><td><code>NAME.local.sh</code></td><td>the machine backupd is installed on, through the <a href="#runner">Host Workflow Runner</a></td></tr>
+          <tr><td><code>NAME.remote.sh</code></td><td>the host this backup set pulls from, over an <a href="#remote">exec-capable SSH connection</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The full rule is <code>^[0-9A-Za-z][0-9A-Za-z._-]*\.(local|remote)\.sh$</code>. Regular files only, symlinks refused. A plain <code>*.sh</code> with no target suffix is <em>refused</em> rather than guessed: a hook that quiesces a database has to run on the machine holding the database, and guessing wrong is silent.</p>
+    <p>Names are held to conservative ASCII for reasons that are all about reading a log six months later. Whitespace in a filename turns one audit line into two. A control character does worse. A Cyrillic <code>&#1077;</code> reads identically to a Latin <code>e</code> and names a different file. A leading dot is an editor's backup, a partial download or a scratch copy far more often than it is a script somebody meant to run, so this product never runs one.</p>
+
+    <h3 id="ordering">Ordering is <code>LC_ALL=C ls</code>, and nothing cleverer</h3>
+    <p>Within a stage, scripts run in bytewise order over the whole basename, <strong>target suffix included</strong>. Not locale-aware, not &ldquo;local ones first&rdquo;, not &ldquo;by the name part with the target as a tiebreak&rdquo;. It is exactly <code>LC_ALL=C ls</code>, which is the one ordering an operator can reproduce on their own machine without running this product. Number your scripts &mdash; <code>10-</code>, <code>20-</code>, <code>30-</code> &mdash; and the order is the one you can see.</p>
+
+    <h3 id="custody">Who else can write to it</h3>
+    <p>A directory anywhere above a hook script that some other local account can write to is a refusal. Nothing about this is subtle: if another account can drop a file into a directory this product executes out of, that account can run code as whatever the hooks run as. Unlike a secret file, a <em>sticky</em> directory earns no exemption here &mdash; a <code>1777</code> hook directory is a root shell for any local account, and the sticky bit does not change that for a file the script author owns.</p>
+    <p>A script is read once, through a descriptor whose custody was checked, and the path it was found at is not handed back out, so nothing can re-open the file after the snapshot was taken. World-<em>readable</em> is fine and deliberately allowed; world-writable is not.</p>
+  </section>
+
+  <section>
+    <h2 id="runner">Local hooks run outside the container, and why</h2>
+    <p>A <code>.local.sh</code> hook means &ldquo;run this on the machine backupd is installed on&rdquo;. The engine cannot run one, and this is not an oversight to be fixed: the engine's image is distroless and has no shell at all, its container is read-only and non-root, and every Linux capability is dropped. Those properties are the product's own security contract, written down in <a href="https://github.com/backupdproject/backupd/blob/main/docs/runtime-contract.md">the runtime contract</a> with gates that fail a build which weakens them.</p>
+    <p>So the shell is bought somewhere else. A <strong>Host Workflow Runner</strong> is a separate process on the host, built from the same commit as the engine and extracted from the same image by the installer, supervised as <code>backupd-workflow-runner.service</code>. The engine asks it to run a hook over a Unix-domain socket &mdash; never a TCP port &mdash; and what crosses that socket is the script's <em>bytes</em>, never a path, so the far side never re-opens a file the engine already vetted.</p>
+    <p>The runner refuses to run as root, refuses an engine whose version is not exactly its own, and requires an installation-scoped credential on every connection. Each hook then runs in its own ephemeral container with every capability dropped, no new privileges, a read-only filesystem, a non-root user, no network and a process limit. No Docker socket is mounted into a hook container under any name. The runner never pulls an image: one that is not already on the host is a refusal, not a download.</p>
+    <div class="note ok">
+      <span class="note-label">What the engine container gained</span>
+      <p>Two mounts and one file, and the one carrying the scripts is read-only. Nothing else. It is still distroless, read-only, non-root and <code>cap_drop: ALL</code>, and a check fails the build if that stops being true. <a href="https://github.com/backupdproject/backupd/blob/main/docs/runtime-contract.md">The runtime contract</a> has the exact mounts and the exact per-hook launch.</p>
+    </div>
+  <figure class="wide">
+    <img src="screens/wf-settings-runner.gif" alt="The deployment-wide Workflow card in Settings: the workflow root, the global stage directories, the script timeout, and the Host Workflow Runner's socket and credential paths" loading="lazy">
+    <figcaption><span class="clip-tag">clip</span>The deployment-wide half. The runner rows report the socket and the credential path as deployment facts and say whether that address is <em>configured</em> &mdash; never that the runner is answering, because nothing on this read contacts it. For a live answer, the <a href="#validation">validation</a> report has a <code>runner_health</code> check, and a terminal has <code>backupd workflow-runner status</code>.</figcaption>
+  </figure>
+    <div class="note danger">
+      <span class="note-label">The trust boundary, stated plainly</span>
+      <p>Anyone who can write a file into a hook directory can run commands on this machine, as the account the runner gives hooks. That is not a weakness in the design; it is what the feature <em>is</em>. The protections are about making sure that set of people is exactly the set of administrators an operator intended: an approved root, a custody check on every directory above a script, conservative names, and a runner that is unprivileged rather than root. backupd deliberately offers no <code>sudo</code>, <code>su</code> or command-prefix field anywhere in the configuration &mdash; a hook that needs a privileged action needs a narrowly scoped <code>sudoers</code> entry the operator wrote and can read back, not a product feature that escalates on their behalf.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2 id="remote">Remote hooks need a credential that can run a command</h2>
+    <p>A <code>.remote.sh</code> hook runs on the host the backup set pulls from, and here the product runs into its own advice. <a href="https://github.com/backupdproject/backupd/blob/main/docs/ssh-setup.md">The SSH setup guide</a> spends four sections teaching an operator to make the transfer account incapable of running anything: a chroot, and a forced <code>internal-sftp</code>. That is correct for a credential whose only job is to hand over files, and it means that credential cannot be a hook executor.</p>
+    <p>So exec capability is <em>proven</em> rather than assumed. An SFTP-only account is refused with the server's own answer &mdash; <code>This service allows sftp connections only.</code> &mdash; and a forced-command account is refused too, which matters more than it looks: a <code>command=</code> in <code>authorized_keys</code> does not fail, it runs a <em>different program</em> and exits zero. Silent success on the wrong program is worse than a refusal. In both cases <strong>artifact backup over that same credential keeps working unchanged</strong>; only the hook use is refused, and the refusal names the missing capability.</p>
+    <p>The fix is a second account, created exactly like the first but keeping a real shell, declared once as an execution connection and named by the sets that use it. A hook runs as that user and this product never escalates.</p>
+    <div class="note">
+      <span class="note-label">What a remote hook is guaranteed, and what it is not</span>
+      <p>The script is streamed over the SSH channel's stdin: nothing is uploaded, no file is written on the far host, and nothing is left behind if the connection drops mid-hook. No environment value and no secret reaches a remote command line, so nothing appears in that host's process table. No PTY is allocated, so stdout and stderr stay separate streams.</p>
+      <p><strong>Not guaranteed:</strong> a hook that deliberately detaches a child &mdash; <code>nohup</code>, <code>setsid</code>, a double fork &mdash; is outside the termination guarantee. When a cancel or a timeout cannot be proved to have killed everything, the step records termination as <em>unconfirmed</em> and says so at the top of the run, rather than reporting a clean stop it cannot vouch for.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2 id="env">The environment a hook gets, and the secrets it does not see</h2>
+    <p>A hook's environment is <em>built</em>, not inherited. It gets none of the daemon's own environment, and that is a deliberate refusal rather than an omission: the daemon's block can hold a repository passphrase, and handing it to a script somebody dropped into a directory would make every hook a credential dump and would do it silently.</p>
+    <p>Four layers, in this order:</p>
+    <div class="scroll-x">
+      <table>
+        <thead><tr><th>Layer</th><th>Where it is set</th><th>Beats</th></tr></thead>
+        <tbody>
+          <tr><td>Sanitized baseline</td><td>this product</td><td>&mdash;</td></tr>
+          <tr><td>Deployment-wide</td><td><code>workflows.environment</code>, or Settings</td><td>the baseline</td></tr>
+          <tr><td>Per backup set</td><td>the set's own environment</td><td>the deployment's</td></tr>
+          <tr><td><code>BACKUPD_*</code> built-ins</td><td>the run itself</td><td>everything</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The first three are ordinary specificity. The fourth is different in kind, and it is handled differently for that reason: the built-ins are the run's own facts, so the whole <code>BACKUPD_</code> prefix is <strong>refused in configuration, at validation time</strong>, rather than accepted and then overridden at merge time. A key an operator can write and this product silently discards is a key that looks like it works.</p>
+  <figure class="wide">
+    <img src="screens/wf-env-table.gif" alt="The workflow environment table on a backup set: variables inherited from the deployment, variables set on the set itself, and a secret-backed variable whose value is not shown" loading="lazy">
+    <figcaption><span class="clip-tag">clip</span>Inheritance is drawn rather than described: which variables came from the deployment and which this set set for itself. The secret-backed one shows its <em>reference</em> and never a value, because there is no surface anywhere &mdash; page, API response, CLI output or metric label &mdash; that can print one.</figcaption>
+  </figure>
+
+    <h3 id="builtins">The nineteen built-ins</h3>
+    <p>Every hook is told which run it belongs to, which stage it is in, where it runs, and what has happened so far: <code>BACKUPD</code>, <code>BACKUPD_RUN_ID</code>, <code>BACKUPD_BACKUP_SET_ID</code>, <code>BACKUPD_BACKUP_SET_NAME</code>, <code>BACKUPD_PHASE</code>, <code>BACKUPD_STEP_ID</code>, <code>BACKUPD_STEP_NAME</code>, <code>BACKUPD_STEP_TARGET</code>, <code>BACKUPD_SOURCE_HOST</code>, <code>BACKUPD_SOURCE_PATH</code>, <code>BACKUPD_DESTINATION</code>, <code>BACKUPD_WORK_DIR</code>, <code>BACKUPD_BACKUP_STATUS</code>, <code>BACKUPD_WORKFLOW_STATUS</code>, <code>BACKUPD_CLEANUP_STATUS</code>, <code>BACKUPD_BACKUP_ERROR_CODE</code>, <code>BACKUPD_STARTED_AT</code>, <code>BACKUPD_RECOVERY</code> and <code>BACKUPD_CLEANUP_REASON</code>.</p>
+    <p>A <em>before</em> hook is told <code>BACKUPD_BACKUP_STATUS=unknown</code>, which is a real value rather than an empty one, because an unset variable and one saying &ldquo;nobody knows yet&rdquo; read identically in <code>test -z</code> and an after script that treats the second as the first will take the wrong branch exactly once, in production.</p>
+
+    <h3 id="secrets">A secret is a reference, never a pasted value</h3>
+    <p>There is no new secret store. A configured value is either a literal or a <em>reference</em> to exactly one of a file, an environment variable name, or a command whose output is the value &mdash; the same custody shape the rest of the product's credentials already use. There is no field an operator can paste a secret into.</p>
+    <p>A resolved value exists only while a step runs. Nothing resolved reaches a plan, a plan digest, a spool file or a journal row, and that is structural rather than careful: the plan has no field that could hold one. Output is redacted as it streams, at every chunk boundary, so a credential split across two reads of a pipe is still caught, and the needles are matched longest-first so <code>user@host</code> is not left as <code>user@[REDACTED]</code>.</p>
+    <div class="note danger">
+      <span class="note-label">What redaction cannot do</span>
+      <p>The redactor matches the values it was given. A script that base64-encodes a credential and prints the result has printed something no needle matches. Redaction is a safety net under a mistake, not a licence to print secrets on purpose.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2 id="bash">Bash runs exactly as written</h2>
+    <p>Hooks run under <code>bash --noprofile --norc</code>, so nothing in a <code>~/.bashrc</code> can change what a hook does &mdash; otherwise the same script behaves differently for two operators and the difference is invisible in the script. A session arriving with <code>BASH_ENV</code> or <code>ENV</code> set is refused rather than run, because those name a file of somebody else's choosing to execute before the hook's first line.</p>
+    <p><strong>Nothing is injected.</strong> No <code>set -e</code>, no <code>-u</code>, no <code>pipefail</code>, no <code>xtrace</code>. That is the harder choice of the two and it is the right one: injecting shell options silently changes the meaning of every script an operator already wrote and tested by hand, and the first time it matters is the run where a hook that used to keep going now stops halfway. If you want those options, write them at the top of your script, where the next person reading it can see them.</p>
+    <p>Every hook gets a bound. A backup set can pin one; otherwise the deployment's <code>workflows.script_timeout</code> applies; otherwise the built-in default of <strong>five minutes</strong>. There is deliberately no spelling of &ldquo;wait forever&rdquo;, because a hook with no bound is a backup set that stops running and never says why.</p>
+  </section>
+
+  <section>
+    <h2 id="verification">A script that is not a shell program cannot be saved</h2>
+    <p>The footguns that injecting <code>set -euo pipefail</code> would have caught are answered a different way: by reading the script. Saving either workflow configuration verifies every discovered hook script first, and a script that does not pass <strong>refuses the save</strong> &mdash; <code>409 WORKFLOW_SCRIPT_REJECTED</code> over HTTP, with the position of each blocking finding in the response rather than in a sentence a client would have to parse, and the same refusal from <code>backupd settings workflow patch</code> and <code>backupd backup-set workflow patch</code>.</p>
+    <p>Nothing executes a script body to do this. The verdict comes from a real Bash parser linked into the product (<code>mvdan.cc/sh</code>), so it arrives even when no runner and no source host is reachable.</p>
+    <p>Then six rules, this product's own. The namespace is <code>BSH</code> &mdash; &ldquo;backupd shell&rdquo; &mdash; deliberately not ShellCheck's <code>SC</code>, because these are not ShellCheck's rules and a reader who searches for <code>SC2086</code> should not land here:</p>
+    <div class="scroll-x">
+      <table class="fields">
+        <thead><tr><th>Code</th><th>What it is about</th><th>What it costs</th></tr></thead>
+        <tbody>
+          <tr><td><strong>BSH001</strong></td><td>An expansion in a command argument that is not quoted, so the shell splits it on whitespace and expands globs in it before the command sees it.</td><td><code>info</code>. Reported, never blocks.</td></tr>
+          <tr><td><strong>BSH002</strong></td><td>A <code>cd</code> whose failure nothing notices. When it fails, everything after it runs against the wrong tree.</td><td><code>warning</code>. Reported, never blocks.</td></tr>
+          <tr><td><strong>BSH003</strong></td><td>An <code>rm -rf</code> that becomes a recursive delete of a root-level path the moment an expansion in it is empty.</td><td><strong><code>error</code>. This one refuses the save.</strong></td></tr>
+          <tr><td><strong>BSH004</strong></td><td><code>set -e</code> and a pipeline with no <code>set -o pipefail</code>: a pipeline's status is its last command's, so the dump failing behind the compressor leaves <code>set -e</code> nothing to trip on.</td><td><code>warning</code>. One finding per script.</td></tr>
+          <tr><td><strong>BSH005</strong></td><td>An unquoted expansion inside <code>[ ... ]</code>, which is a run-time syntax error when the value is empty &mdash; the case the condition was usually written for.</td><td><code>warning</code>. Reported, never blocks.</td></tr>
+          <tr><td><strong>BSH006</strong></td><td>No <code>#!</code> interpreter line. It changes nothing here, since the bytes are handed to bash; it changes what happens when somebody runs the file by hand.</td><td><code>style</code>. Always at 1:1.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>A parse error or an <code>error</code>-severity finding refuses the save. Everything else is reported and never blocks, which is the whole design: a verification that refuses everything is one an operator turns off. There is deliberately no <code>BSH007</code> yet.</p>
+    <p>A script too large to read, or nesting shell constructs deeper than this check will parse, is reported <strong>not examined</strong> &mdash; never drawn as a pass &mdash; and does not block the save. A prefix of a shell script is a different program, so it is not examined rather than partly examined.</p>
+
+    <h3 id="validation">Reading the whole verdict before a backup runs</h3>
+    <p>Validation reports two answers and never folds them into one: <code>valid_for_backup</code> and <code>workflow_valid</code>. A backup set can be perfectly sound while its hooks are not, and that combination has a specific consequence &mdash; backups of it are refused for as long as its workflow cannot be snapshotted &mdash; which is worth saying rather than leaving an operator to infer from a single red light.</p>
+    <p>Fifteen named checks run, and a check nobody could run is reported <em>skipped</em> rather than green: a deployment with no remote hooks is never shown a passing tick for a remote syntax check that did not happen.</p>
+  <figure class="wide">
+    <img src="screens/wf-set-workflow-tab.gif" alt="The Workflow card on a backup set: its stage directories, the scripts discovered in each, and the validation report with per-script findings" loading="lazy">
+    <figcaption><span class="clip-tag">clip</span>The per-set half: which stage directories this set uses, the scripts found in each in the order they will run, and the validation report underneath with each finding's code, its <code>line:col</code> and what to write instead.</figcaption>
+  </figure>
+    <div class="note">
+      <span class="note-label">From a terminal</span>
+      <pre style="margin-bottom:0"><code>backupd validate workflow production/postgres-primary</code></pre>
+      <p style="margin-top:0.6rem">Everything this product can establish about a set's hooks without running one. Exit 0 when the workflow is sound, 1 when it is not; <code>--json</code> emits the whole report.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2 id="statuses">Three verdicts, and why they are never one</h2>
+    <p>A run records <strong>three</strong> statuses, separately, and none of them is derived from the others: the backup, the workflow, and the cleanup. The reason is one sentence: <em>the backup succeeded and the cleanup did not</em> means there is a good backup sitting beside a machine that is still quiesced, and no single Boolean can hold that.</p>
+  <figure class="wide">
+    <img src="screens/wf-status-split.gif" alt="A workflow run's three verdicts side by side: backup Success, workflow Failed, cleanup Failed, with the failing script named" loading="lazy">
+    <figcaption><span class="clip-tag">clip</span>Backup <strong>success</strong>, workflow <strong>failed</strong>, cleanup <strong>failed</strong>, with the script that ended it named. A run whose hooks were bypassed reports its workflow status as <em>skipped</em> and says the hooks were bypassed, rather than showing a green verdict for scripts nothing executed.</figcaption>
+  </figure>
+    <div class="scroll-x">
+      <table>
+        <thead><tr><th>What happened</th><th>Backup</th><th>Cleanup</th><th>The run's state says why</th></tr></thead>
+        <tbody>
+          <tr><td>A <em>before</em> hook failed</td><td><code>skipped</code></td><td>runs, for the eligible stages</td><td><code>failed</code>, <code>canceled</code> or <code>timed_out</code></td></tr>
+          <tr><td>The backup itself failed</td><td><code>failed</code></td><td>runs</td><td><code>failed</code></td></tr>
+          <tr><td>An <em>after</em> hook failed</td><td><code>success</code></td><td><code>failed</code></td><td><code>cleanup_failed</code></td></tr>
+          <tr><td>The hooks were bypassed</td><td><code>success</code></td><td><code>skipped</code></td><td><code>skipped</code>, and it says bypassed</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>A failing before hook gives <code>skipped</code> rather than <code>failed</code> for the backup, because nothing was attempted &mdash; the run's own state carries <em>why</em>, and the failing script is named. <code>cleanup_failed</code> is the worst terminal state this feature has: the backup may be perfectly fine and the machine is not back the way the workflow found it.</p>
+  <figure class="wide">
+    <img src="screens/wf-before-failure.gif" alt="A workflow run where a before script failed: the backup status reads Skipped and the failing script is named" loading="lazy">
+    <figcaption><span class="clip-tag">clip</span>A before hook refused to let the backup proceed. The backup is <em>skipped</em>, not <em>failed</em>: nothing was attempted, and an audit six months later has to be able to tell those apart.</figcaption>
+  </figure>
+  </section>
+
+  <section>
+    <h2 id="terminals">One terminal per script, and it refuses to be a terminal</h2>
+    <p>Every step owns its own read-only view of exactly what that hook printed, streamed by cursor while the run is live. Each record keeps its stream identity &mdash; <code>stdout</code> or <code>stderr</code> &mdash; and a sequence number from one run-monotonic counter; a merged view is labelled best-effort capture order, because two pipes have no total order to claim and pretending otherwise would be a claim the kernel does not make.</p>
+  <figure class="wide">
+    <img src="screens/wf-step-terminal.gif" alt="Selecting a script step on a workflow run page and reading the read-only terminal of what that hook printed" loading="lazy">
+    <figcaption><span class="clip-tag">clip</span>One step selected, one terminal mounted. A hundred-step run is still one terminal: each step owns a <em>logical</em> stream and only the selected viewer is mounted.</figcaption>
+  </figure>
+    <p>A script's output is untrusted input to a terminal emulator, and it is treated that way. Stdin is disabled, hyperlinks are not activated, title and window control sequences have no effect, nothing in the output can trigger an action, scrollback is bounded, and nothing is rendered as HTML. A hostile hook can draw whatever it likes in that panel and change nothing outside it.</p>
+    <p>Output is persisted through the engine first and only then fanned out, asynchronously, through bounded queues. A follower that stops reading &mdash; a browser tab on hotel wifi &mdash; is <em>dropped</em> from the queue rather than waited for, and catches up afterwards from the journal, which is the authority. A slow viewer cannot slow a database quiesce down; that would be a correctness bug, not a performance one.</p>
+    <p>Output is bounded per step and per run, and the truncation marker sits <em>in</em> the sequence, in position, so a client never renders it as something the hook printed. Past the bound the hook keeps running with its output still being drained, because a hook blocked on a full pipe is a backup that never finishes.</p>
+    <div class="note">
+      <span class="note-label">From a terminal</span>
+      <pre style="margin-bottom:0"><code>backupd workflow run steps wfr_2f91a4
+backupd workflow run log wfr_2f91a4 --step &lt;step-id&gt; --follow</code></pre>
+      <p style="margin-top:0.6rem">The same records the browser reads, by cursor, with <code>--json</code> emitting one record per line so a script reads it with a line reader rather than an incremental JSON parser.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2 id="recovery">What a crash leaves behind</h2>
+    <p>This is the case the feature exists to answer, and the one a wrapper script has no answer to at all. The engine quiesces a database in a before hook and the machine dies. Nothing is scheduled to unquiesce it. Nobody is told.</p>
+    <p>A step that was running when the process died becomes <strong><code>interrupted</code></strong>, and deliberately not <code>failed</code>: &ldquo;this script reported failure&rdquo; and &ldquo;this script's outcome is unknown and its side effects may be half-applied&rdquo; are different facts, and a recovery has to be able to tell them apart.</p>
+    <p>On the next start, the engine reconciles. Every interrupted run is marked <code>recovery_required</code>, the backup sets those runs belong to are <strong>blocked</strong> &mdash; scheduled runs suspended, a manual run refused, a health warning raised, the run's script spool retained &mdash; and <strong>nothing is replayed</strong>. Automatically re-running a half-applied cleanup is not a safe default, so it is not a default.</p>
+  <figure class="wide">
+    <img src="screens/wf-recovery.gif" alt="A workflow run in recovery_required with two controls: Resume cleanup, and Acknowledge manual recovery with a recorded reason" loading="lazy">
+    <figcaption><span class="clip-tag">clip</span>Exactly two ways out, and no third. There is no dismiss, because a hold an operator can wave away is a hold that tells you nothing.</figcaption>
+  </figure>
+    <div class="scroll-x">
+      <table class="fields">
+        <thead><tr><th>The way out</th><th>What it does</th><th>What it costs</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Resume cleanup</strong></td><td>Runs only the eligible <em>after</em> stages, out of that run's own captured script bytes, re-verified against the digest recorded when the run was planned.</td><td>It executes your cleanup scripts. It does not re-run the backup.</td></tr>
+          <tr><td><strong>Acknowledge</strong></td><td>Unblocks the set on your word that the machine has been put back by hand. Requires a reason, which is recorded durably against the run.</td><td>Nothing runs. The set is unblocked with its cleanup never having run, and the record says who said so and why.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>A resume executes the bytes <em>that run</em> captured, with the environment <em>that run</em> was planned with and its secrets re-resolved from their references. Editing <code>/workflows</code> or the configuration while the daemon was down therefore does not change what the recovery does &mdash; which is the point, because reopening a directory after a crash cannot guarantee the same cleanup code is still in it. A resumed after stage is told <code>BACKUPD_RECOVERY=1</code> and <code>BACKUPD_CLEANUP_REASON=interrupted_run</code>, so a script can tell a recovery from an ordinary cleanup and stay idempotent.</p>
+    <p>A resume that cannot account for everything lands back at <code>recovery_required</code>, durably. Two processes cannot unwind one run at once: a scope moves to &ldquo;in progress&rdquo; durably <em>before</em> a hook runs, so a resume typed in a terminal and one clicked in a browser serialise on a row rather than both executing.</p>
+    <div class="note danger">
+      <span class="note-label">Write your after scripts to be idempotent</span>
+      <p>A cleanup script may run twice: once in the run it belongs to, and once from a recovery whose first attempt got part of the way. &ldquo;Unquiesce this database&rdquo; should succeed when the database is already unquiesced. Check the state and make it so, rather than assuming what the previous step left.</p>
+    </div>
+    <div class="note">
+      <span class="note-label">From a terminal</span>
+      <pre style="margin-bottom:0"><code>backupd workflow recovery show
+backupd workflow recovery resume-cleanup &lt;run-id&gt;
+backupd workflow recovery acknowledge &lt;run-id&gt; --reason "unquiesced by hand, DBA ticket 4471"</code></pre>
+      <p style="margin-top:0.6rem"><code>--reason</code> is required, and it is required for a reason: the whole value of an acknowledgement is answering, six months later, why a backup set was unblocked without its cleanup ever running. Beside a serving engine, the reads fall back to the journal but the two writes are refused, because that process holds the hold as well as the journal does and a resume made around it would unblock a set that process would go on refusing.</p>
+    </div>
+    <p>Both the terminal procedure and the browser-only one are written out in <a href="https://github.com/backupdproject/backupd/blob/main/docs/recovery.md">the recovery guide</a> and <a href="https://github.com/backupdproject/backupd/blob/main/docs/recovery-without-a-terminal.md">its no-terminal counterpart</a>.</p>
+  </section>
+
+  <section>
+    <h2 id="theme">Dark mode and narrow windows</h2>
+    <p>The workflow surfaces are held to the same two constraints as the rest of the interface, so they get the same two pictures.</p>
+  <figure class="wide">
+    <img src="screens/wf-dark-mode.gif" alt="A workflow run page switching to dark mode and back" loading="lazy">
+    <figcaption><span class="clip-tag">clip</span>The run page in both themes. The step terminal is the interesting part: it is the one panel whose colours are output rather than design.</figcaption>
+  </figure>
+  <figure class="wide">
+    <img src="screens/wf-narrow.gif" alt="A workflow run page at a narrow phone-width viewport" loading="lazy">
+    <figcaption><span class="clip-tag">clip</span>At phone width. The three verdicts are the thing that has to survive the fold, because they are what an operator woken up at 3am is looking for.</figcaption>
+  </figure>
+  </section>
+
+  <section>
+    <h2 id="honest">What this does not guarantee</h2>
+    <p>The same rule as everywhere else on this site: naming the uncomfortable half is the only thing that makes the rest worth reading.</p>
+    <ul>
+      <li><strong>A browser cannot start a backup run on any deployment this repository builds.</strong> The API's destructive operations are behind a deployment-level gate and the only implementation shipped returns false unconditionally, so <code>run_backup_set</code> is refused everywhere until <a href="https://github.com/backupdproject/backupd/issues/92">#92</a> supplies a real gate. Workflow runs are therefore the scheduler's. The one bypass this feature has lives on that same route, which means &ldquo;an administrator may bypass the hooks&rdquo; is a code path with test coverage and no deployment in which it can be reached.</li>
+      <li><strong>A local hook needs the deployment to mount the host plane, and not every platform offers local hooks at all.</strong> A <code>.local.sh</code> hook needs three things present in the deployment: the workflow root mounted into the engine read-only, the runtime directory holding the runner's socket, and the runner's credential file. Every deployment profile that advertises local hooks now carries all three, and the platforms that cannot host a runner say so rather than offering a capability they do not have &mdash; so the question to ask is not &ldquo;are the mounts there&rdquo; but &ldquo;does my platform answer yes&rdquo;. <a href="https://github.com/backupdproject/backupd/blob/main/docs/install.md">The install guide</a> and <a href="https://github.com/backupdproject/backupd/blob/main/docs/runtime-contract.md">the runtime contract</a> carry that answer per platform, along with the runner's own prerequisites; check yours before you rely on a local hook. If the answer is no, remote hooks are unaffected, because they need no runner. The symptom of a deployment that is not set up for it is the <code>runner_health</code> check in <a href="#validation">the validation report</a> failing, or <code>backupd workflow-runner status</code> finding nothing to ask, before any hook has run.</li>
+      <li><strong>A detached remote descendant is outside the termination guarantee.</strong> A hook that runs <code>nohup</code>, <code>setsid</code> or a double fork can leave a process this product cannot prove is gone. Termination is recorded as <em>unconfirmed</em> and the step's working directory is kept as the forensic record rather than tidied away.</li>
+      <li><strong>Redaction cannot follow a secret a script has transformed.</strong> The redactor matches resolved values. A script that encodes a credential before printing it has printed something no needle matches.</li>
+      <li><strong>Power-loss cleanup is not guaranteed.</strong> <code>recovery_required</code> is an answer about the <em>next</em> start. Between the crash and that start, whatever a before hook did to a machine stays done; there is no agent on the far host to undo it.</li>
+      <li><strong>Every picture on this page comes from a mock.</strong> Every clip here was recorded against the development server's in-memory fixture API by <code>docs/site/tools/capture-workflows.mjs</code>, not against a running engine. The layout, the copy, the flow and the interaction are the real ones. The data is not.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2 id="recording">Where these clips come from</h2>
+    <p>Each one is a list of frames with how long to hold each, captured between real interactions with the running application, by a committed script rather than by hand &mdash; <code>docs/site/tools/capture-workflows.mjs</code> over the shared harness the rest of the site's clips use. Re-running it reproduces them, which is the only reason to trust a picture in documentation: a hand-recorded GIF is one nobody can re-take after the interface moves. <a href="web-ui.html#recording">The web interface page</a> explains why they are clips and not videos, and is honest about where that determinism stops.</p>
+    <p>Ten clips, about 2.5&nbsp;MB between them, loaded lazily. On the machine they were taken on, three consecutive runs of the script produced byte-identical files &mdash; which is a stronger result than the harness promises and is worth saying <em>as an observation rather than as a guarantee</em>: none of these ten surfaces is one the application animates on its own, so the exception the harness names does not arise here. A different <code>ffmpeg</code> build is a different matter, and nobody has checked that.</p>
+  </section>
+
+</main>
+
+<footer>
+  <p>backupd is Apache-2.0 licensed. <a href="https://github.com/backupdproject/backupd">View on GitHub</a></p>
+  <p>Pictures taken against the development fixture API. No picture or clip on this page is evidence about a running engine.</p>
+</footer>
+
+</body>
+</html>

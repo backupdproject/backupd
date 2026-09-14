@@ -27,16 +27,18 @@ these in it, and once at each phase exit gate.
   section, the way `docs/EPIC-E-alternative-storage.md` does. Deferred work
   becomes the next epic, not a third phase.
 - [ ] **An org-unique epic letter**, and sub-issues titled `<letter><phase>.<n>`
-  (`E1.2`, `E2.4`). *(Ungated.)* A, B, D and E are taken.
+  (`E1.2`, `E2.4`). *(Ungated.)* A, B, D, E, K and L are taken.
 - [ ] **The spec lives at `docs/EPIC-<letter>-<slug>.md`** with the Status block
-  the existing two carry: type, repository, parent epics, primary implementation
-  root, tracker issue with its sub-issue range, and an explicit FR-numbering
-  sentence. *(Ungated.)*
+  the existing three carry: type, repository, parent epics, primary
+  implementation root, tracker issue with its sub-issue range, and an explicit
+  FR-numbering sentence. *(Ungated.)* EPIC L's was written at the END of the
+  epic, in #817, which is how long an ungated item can go missing while every
+  gated one stays green.
 - [ ] **FR numbers continue the global series and renumber nothing.** *(Ungated.)*
-  The next free number is **FR-36**. FR-1 to FR-24 are in `docs/EPIC.md`, FR-26 is
-  the `version` command, FR-27 to FR-35 are EPIC E. FR-25 is an unclaimed hole:
-  leave it alone rather than filling it, because anything citing "FR-25" today is
-  citing nothing.
+  The next free number is **FR-49**. FR-1 to FR-24 are in `docs/EPIC.md`, FR-26 is
+  the `version` command, FR-27 to FR-35 are EPIC E, FR-36 to FR-48 are EPIC L.
+  FR-25 is an unclaimed hole: leave it alone rather than filling it, because
+  anything citing "FR-25" today is citing nothing.
 - [ ] **A five-expert adversarial review section**, initial verdicts and consensus
   position, before implementation starts. *(Ungated.)*
 - [ ] **Entry gate and exit gate per phase**, written as checkable claims rather
@@ -212,10 +214,12 @@ synology, truenas, ugos, unraid, zimaos.
 
 - [ ] **`README.md`**: the install block, the subcommand list and "What the browser
   looks like while it works". *(Ungated.)*
-- [ ] **The site**, all five pages, whichever the change touches:
-  `docs/site/index.html`, `web-ui.html`, `reference.html`, `first-run.html`,
-  `ssh.html`. *(Partly gated:* only `reference.html`'s command table is held to the
-  binary.*)*
+- [ ] **The site**, all six pages, whichever the change touches:
+  `docs/site/index.html`, `web-ui.html`, `workflows.html`, `reference.html`,
+  `first-run.html`, `ssh.html`. *(Partly gated:* only `reference.html`'s command
+  table is held to the binary. A new page is picked up by the site-wide
+  dead-fragment check in `scripts/install/test_install_docker_host.py` the
+  moment it lands, so every `#anchor` it cites has to resolve.*)*
 - [ ] **The site's "What has not been proven" section** (`index.html#honest`) says
   honestly what the epic did and did not demonstrate, including on hardware nobody
   here owns. *(Ungated.)*
@@ -230,13 +234,27 @@ synology, truenas, ugos, unraid, zimaos.
   (`scripts/docs/package-doc.baseline`). *(Gated.)*
 - [ ] **Comments the change falsified are fixed.** *(Ungated.)* Several defects
   here came from trusting a comment that had quietly stopped being true.
+- [ ] **When a step, screen or field is removed rather than renamed, sweep for
+  what it was SPLIT into, not for its old name.** *(Ungated, and it has cost
+  three separate repairs.)* #788 is the worked example. It reads as a rename —
+  six wizard steps became eight, `Authentication` and `Verify server` became
+  `Connection test` — and a name-substitution sweep gets most of it. But
+  `Backup discovery` was **deleted**: its directory and pattern fields moved
+  onto `Source` and its completion-method radios became the artifact engine's
+  branch of a later step. There is no new name to substitute, so a sweep
+  searching for old names finds nothing to fix and reports itself done, while
+  every sentence, picture and test fixture that described the deleted step
+  survives intact. The wreckage was still being found three passes later, in
+  #872, in #923/#924, and in this file's own capture scripts. Ask what the
+  removed thing's contents became and follow each piece, one at a time.
 
 ## 10. Screenshots and GIFs for the site
 
 - [ ] **Regenerate `docs/site/screens/`** with the capture scripts in
   `docs/site/tools/`: `capture-first-run.mjs`, `capture-reference.mjs`,
-  `capture-ssh.mjs`, `capture-web-ui.mjs`. *(Ungated.)* 44 files today, 10 of them
-  animated.
+  `capture-ssh.mjs`, `capture-web-ui.mjs`, `capture-workflows.mjs`.
+  *(Ungated.)* 55 files today, 20 of them animated, plus 11 `.superseded` stills
+  of wizard steps #788 deleted.
 - [ ] **A new screen or interaction gets a capture step added to the right
   script**, never a picture taken by hand. *(Ungated.)* A hand-taken image is one
   nobody can reproduce after the UI moves.
@@ -257,6 +275,28 @@ synology, truenas, ugos, unraid, zimaos.
   running a real installation against a real SFTP source. Never substitute a mock
   there. If the epic changes a screen a store listing shows, the row goes back to
   outstanding rather than quietly keeping the old picture.
+- [ ] **Run the capture script you did not change, once, before you believe the
+  ones you did.** *(Ungated, and this is the item that failed.)* EPIC L's docs
+  pass (#817) found **four** unrelated breaks in this tooling in a single
+  afternoon. `Clip.write` in `harness.mjs` named an unbound `FFMPEG`
+  identifier, so every GIF encode raised `ReferenceError` and none of the four
+  then-existing scripts could have re-recorded anything. `EXAMPLE.port` was the
+  placeholder string `"<your-ssh-port>"`, which #864 turned from a value the
+  wizard coerced into one the wizard refuses, making every picture after the
+  Source step unreachable. `getByLabel("Username")` became ambiguous when #830
+  added an SMTP username to the same form. And the enrolment card's selector,
+  `#root > div > div`, stopped matching a card when #874's delegated-tooltip
+  layer inserted a `display: contents` wrapper into that chain — which is the
+  worst of the four, because it did not throw: it silently photographed the
+  whole 1280-pixel window instead of the 484-pixel card, so the *only* signal
+  was a human looking at the result.
+
+  None of these was visible until somebody tried to take a picture, and three
+  of the four were caused by product changes nobody connected to a capture
+  script. This tooling reads the shipped UI's own rules — `isPort`, the rail
+  labels, the accessible names, the field help, the DOM shape — so a product
+  change invalidates it silently, and a break that produces a wrong picture
+  rather than an error is not caught by running it either. Gating it is #926.
 
 ## 11. Compliance and supply chain
 
