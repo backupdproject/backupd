@@ -726,11 +726,23 @@ teardown() {
   # removes it as the step ends, so a clean run leaves none; a run
   # killed mid-hook can, and a container holding a mount of a directory
   # this teardown is about to remove is how a run leaves rubbish behind.
-  # Scoped by the label the runner puts on every one of them, which on
-  # this machine can only be this run's: nothing else here starts a
-  # runner.
-  if [ "$workflows" = 1 ]; then
-    for h in $(docker ps -aq --filter "label=backupd.workflow-hook=1" 2>/dev/null); do
+  #
+  # `backupd.workflow-hook=1` is the PRODUCT's label
+  # (core/internal/hostrunner's LabelHook), not this rig's, and it
+  # carries no rig identity -- so on its own that filter names every
+  # hook container on the host, including a real deployment's runner's
+  # and a second instance of this rig's. This used to say that could
+  # only be this run's, which was an assumption about the host rather
+  # than a property of the filter.
+  #
+  # `since` is the identity that is available: this rig's runner is
+  # created before any hook it can possibly launch, so every hook of
+  # THIS run is newer than that container and no other runner's is
+  # caught. Every other container here is removed by a name this script
+  # recorded; this is the one it cannot name in advance, and it is now
+  # bounded the same way in spirit.
+  if [ "$workflows" = 1 ] && [ -n "$c_runner" ]; then
+    for h in $(docker ps -aq --filter "label=backupd.workflow-hook=1" --filter "since=$c_runner" 2>/dev/null); do
       docker rm -f "$h" >/dev/null 2>&1 || true
     done
   fi
@@ -1587,6 +1599,13 @@ if [ "$workflows" = 1 ]; then
     --name "$c_exec" \
     --network "$net_backhaul" \
     --network-alias exechost \
+    # The hostname the remote hooks PRINT, and it has to be a name
+    # rather than Docker's default short container id: the suite
+    # reads that line as evidence that a hook ran on the far side,
+    # and evidence that changes every run is evidence nobody can
+    # pin. Same string as the network alias, which is the name
+    # everything else in this rig calls this machine.
+    --hostname exechost \
     --label "$label" \
     -v "$run_dir/authorized_keys/engine.pub:/etc/ssh/authorized/backupd.pub:ro" \
     -v "$run_dir/hookdata:/home/$exec_user/hookdata" \
@@ -1975,9 +1994,18 @@ if [ "$workflows" = 1 ]; then
   # inside it before it binds anything (#865), so a container that is up
   # and a runner that is serving are different facts and only the second
   # is one the engine can use.
-  if ! wait_or_die 120 "the workflow runner to answer its own status verb" runner_is_live; then
+  # In a SUBSHELL, because wait_or_die dies: it calls die, die exits, and
+  # an `if !` around it could never run its else branch. That made this
+  # diagnostic dead code on the rig's hardest failure mode -- a runner
+  # that refuses to serve says WHY on its own stdout (no docker client, no
+  # daemon, the hook image absent, the wrong platform), and that sentence
+  # was being thrown away. Run in a subshell the exit only leaves, so the
+  # logs are printed here and the refusal below is this script's.
+  if ! ( wait_or_die 120 "the workflow runner to answer its own status verb" runner_is_live ); then
+    echo "    the runner's own last words:" >&2
     docker logs "$c_runner" 2>&1 | tail -20 >&2 || true
-    die "the Host Workflow Runner never came up."
+    die "the Host Workflow Runner never came up." \
+        "Its startup proves a docker client, a reachable daemon, the hook image and bash inside it before it binds a socket (#865), and it prints which of those it could not do."
   fi
   note "$(docker logs "$c_runner" 2>&1 | sed -n '1,2p' | tr '\n' ' ')"
   note "$c_runner is serving on the socket in $v_wfrun, as $app_uid:$app_gid with group $docker_socket_gid"

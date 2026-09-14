@@ -32,8 +32,15 @@
  * keyed by step: the follower, its cursor, its lines, its tally. So a
  * step change is a swap inside one instance rather than an unmount and a
  * mount — no DOM is thrown away, no scroll container is rebuilt, and
- * switching back to a step already read is instant AND resumes from the
- * cursor it reached instead of re-reading the log from the beginning.
+ * switching back to a step already read is instant.
+ *
+ * What "instant" costs is the other half of the contract, and #917
+ * settled it: a step held IN FULL -- its page read at least once,
+ * reported complete, with no error waiting to be retried -- is drawn
+ * from the kept scrollback and starts NO follower and no read. A step
+ * still running, or one whose page ended mid-log, is not held in full:
+ * it resumes its follower from the cursor it reached rather than
+ * re-reading the log from the beginning.
  *
  * The cache is bounded (`HISTORY_DEPTH`), because "quickly switchable"
  * for a hundred steps must not mean a hundred step's lines held at once.
