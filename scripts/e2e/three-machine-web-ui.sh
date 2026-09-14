@@ -288,6 +288,18 @@
 #                    quiet: none of the variables above is set, so every
 #                    workflow case skips itself and says so.
 #
+# One thing this rig cannot give a browser, and says so rather than
+# leaving a suite to discover it as a timeout: a browser cannot START a
+# backup. POST /api/v1/operations run_backup_set is refused 403
+# DESTRUCTIVE_OPERATIONS_DISABLED on every deployment this repository
+# can build, because apps/common/webhost ships one DestructiveGate and
+# its own doc says nothing may flip it before #92. The SCHEDULER runs
+# the same cycle on a timer regardless, which gate.go states in as many
+# words, so the rig sets that timer to the product's own floor -- one
+# minute, config.MinPollInterval -- and hands it over as
+# RM_WF_POLL_SECONDS. A spec watches for the run the timer produces
+# instead of asking for one.
+#
 # The exit status is the client container's, not the teardown's. A run that
 # tore down cleanly after a red suite is a red run.
 #
@@ -640,6 +652,14 @@ engine_token_path="$engine_secrets_mount/$runner_token_name"
 # suite so a spec asserting the "Runs on" column reads it from here
 # rather than from a copy of the product's string.
 runner_display="Host Workflow Runner"
+
+# How often the deployment polls, in seconds, and it is the product's own
+# floor (config.MinPollInterval): a browser cannot START a run -- the
+# destructive gate refuses one on every deployment this repository can
+# build (#92) -- so the runs a suite watches are the scheduler's, and
+# this is how long the longest of those waits can be. Handed to the
+# client so no spec has to hard-code a cadence the rig owns.
+wf_poll_seconds=60
 
 # The one secret a hook of this run resolves. Generated per run like the
 # administrator's password, written into the deployment's secrets volume
@@ -1858,6 +1878,42 @@ YAML
            "A remote hook would then run over the backup set's own SFTP-only credential, which is the other case entirely." ;;
   esac
   note "the deployment reports both the runner and the execution connection"
+
+  # And the cadence, which is the one thing that decides whether a
+  # browser can watch a workflow run happen at all.
+  #
+  # It cannot start one. POST /api/v1/operations run_backup_set is
+  # refused 403 DESTRUCTIVE_OPERATIONS_DISABLED on every deployment this
+  # repository can build: apps/common/webhost ships exactly one
+  # DestructiveGate, NotYetImplementedGate, whose own doc says there is
+  # deliberately no parameter, variable or flag that can make it report
+  # true before #92. So the "Run this backup set" control cannot produce
+  # a run, and a suite that presses it waits out its timeout on a
+  # request the engine was never going to be allowed to accept.
+  #
+  # What DOES produce runs is the scheduler, and gate.go says so in as
+  # many words: "the scheduler runs the same destructive cycle on a
+  # timer whatever this reports". So the rig sets that timer to the
+  # product's own floor -- config.MinPollInterval, one minute, and a
+  # shorter value is refused rather than accepted -- and hands the
+  # number to the suite as RM_WF_POLL_SECONDS so no spec has to guess
+  # it. Each workflow set then gets a fresh run every poll interval plus
+  # its position in the cycle, which is what a spec waits for instead of
+  # asking.
+  #
+  # Edited in place rather than patched through the CLI because there is
+  # no `settings patch --poll-interval` in this build, and appended-block
+  # style would not work for a key `backup-set create` has already
+  # written: the line is replaced, and the replacement is verified by
+  # reading the file back rather than by trusting sed's exit status.
+  toolbox -v "$v_config:/c" -- "
+      set -e
+      sed -i 's/^poll_interval:.*/poll_interval: ${wf_poll_seconds}s/' /c/config.yaml
+      grep -q '^poll_interval: ${wf_poll_seconds}s\$' /c/config.yaml
+    " >/dev/null \
+    || die "could not set the deployment's poll_interval to ${wf_poll_seconds}s." \
+           "Without it the engine polls at its own default and a browser would wait an hour for the run it is meant to watch."
+  note "poll_interval is ${wf_poll_seconds}s (config.MinPollInterval, the product's floor), so every set runs on a timer a browser can wait for"
 fi
 
 # ------------------------------------------- the Host Workflow Runner
@@ -2250,6 +2306,7 @@ if [ "$workflows" = 1 ]; then
   note "                  $wf_set_secret, $wf_set_slow, $wf_set_crash, $wf_set_many,"
   note "                  $wf_set_findings"
   note "RM_WF_SCRIPT_PREFIX /workflows"
+  note "RM_WF_POLL_SECONDS $wf_poll_seconds (the scheduler's cadence: a browser cannot start a run, #92)"
 else
   note "workflows        NOT provisioned (--no-workflows), so every workflow case skips itself"
 fi
@@ -2292,6 +2349,7 @@ if [ "$workflows" = 1 ]; then
     -e "RM_WF_SECRET_ENV=$wf_secret_env"
     -e "RM_WF_SECRET_VALUE=$wf_secret"
     -e "RM_WF_SCRIPT_PREFIX=/workflows"
+    -e "RM_WF_POLL_SECONDS=$wf_poll_seconds"
     -e "RM_WF_GLOBAL_BEFORE_DIR=global-before"
     -e "RM_WORKFLOW_RUNNER_NAME=$runner_display"
   )
