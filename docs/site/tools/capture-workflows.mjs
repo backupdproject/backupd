@@ -78,15 +78,25 @@
 // shown", and there is no control anywhere on the card that offers to
 // reveal one.
 //
-// # Why most of these are whole-window rather than cropped
+// # Why most of these are whole-window, and what the other three crop to
 //
-// A cropped clip anchors on one region in document coordinates, which is
-// what lets a crop survive a scroll. It cannot survive a NAVIGATION: the
-// anchor is measured on the first frame, and the same region on the next
-// run sits at a different offset because that run has a different number
-// of banners above it. Four of these clips move between runs or scroll
-// most of a long card, so they photograph the window. Nothing is staged
-// to make that read better; it is the page as the application drew it.
+// A crop that names a selector anchors on that region in document
+// coordinates, which is what lets it survive a scroll. It cannot survive
+// a NAVIGATION: the anchor is measured on the first frame, and the same
+// region on the next run sits at a different offset because that run has
+// a different number of banners above it. Nor can it survive a scroll
+// when the region is taller than the window, because then the anchor IS
+// the window. Seven of these clips move between runs, or scroll a card
+// several times taller than the viewport, so they photograph the window.
+//
+// The three that are of one card in a two-column page crop instead to an
+// explicit rectangle — the card's own column, measured off the card at
+// capture time and fixed to the window rather than to the document, so a
+// scroll moves the page behind a crop that stays put. That is worth the
+// extra line because those three are tables, and a table that spends
+// half its pixels on the empty column beside it is a table nobody reads.
+// Nothing is staged either way; it is the page as the application drew
+// it.
 
 import { Clip, mb, openApp, screensTotal, settle, typeInto, VIEWPORT, withDevServer } from "./harness.mjs";
 
@@ -100,6 +110,22 @@ const WIDTH = 1100;
  *  a viewport, passed to openApp for that block only. */
 const NARROW = { width: 480, height: 900 };
 const NARROW_WIDTH = 460;
+
+/** Three clips are of one card in a two-column page, and a whole-window
+ *  frame of those spends half its pixels on the empty column beside it.
+ *  So they crop to that card's own column, MEASURED off the card rather
+ *  than written down here, and expressed as an explicit rectangle: that
+ *  is the one crop the harness does not re-anchor per frame, which is
+ *  what lets a clip scroll a card several times taller than the window
+ *  without the crop chasing it. */
+const CARD_WIDTH = 900;
+
+async function columnOf(page, viewport) {
+  const box = await page.locator("section.card:has(h2:text-is('Workflow'))").boundingBox();
+  if (box === null) throw new Error("there is no Workflow card here to measure a column from");
+  const x = Math.max(0, Math.round(box.x - 14));
+  return { x, y: 0, width: Math.min(viewport.width - x, Math.round(box.width + 28)), height: viewport.height };
+}
 
 const clips = [];
 
@@ -136,10 +162,8 @@ await withDevServer(async (app) => {
     await page.mouse.move(640, 500);
     await page.mouse.wheel(0, 420);
     await clip.frame(2.6);
-    await page.mouse.wheel(0, 420);
-    await clip.frame(3.0);
-    await page.mouse.wheel(0, 420);
-    await clip.frame(2.8);
+    await page.mouse.wheel(0, 520);
+    await clip.frame(3.4);
 
     await page.goto(run("wfr_7b03d9"));
     await page.getByText("No directory is configured for this stage").waitFor();
@@ -236,7 +260,11 @@ await withDevServer(async (app) => {
   // (wfr_2f91a4). A run recovered by acknowledgement, whose cleanup is
   // still recorded as failed because acknowledging is somebody saying
   // they dealt with it and not the hooks having run (wfr_44b2e1). A
-  // failed backup whose hooks all did their job (wfr_c17e88). And a
+  // failed backup whose hooks all ran and succeeded (wfr_c17e88): its
+  // cleanup verdict is Success and its workflow verdict is Failed
+  // anyway, because the engine folds a failed backup into that one.
+  // That is the flagship's pairing inverted, and it is the reason the
+  // cleanup column is not a restatement of the workflow column. And a
   // bypassed run, where the workflow verdict is Skipped with a sentence:
   // a green one there would say hooks ran and passed.
   {
@@ -322,23 +350,22 @@ await withDevServer(async (app) => {
     await check.scrollIntoViewIfNeeded();
     await settle(page, 600);
 
-    const clip = new Clip(page, "wf-set-workflow-tab", { width: WIDTH });
+    const clip = new Clip(page, "wf-set-workflow-tab", {
+      clip: await columnOf(page, WINDOW),
+      width: CARD_WIDTH
+    });
     await clip.frame(2.8);
     await check.click();
     await page.getByText("before/20-freeze-db.local.sh").waitFor();
     await settle(page, 900);
-    await clip.frame(4.0);
+    await clip.frame(4.4);
 
-    const findings = page.getByRole("button", { name: "1 error, 3 more" });
-    await findings.scrollIntoViewIfNeeded();
-    await settle(page, 400);
-    await clip.frame(2.0);
-    await findings.click();
+    await page.getByRole("button", { name: "1 error, 3 more" }).click();
     const bsh = page.getByText("BSH003", { exact: true }).first();
     await bsh.waitFor();
     await bsh.scrollIntoViewIfNeeded();
     await settle(page, 700);
-    await clip.frame(4.6);
+    await clip.frame(5.0);
     clips.push(await clip.write());
   }
 
@@ -369,7 +396,10 @@ await withDevServer(async (app) => {
     await name.scrollIntoViewIfNeeded();
     await settle(page, 600);
 
-    const clip = new Clip(page, "wf-env-table", { width: WIDTH });
+    const clip = new Clip(page, "wf-env-table", {
+      clip: await columnOf(page, WINDOW),
+      width: CARD_WIDTH
+    });
     await clip.frame(3.0);
     await typeInto(clip, name, "BACKUPD_PHASE", { chunks: 2 });
     await page.getByText("set by this product from the run it belongs to").waitFor();
@@ -377,13 +407,13 @@ await withDevServer(async (app) => {
     await clip.frame(4.0);
     await name.fill("");
     await settle(page, 400);
-    await clip.frame(1.6);
+    await clip.frame(1.8);
 
-    const merged = page.getByText("What a hook will see");
-    await merged.scrollIntoViewIfNeeded();
-    await settle(page, 600);
-    await clip.frame(4.4);
+    // Down to the second table, which is the one an operator checks
+    // against what their hook actually saw.
     await page.mouse.move(500, 500);
+    await page.mouse.wheel(0, 280);
+    await clip.frame(4.4);
     await page.mouse.wheel(0, 300);
     await clip.frame(3.4);
     clips.push(await clip.write());
@@ -412,14 +442,19 @@ await withDevServer(async (app) => {
     await page.getByRole("heading", { name: "Workflow", exact: true, level: 2 }).scrollIntoViewIfNeeded();
     await settle(page, 600);
 
-    const clip = new Clip(page, "wf-settings-runner", { width: WIDTH });
-    await clip.frame(3.2);
+    const clip = new Clip(page, "wf-settings-runner", {
+      clip: await columnOf(page, WINDOW),
+      width: CARD_WIDTH
+    });
+    // scrollIntoViewIfNeeded stops as soon as the heading is on screen,
+    // which leaves it at the bottom edge with the card below the fold.
+    // One more turn of the wheel puts the card's own head at the top.
     await page.mouse.move(500, 500);
-    await page.mouse.wheel(0, 360);
-    await clip.frame(3.0);
-    const liveness = page.getByText("Runner liveness, version and execution user");
-    await liveness.scrollIntoViewIfNeeded();
-    await settle(page, 500);
+    await page.mouse.wheel(0, 300);
+    await clip.frame(3.4);
+    await page.mouse.wheel(0, 300);
+    await clip.frame(3.2);
+    await page.mouse.wheel(0, 260);
     await clip.frame(4.8);
     clips.push(await clip.write());
   }
