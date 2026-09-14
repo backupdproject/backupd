@@ -572,6 +572,111 @@ func TestAHostThatCannotEnumerateItsEnvironmentIsRefused(t *testing.T) {
 	}
 }
 
+// oversizedScript is a script too big for the exec channel's window, which
+// is what makes the payload write to a server that is not reading it still
+// be in flight when the step ends. A script that fitted would be written
+// into the window and reported as delivered, and the race these tests are
+// about would never happen.
+func oversizedScript() []byte {
+	script := make([]byte, 0, 4<<20+4)
+	script = append(script, "# "...)
+	for len(script) < 4<<20 {
+		script = append(script, 'x')
+	}
+
+	return append(script, '\n')
+}
+
+// TestAHookThatEndsUnderItsOwnPayloadWriteReportsItsExitStatus is #915: a
+// remote hook that ran, and said how it ended, reported as an outcome
+// nobody observed.
+//
+// A hook stops reading its payload the moment it exits -- an early
+// "exit 0", a script shorter than the stdin behind it, a hook killed on the
+// far side -- so the remote closes the channel's stdin while this side is
+// still writing and the write fails ON THE HOOK'S OWN ENDING. The server
+// here does exactly that: it reads nothing and exits, leaving a four
+// mebibyte payload parked on a two mebibyte window.
+//
+// The exit status is the step's outcome. Returning the write's failure
+// instead made every such step transport_lost, which is a hook whose side
+// effects may be half applied and whose exit code is nil -- reported for a
+// hook that in fact ran to completion and returned a status.
+func TestAHookThatEndsUnderItsOwnPayloadWriteReportsItsExitStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code uint32
+	}{
+		{name: "a hook that succeeded", code: 0},
+		{name: "a hook that failed", code: 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The step's own channel: not one byte of the payload is
+			// read before the status is sent and the channel closed.
+			exitAtOnce := func(t *testing.T, s *fakeSession) {
+				t.Helper()
+				s.Exit(tc.code)
+			}
+			server := startFakeSSHD(t, answerInternalSessions(exitAtOnce))
+			client := connectTo(t, server)
+
+			sink := &collectingSink{}
+			res, err := client.Run(t.Context(), Request{
+				Token:   "backupd-exec-earlyexit",
+				Script:  oversizedScript(),
+				Sink:    sink,
+				Timeout: 30 * time.Second,
+			})
+
+			if err != nil {
+				t.Fatalf("a hook that exited %d was reported as a failure: %v", tc.code, err)
+			}
+			if res.ExitCode == nil {
+				t.Fatalf("a hook that exited %d left no exit code, which is how this product spells \"nobody saw a status\"", tc.code)
+			}
+			if *res.ExitCode != int(tc.code) {
+				t.Errorf("exit code %d, want %d", *res.ExitCode, tc.code)
+			}
+		})
+	}
+}
+
+// TestAnExecChannelThatClosesWithoutAStatusIsStillTransportLoss is the
+// control for the test above, and the thing it must not have cost. The
+// write fails in exactly the same way here -- same unread oversized payload
+// -- but the channel closes with NO exit status, so nobody observed how the
+// hook ended, or whether it ran at all.
+//
+// That is transport loss, and it stays transport loss with a nil exit code:
+// the difference between the two tests is the status, which is the only
+// thing that may decide it.
+func TestAnExecChannelThatClosesWithoutAStatusIsStillTransportLoss(t *testing.T) {
+	vanish := func(t *testing.T, s *fakeSession) {
+		t.Helper()
+		_ = s.channel.Close()
+	}
+	server := startFakeSSHD(t, answerInternalSessions(vanish))
+	client := connectTo(t, server)
+
+	sink := &collectingSink{}
+	res, err := client.Run(t.Context(), Request{
+		Token:   "backupd-exec-nostatus",
+		Script:  oversizedScript(),
+		Sink:    sink,
+		Timeout: 30 * time.Second,
+	})
+
+	if err == nil {
+		t.Fatal("a channel that closed without an exit status was reported as a step that finished")
+	}
+	if !errors.Is(err, ErrTransportLoss) {
+		t.Errorf("error %v is not an ErrTransportLoss", err)
+	}
+	if res.ExitCode != nil {
+		t.Errorf("a step whose channel reported no status produced exit code %d", *res.ExitCode)
+	}
+}
+
 func init() {
 	// A guard against this file's fixture drifting from the command the
 	// client actually sends: isSyntaxCheck reads the tail of the command
