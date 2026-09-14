@@ -2762,8 +2762,9 @@ export interface BackupdApi {
    *  already found are different acts; both answer with the same
    *  `SSHKeyImportResult`. */
   importSSHKeyCandidate(candidateId: string): Promise<SSHKeyImportResult>;
-  /** The wizard's "Verify server" step (#98 step 3): fetches a real
-   *  fingerprint for host:port, trusting nothing yet. */
+  /** The wizard's "Connection test" step (#98's step 3 "Verify server",
+   *  folded into step 2 by #788): fetches a real fingerprint for
+   *  host:port, trusting nothing yet. */
   probeHostKey(host: string, port: number): Promise<HostKeyProbeResult>;
   /** A pre-save reachability/auth check, run before createBackupSet —
    *  distinct from testConnection(id) above, which checks an ALREADY

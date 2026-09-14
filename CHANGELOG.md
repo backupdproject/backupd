@@ -809,6 +809,32 @@
   of `transport_lost`: nothing of it ran, so there are no half-applied side
   effects for anyone to go looking for.
 
+- **The add-backup-set wizard stops sending an operator to a step it does not
+  have** (#923). Picking "Generate dedicated SSH key" on the Connection test
+  step answered with "import a key on the **Authentication** step instead" —
+  a step #788 deleted when it folded the credentials, the host key and the
+  connection test into one. The control that sentence is about is directly
+  below the banner, so the one remediation line on the screen pointed an
+  operator away from it and at a rail entry that is not there. It now says
+  what `saveHint` has said for the same refusal since #788: pick a key this
+  deployment already holds, or import one, on this Connection test step.
+
+  #788 fixed the hint and missed the banner, and the guard written to catch
+  exactly this ("sends the operator to a step that is actually on the rail")
+  could not see it: it never selects that radio, so the banner never renders
+  and its text never enters the document the assertion scans. The same sweep
+  had also left three stale steps in the wizard's field help — hostname and
+  port both revoked host trust "on the Verify server step", and the username
+  entry wanted read access to a folder "you set on the Discovery step", a
+  field that is two rows above it on Source now.
+
+  **The rule is asserted instead of the wording.** Two cases pull the step
+  name out of the sentence an operator reads and look it up in the rail the
+  wizard is actually drawing — for the banner, and for every `wizard*` entry
+  in the field-help copy. A reintroduced `Authentication`, or a relabelled
+  rail that leaves some sentence behind, fails them; the current copy is not
+  pinned anywhere, so rewording it stays free.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added

@@ -120,7 +120,7 @@ const VERIFICATION_ORDER: readonly VerificationLevel[] = [
 ];
 
 /** Shown only until the real probe (issue #146) resolves for the first
- *  time — see the "Verify server" step below — so step 3 never renders
+ *  time — see the "Connection test" step below — so step 2 never renders
  *  a completely blank fingerprint while that request is in flight.
  *  Never what "Trust host" actually trusts: that always reads the real
  *  probedKnownHostsLine state, never this constant. */
@@ -1008,13 +1008,22 @@ export function BackupSetWizardPage({ readOnly, firstRun = false, onFirstRunComp
                   is already refused at save (see handleSave/saveHint
                   below), exactly like "Use managed key", so both panels
                   now say the same honest thing instead of inventing
-                  detail for a path that cannot be saved. */}
+                  detail for a path that cannot be saved.
+
+                  Issue #923: this banner and saveHint's own "generate"
+                  branch are one refusal said twice, so they have to name
+                  the same step. #788 folded the credentials into
+                  "Connection test" and fixed the hint but not this
+                  sentence, which went on sending an operator to an
+                  "Authentication" step the rail no longer has — and to a
+                  control that is in fact directly below this banner. */}
               {keySource === "generate" ? (
                 <div className="banner banner--info" style={{ marginTop: 18, fontSize: "var(--text-sm)" }}>
                   <span aria-hidden="true">i</span>
                   <span>
-                    Generating a key on save isn&rsquo;t available yet — import a key on the Authentication
-                    step instead.
+                    Generating a key on save isn&rsquo;t available yet — pick a key this
+                    deployment already holds, or import one, on this Connection test step
+                    instead.
                   </span>
                 </div>
               ) : null}

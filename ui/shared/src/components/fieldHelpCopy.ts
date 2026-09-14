@@ -39,9 +39,9 @@
  * none of it was cheap to wire honestly. What is left with no entry today,
  * and why:
  *
- *   - The wizard's "Transfer verification" toggle (Storage & validation
- *     step). It stayed, because it is true — every artifact this product
- *     creates is transfer-verified, unconditionally, with no field
+ *   - The wizard's "Transfer verification" toggle (Completion and
+ *     validation step). It stayed, because it is true — every artifact this
+ *     product creates is transfer-verified, unconditionally, with no field
  *     anywhere that could turn that off — but it is `disabled` now, not a
  *     control: a checkbox with nothing behind it doesn't get a tooltip
  *     explaining a choice, because there is no choice to explain.
@@ -412,28 +412,28 @@ export const FIELD_HELP = {
     what: "The address of the remote server this backup set pulls artifacts from over SFTP.",
     example: "prod-db-01.internal",
     effect:
-      "Used to probe and verify the host's SSH fingerprint on the next step, then to actually connect and transfer files once saved. If you already trusted a fingerprint for this host on the Verify server step, changing this and leaving the field revokes that trust, since it no longer matches what was trusted, and you'll need to fetch and trust the new address's fingerprint before you can save."
+      "Used to probe and verify the host's SSH fingerprint on the next step, then to actually connect and transfer files once saved. If you already trusted a fingerprint for this host on the Connection test step, changing this and leaving the field revokes that trust, since it no longer matches what was trusted, and you'll need to fetch and trust the new address's fingerprint before you can save."
   },
 
   wizardSshPort: {
     what: "The TCP port the remote server's SSH/SFTP service listens on.",
     example: "22",
     effect:
-      "Sent with every probe and connection attempt to that host. Leave it blank, or clear it entirely, and Backupd treats it as port 22 rather than refusing to proceed. Like the hostname, changing this after trusting a fingerprint on the Verify server step revokes that trust, since port is part of what was trusted."
+      "Sent with every probe and connection attempt to that host. Leave it blank, or clear it entirely, and Backupd treats it as port 22 rather than refusing to proceed. Like the hostname, changing this after trusting a fingerprint on the Connection test step revokes that trust, since port is part of what was trusted."
   },
 
   wizardUsername: {
     what: "The account on the remote server Backupd signs in as over SSH.",
     example: "backup-agent",
     effect:
-      "Sent as the SSH username on every connection this backup set makes. That account needs read access to the remote folder you set on the Discovery step, and, once an artifact completes its full verify-and-commit chain, delete access there too: Backupd removes the remote copy after that (FR-15)."
+      "Sent as the SSH username on every connection this backup set makes. That account needs read access to the directory you set on this same Source step, and, once an artifact completes its full verify-and-commit chain, delete access there too: Backupd removes the remote copy after that (FR-15)."
   },
 
   wizardKeySource: {
     what: "How this backup set authenticates to the remote server. Only one of the three choices actually lets you finish this wizard today.",
     example: "Import key",
     effect:
-      "The first two options above each open their own panel below, but neither is wired to a save yet: picking either one and clicking any Save button is refused, with a message pointing you at the third option instead. That one is the one that actually lets Save succeed, once its key is imported below and the host is trusted on the next step."
+      "The first two options above each open their own panel below, but neither is wired to a save yet: picking either one and clicking any Save button is refused, with a message pointing you at the third option instead. That one is the one that actually lets Save succeed, once its key is imported below and the host is trusted further down this same Connection test step."
   },
 
   wizardPrivateKey: {
