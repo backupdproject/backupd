@@ -141,17 +141,26 @@ halves: an adapter that mounts nothing for the runner is equivalent, and one
 that mounts `/workflows` writable is still reported.
 
 Relaxing that comparison is also where the review found the one genuine product
-gap, and it is filed as **#921** rather than written into this region as a
+gap, and it was filed as **#921** rather than written into this region as a
 `FAIL`. Host-plane mounts being optional is right for a provider that deploys no
 runner; it is wrong for one that declares `localHooks: available`, and four
-profiles do both at once — OpenMediaVault, Proxmox VE, Portainer CE and CasaOS
-mount no `/workflows`, no `/data/run` and no runner token, so an operator who
-follows their documents and provisions the runner still has an engine with no
-socket to dial. Three rules pass over that combination, each correctly on its
-own terms, and none of them reads the declaration and the mounts together. It is
+profiles did both at once — OpenMediaVault, Proxmox VE, Portainer CE and CasaOS
+mounted no `/workflows`, no `/data/run` and no runner token, so an operator who
+followed their documents and provisioned the runner still had an engine with no
+socket to dial. Three rules passed over that combination, each correctly on its
+own terms, and none of them read the declaration and the mounts together. It was
 not this report's `FAIL` to record: the `local-workflow-hooks` row decides
-whether three declarations agree, and they do. It is a missing rule and four
-profiles, which is what #921 says.
+whether three declarations agree, and they did.
+
+**#921 is now fixed**, which is why no cell here moved: all four profiles carry
+the three mounts, ZimaOS still carries none because it is the one store adapter
+that declares `localHooks: unavailable` and cannot host a runner at all, and the
+combination has a rule of its own —
+`CheckLocalHookMounts` and
+`TestEveryProviderThatAdvertisesLocalHooksCanActuallyReachTheRunner`, which
+redden on exactly those four profiles as they stood. A capability this report
+records as `PASS` is now one an operator can reach, which is the claim the row
+was always read as making.
 
 What the regeneration itself then changed is small, which is the outcome an
 honest review wants: the eight `Local workflow hooks` reason rows the #877

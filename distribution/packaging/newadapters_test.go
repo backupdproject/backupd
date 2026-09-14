@@ -154,6 +154,14 @@ func TestEveryNewAdapterIsSemanticallyEquivalentToTheCanonicalStack(t *testing.T
 // Without the second half the exemption reads as "the workflow mounts
 // are not compared", which would let a store profile hand the container
 // a writable /workflows and pass a gate whose whole job is to notice.
+//
+// ZimaOS is the fixture, and which adapter this reads is load-bearing:
+// it has to be one that really carries none of the three. CasaOS was,
+// until #921 gave it all three — CasaOS can host a runner and ZimaOS,
+// an appliance OS with no host session, cannot, which is why ZimaOS
+// declares `localHooks: unavailable` and carries nothing. That makes it
+// the one store adapter for which "mounts nothing for the runner" is
+// still the shipped truth rather than a defect.
 func TestAHostPlaneMountIsOptionalToCarryAndNotOptionalToCarryCorrectly(t *testing.T) {
 	c := MustLoad()
 	want := canonicalRuntime(t, c)
@@ -166,7 +174,7 @@ func TestAHostPlaneMountIsOptionalToCarryAndNotOptionalToCarryCorrectly(t *testi
 		t.Fatal(`"workflows" is not a host-plane role any more, so the exemption this control guards is not the one under test`)
 	}
 
-	base, drift := ReduceToRoles("casaos", newAdapter{id: "casaos", compose: "compose/backupd.yml"}.services(t), c)
+	base, drift := ReduceToRoles("zimaos", newAdapter{id: "zimaos", compose: "compose/backupd.yml"}.services(t), c)
 	if len(drift) > 0 {
 		t.Fatalf("could not reduce the fixture adapter to roles: %s", FormatDrift(drift))
 	}

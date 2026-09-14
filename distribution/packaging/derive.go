@@ -327,20 +327,32 @@ func checkProfile(svc *Service, p Platform, c Canonical) []Drift {
 // every mount it declares is a finding: it is the one container on the
 // LAN, and a mount there is attack surface rather than a configuration
 // choice.
+//
+// "Extra" means a path the canonical image does not know, which is
+// KnownRoles() and not Roles. The difference is the whole point of
+// HostPlaneRoles and getting it wrong here was the third instance of the
+// same bug (issue #921, after #871 and #881): a profile that mounts the
+// workflow runner's socket directory, token or script directory was told
+// it mounts something "the canonical runtime does not declare", when
+// canonical.json declares all three and container/compose.yaml mounts
+// them. The MISSING direction below still reads Roles, because those are
+// the five every platform must carry; the runner's three are carried by a
+// profile that can host a runner and by no other, which is what
+// CheckLocalHookMounts decides.
 func checkMounts(a AdapterRuntime, c Canonical) []Drift {
 	why := DerivedFields[3].Why
 	var out []Drift
 
 	if a.Engine != nil {
-		want := map[string]bool{}
-		for _, role := range Roles {
-			p, _ := c.ContainerPaths.ByRole(role)
-			want[p] = true
-		}
 		got := map[string]bool{}
 		for _, m := range a.Engine.Mounts {
 			got[m.ContainerPath] = true
-			if !want[m.ContainerPath] {
+			// Resolved from the PATH rather than from the parsed Role
+			// field: the field is what a reader decided, and this rule
+			// is about what the binaries read. roleForContainerPath
+			// iterates KnownRoles(), so the runner's three resolve and
+			// a path nothing reads still does not.
+			if roleForContainerPath(c, m.ContainerPath) == "" {
 				out = append(out, Drift{FieldStorageMounts, a.Engine.Name,
 					fmt.Sprintf("mounts %s, which is not a container path the canonical runtime declares", m.ContainerPath), why})
 			}

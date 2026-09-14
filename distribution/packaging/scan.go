@@ -301,13 +301,16 @@ func ScanSecrets(root string) ([]Violation, error) {
 		if strings.EqualFold(filepath.Ext(rel), ".md") {
 			return nil
 		}
-		for _, m := range credentialRe.FindAllStringSubmatch(text, -1) {
-			value := m[2]
+		for _, m := range credentialRe.FindAllStringSubmatchIndex(text, -1) {
+			value := text[m[4]:m[5]]
 			if isPlaceholder(value) {
 				continue
 			}
+			if mountsAFileRatherThanAssigningASecret(text, m[2], value) {
+				continue
+			}
 			out = append(out, Violation{rel, RuleBundledSecret,
-				fmt.Sprintf("assigns a literal value to %q", strings.ToLower(m[1]))})
+				fmt.Sprintf("assigns a literal value to %q", strings.ToLower(text[m[2]:m[3]]))})
 		}
 		return nil
 	})
@@ -557,6 +560,69 @@ func isPlaceholder(value string) bool {
 		}
 	}
 	return false
+}
+
+// mountsAFileRatherThanAssigningASecret reports whether a
+// credential-shaped match is a FILE PATH on both sides rather than an
+// assignment of a literal.
+//
+// The case that forced it is a bind mount whose host side is the workflow
+// runner's credential FILE (issue #921):
+//
+//   - /DATA/AppData/backupd/secrets/workflow-runner.token:/etc/backupd/workflow-runner.token:ro
+//
+// credentialRe sees `token:` followed by eight-plus characters and reports
+// a bundled secret. There is no secret there at all: both sides are
+// paths, and the file the mount points at is created on the host by the
+// runner's installer and is never in this repository. Two profiles
+// escaped the same reading only because they spell the host side as
+// `${RUNNER_TOKEN_FILE:-...}`, whose closing brace happens to break the
+// pattern, which is not a distinction anybody designed.
+//
+// BOTH halves are required, and the key half alone is not enough --
+// that version of this narrowing was wider than the bug and #921's
+// review measured what it let through:
+//
+//	WEBHOOK=https://example.com/api/v1/notify?token=abcdef0123456789
+//	endpoint: https://hooks.example.com/services/token: abcdef0123456789
+//	/etc/backupd/admin_password: hunter2hunter2
+//
+// every one of which has a `/` in front of the key and a real credential
+// after it. So the value has to look like a path too: absolute or
+// explicitly relative, with a separator inside it. A secret does not.
+func mountsAFileRatherThanAssigningASecret(text string, keyStart int, value string) bool {
+	return keyIsAPathTail(text, keyStart) && valueIsAPath(value)
+}
+
+// keyIsAPathTail reports whether the key at keyStart has a path separator
+// in front of it inside the same whitespace-delimited word, which makes
+// it a filename component rather than the left side of an assignment.
+// `ADMIN_TOKEN=`, `token:` and `oauth.token=` all fail this.
+func keyIsAPathTail(text string, keyStart int) bool {
+	for i := keyStart - 1; i >= 0; i-- {
+		switch text[i] {
+		case ' ', '\t', '\n', '\r':
+			return false
+		case '/':
+			return true
+		}
+	}
+	return false
+}
+
+// valueIsAPath reports whether value is a filesystem path rather than a
+// credential: it starts at a root or says it is relative, and it has a
+// separator inside it. `/etc/backupd/workflow-runner.token:ro` passes;
+// `abcdef0123456789` and a base64 blob that happens to begin with `/`
+// do not.
+func valueIsAPath(value string) bool {
+	switch {
+	case strings.HasPrefix(value, "/"):
+	case strings.HasPrefix(value, "./"), strings.HasPrefix(value, "../"):
+	default:
+		return false
+	}
+	return strings.Contains(strings.TrimLeft(value, "./"), "/")
 }
 
 func contains(haystack []string, needle string) bool {

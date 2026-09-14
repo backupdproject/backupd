@@ -125,7 +125,16 @@ func derivationMutations() []derivationMutation {
 			return "dropped --profile= from the engine command"
 		}},
 		{FieldStorageMounts, func(a *AdapterRuntime, _ *Canonical) string {
+			// The role goes with the path. ReadCompose resolves Role
+			// FROM the container path against KnownRoles, so a profile
+			// that really pointed a mount at /somewhere/else would carry
+			// no role at all — and since #921 that is what checkMounts
+			// reads to tell "a path we do not know" from "a path we know
+			// and do not require". Mutating the path alone would leave
+			// this control passing on the missing-role half while the
+			// message claims the other one.
 			a.Engine.Mounts[0].ContainerPath = "/somewhere/else"
+			a.Engine.Mounts[0].Role = ""
 			return "moved one engine mount to a container path the runtime does not know"
 		}},
 		{FieldPublishedPort, func(a *AdapterRuntime, _ *Canonical) string {

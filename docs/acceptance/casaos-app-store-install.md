@@ -357,6 +357,23 @@ runner's account cannot reach the daemon. A deployment with an empty workflows
 directory is held to none of it, and `WORKFLOW_RUNNER=off` in the `.env` says so
 explicitly.
 
+And a fourth prerequisite, which is on THIS side of the socket and was missing
+until issue #921: the engine has to be able to see the runner. The compose file
+this store installs mounts three paths for it, and an operator who installs the
+runner somewhere else gets a refusal at the first hook rather than a hook that
+runs:
+
+| Host path | In the container | Why |
+|---|---|---|
+| `/DATA/AppData/backupd/workflows` | `/workflows` (read-only) | the hook scripts the engine reads |
+| `/DATA/AppData/backupd/run` | `/data/run` | where the runner's socket appears |
+| `/DATA/AppData/backupd/secrets/workflow-runner.token` | `/etc/backupd/workflow-runner.token` (read-only) | the credential the engine presents |
+
+So install the runner with `--workflows-dir /DATA/AppData/backupd/workflows`,
+`--runtime-dir /DATA/AppData/backupd/run` and its token under
+`/DATA/AppData/backupd/secrets`. None of the three gives this container any part
+of the Docker daemon: the runner holds the socket's group, on the host.
+
 - [ ] `systemctl is-active backupd-workflow-runner.service` reports `active`, and the
       account it runs as is recorded in the evidence table
 - [ ] That account is in the Docker socket's group (`id <account>`), and the engine

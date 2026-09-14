@@ -86,6 +86,24 @@
           "default": "/opt/backupd/secrets/known_hosts"
         },
         {
+          "name": "WORKFLOWS_DIR",
+          "label": "Workflow hook scripts directory (host)",
+          "description": "Mounted read-only. Local workflow hooks run in containers the Host Workflow Runner launches on this host, never in this stack; leave the default if you run none.",
+          "default": "/opt/backupd/workflows"
+        },
+        {
+          "name": "RUNTIME_DIR",
+          "label": "Workflow runner socket directory (host)",
+          "description": "Where the Host Workflow Runner's socket appears. The one directory in this group the engine writes.",
+          "default": "/opt/backupd/run"
+        },
+        {
+          "name": "RUNNER_TOKEN_FILE",
+          "label": "Workflow runner token file (host)",
+          "description": "Mounted read-only. The installation-scoped credential the engine presents to the Host Workflow Runner; the installer writes it.",
+          "default": "/opt/backupd/secrets/workflow-runner.token"
+        },
+        {
           "name": "WEB_PORT",
           "label": "Published web port",
           "description": "The only published port in the stack. The engine publishes none.",

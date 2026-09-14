@@ -9,15 +9,28 @@
 # otherwise, so the citation lives beside it rather than inside it.
 #
 # This is a SECOND STORE REGISTRATION OVER ONE RUNTIME, not a second
-# runtime. Its services are byte-for-byte the same shape as
-# apps/casaos/compose/backupd.yml and its host paths are the same
-# paths, because ZimaOS lays /DATA out the way CasaOS does. What differs
-# is the store the file is submitted to and the identity it is submitted
-# under, which is exactly the amount of difference a thin adapter is
-# allowed to have. Saying that plainly is better than inventing a
-# distinction to justify the second directory: the two are separately
-# submitted and separately certified, so they are two rows of the release
-# matrix, and they are one deployment.
+# runtime. Its services are the same shape as
+# apps/casaos/compose/backupd.yml and its host paths are the same paths,
+# because ZimaOS lays /DATA out the way CasaOS does. What differs is the
+# store the file is submitted to and the identity it is submitted under,
+# which is exactly the amount of difference a thin adapter is allowed to
+# have. Saying that plainly is better than inventing a distinction to
+# justify the second directory: the two are separately submitted and
+# separately certified, so they are two rows of the release matrix, and
+# they are one deployment.
+#
+# ONE mount group differs, and it is not a drift: the CasaOS file carries
+# the Host Workflow Runner's three paths and this one does not (issue
+# #921). CasaOS is an application layer over a distribution whose
+# systemd and docker group the operator still administers, so a runner
+# can be provisioned there and its acceptance procedure says how. ZimaOS
+# is a complete appliance OS with no such host session, which is why its
+# conformance declaration is `localHooks: unavailable` and why mounting a
+# socket directory for a runner that cannot exist here would be three
+# lines of dead weight in an install dialog. `HostPlaneRoles` in
+# distribution/packaging is what makes that legal rather than a
+# divergence: those three paths are known and optional, and a profile is
+# held to them only if it declares the capability.
 #
 # Two halves, and the split is the whole design. Everything outside
 # `x-casaos` is Compose and container semantics DERIVED from

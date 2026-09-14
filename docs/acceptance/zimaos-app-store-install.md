@@ -325,9 +325,13 @@ systemd supervises as `backupd-workflow-runner.service`
 ZimaOS ships as a complete appliance operating system rather than as a layer over a
 distribution you administer, so there is no host session in which to install a systemd
 unit or add an account to the Docker socket's group. This is the one place the CasaOS
-and ZimaOS answers genuinely differ even though the stack is byte-for-byte the same
-compose file, and the running product cannot tell them apart: both select the generic
-runtime profile, so this document is the only place the difference is stated.
+and ZimaOS answers genuinely differ even though the two stacks are otherwise the same
+compose file: since issue #921 the CasaOS one carries the Host Workflow Runner's three
+mounts and this one deliberately does not, which is the only shape difference between
+them. The running product still cannot tell the two platforms apart — both select the
+generic runtime profile — so this document is where an operator is told, and
+`conformance.json`'s `localHooks: unavailable` plus
+`distribution/packaging`'s `CheckLocalHookMounts` are what hold the compose file to it.
 
 **Local workflow hooks are unavailable on this platform.** That is a refusal with a
 named mechanism rather than a gap, and it is worth being precise about which

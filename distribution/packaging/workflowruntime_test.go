@@ -151,6 +151,143 @@ func TestEveryProviderStatesItsLocalHookAnswerWhereItsOperatorWillRead(t *testin
 	}
 }
 
+// TestEveryProviderThatAdvertisesLocalHooksCanActuallyReachTheRunner is
+// issue #921's gate, and the sweep above is exactly why it is a separate
+// one: that test asks whether the operator was TOLD, this one asks
+// whether the deployment they were told about can do it.
+//
+// Four profiles passed every declaration check while mounting none of
+// the three paths the engine reaches the runner through, so the answer an
+// operator read was true about the platform and false about the stack
+// they had just installed.
+func TestEveryProviderThatAdvertisesLocalHooksCanActuallyReachTheRunner(t *testing.T) {
+	c := MustLoadConformance()
+	canonical := MustLoad()
+	asked := 0
+
+	for _, pid := range c.ProviderIDs() {
+		t.Run(pid, func(t *testing.T) {
+			p := providerUnderTest{id: pid, spec: c.Providers[pid], canonical: canonical}
+			wr := p.spec.WorkflowRunner
+			kind := p.spec.Metadata.Kind
+			if wr.LocalHooks != LocalHooksAvailable || kind == "canonical-compose" {
+				return
+			}
+			asked++
+			svcs, err := p.services()
+			if err != nil {
+				t.Fatalf("read this provider's runtime definition: %v", err)
+			}
+			rt, drift := ReduceToRoles(pid, svcs, canonical)
+			if len(drift) > 0 {
+				t.Fatalf("could not reduce this provider to roles:\n%s", FormatDrift(drift))
+			}
+			if v := CheckLocalHookMounts(p.spec.Metadata.Compose, wr, kind, rt.Engine, canonical); len(v) > 0 {
+				t.Errorf("this provider advertises local workflow hooks it cannot run:\n%s", format(v))
+			}
+		})
+	}
+
+	// A sweep that asked nobody is a sweep that proves nothing, and the
+	// way that happens is a declaration edit rather than a deleted test.
+	// Five providers ship a profile of their own and advertise the
+	// capability: Generic Docker, which always carried the three mounts,
+	// and the four #921 found without them.
+	if asked < 5 {
+		t.Errorf("this gate ran over %d provider(s) and there are five: a provider that stopped advertising local hooks, or stopped shipping a profile of its own, is a declaration change and not a smaller gate", asked)
+	}
+}
+
+// TestTheLocalHookMountRuleFiresOnTheCombinationNothingElseReads is the
+// control, and the first case is the one that matters: it is #921's own
+// shape, the state four shipped profiles were in, and the rule has to
+// redden on it or this whole gate is decoration.
+//
+// The last two cases are the optionality this must not break. Host-plane
+// mounts stay optional for a provider that does not advertise the
+// capability and for one that ships no profile of its own, which is the
+// distinction HostPlaneRoles exists to draw.
+func TestTheLocalHookMountRuleFiresOnTheCombinationNothingElseReads(t *testing.T) {
+	c := MustLoad()
+	available := WorkflowRunner{LocalHooks: LocalHooksAvailable, Platform: "openmediavault", Doc: "docs/acceptance/openmediavault-provider-acceptance.md"}
+
+	mount := func(role string, readOnly bool) Mount {
+		path, ok := c.ContainerPaths.ByRole(role)
+		if !ok {
+			t.Fatalf("canonical.json declares no container path for the %q role", role)
+		}
+		return Mount{Role: role, HostPath: "/srv/backupd/" + role, ContainerPath: path, ReadOnly: readOnly}
+	}
+	engine := func(mounts ...Mount) *Service {
+		return &Service{Name: "backupd", Source: "fixture.yml", Mounts: mounts}
+	}
+	// The five storage roles every profile already carries. The rule must
+	// decide on the runner's three and on nothing else.
+	storage := []Mount{
+		mount("state", false), mount("backups", false), mount("config", false),
+		mount("sshKey", true), mount("knownHosts", true),
+	}
+	with := func(extra ...Mount) *Service {
+		return engine(append(append([]Mount(nil), storage...), extra...)...)
+	}
+
+	runner := []Mount{mount("workflows", true), mount("runtime", false), mount("runnerToken", true)}
+
+	t.Run("advertised and unreachable, which is #921", func(t *testing.T) {
+		v := CheckLocalHookMounts("fixture.yml", available, "compose", with(), c)
+		if len(v) != len(HostPlaneRoles) {
+			t.Fatalf("want one violation per unmounted runner path (%d), got %d: %s", len(HostPlaneRoles), len(v), oneLine(v))
+		}
+	})
+
+	t.Run("advertised and reachable", func(t *testing.T) {
+		if v := CheckLocalHookMounts("fixture.yml", available, "compose", with(runner...), c); len(v) > 0 {
+			t.Errorf("a profile carrying all three runner paths was refused: %s", oneLine(v))
+		}
+	})
+
+	t.Run("the scripts directory handed over writable", func(t *testing.T) {
+		bad := []Mount{mount("workflows", false), mount("runtime", false), mount("runnerToken", true)}
+		if v := CheckLocalHookMounts("fixture.yml", available, "compose", with(bad...), c); len(v) == 0 {
+			t.Error("a writable /workflows was accepted; the engine executes what it reads out of there")
+		}
+	})
+
+	t.Run("the socket directory handed over read-only", func(t *testing.T) {
+		bad := []Mount{mount("workflows", true), mount("runtime", true), mount("runnerToken", true)}
+		if v := CheckLocalHookMounts("fixture.yml", available, "compose", with(bad...), c); len(v) == 0 {
+			t.Error("a read-only /data/run was accepted, and the runner's socket has to appear in it")
+		}
+	})
+
+	t.Run("not advertised, so not asked", func(t *testing.T) {
+		unavailable := WorkflowRunner{LocalHooks: LocalHooksUnavailable, Platform: "zimaos", Doc: available.Doc}
+		if v := CheckLocalHookMounts("fixture.yml", unavailable, "compose", with(), c); len(v) > 0 {
+			t.Errorf("a profile that declares local hooks unavailable was told it is missing the runner's storage: %s", oneLine(v))
+		}
+	})
+
+	t.Run("deploys the canonical stack, so not asked", func(t *testing.T) {
+		inherits := WorkflowRunner{LocalHooks: LocalHooksAvailable, Doc: available.Doc}
+		if v := CheckLocalHookMounts("fixture.yml", inherits, "canonical-compose", with(), c); len(v) > 0 {
+			t.Errorf("a provider that deploys container/compose.yaml itself was held to a profile it does not ship: %s", oneLine(v))
+		}
+	})
+
+	// The boundary that decides whether this rule catches all four of
+	// #921 or only half of them. An empty Platform means "no row in the
+	// capability contract, inherits generic's answer", which is CasaOS
+	// and Portainer -- and both ship a compose file. Keying the rule on
+	// Platform instead of on whose runtime definition it is would let
+	// exactly those two through.
+	t.Run("no capability-contract row but a profile of its own, so asked", func(t *testing.T) {
+		inherited := WorkflowRunner{LocalHooks: LocalHooksAvailable, Doc: available.Doc}
+		if v := CheckLocalHookMounts("fixture.yml", inherited, "compose", with(), c); len(v) != len(HostPlaneRoles) {
+			t.Errorf("a provider that inherits the available answer and ships its own stack was not held to it: %s", oneLine(v))
+		}
+	})
+}
+
 // The positive control for the test above, and it is the one that matters
 // most: the requirement is a set of regexes over a markdown document, and
 // a regex set that cannot fail is decoration. Both branches are proved,
