@@ -835,6 +835,40 @@
   rail that leaves some sentence behind, fails them; the current copy is not
   pinned anywhere, so rewording it stays free.
 
+- **The add-backup-set wizard's glob field is named for what it does** (#927).
+  The Source step's second box was labelled "Ignore paths matching" and is an
+  INCLUDE list: the state is `includePatterns`, the wire field is `include`,
+  the field's own help says which filenames "count as this backup set's
+  artifacts", and the same data reads as "Include patterns" on the set's edit
+  form and "Include" on its detail page. The label was the only thing in the
+  product saying otherwise, and it said the opposite.
+
+  An operator who believed it and typed `*.tmp` there got a backup set that
+  backs up **only** `*.tmp`. Nothing refuses that save and no run fails:
+  discovery drops a basename the include list does not match with a bare
+  `continue`, silently and on purpose, so the set has nothing to report. The
+  symptom is empty backups noticed days later, with a configuration screen
+  that still reads as though the pattern were being excluded. The box is now
+  "Filename patterns to back up", which is the wording the edit form's own
+  help already used and which stays parallel to "Directory to back up"
+  directly above it.
+
+  **No exclude capability was invented, because there is none to bind to.**
+  The engine's exclude (`exclude_paths`, #737) names DIRECTORIES discovery
+  must not walk into — its validation refuses a basename glob, exactly as
+  `include` refuses a path — and the HTTP API exposes no exclude field at
+  all, so the wizard never had an ignore list to send anywhere. This was a
+  wrong label, and correcting the label is the whole fix.
+
+  **The rule is asserted instead of the wording.** The new case never names
+  the field: it finds the one Source-step box whose contents come back out in
+  `createBackupSet`'s `include` — proven causally, by typing a sentinel into
+  it and watching that sentinel arrive on the wire — and only then reads the
+  name an operator sees, across every surface that can give a control its
+  accessible name (label text, `aria-label`, `aria-labelledby`, placeholder,
+  title). Rewording the field stays free; naming an include control "ignore",
+  "exclude", "omit" or "skip" again does not.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added
