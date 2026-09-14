@@ -311,6 +311,28 @@ func CheckRequiredMounts(svc Service, c Canonical) []Violation {
 		}
 	}
 
+	// The host-plane paths, which are optional to mount and not optional to
+	// mount CORRECTLY. Nothing here asks why a profile does not carry them:
+	// a NAS store profile deploys no workflow runner and is right not to.
+	// A profile that does carry one is held to the same write mode as any
+	// other declared path, and the workflows directory is the one that
+	// matters: the engine reads scripts out of it, so a writable mount is a
+	// process one compromise away from running anything it likes on the
+	// host that the container was specifically built not to reach.
+	for _, role := range HostPlaneRoles {
+		m, ok := byRole[role]
+		if !ok {
+			continue
+		}
+		if readOnly[m.ContainerPath] && !m.ReadOnly {
+			add(fmt.Sprintf("service %s mounts %s writable, and canonical.json declares it read-only; the engine executes what it reads out of that directory, so a process that can rewrite it can run anything on the host",
+				backquote(svc.Name), backquote(m.ContainerPath)))
+		}
+		if !readOnly[m.ContainerPath] && m.ReadOnly {
+			add(fmt.Sprintf("service %s mounts %s read-only, and the canonical contract needs it writable", backquote(svc.Name), backquote(m.ContainerPath)))
+		}
+	}
+
 	sortViolations(out)
 	return out
 }

@@ -484,11 +484,11 @@ func TestADeclaredCredentialMountIsHeldToItsWriteModeWithoutAStorageRole(t *test
 	}
 
 	// And the other half: a role-less path canonical.json says nothing
-	// about stays nobody's business here. /workflows is the live example
-	// — it is mounted by the canonical stack, carries no role and has no
-	// declared write mode, and turning that into a finding would be this
-	// check answering a question TestEveryPlatformMapsEveryStorageRoleTheSameWay
-	// owns.
+	// about stays nobody's business here. /workflows was the live example
+	// until #868 declared it, so the example is now a path the contract
+	// genuinely never names; turning one of those into a finding would be
+	// this check answering a question
+	// TestEveryPlatformMapsEveryStorageRoleTheSameWay owns.
 	for _, readOnly := range []bool{true, false} {
 		if v := CheckStorageShapes(mount("/a/path/canonical/json/never/names", readOnly), c); len(v) != 0 {
 			t.Errorf("an undeclared role-less mount (readOnly=%v) was refused: %s", readOnly, oneLine(v))
