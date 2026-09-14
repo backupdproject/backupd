@@ -56,14 +56,14 @@
   },
   "checksums": {
     "path": "provenance/checksums.txt",
-    "sha256": "2784376a20e5f43246d31cab023e89a60d67bc680dae4aa751645ac229fc1b64",
+    "sha256": "5e086f0274ebcfec7f88b606ff09abecce05513c60274ac1d29e1f7b3f028908",
     "format": "sha256sum"
   },
   "artifacts": [
     {
       "target": "casaos",
       "path": "apps/casaos/compose/backupd.yml",
-      "sha256": "0ff3630f7e219ebe77577e093fe9924f6fb67496b0cc1069491cd25392f96e18"
+      "sha256": "f4406b2170e1ae8e5ae7926ee2519b5f6cd33d84400d8557d186be5c7948ffb6"
     },
     {
       "target": "casaos",
@@ -78,17 +78,17 @@
     {
       "target": "openmediavault",
       "path": "apps/openmediavault/compose/backupd.yml",
-      "sha256": "06200d30bf4b63cd8639f041217001fd759567202879fea64861b3d2adda2a49"
+      "sha256": "41953369de692c9f3375a4fef471bea11cb5815c687f200a202e8653d6524bdc"
     },
     {
       "target": "portainer",
       "path": "apps/portainer/compose/backupd.env",
-      "sha256": "e8fba0241e143fbe5ec776bb3d98e197f4c017da78eb9a3331689b978f69980c"
+      "sha256": "f333ee5b046e9d92dcbf6f2b4f1ae7ffd85cd8a51c0fbf5ea7072cbbca4b8b64"
     },
     {
       "target": "portainer",
       "path": "apps/portainer/compose/backupd.yml",
-      "sha256": "24f793351784d777f27547efc21caedc544e520d695634be2968989f073aae35"
+      "sha256": "2977f1a59120b061b8fb20cfc44c731a13c304d0587ba47d6408071e3f6091c3"
     },
     {
       "target": "portainer",
@@ -98,17 +98,17 @@
     {
       "target": "portainer",
       "path": "apps/portainer/templates.json",
-      "sha256": "213ef258130ae2ba0832b82048e567f52df42376f063288a86f6d20647bab25a"
+      "sha256": "27f1cd724dd4169b15beb31b9b2706fca17b57854db4b143e14adffe99fd5cf0"
     },
     {
       "target": "proxmox",
       "path": "apps/proxmox/compose/backupd.env",
-      "sha256": "7715dea79107850fa20115654379727780f80a20073e8b39dc84f754f23df054"
+      "sha256": "dd8817f3f7132fe8ebd67cfa2e4ea2f292305a853e1e1ebca1c9376c89234499"
     },
     {
       "target": "proxmox",
       "path": "apps/proxmox/compose/backupd.yml",
-      "sha256": "88af6e05f892b085750aedf8fe5c8ed3a5faf1070e73fec6a719126dd21bac34"
+      "sha256": "4666f8d494667825d44cc0dc64315897ea821b36c398cf21c041960bd6aa6373"
     },
     {
       "target": "truenas",
@@ -148,7 +148,7 @@
     {
       "target": "zimaos",
       "path": "apps/zimaos/compose/backupd.yml",
-      "sha256": "283044edf65e99f6e7593995aa4824de3a1fd1552a4d02c60fd98dbe7e074ecc"
+      "sha256": "28d6a8d692c1b416362c287acaccab56195998d84a53cd1db85f46129abce484"
     },
     {
       "target": "zimaos",

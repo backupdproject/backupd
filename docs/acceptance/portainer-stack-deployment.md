@@ -363,6 +363,23 @@ runner's account cannot reach the daemon. A deployment with an empty workflows
 directory is held to none of it, and `WORKFLOW_RUNNER=off` in the `.env` says so
 explicitly.
 
+And a fourth prerequisite, on THIS side of the socket, which was missing until
+issue #921: the engine has to be able to see the runner. The stack mounts three
+paths for it, all three offered as form fields with these defaults, and an
+operator who installs the runner somewhere else gets a refusal at the first hook
+rather than a hook that runs:
+
+| Form field | In the container | Why |
+|---|---|---|
+| `WORKFLOWS_DIR` (`/opt/backupd/workflows`) | `/workflows` (read-only) | the hook scripts the engine reads |
+| `RUNTIME_DIR` (`/opt/backupd/run`) | `/data/run` | where the runner's socket appears |
+| `RUNNER_TOKEN_FILE` (`/opt/backupd/secrets/workflow-runner.token`) | `/etc/backupd/workflow-runner.token` (read-only) | the credential the engine presents |
+
+So install the runner with `--workflows-dir` and `--runtime-dir` pointed at the
+first two, and its token written to the third. None of the three hands this
+stack any part of the Docker socket Portainer itself holds — which is the whole
+point of the runner being a host unit and not a container in this stack.
+
 - [ ] `systemctl is-active backupd-workflow-runner.service` reports `active`, and the
       account it runs as is recorded in the evidence table
 - [ ] That account is in the Docker socket's group (`id <account>`), and the engine

@@ -329,6 +329,45 @@ func TestScanSecretsCatchesBundledCredentials(t *testing.T) {
 			body:   "Enrol with a password: choose a long one and keep it out of this repository.\n",
 			expect: false,
 		},
+		{
+			// Issue #921's mount. The value is a container path and the
+			// file itself is created on the host by the runner's
+			// installer, so there is no secret in the tree to find.
+			name:   "a mount whose host side is the runner's credential file",
+			file:   "compose/backupd.yml",
+			body:   "services:\n  backupd:\n    volumes:\n      - /srv/backupd/secrets/workflow-runner.token:/etc/backupd/workflow-runner.token:ro\n",
+			expect: false,
+		},
+		{
+			// And the narrowing that allows it stays narrow: a dotted
+			// key is not a path just because it has a dot in it.
+			name:   "a dotted property key with a literal value is still a secret",
+			file:   "catalog/application.properties",
+			body:   "oauth.token=abcdef0123456789\n",
+			expect: true,
+		},
+		{
+			// The three shapes #921's review measured against a version
+			// of that narrowing which tested the key alone. Each has a
+			// path separator in front of the key and a real credential
+			// after it, so only the value-side half keeps them caught.
+			name:   "a token in a webhook query string is still a secret",
+			file:   "compose/backupd.env",
+			body:   "WEBHOOK=https://example.com/api/v1/notify?token=abcdef0123456789\n",
+			expect: true,
+		},
+		{
+			name:   "a credential after a URL path segment is still a secret",
+			file:   "catalog/values.yaml",
+			body:   "endpoint: https://hooks.example.com/services/token: abcdef0123456789\n",
+			expect: true,
+		},
+		{
+			name:   "a literal assigned to a path-shaped key is still a secret",
+			file:   "catalog/values.yaml",
+			body:   "/etc/backupd/admin_password: hunter2hunter2\n",
+			expect: true,
+		},
 	}
 
 	for _, tc := range tests {

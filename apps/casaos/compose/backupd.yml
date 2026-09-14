@@ -119,6 +119,33 @@ services:
       - /DATA/AppData/backupd/config:/etc/backupd/config
       - /DATA/AppData/backupd/secrets/id_ed25519:/etc/backupd/id_ed25519:ro
       - /DATA/AppData/backupd/secrets/known_hosts:/etc/backupd/known_hosts:ro
+      # The Host Workflow Runner's three paths (issue #921). CasaOS is an
+      # application layer over a distribution the operator administers,
+      # which keeps its own systemd and its own docker group, so step 9
+      # of docs/acceptance/casaos-app-store-install.md tells the
+      # administrator local hooks are AVAILABLE and has them install the
+      # runner on that host with scripts/install/install_docker_host.py.
+      # Without these three the engine has no socket to dial, no
+      # credential to present and no scripts to read, so an installed and
+      # active runner would still refuse every `NAME.local.sh` step.
+      #
+      # Literal paths like every other mount here, because a store
+      # install deploys this file as it stands with no env file beside
+      # it. They are also what the installer must be pointed at.
+      #
+      # None of the three reaches the Docker daemon: the runner holds the
+      # socket's group on the host and this container gains nothing
+      # (docs/runtime-contract.md).
+      #
+      # The scripts, READ-ONLY: the engine executes what it reads here.
+      - /DATA/AppData/backupd/workflows:/workflows:ro
+      # The socket directory, and the only one of the three this
+      # container writes: the engine dials
+      # /data/run/workflow-runner.sock, which the runner creates.
+      - /DATA/AppData/backupd/run:/data/run
+      # The credential, one FILE and read-only, exactly like the SSH key
+      # and known_hosts above.
+      - /DATA/AppData/backupd/secrets/workflow-runner.token:/etc/backupd/workflow-runner.token:ro
 
     # The start gate, and a liveness question rather than a health
     # verdict (issue #206). The Web UI below declares
@@ -179,6 +206,15 @@ services:
         - container: /etc/backupd/known_hosts
           description:
             en_us: Pinned SFTP host key, mounted read-only.
+        - container: /workflows
+          description:
+            en_us: Workflow hook scripts, mounted read-only. Local hooks run in containers the Host Workflow Runner launches on this host; leave this empty if you run none.
+        - container: /data/run
+          description:
+            en_us: Where the Host Workflow Runner's socket appears.
+        - container: /etc/backupd/workflow-runner.token
+          description:
+            en_us: The Host Workflow Runner's credential, mounted read-only. The runner's installer writes it.
 
   # The web UI: the shared static bundle plus a reverse proxy to the
   # engine. The only container with a published port, and the app CasaOS

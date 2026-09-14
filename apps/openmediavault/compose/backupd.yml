@@ -70,6 +70,23 @@ services:
     # a fallback default here would put the backup root on the OS disk and
     # the config file would be created as a directory, which is the one
     # failure this profile exists to make impossible.
+    #
+    # The last three are the Host Workflow Runner's, and this profile
+    # carries them because step 9 of
+    # docs/acceptance/openmediavault-provider-acceptance.md tells the
+    # administrator local hooks are AVAILABLE here: OMV is Debian with
+    # systemd, so the runner installs onto the host beside this stack with
+    # scripts/install/install_docker_host.py. Without these three the
+    # engine has no socket to dial, no credential to present and no
+    # scripts to read, so the runner could be installed and active and
+    # every `NAME.local.sh` step would still be refused (issue #921).
+    # They point under the same DISK prefix as everything else, which is
+    # what --workflows-dir, --runtime-dir and the token path the installer
+    # writes must be pointed at.
+    #
+    # Nothing here reaches the Docker daemon: docs/runtime-contract.md's
+    # "this container gains nothing" still holds, and it is the RUNNER,
+    # on the host, that holds the socket's group.
     volumes:
       - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/state:/data/state
       - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/backups/backupd:/data/backups
@@ -79,6 +96,19 @@ services:
       - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/config:/etc/backupd/config
       - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/secrets/id_ed25519:/etc/backupd/id_ed25519:ro
       - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/secrets/known_hosts:/etc/backupd/known_hosts:ro
+      # The hook scripts, READ-ONLY: the engine executes what it reads
+      # here, so a writable mount would be one compromised process away
+      # from running anything on this host.
+      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/workflows:/workflows:ro
+      # The runner's socket directory, and the only directory this
+      # container writes for it: the engine dials
+      # /data/run/workflow-runner.sock, which the runner creates.
+      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/run:/data/run
+      # The runner's credential, one FILE and read-only, exactly like the
+      # SSH key and known_hosts above: nothing in this container writes
+      # it, and the rest of the secrets directory is not this container's
+      # business.
+      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/secrets/workflow-runner.token:/etc/backupd/workflow-runner.token:ro
 
     # The start gate, and a liveness question rather than a health
     # verdict (issue #206). The Web UI below declares

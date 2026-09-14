@@ -55,6 +55,12 @@ shape every metadata format reduces to.
                    /opt/backupd/config /opt/backupd/secrets
    ```
 
+   The Host Workflow Runner's three paths — `/opt/backupd/workflows`,
+   `/opt/backupd/run` and `/opt/backupd/secrets/workflow-runner.token` — are the
+   runner installer's to create, not yours (issue #921). The stack mounts them so
+   the engine can reach a runner installed on this host; a deployment that runs no
+   local hooks needs nothing there.
+
 2. Put the SFTP private key at `/opt/backupd/secrets/id_ed25519` (mode
    0600) and the pinned host key at `/opt/backupd/secrets/known_hosts`.
    Neither is ever baked into the image or into any file in this repository.

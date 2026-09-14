@@ -300,6 +300,88 @@ func LocalHookCell(wr WorkflowRunner, contract map[string]string) (bool, string)
 	return LocalHookDocStates(wr.Doc, string(doc), wr.LocalHooks)
 }
 
+// RuleLocalHookMounts is a profile that advertises local workflow hooks
+// and mounts nothing the engine could reach a runner through.
+const RuleLocalHookMounts = "local-hook-mounts-missing"
+
+// CheckLocalHookMounts is the rule issue #921 was filed for: a provider
+// that declares local hooks AVAILABLE and ships a runtime profile of its
+// own has to mount the three paths the engine reaches the runner through.
+//
+// Why it did not already exist is the interesting part, because three
+// rules pass over this and each is right on its own terms.
+// CheckRequiredMounts holds the five storage roles and treats
+// HostPlaneRoles as known and optional, which it has to: a NAS store
+// profile that deploys no runner has no business being told it is
+// missing storage. CheckStackEquivalence compares an adapter's mounts to
+// the canonical stack's and draws the same distinction since #881.
+// And the local-workflow-hooks matrix cell compares three DECLARATIONS —
+// the capability contract, conformance.json and the operator's document
+// — which is what #877 built it to do.
+//
+// So "available" and "mounts none of them" was a combination nothing
+// read together, and four profiles were in it: an administrator who
+// followed the procedure, installed the runner and watched systemd call
+// it active still had an engine with no socket to dial, no credential to
+// present and no scripts to read. The capability was advertised and
+// undeliverable, which is the failure #877's row exists to prevent, one
+// layer below where that row looks.
+//
+// Optionality is unchanged for everybody else. A provider that declares
+// the hooks UNAVAILABLE is not asked (ZimaOS mounts none of the three and
+// is right not to), and neither is the one that deploys
+// container/compose.yaml itself, because that file carries them and
+// "canonical-compose" is exactly the declaration that says so.
+//
+// What this must NOT key on is wr.Platform, and getting that wrong is
+// how the rule would have missed half of #921. An empty Platform means
+// no row in the capability contract — the provider selects the generic
+// runtime profile and inherits generic's answer — and it says nothing
+// about whether the provider ships a stack. CasaOS and Portainer have no
+// platform row and ship a compose file each, and they were two of the
+// four. So the question is whose runtime definition this is, which is
+// what Metadata.Kind answers.
+func CheckLocalHookMounts(source string, wr WorkflowRunner, kind string, engine *Service, c Canonical) []Violation {
+	if wr.LocalHooks != LocalHooksAvailable || kind == "canonical-compose" {
+		return nil
+	}
+	if engine == nil {
+		return []Violation{{source, RuleLocalHookMounts,
+			fmt.Sprintf("declares local hooks %s and no service running the engine command, so there is nothing for the three runner paths to be mounted into", LocalHooksAvailable)}}
+	}
+
+	readOnly := map[string]bool{}
+	for _, p := range c.ReadOnlyContainerPaths {
+		readOnly[p] = true
+	}
+	byRole := map[string]Mount{}
+	for _, m := range engine.Mounts {
+		byRole[m.Role] = m
+	}
+
+	var out []Violation
+	for _, role := range HostPlaneRoles {
+		want, _ := c.ContainerPaths.ByRole(role)
+		m, ok := byRole[role]
+		if !ok {
+			out = append(out, Violation{source, RuleLocalHookMounts,
+				fmt.Sprintf("service %s mounts nothing at %s, and this provider declares local hooks %s: the engine reads %s to reach the Host Workflow Runner, so an operator who installs the runner exactly as this provider's procedure says still gets every local step refused",
+					backquote(engine.Name), backquote(want), LocalHooksAvailable, backquote(role))})
+			continue
+		}
+		if readOnly[m.ContainerPath] && !m.ReadOnly {
+			out = append(out, Violation{source, RuleLocalHookMounts,
+				fmt.Sprintf("service %s mounts %s writable, and canonical.json declares it read-only", backquote(engine.Name), backquote(m.ContainerPath))})
+		}
+		if !readOnly[m.ContainerPath] && m.ReadOnly {
+			out = append(out, Violation{source, RuleLocalHookMounts,
+				fmt.Sprintf("service %s mounts %s read-only, and the canonical contract needs it writable: the runner's socket appears in that directory", backquote(engine.Name), backquote(m.ContainerPath))})
+		}
+	}
+	sortViolations(out)
+	return out
+}
+
 // ---------------------------------------------------------------------
 // The host-side prerequisite, in canonical.json
 // ---------------------------------------------------------------------
