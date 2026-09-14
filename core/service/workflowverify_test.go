@@ -664,3 +664,62 @@ func TestEachFindingCarriesItsOwnSourceLine(t *testing.T) {
 		t.Fatalf("no BSH003 finding on the script: %+v", report.Scripts[0].Lint)
 	}
 }
+
+// The captured scripts a validation reports on have to outlive the
+// on-disk checks, because the pass is not over when those finish: the
+// host runner's own `bash -n` runs afterwards, over the SAME captured
+// bytes, and reads them out of the spool through plan.OpenScript.
+//
+// #816's rig found this from a browser. checkPlan deleted its spool on
+// the way out, so every set with a NAME.local.sh hook came back as
+//
+//	local_bash_syntax  error  this workflow run plan cannot be built:
+//	<state>/workflow-runs/validate-NNN cannot be opened: no such file
+//	or directory
+//
+// once per local step -- and an error-severity finding is what makes
+// WorkflowValid false, so a deployment whose hooks were sound reported
+// "this backup set is sound and its hooks are not" on the CLI and in the
+// UI's validation report. The probe itself needs a runner and a docker
+// daemon; the lifetime that broke does not, which is what this holds.
+func TestTheValidationSpoolOutlivesThePlanChecks(t *testing.T) {
+	t.Parallel()
+
+	svc, _, root := openWorkflowSaveService(t)
+	writeHook(t, root, "alpha-before", "10-quiesce.local.sh",
+		"#!/usr/bin/env bash",
+		"echo quiescing",
+	)
+
+	cfg := svc.state.Load().inner.Config
+	bs, err := lookupConfiguredBackupSet(cfg, "production/alpha")
+	if err != nil {
+		t.Fatalf("lookupConfiguredBackupSet: %v", err)
+	}
+	bs.Workflow = &config.SetWorkflow{BeforeDir: "alpha-before"}
+
+	v := &workflowValidator{svc: svc, cfg: cfg, set: bs}
+	v.checkPlan(context.Background(), cfg.WorkflowStagesFor(&bs))
+
+	steps := v.plan.Steps()
+	if len(steps) != 1 {
+		t.Fatalf("the plan holds %d step(s), want the one hook written above: %+v", len(steps), steps)
+	}
+
+	// The assertion, and it is made where the runner's probe makes it.
+	if _, err := v.plan.OpenScript(steps[0].ID); err != nil {
+		t.Fatalf("the captured script cannot be read after the on-disk checks, so the runner's own bash -n would report a broken deployment: %v", err)
+	}
+
+	// And the other half of the same contract: it does not leak. The
+	// spool is this validation's private copy under the state directory,
+	// and a pass that left one behind would grow one per validation for
+	// as long as the deployment ran.
+	if v.releaseSpool == nil {
+		t.Fatal("the validation captured a spool and kept no way to remove it")
+	}
+	v.releaseSpool()
+	if _, err := v.plan.OpenScript(steps[0].ID); err == nil {
+		t.Error("the spool survived the pass that owns it")
+	}
+}

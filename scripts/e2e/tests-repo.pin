@@ -267,7 +267,7 @@ TESTS_REPO_URL=https://github.com/backupdproject/backupd-tests.git
 # #624, so #60's three cases are red over there until it moves to whatever
 # commit this branch merges as. That is the same manual half every paragraph
 # above keeps flagging.
-TESTS_REPO_SHA=d04314490ca6c0af5de295744cb6063fbb7c2d0e
+TESTS_REPO_SHA=5ff2ef51bb7ded7e0d6bf9902f050ccc7035e22d
 #
 # Moved to bccd71c, backupd-tests#65, off their merged main and not
 # off the branch, for the reason the paragraph about a794c38 above already
@@ -324,3 +324,58 @@ TESTS_REPO_SHA=d04314490ca6c0af5de295744cb6063fbb7c2d0e
 # hook is red on main for that reason alone. It is the manual half of the
 # lockstep every paragraph above keeps flagging, and no bump on this side
 # can close it.
+#
+# ---------------------------------------------------------------------
+#
+# 5ff2ef5 is EPIC L's browser evidence: backupd-tests' feat/816-workflow-
+# e2e, carrying suites/web-ui's four workflow-*.spec.ts files and the
+# Suite C equivalence rows for every mutating workflow route. It is a
+# BRANCH HEAD rather than a merged main commit, which every paragraph
+# above would normally refuse, and the reason is lockstep: the rig those
+# specs need did not exist until this commit of THIS repository, so their
+# branch cannot be merged against a main that cannot run it and this one
+# cannot be proved against a pin that predates it. #816 lands both halves
+# together, and their merge is the follow-up.
+#
+# What this pin buys, run through scripts/e2e/three-machine-web-ui.sh
+# against a real stack on the machine this was written on: a Host
+# Workflow Runner in its own container (the product's own binary, the
+# host's Docker socket, non-root, socket and credential in volumes the
+# engine mounts the way container/compose.yaml does), an exec host whose
+# `hookuser` account genuinely runs a NAME.remote.sh, the VPS's
+# internal-sftp-forced account genuinely refusing one, and twelve
+# scenario backup sets whose hooks produce the states #816 is about --
+# including the two the epic exists for: `backup=skipped workflow=failed`
+# for a failing before hook, and `backup=success workflow=failed
+# cleanup=failed` for a failing after hook.
+#
+# And what it does NOT buy, stated here because a reader of this file is
+# the person who will next be surprised by it:
+#
+#   27 cases in suites/web-ui are RED, and they are red at
+#   d04314490 too. That was measured rather than assumed: the same rig,
+#   with --no-workflows so none of #816's fixture is in play, was run
+#   against both this sha and the previous one, and the two failure lists
+#   are identical -- sixteen wizard cases, four backup-sets, three
+#   quarantine-activity, and one each in auth, dashboard,
+#   provider-treatment and safety-invariants. They are product/suite
+#   drift on their main, tracked in #913, and no bump on this side closes
+#   them. This bump does not make the gate redder; it does not make it
+#   green either.
+#
+#   And the run cases in workflow-run.spec.ts and workflow-terminal.spec.ts
+#   cannot pass on ANY deployment this repository can build today, for a
+#   reason that is not the suite's fault and not the rig's: POST
+#   /api/v1/operations run_backup_set is refused 403
+#   DESTRUCTIVE_OPERATIONS_DISABLED, because apps/common/webhost's only
+#   DestructiveGate implementation is NotYetImplementedGate and its own
+#   doc says there is deliberately no flag that can make it report true
+#   until #92 is done. So a browser cannot start a backup on a real
+#   deployment at all, and the specs that press "Run this backup set"
+#   fail waiting for a run the engine was never going to be allowed to
+#   start. The runs those cases want DO happen -- the scheduler makes
+#   them on its own timer, which is what the evidence above was read from
+#   -- so the fix is for those cases to observe a scheduled run rather
+#   than to ask for one, and that is a change on their side. It is
+#   written up in #816 rather than worked around here, because a rig that
+#   opened that gate would be a rig proving something no operator can do.

@@ -421,6 +421,17 @@ func (b *BackupService) ValidateWorkflow(ctx context.Context, id string) (Workfl
 		},
 	}
 
+	// The spool outlives checkPlan and dies with the pass. Both syntax
+	// checks read the captured bytes -- this product's own verification
+	// inside checkPlan, and the runner's `bash -n` from checkExecutors
+	// afterwards -- so the one thing that must not happen is the copy
+	// disappearing between them.
+	defer func() {
+		if v.releaseSpool != nil {
+			v.releaseSpool()
+		}
+	}()
+
 	v.run(ctx)
 
 	return v.report, nil
@@ -434,6 +445,30 @@ type workflowValidator struct {
 
 	report WorkflowValidation
 	plan   workflow.Plan
+
+	// releaseSpool removes the throwaway spool checkPlan captured this
+	// validation's scripts into, and it is held here rather than
+	// deferred inside checkPlan because the spool has to OUTLIVE that
+	// function.
+	//
+	// #816 found this from a browser. checkPlan used to
+	// `defer cleanup()`, and checkExecutors -- which runs after it --
+	// asks the host runner to parse each local hook's CAPTURED bytes,
+	// through plan.OpenScript. With the spool already gone, every set
+	// with a NAME.local.sh hook reported
+	//
+	//   local_bash_syntax  error  this workflow run plan cannot be
+	//   built: <spool>/validate-NNN cannot be opened: no such file or
+	//   directory
+	//
+	// once per local step, and an error-severity finding is what makes
+	// WorkflowValid false -- so a deployment whose hooks were perfectly
+	// sound reported "this backup set is sound and its hooks are not"
+	// on the CLI and in the UI's validation report. Nothing was wrong
+	// with the deployment, and nothing in the product's own tests could
+	// see it: the report was built from a plan whose bytes had been
+	// deleted between the two halves of the same pass.
+	releaseSpool func()
 
 	// syntax holds every observation about the two syntax checks until
 	// settleSyntaxFindings collapses them. See scriptFinding.
@@ -538,7 +573,7 @@ func (v *workflowValidator) checkPlan(ctx context.Context, stages []workflow.Sta
 
 		return
 	}
-	defer cleanup()
+	v.releaseSpool = cleanup
 
 	root, err := workflow.NewRoot(v.cfg.Workflows.Root)
 	if err != nil {
@@ -582,10 +617,12 @@ func (v *workflowValidator) checkPlan(ctx context.Context, stages []workflow.Sta
 	v.ok(WorkflowCheckScriptHash, "every script was read and hashed; a run re-verifies these hashes before it executes anything")
 	v.ok(WorkflowCheckPermissionAncestry, "no stage directory, and no ancestor of one inside the root, is a symbolic link or writable by group or other")
 
-	// Last, and inside this function rather than beside it, because the
-	// bytes it reads come out of the spool cleanup removes on the way
-	// out: the verification is about the CAPTURED bytes, which are the
-	// ones a run would execute and the ones the hashes above cover.
+	// Here rather than beside the call in `run`, because it reads the
+	// CAPTURED bytes and this is where they have just been captured:
+	// the verification is about what a run would execute and about the
+	// hashes above, not about the files in the operator's tree. The
+	// copy stays readable until the whole pass ends (releaseSpool), so
+	// the runner's own `bash -n` in checkExecutors sees it too.
 	v.checkScriptLint(ctx)
 }
 
