@@ -18,7 +18,7 @@
  * that uses it into a test of the Source step.
  */
 import { expect } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 /** Synthetic fixture only — nothing resembling real key material ever
@@ -27,6 +27,19 @@ export const FIXTURE_PRIVATE_KEY = "FAKE-TEST-KEY-MATERIAL-not-a-real-key-012345
 
 /** A rail button, by the step label it carries as its accessible name. */
 export const railStep = (label: string) => screen.getByRole("button", { name: label });
+
+/**
+ * Every step label this rail is currently drawing, in rail order, read
+ * off the buttons themselves rather than restated from a literal here
+ * (issue #923). A test that wants to know whether some copy names a
+ * step an operator can actually click asks THIS, so relabelling the
+ * rail moves the expectation with it and reintroducing a step name the
+ * rail lost cannot pass.
+ */
+export const railLabels = (): string[] =>
+  screen
+    .getAllByRole("listitem")
+    .map((li) => within(li).getByRole("button").getAttribute("aria-label") ?? "");
 
 /**
  * Step 2's credentials and host key: import a key, wait for the host-key
