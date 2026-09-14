@@ -4,6 +4,43 @@
 
 ### Added
 
+- **The workflow feature is now proved in a browser against a real
+  deployment** (EPIC L, #816). `scripts/e2e/three-machine-web-ui.sh` stands
+  up what EPIC L actually needs and what no mock can stand in for: a **Host
+  Workflow Runner** in a container of its own
+  (`scripts/e2e/runner-machine.Dockerfile`, the product's own binary from the
+  run's own image plus a Docker client), holding the host's Docker socket,
+  running non-root with `--group-add` for that socket's group, with its
+  authenticated Unix socket and its installation credential in volumes the
+  engine mounts exactly as `container/compose.yaml` does — so the engine
+  reads the credential at the path IT sees, which is the fix #877 landed and
+  the thing nothing else in this repository executes. The engine container's
+  posture is unchanged: no capability, no privilege, no socket, no host root.
+
+  **Two SSH postures, one client key**, because #810's claim is that an SFTP
+  transfer credential must not be assumed to grant shell exec, and a claim
+  about two capabilities cannot be proved against one account. A
+  `NAME.remote.sh` runs over `scripts/e2e/exec-host.Dockerfile`'s shell
+  account; the VPS's chrooted, internal-sftp-forced account is refused one by
+  the SERVER — `the server answered the exec request with "This service
+  allows sftp connections only."` — while backup over that same credential
+  goes on working and its artifacts stay in the catalogue.
+
+  **Twelve scenario backup sets and a committed script library**
+  (`scripts/e2e/workflows/`), one stage directory per scenario, every printed
+  line a contract a suite across the repository boundary asserts: a happy
+  local pair, a real remote pair, a before hook that fails so the backup is
+  **skipped**, an after hook that fails so the run is `backup=success
+  workflow=failed cleanup=failed`, hostile terminal output (OSC 8, a window
+  title, a window-manipulation sequence), a secret-backed variable a hook
+  resolves without disclosing, a bounded burst, a long hook to crash an
+  engine into, a six-step run, lint findings below the save gate, and a
+  `BSH003` directory the save gate refuses. Plus a control directory the
+  client drives the rig from — `crash` (SIGKILL the engine and start it
+  again, so a run in flight is one nobody observed the end of),
+  `runner-down`/`runner-up` — on the same one-ack-per-request protocol
+  `--break-engine` uses.
+
 - **A hook script that does not pass verification cannot be saved** (EPIC L,
   #906, over #813's validation surface and #814's Workflow tab). Hook scripts
   are now parsed and statically checked, and a passing verdict is a
@@ -614,6 +651,42 @@
   issued the current one.
 
 ### Fixed
+
+- **The step log terminal fits the window it is read in** (EPIC L, #916). In a
+  940px window it measured 1178px and the page scrolled sideways — with
+  wrapping ON, which is the one setting that promises it will not. Two causes,
+  and the second is the one that mattered: the terminal was not capped at its
+  own column, and a step row on the run page is a
+  `repeat(auto-fit, minmax(130px, 1fr))` grid whose min-content width is 130px
+  times the facts a step carries, about 1170px, which the shell's
+  `overflow: auto` main took rather than clipped. Both are now bounded at
+  100%, and the desktop layout is unchanged because 100% was always the larger
+  there. Found in a browser by #816's rig; the small-window case that measured
+  it is now the regression guard.
+
+- **Coming back to a step log no longer re-reads it** (EPIC L, #917). The
+  viewer keeps the scrollbacks of eight steps so switching between them is
+  instant, and then asked the engine for the log again anyway — so the cache
+  saved memory and nothing else, and an operator comparing a failure with the
+  step before it paid a durable read per click. A step held in full (read at
+  least once, its page reported complete, no error waiting to be retried) is
+  now drawn from the kept scrollback and starts no follower and no read. A
+  step still running, or one whose page ended mid-log, resumes its follower
+  exactly as before, and the ninth distinct step still evicts the oldest and
+  still costs its one read.
+
+
+- **A validation report no longer calls a sound deployment's hooks broken**
+  (EPIC L, #816). `ValidateWorkflow` captured each hook into a throwaway
+  spool and deleted it as the on-disk checks finished, while the check that
+  runs next asks the Host Workflow Runner to `bash -n` those same captured
+  bytes. Every backup set with a `NAME.local.sh` hook therefore reported an
+  error-severity `local_bash_syntax` finding — `this workflow run plan cannot
+  be built: .../validate-NNN cannot be opened: no such file or directory` —
+  and `workflow valid: false`, on the CLI and in the Workflow tab's own
+  report, for hooks that were perfectly fine. It needed a reachable runner to
+  appear at all, which is why the repository's own tests could not see it and
+  why #816's rig found it on its first green stack.
 
 - **`scripts/api/check-client-paths.sh` runs again** (#730). The diagnostics
   commit on this branch changed `ui/shared/src/api/client.ts` to fetch through

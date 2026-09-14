@@ -108,6 +108,11 @@
 #   RM_BACKUP_SET        the seeded set's name
 #   RM_ARTIFACTS_DIR     /artifacts, mounted out to the host
 #
+# plus, unless --no-workflows, the workflow contract in the section
+# below: the backup sets #816's scenarios need, the seeded script
+# library's root, and the control channel that crashes the engine or
+# takes the runner away.
+#
 # A Playwright config that sees RM_BASE_URL must use it as `baseURL` and
 # must NOT start a web server: there is one, it is another container, and
 # `npm run dev` in here would serve the mock this whole script exists to
@@ -205,6 +210,96 @@
 #                     exists to produce fails here rather than handing a
 #                     suite a healthy stack to pass against.
 #
+# # The workflow machinery (#816)
+#
+# EPIC L put hook scripts in the product, and none of them can be proven
+# in a browser against a mock: a local hook is executed by a SEPARATE
+# PROCESS on the host, a remote one by an sshd that may refuse, and the
+# interesting states are what a run looks like when one of those fails
+# halfway. So the rig stands the whole apparatus up, and by default
+# rather than behind a flag, because a workflow case that skips itself
+# for want of a fixture is a case that never ran.
+#
+#   THE RUNNER    `backupd workflow-runner serve`, from THIS run's
+#                 product image, in a container of its own
+#                 (scripts/e2e/runner-machine.Dockerfile) that is NOT
+#                 the engine's. It holds this host's Docker socket,
+#                 because every local hook runs in an ephemeral
+#                 container (#865) -- which is the privilege the
+#                 installer grants the runner's service account and
+#                 withholds from the engine. The engine reaches it
+#                 through one authenticated Unix socket in a volume the
+#                 two share, with the credential read at the path the
+#                 ENGINE sees (backupd#877).
+#
+#   THE EXEC HOST a second sshd (scripts/e2e/exec-host.Dockerfile, the
+#                 definition core/tests/machines already uses), carrying
+#                 an ordinary shell account and an internal-sftp-forced
+#                 one that authenticate with the SAME client key. That is
+#                 what makes "this credential may not exec" provable:
+#                 e2e/workflow-remote runs a NAME.remote.sh over the
+#                 shell account and e2e/vps is refused one over its own
+#                 transfer credential, by the server, not by this rig.
+#
+#   THE LIBRARY   scripts/e2e/workflows/, seeded into a volume the engine
+#                 mounts read-only at /workflows. One stage directory per
+#                 scenario, and every line those scripts print is
+#                 asserted by the suite, which is why they are committed
+#                 files rather than here-documents.
+#
+# The client container gets a backup set name per scenario -- happy,
+# remote, SFTP-only-refused, no-hooks, before-fail, after-fail, hostile
+# output, secret-backed environment, slow, crash, many-step, lint
+# findings and a gate-refused script -- and the plaintext of the one
+# secret a hook resolves, so a spec can assert it appears NOWHERE.
+#
+#   RM_WORKFLOW_CONTROL  a directory under /artifacts, the same protocol
+#                        --break-engine's channel uses and for the same
+#                        reason: the capability lives on THIS host and
+#                        the client is given a few files rather than a
+#                        Docker socket. Three requests:
+#
+#                          crash        -> the engine is KILLED and
+#                                          started again, so a run in
+#                                          flight is one nobody observed
+#                                          the end of and startup
+#                                          reconciliation has to account
+#                                          for it. "crashed" appears
+#                                          once the browser's own path to
+#                                          the engine is good again, or
+#                                          "crash-failed" does.
+#                          runner-down  -> the runner is stopped, so a
+#                                          local hook has nothing to run
+#                                          on. "runner-stopped", or
+#                                          "runner-down-failed".
+#                          runner-up    -> and started again, acked
+#                                          "runner-started" only once it
+#                                          answers its own status verb,
+#                                          or "runner-up-failed".
+#
+#                        Exactly one ack per request, a success ack means
+#                        a state this script WATCHED the stack reach, and
+#                        the request file is removed as it is picked up.
+#                        Not handed over under --keep-up, for the reason
+#                        the engine channel is not.
+#
+#   --no-workflows   leave all of it out. For a machine whose daemon
+#                    cannot host the runner, and it is honest rather than
+#                    quiet: none of the variables above is set, so every
+#                    workflow case skips itself and says so.
+#
+# One thing this rig cannot give a browser, and says so rather than
+# leaving a suite to discover it as a timeout: a browser cannot START a
+# backup. POST /api/v1/operations run_backup_set is refused 403
+# DESTRUCTIVE_OPERATIONS_DISABLED on every deployment this repository
+# can build, because apps/common/webhost ships one DestructiveGate and
+# its own doc says nothing may flip it before #92. The SCHEDULER runs
+# the same cycle on a timer regardless, which gate.go states in as many
+# words, so the rig sets that timer to the product's own floor -- one
+# minute, config.MinPollInterval -- and hands it over as
+# RM_WF_POLL_SECONDS. A spec watches for the run the timer produces
+# instead of asking for one.
+#
 # The exit status is the client container's, not the teardown's. A run that
 # tore down cleanly after a red suite is a red run.
 #
@@ -289,6 +384,12 @@ front_proxy="${RM_FRONT_PROXY_TLS:-0}"
 # Off by default; every line it adds is behind this flag, so a default run
 # is the run it was before.
 break_engine="${RM_BREAK_ENGINE:-0}"
+# EPIC L (#816). The Host Workflow Runner, the exec host, the seeded
+# script library and the backup sets that use them. ON by default,
+# because the point of this rig is that a browser meets the real thing:
+# a suite handed a deployment with no hooks configured skips every
+# workflow case and reports a pass.
+workflows="${RM_WORKFLOWS:-1}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -302,9 +403,10 @@ while [ $# -gt 0 ]; do
     --keep-up) keep_up=1; shift ;;
     --front-proxy-tls) front_proxy=1; shift ;;
     --break-engine) break_engine=1; shift ;;
+    --no-workflows) workflows=0; shift ;;
     -h|--help) render_help; exit 0 ;;
     *) die "unknown option $1" \
-           "Usage: $0 [--suite DIR] [--artifacts DIR] [--image REF] [--front-proxy-tls] [--break-engine] [--keep-up] [--keep-on-failure]" ;;
+           "Usage: $0 [--suite DIR] [--artifacts DIR] [--image REF] [--front-proxy-tls] [--break-engine] [--no-workflows] [--keep-up] [--keep-on-failure]" ;;
   esac
 done
 
@@ -330,6 +432,10 @@ c_engine="rm-webui-engine-$run_id"
 c_web="rm-webui-web-$run_id"
 c_client="rm-webui-client-$run_id"
 c_proxy="rm-webui-proxy-$run_id"
+# The two machines EPIC L adds. The runner is the process the engine
+# cannot be, and the exec host is the machine a remote hook runs on.
+c_exec="rm-webui-exechost-$run_id"
+c_runner="rm-webui-runner-$run_id"
 
 # The deployment's state, in Docker volumes rather than host directories,
 # and the reason is the SSH key. core/internal/transport/rclone/ssh.go
@@ -344,6 +450,17 @@ v_keys="rm-webui-keys-$run_id"
 v_config="rm-webui-config-$run_id"
 v_state="rm-webui-state-$run_id"
 v_backups="rm-webui-backups-$run_id"
+# The workflow machinery's three, and each is a volume rather than a host
+# directory for the reason v_keys is: modes and ownership. The script
+# library has to be owned by the uid the engine runs as and not
+# group-writable or the engine refuses to read it; the runner's socket
+# directory has to be 0700 owned by the runner; and the credential in the
+# secrets volume has to be exactly 0600 or the runner refuses to load it.
+# A Docker volume is the same filesystem both containers see, so a mode
+# set once is the mode both get.
+v_workflows="rm-webui-workflows-$run_id"
+v_wfrun="rm-webui-wfrun-$run_id"
+v_wfsecrets="rm-webui-wfsecrets-$run_id"
 
 # The payload is the exception, and deliberately: the harness generates it
 # and has to be able to digest it from outside, and it holds nothing
@@ -370,14 +487,53 @@ engine_control="$artifacts_dir/engine-control"
 engine_control_in_client="/artifacts/engine-control"
 engine_watcher_pid=""
 
+# #816's control channel, beside the engine's and for the same reasons.
+# Three verbs rather than two, because the states this one has to produce
+# are a crashed engine and an absent runner.
+workflow_control="$artifacts_dir/workflow-control"
+workflow_control_in_client="/artifacts/workflow-control"
+workflow_watcher_pid=""
+
+# The runner's workspace, which is the one path in this rig that must be
+# a HOST directory: the runner asks the daemon to bind-mount each step's
+# working directory into that step's hook container, and the daemon
+# resolves those paths on the host. So the runner's own view of them has
+# to be the host's, which is why it is mounted at the same path inside
+# the runner's container rather than at a tidier one.
+#
+# Beside the artifacts directory rather than inside $run_dir, because
+# $run_dir is 0700 owned by whoever ran this and the runner runs as the
+# deployment's uid: a 0700 ancestor owned by somebody else is a
+# directory it cannot traverse at all.
+wf_prefix="$tmp_root/$run_id-workflow-runner"
+wf_workspace="$wf_prefix/workspace"
+
 product_image="${prebuilt_image:-backupd-web-ui-e2e:$run_id}"
 source_image="backupd-e2e-source:1"
 client_image="backupd-e2e-client:1"
 proxy_image="backupd-e2e-proxy:1"
+exec_image="backupd-e2e-exec-host:1"
+# Per-run, because it is built FROM the product image this run tested:
+# the runner refuses an engine from another release, so the tag has to
+# move when that image does.
+runner_image="backupd-e2e-runner:$run_id"
+# The image every local hook runs in. `workflow-runner serve` refuses to
+# pull one, so this is pulled by the rig, once, and is the same reference
+# distribution/packaging/canonical.json pins for a real installation.
+hook_image="${RM_HOOK_IMAGE:-bash:5.2.37-alpine3.21}"
 
 source_dockerfile="$repo_root/scripts/e2e/source-machine.Dockerfile"
 client_dockerfile="$repo_root/scripts/e2e/client-machine.Dockerfile"
 proxy_dockerfile="$repo_root/scripts/e2e/proxy-machine.Dockerfile"
+exec_dockerfile="$repo_root/scripts/e2e/exec-host.Dockerfile"
+runner_dockerfile="$repo_root/scripts/e2e/runner-machine.Dockerfile"
+if [ "$workflows" = 1 ]; then
+  [ -r "$exec_dockerfile" ] || die "the exec host Dockerfile is missing at $exec_dockerfile."
+  [ -r "$runner_dockerfile" ] || die "the workflow runner machine Dockerfile is missing at $runner_dockerfile."
+  [ -d "$repo_root/scripts/e2e/workflows" ] \
+    || die "the seeded hook script library is missing at $repo_root/scripts/e2e/workflows." \
+           "Every workflow case asserts a line one of those scripts prints, so there is nothing to seed without it."
+fi
 [ -r "$source_dockerfile" ] || die "the VPS machine Dockerfile is missing at $source_dockerfile."
 [ -r "$client_dockerfile" ] || die "the client machine Dockerfile is missing at $client_dockerfile."
 [ "$front_proxy" != 1 ] || [ -r "$proxy_dockerfile" ] \
@@ -394,6 +550,141 @@ app_uid=1000
 app_gid=1000
 
 backup_set="e2e/vps"
+
+# #816's scenarios, one backup set each, and the names are the contract
+# the suite reads out of the environment. Each gets its own local path so
+# no two of them write over each other, and none is scheduled: they run
+# when a browser asks for a run, which is the thing under test.
+wf_set_happy="e2e/workflow-happy"
+wf_set_remote="e2e/workflow-remote"
+wf_set_none="e2e/workflow-none"
+wf_set_before_fail="e2e/workflow-before-fail"
+wf_set_after_fail="e2e/workflow-after-fail"
+wf_set_hostile="e2e/workflow-hostile"
+wf_set_secret="e2e/workflow-secret"
+wf_set_slow="e2e/workflow-slow"
+wf_set_crash="e2e/workflow-crash"
+wf_set_many="e2e/workflow-many"
+wf_set_findings="e2e/workflow-findings"
+
+# name:local-path-under-/data/backups. e2e/vps is not here: it exists
+# already, it is the SFTP-only posture, and its cycle has to run before
+# any hook is attached to it.
+wf_sets=(
+  "$wf_set_happy:workflow-happy"
+  "$wf_set_remote:workflow-remote"
+  "$wf_set_none:workflow-none"
+  "$wf_set_before_fail:workflow-before-fail"
+  "$wf_set_after_fail:workflow-after-fail"
+  "$wf_set_hostile:workflow-hostile"
+  "$wf_set_secret:workflow-secret"
+  "$wf_set_slow:workflow-slow"
+  "$wf_set_crash:workflow-crash"
+  "$wf_set_many:workflow-many"
+  "$wf_set_findings:workflow-findings"
+)
+
+# set|before-dir|after-dir|execution-connection, all four fields
+# present and the empty ones meaning "this stage is disabled", which is a
+# different state from a stage that exists and is empty. Relative to
+# /workflows, the way `backup-set workflow patch` spells them.
+#
+# $wf_set_none is deliberately absent: a set with no workflow block at
+# all is what the quiet empty surface renders, and a global stage would
+# make that state unreachable for every set at once, which is why none is
+# configured here either.
+
+# The declared execution connection's id, and it is the exec host's
+# HOSTNAME rather than a prettier "exec-host" on purpose. The product
+# reports a remote step's executor as "Remote · <connection id>", and the
+# hook itself prints the machine it ran on, and a suite proving far-side
+# execution compares the two: a hook that had quietly run on the manager
+# would print the engine's host while the product named something else.
+# With the id spelled differently from the hostname, that cross-check
+# read "the hook printed that it ran on exechost and the product says it
+# executed on Remote · exec-host, so one of them is describing a
+# different machine" -- which was true of the NAMES and false of the
+# machine. One name for one machine: the container's hostname, its
+# network alias, the connection's host and the connection's id are all
+# `exechost`.
+exec_connection="exechost"
+exec_user="hookuser"
+wf_stages=(
+  "$wf_set_happy|happy-before|happy-after|"
+  "$wf_set_remote|remote-before|remote-after|$exec_connection"
+  # The SFTP-only posture, and the fourth field is the whole of it. A
+  # NAME.remote.sh with NO execution connection is not a refusal at all
+  # -- the plan cannot even be built, and the product says so: "runs on
+  # the host this backup set pulls from, and no execution connection is
+  # configured for it". That is a configuration mistake, not #810's
+  # case.
+  #
+  # #810's case is the operator who names the connection they already
+  # have: a reference spelled source/set resolves to the backup set's
+  # OWN transfer credential, which here is atmoz/sftp's chrooted,
+  # internal-sftp-forced account. It authenticates, it transfers three
+  # files a cycle, and the server answers an exec request with "This
+  # service allows sftp connections only." So the hook is refused for
+  # the reason the epic is about, by the sshd, while the backup over the
+  # same credential goes on working.
+  "$backup_set|sftp-only-before||$backup_set"
+  "$wf_set_before_fail|before-fail-before||"
+  "$wf_set_after_fail||after-fail-after|"
+  "$wf_set_hostile||hostile-after|"
+  "$wf_set_secret|secret-before||"
+  "$wf_set_slow|slow-before||"
+  "$wf_set_crash|crash-before|crash-after|"
+  "$wf_set_many|many-before|many-after|"
+  "$wf_set_findings|findings-before||"
+)
+
+# The gate's own fixture, and it is NOT in the list above, because the
+# product refuses to let it be: `backup-set workflow patch` runs the
+# shell verification over every script the change points at and declines
+# the whole save at ERROR severity (L7.5, #906). rejected-before holds a
+# BSH003 -- a recursive forced delete that becomes a root-level path when
+# its expansion is empty -- so attaching it here fails, correctly, and a
+# rig that worked around that would be a rig testing a product nobody
+# ships.
+#
+# So the set exists with NO hooks configured and the directory is seeded
+# and named to the suite instead. The refusal is then provable where it
+# happens: a browser filling that directory into the set's workflow form
+# and being turned down with the finding on it.
+wf_rejected_dir="rejected-before"
+
+# The names on the runner's side of the socket, and the paths on the
+# ENGINE's. They are different views of the same two files, which is the
+# whole of why config.yaml carries the engine's view: a token_file naming
+# the installer's host path is a file that does not exist in there, and
+# every local hook then fails authentication (backupd#877).
+runner_socket_name="workflow-runner.sock"
+runner_token_name="workflow-runner.token"
+engine_secrets_mount="/etc/backupd/wf-secrets"
+engine_token_path="$engine_secrets_mount/$runner_token_name"
+# How the product names the runner on its own surfaces, handed to the
+# suite so a spec asserting the "Runs on" column reads it from here
+# rather than from a copy of the product's string.
+runner_display="Host Workflow Runner"
+
+# How often the deployment polls, in seconds, and it is the product's own
+# floor (config.MinPollInterval): a browser cannot START a run -- the
+# destructive gate refuses one on every deployment this repository can
+# build (#92) -- so the runs a suite watches are the scheduler's, and
+# this is how long the longest of those waits can be. Handed to the
+# client so no spec has to hard-code a cadence the rig owns.
+wf_poll_seconds=60
+
+# The one secret a hook of this run resolves. Generated per run like the
+# administrator's password, written into the deployment's secrets volume
+# and never into config.yaml, which holds the PATH to it. It is handed to
+# the client so a spec can assert it appears on no surface at all: the
+# seeded hook prints only its length, so a page holding this string is a
+# disclosure and not a fixture artefact.
+wf_secret_env="WF_E2E_SECRET"
+wf_secret_name="wf-e2e-secret"
+wf_secret="e2e-secret-$(openssl rand -hex 12)"
+engine_secret_path="$engine_secrets_mount/$wf_secret_name"
 
 # What the client is told. `backupd` is an alias on the edge network
 # and on no other, so it resolves to exactly one container from exactly one
@@ -442,6 +733,33 @@ teardown() {
   # behind that stops a container somebody is reading. Killed even when
   # the containers are kept.
   stop_engine_watcher
+  stop_workflow_watcher
+
+  # The hook containers, which are the one thing in this rig that
+  # another process creates. The runner starts one per local hook and
+  # removes it as the step ends, so a clean run leaves none; a run
+  # killed mid-hook can, and a container holding a mount of a directory
+  # this teardown is about to remove is how a run leaves rubbish behind.
+  #
+  # `backupd.workflow-hook=1` is the PRODUCT's label
+  # (core/internal/hostrunner's LabelHook), not this rig's, and it
+  # carries no rig identity -- so on its own that filter names every
+  # hook container on the host, including a real deployment's runner's
+  # and a second instance of this rig's. This used to say that could
+  # only be this run's, which was an assumption about the host rather
+  # than a property of the filter.
+  #
+  # `since` is the identity that is available: this rig's runner is
+  # created before any hook it can possibly launch, so every hook of
+  # THIS run is newer than that container and no other runner's is
+  # caught. Every other container here is removed by a name this script
+  # recorded; this is the one it cannot name in advance, and it is now
+  # bounded the same way in spirit.
+  if [ "$workflows" = 1 ] && [ -n "$c_runner" ]; then
+    for h in $(docker ps -aq --filter "label=backupd.workflow-hook=1" --filter "since=$c_runner" 2>/dev/null); do
+      docker rm -f "$h" >/dev/null 2>&1 || true
+    done
+  fi
 
   if [ "$keep_up" = 1 ] || { [ "$keep_on_failure" = 1 ] && [ "$status" != 0 ]; }; then
     echo "" >&2
@@ -491,8 +809,20 @@ teardown() {
 remove_run_dir() {
   [ -d "$run_dir" ] || return 0
   rm -f "$run_dir/upload/payload.bin" "$run_dir/upload/schema.sql" "$run_dir/upload/notes.txt" 2>/dev/null || true
-  rm -f "$run_dir/authorized_keys/engine.pub" 2>/dev/null || true
-  rmdir "$run_dir/upload" "$run_dir/authorized_keys" "$run_dir" 2>/dev/null || true
+  rm -f "$run_dir/authorized_keys/engine.pub" "$run_dir/hookdata/marker.txt" 2>/dev/null || true
+  # The runner's workspace, which is the one directory here this script
+  # does not write itself: `workflow-runner serve` creates one per run
+  # and one per step under it and removes each as its step ends, so a
+  # clean run leaves an empty tree and a crashed one leaves whatever
+  # that step had got to. Removed recursively, and the recursion happens
+  # INSIDE a container whose only mount is that directory: the literal
+  # /w/workflow cannot name anything else, which is the property the
+  # by-name rule above is protecting.
+  if [ -d "$wf_workspace" ]; then
+    toolbox -v "$wf_workspace:/w" -- 'rm -rf /w/workflow' >/dev/null 2>&1 || true
+    rmdir "$wf_workspace" "$wf_prefix" 2>/dev/null || true
+  fi
+  rmdir "$run_dir/upload" "$run_dir/authorized_keys" "$run_dir/hookdata" "$run_dir" 2>/dev/null || true
   rmdir "$tmp_root" 2>/dev/null || true
 }
 
@@ -719,6 +1049,133 @@ stop_engine_watcher() {
   engine_watcher_pid=""
 }
 
+# ----------------------------------- the workflow control channel (#816)
+#
+# The same shape as the engine channel above -- a directory of files,
+# requests removed as they are picked up, exactly one ack per request,
+# and a success ack only for a state this script watched the stack reach
+# -- and the reasoning there is the reasoning here, so it is not
+# restated. What differs is what the three verbs do.
+
+workflow_ack() {  # workflow_ack <name> [reason]
+  local name="$1"
+  local reason
+  reason="$(printf '%s' "${2:-}" | tr '\n\t' '  ' | cut -c1-200)"
+  printf '%s\n' "$reason" > "$workflow_control/.$name.tmp"
+  mv -f "$workflow_control/.$name.tmp" "$workflow_control/$name"
+}
+
+# The runner ANSWERING, which is not the same fact as its container
+# running: `serve` proves a docker client, a reachable daemon, the hook
+# image and bash inside it before it binds its socket (#865), and
+# `status` is the same question the engine asks before it will validate a
+# .local.sh hook. So this is the engine's own answer, asked the engine's
+# own way.
+runner_is_live() {
+  docker exec "$c_runner" /backupd workflow-runner status \
+    --runtime-dir /data/run \
+    --workspace-dir "$wf_workspace" \
+    --secrets-dir /data/secrets >/dev/null 2>&1
+}
+
+runner_is_stopped() {
+  [ "$(docker inspect -f '{{.State.Running}}' "$c_runner" 2>/dev/null)" = "false" ]
+}
+
+# The runner's health budget for one "runner-up" request. Smaller than
+# the engine's because what it waits for is smaller: a process that
+# re-proves its container capability and binds a socket, with no database
+# to open and no schema to migrate.
+runner_start_health_budget=60
+
+workflow_watcher_loop() {
+  while :; do
+    if [ -e "$workflow_control/crash" ]; then
+      rm -f "$workflow_control/crash"
+      local out=""
+      # KILLED, not stopped, and that is the whole verb. `docker stop`
+      # sends SIGTERM and the engine shuts a run down on its way out,
+      # which produces a run that ENDED -- the opposite of the state
+      # under test. SIGKILL leaves a run nobody observed the end of,
+      # which is what startup reconciliation exists for and what a
+      # cleanup obligation nobody settled looks like.
+      if ! out="$(docker kill "$c_engine" 2>&1)"; then
+        rm -f "$workflow_control/crashed"
+        workflow_ack crash-failed "docker kill refused: ${out:-no output}"
+      elif ! out="$(docker start "$c_engine" 2>&1)"; then
+        rm -f "$workflow_control/crashed"
+        workflow_ack crash-failed "the engine was killed and would not start again: ${out:-no output}"
+      else
+        local waited=0 live=0
+        while [ "$waited" -lt "$engine_start_health_budget" ]; do
+          if engine_is_live && serve_ui_reaches_engine; then live=1; break; fi
+          sleep 1
+          waited=$(( waited + 1 ))
+        done
+        if [ "$live" = 1 ]; then
+          rm -f "$workflow_control/crash-failed"
+          workflow_ack crashed
+        else
+          rm -f "$workflow_control/crashed"
+          workflow_ack crash-failed "the engine was killed and restarted but the browser's own path to it did not come good within ${engine_start_health_budget}s"
+        fi
+      fi
+    elif [ -e "$workflow_control/runner-down" ]; then
+      rm -f "$workflow_control/runner-down"
+      local out=""
+      if out="$(docker stop "$c_runner" 2>&1)" && runner_is_stopped; then
+        rm -f "$workflow_control/runner-started" "$workflow_control/runner-down-failed" "$workflow_control/runner-up-failed"
+        workflow_ack runner-stopped
+      else
+        rm -f "$workflow_control/runner-stopped"
+        workflow_ack runner-down-failed "docker stop did not leave the runner stopped: ${out:-no output}"
+      fi
+    elif [ -e "$workflow_control/runner-up" ]; then
+      rm -f "$workflow_control/runner-up"
+      local out=""
+      if ! out="$(docker start "$c_runner" 2>&1)"; then
+        rm -f "$workflow_control/runner-started"
+        workflow_ack runner-up-failed "docker start refused: ${out:-no output}"
+      else
+        local waited=0 live=0
+        while [ "$waited" -lt "$runner_start_health_budget" ]; do
+          if runner_is_live; then live=1; break; fi
+          sleep 1
+          waited=$(( waited + 1 ))
+        done
+        if [ "$live" = 1 ]; then
+          rm -f "$workflow_control/runner-stopped" "$workflow_control/runner-up-failed" "$workflow_control/runner-down-failed"
+          workflow_ack runner-started
+        else
+          rm -f "$workflow_control/runner-started"
+          workflow_ack runner-up-failed "the runner's container started but it did not answer its own status verb within ${runner_start_health_budget}s"
+        fi
+      fi
+    fi
+    sleep 0.25
+  done
+}
+
+start_workflow_watcher() {
+  mkdir -p "$workflow_control"
+  rm -f "$workflow_control/crash" "$workflow_control/runner-down" "$workflow_control/runner-up" \
+        "$workflow_control/crashed" "$workflow_control/crash-failed" \
+        "$workflow_control/runner-stopped" "$workflow_control/runner-down-failed" \
+        "$workflow_control/runner-up-failed"
+  # The state the stack is actually in when the suite is handed it, for
+  # start_engine_watcher's reason.
+  : > "$workflow_control/runner-started"
+  workflow_watcher_loop &
+  workflow_watcher_pid=$!
+}
+
+stop_workflow_watcher() {
+  [ -n "$workflow_watcher_pid" ] || return 0
+  kill "$workflow_watcher_pid" >/dev/null 2>&1 || true
+  wait "$workflow_watcher_pid" 2>/dev/null || true
+  workflow_watcher_pid=""
+}
+
 # The VPS container, which is alpine and has coreutils. The product's
 # containers do not, which is what the three functions below are for.
 sha256_of() {  # sha256_of <container> <path>
@@ -768,6 +1225,17 @@ list_volume() {  # list_volume <volume> <directory within it>
 # honest order rather than a workaround.
 oneshot() {  # oneshot <network, or "none"> <command...>
   local net="$1"; shift
+  # The workflow mounts, and only when there are workflows: `backup-set
+  # workflow patch` resolves the stage directory it is given and
+  # `workflow env set --secret-file` resolves the file it names, so both
+  # writes need the same view of them the engine will have. Expanded with
+  # the +"${...}" form because an empty array under `set -u` is an error
+  # on the bash this may run on, and a bare "${a[@]}" there would pass
+  # docker an empty argument.
+  local wf_mounts=()
+  if [ "$workflows" = 1 ]; then
+    wf_mounts=(-v "$v_workflows:/workflows:ro" -v "$v_wfsecrets:$engine_secrets_mount:ro")
+  fi
   docker run --rm -i \
     --network "$net" \
     --label "$label" \
@@ -776,6 +1244,7 @@ oneshot() {  # oneshot <network, or "none"> <command...>
     -v "$v_state:/data/state" \
     -v "$v_backups:/data/backups" \
     -v "$v_keys:/etc/backupd/keys:ro" \
+    ${wf_mounts[@]+"${wf_mounts[@]}"} \
     -e TMPDIR=/tmp \
     "$product_image" "$@"
 }
@@ -798,7 +1267,34 @@ if [ -n "$prebuilt_image" ]; then
            "A published tag would test somebody else's build, which is #342. Build it, or drop --image."
 fi
 
-mkdir -p "$run_dir/upload" "$run_dir/authorized_keys" "$artifacts_dir"
+if [ "$workflows" = 1 ]; then
+  # The runner runs every local hook in an ephemeral container, so the
+  # machine it runs on needs a docker client and a daemon it can reach.
+  # In this rig that machine is itself a container, so the SOCKET is what
+  # has to be handed to it -- the sibling-container shape, and the reason
+  # the runner's workspace is a host path mounted at the same path inside
+  # it: the daemon resolves a hook's mounts on the host.
+  #
+  # Read from the active Docker context rather than assumed to be
+  # /var/run/docker.sock, because on Docker Desktop it is not: it is a
+  # socket under the user's own home, and a rig that mounted a path that
+  # is not there would hand the runner a daemon it cannot reach and then
+  # report the refusal as a product fault.
+  docker_socket="${RM_DOCKER_SOCKET:-}"
+  if [ -z "$docker_socket" ]; then
+    docker_endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+    case "$docker_endpoint" in
+      unix://*) docker_socket="${docker_endpoint#unix://}" ;;
+      *) docker_socket="/var/run/docker.sock" ;;
+    esac
+  fi
+  [ -S "$docker_socket" ] \
+    || cannot_run "the Docker daemon is not reachable over a Unix socket ($docker_socket is not one)." \
+                  "The Host Workflow Runner runs local hooks in containers, so it needs that socket; name it with RM_DOCKER_SOCKET, or re-run with --no-workflows and accept that every workflow case will skip."
+  note "docker socket for the runner: $docker_socket"
+fi
+
+mkdir -p "$run_dir/upload" "$run_dir/authorized_keys" "$run_dir/hookdata" "$artifacts_dir"
 # The client container runs as this host's own uid so the traces and
 # screenshots it writes are owned by the person who has to read them, so
 # this directory only has to be writable by that same uid.
@@ -845,6 +1341,57 @@ if [ "$front_proxy" = 1 ]; then
   note "front proxy:    $proxy_image (TLS + HTTP/2, #730 reproduction)"
 fi
 
+if [ "$workflows" = 1 ]; then
+  step "building the exec host and the workflow runner machine images"
+  # The exec host is scripts/e2e/exec-host.Dockerfile, which
+  # core/tests/machines already builds for the same purpose: one sshd
+  # carrying accounts that differ ONLY in what the server will let them
+  # run. This rig needs two of those accounts and one client key across
+  # both, because #810's claim is that an SFTP transfer credential must
+  # not be assumed to grant shell exec, and a claim about two
+  # capabilities cannot be proven against one account.
+  docker build -q -t "$exec_image" -f "$exec_dockerfile" "$(dirname "$exec_dockerfile")" >/dev/null \
+    || die "could not build the exec host image from $exec_dockerfile."
+  # The runner's machine is the product's own binary plus a docker
+  # client, so PRODUCT_IMAGE is the image this run is testing: the
+  # runner refuses an engine from a different release, and building the
+  # runner from the same image is the only way to be sure of the match
+  # rather than to hope for it.
+  docker build -q -t "$runner_image" -f "$runner_dockerfile" \
+    --build-arg "PRODUCT_IMAGE=$product_image" "$(dirname "$runner_dockerfile")" >/dev/null \
+    || die "could not build the workflow runner machine image from $runner_dockerfile."
+  created_images+=("$runner_image")
+  note "exec host:      $exec_image"
+  note "runner machine: $runner_image"
+  # And the image local hooks run IN. `workflow-runner serve` proves this
+  # image is present before it binds its socket and refuses rather than
+  # pulling it, because a preflight that reached for the network would
+  # hang on a NAS with no route out. So the pull is the rig's job.
+  #
+  # --platform, and the ARCHITECTURE IS CHECKED rather than the presence,
+  # which is what this run learned the hard way: a plain `docker pull` of
+  # this reference on an arm64 Docker Desktop came back with the amd64
+  # image, and the runner then refused to serve at all --
+  #
+  #   the hook image ... is built for linux/amd64 and this host's daemon
+  #   runs linux/arm64. Under emulation a hook is an order of magnitude
+  #   slower and its libc is untested here, and the docker client prints
+  #   a warning about it into every hook's stderr, which this runner
+  #   streams to the operator as the hook's own output
+  #
+  # which is the right refusal and a confusing way to find out that a
+  # cached image is the wrong one. Asking the daemon what it runs and the
+  # image what it is makes a mismatch a re-pull rather than a mystery.
+  hook_platform="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}' 2>/dev/null || true)"
+  [ -n "$hook_platform" ] || die "could not ask the Docker daemon which platform it runs."
+  if [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$hook_image" 2>/dev/null || true)" != "$hook_platform" ]; then
+    docker pull -q --platform "$hook_platform" "$hook_image" >/dev/null \
+      || cannot_run "the hook image $hook_image is not on this machine for $hook_platform and could not be pulled." \
+                    "Every local hook runs in a container from it, so the runner would refuse to serve and every workflow case would be a skip."
+  fi
+  note "hook image:     $hook_image ($hook_platform)"
+fi
+
 # ------------------------------------------------------------- payload
 
 step "seeding the VPS's files"
@@ -862,6 +1409,21 @@ printf 'the browser suite runs against this machine, not against a mock.\n' > "$
 chmod 644 "$run_dir/upload"/*
 chmod 755 "$run_dir/upload"
 note "3 files: payload.bin (3 MiB), schema.sql, notes.txt"
+
+if [ "$workflows" = 1 ]; then
+  # What the twelve workflow sets pull, and it is deliberately tiny. The
+  # three files above are the VPS's, and the digests of them are what the
+  # real-path cases assert; these sets exist to run HOOKS, and every byte
+  # they transfer is a byte the deployment's own first cycle has to move
+  # before a browser can press anything. One file, under a kilobyte, and
+  # it is still a real SFTP transfer of a real file with a real digest.
+  printf 'one small file, so twelve workflow runs cost seconds rather than minutes.\n' \
+    > "$run_dir/hookdata/marker.txt" \
+    || die "could not write the workflow sets' payload."
+  chmod 644 "$run_dir/hookdata/marker.txt"
+  chmod 755 "$run_dir/hookdata"
+  note "1 file for the workflow sets: marker.txt"
+fi
 
 # ------------------------------------------------------------- volumes
 
@@ -905,6 +1467,97 @@ toolbox -v "$v_config:/c" -v "$v_state:/s" -v "$v_backups:/b" \
   || die "could not give the deployment's volumes to $app_uid:$app_gid."
 note "config, state and backup volumes belong to $app_uid:$app_gid"
 
+if [ "$workflows" = 1 ]; then
+  step "provisioning the workflow machinery (#816)"
+
+  for v in "$v_workflows" "$v_wfrun" "$v_wfsecrets"; do
+    docker volume create --label "$label" "$v" >/dev/null \
+      || die "could not create the volume $v."
+    created_volumes+=("$v")
+  done
+
+  # The script library. Committed under scripts/e2e/workflows/ rather
+  # than written here by a here-document, for one reason: every line
+  # those scripts print is asserted by a suite in another repository, so
+  # they are a contract, and a contract belongs in a file a reviewer can
+  # read and `bash -n` can parse.
+  #
+  # The modes are not hygiene theatre. core/internal/workflow/discover.go
+  # refuses a stage directory this process does not own, one that is
+  # group- or world-writable, and one with a writable ancestor, so the
+  # tree is chowned to the uid the engine runs as and left at 0755/0644.
+  # A Docker volume is the same filesystem the container reads, so a mode
+  # set here is the mode the engine sees -- which a bind mount from this
+  # host cannot promise across every Docker implementation.
+  toolbox -v "$repo_root/scripts/e2e/workflows:/src:ro" -v "$v_workflows:/w" -- "
+      set -e
+      cp -R /src/. /w/
+      chown -R $app_uid:$app_gid /w
+      find /w -type d -exec chmod 755 {} +
+      find /w -type f -exec chmod 644 {} +
+    " >/dev/null \
+    || die "could not seed the workflow script library into the volume $v_workflows."
+  note "script library: $(list_volume "$v_workflows" ".")in $v_workflows"
+
+  # The runner's two other directories. 0700 and owned by the account
+  # the runner runs as, which is hostrunner.RuntimeDirMode's own rule and
+  # is enforced by the runner at startup: it chmods what it can and
+  # refuses what it cannot, and a root-owned volume is the second.
+  toolbox -v "$v_wfrun:/r" -v "$v_wfsecrets:/s" \
+    -- "chown $app_uid:$app_gid /r /s && chmod 700 /r /s" >/dev/null \
+    || die "could not give the runner's runtime and secrets volumes to $app_uid:$app_gid."
+
+  # The installation credential, and the one secret a hook of this run
+  # will be handed. Both go down a PIPE into a container rather than onto
+  # a command line: an argv is readable by every process on this host for
+  # as long as the container lives, which is the exposure the
+  # administrator's password already avoids the same way.
+  #
+  # 64 hex characters, which is what scripts/install/install_docker_host.py
+  # writes and is well past hostrunner.MinTokenLength; mode 0600, which
+  # LoadToken refuses anything looser than.
+  runner_token="$(openssl rand -hex 32)"
+  printf '%s\n' "$runner_token" | toolbox -i -v "$v_wfsecrets:/s" -- "
+      set -e
+      cat > /s/$runner_token_name
+      chown $app_uid:$app_gid /s/$runner_token_name
+      chmod 600 /s/$runner_token_name
+    " >/dev/null \
+    || die "could not write the workflow runner's installation credential."
+  printf '%s\n' "$wf_secret" | toolbox -i -v "$v_wfsecrets:/s" -- "
+      set -e
+      cat > /s/$wf_secret_name
+      chown $app_uid:$app_gid /s/$wf_secret_name
+      chmod 600 /s/$wf_secret_name
+    " >/dev/null \
+    || die "could not write the hook environment's secret."
+  note "the runner's credential and one hook secret are in $v_wfsecrets, mode 0600"
+
+  # The runner's WORKSPACE, and the one path in this rig that has to be a
+  # host directory rather than a volume. The runner asks the DAEMON to
+  # bind-mount each step's working directory into that step's hook
+  # container, and the daemon resolves those paths on the host -- so the
+  # runner's own view of them has to be the host's view. It is mounted at
+  # the same path inside the runner's container for exactly that reason.
+  #
+  # Its parent is 0755 and not 0700: the runner runs as the deployment's
+  # uid rather than as this host's user, and a 0700 ancestor owned by
+  # somebody else is a directory it cannot traverse. The workspace itself
+  # is 0700 and owned by that uid, which is what holds whatever a hook
+  # writes into BACKUPD_WORK_DIR -- and created from inside a container
+  # so the ownership is real on a Linux host rather than only mapped.
+  mkdir -p "$wf_prefix" || die "could not create $wf_prefix."
+  chmod 755 "$wf_prefix"
+  toolbox -v "$wf_prefix:/p" -- "
+      set -e
+      mkdir -p /p/workspace
+      chown $app_uid:$app_gid /p/workspace
+      chmod 700 /p/workspace
+    " >/dev/null \
+    || die "could not create the runner's workspace at $wf_workspace."
+  note "runner workspace: $wf_workspace, 0700 and owned by $app_uid:$app_gid"
+fi
+
 # ------------------------------------------------------------ networks
 
 step "creating the three private networks"
@@ -947,6 +1600,91 @@ want_payload="$(sha256_of "$c_source" "/home/$sftp_user/upload/payload.bin")"
 want_schema="$(sha256_of "$c_source" "/home/$sftp_user/upload/schema.sql")"
 want_notes="$(sha256_of "$c_source" "/home/$sftp_user/upload/notes.txt")"
 note "payload.bin on the VPS is sha256 $want_payload"
+
+if [ "$workflows" = 1 ]; then
+  step "starting the exec host, the machine a remote hook really runs on"
+  # atmoz's entrypoint is gone from that image (it creates chrooted SFTP
+  # users and execs its own sshd, and this image is an sshd of its own),
+  # which also means nothing generates host keys. `ssh-keygen -A` makes
+  # the missing ones INSIDE the container, so the fixture's private host
+  # keys never touch this host -- the same rule the deployment's own
+  # keypair follows, and the reason the VPS mounts none either.
+  #
+  # --hostname, because the remote hooks PRINT the name of the machine
+  # they ran on and the suite compares it with the executor the product
+  # names. Docker's default is the container's short id: evidence that
+  # changes every run is evidence nobody can pin, and it cannot agree
+  # with the exec connection's host. The same string as the network
+  # alias and as that connection's host, which is the name everything
+  # else in this rig calls this machine.
+  #
+  # And the comment lives HERE rather than among the arguments below,
+  # which is how this broke once already: a `#` line spliced into a
+  # backslash-continued command comments out the rest of the joined
+  # logical line, so `docker run` was handed no image at all.
+  docker run -d \
+    --name "$c_exec" \
+    --network "$net_backhaul" \
+    --network-alias exechost \
+    --hostname exechost \
+    --label "$label" \
+    -v "$run_dir/authorized_keys/engine.pub:/etc/ssh/authorized/backupd.pub:ro" \
+    -v "$run_dir/hookdata:/home/$exec_user/hookdata" \
+    --entrypoint sh \
+    "$exec_image" -c 'ssh-keygen -A >/dev/null && exec /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config.exec' >/dev/null \
+    || die "could not start the exec host."
+  created_containers+=("$c_exec")
+
+  wait_or_die 120 "the exec host's sshd to start listening" \
+    docker exec "$c_exec" sh -c 'nc -w 2 127.0.0.1 22 </dev/null 2>/dev/null | grep -q ^SSH-'
+  note "$c_exec is serving SSH on the backhaul network as \"exechost\""
+
+  # And the host keys it is presenting, pinned. A declared execution
+  # connection has no --trust-host-key to fall back on: core/internal/config
+  # refuses an sftp remote with no known_hosts and refuses the literal
+  # "none", by design, so the pin has to be a real file holding the keys
+  # this machine actually answers with.
+  #
+  # Read out of the container rather than scanned over the network, and
+  # for a plain reason: ssh-keyscan is in openssh-client and the machine
+  # images here carry openssh-SERVER, so a scan would mean pulling a
+  # package into a throwaway container on every run (#243 is what that
+  # costs). The public halves are files in the container that generated
+  # them, `docker exec cat` is enough to read them, and what is pinned is
+  # then exactly what sshd loaded rather than what a scan happened to
+  # negotiate.
+  #
+  # Both key types, for the reason core/tests/machines states: x/crypto/ssh
+  # picks a host-key algorithm by its own preference order rather than by
+  # what known_hosts holds, so pinning one type is not pinning the
+  # connection.
+  known_hosts=""
+  for keytype in ed25519 rsa; do
+    pub="$(docker exec "$c_exec" cat "/etc/ssh/ssh_host_${keytype}_key.pub" 2>/dev/null || true)"
+    case "$pub" in
+      ssh-*)
+        # The comment field goes: a known_hosts line is host, algorithm
+        # and key, and the trailing "root@<container id>" is neither.
+        known_hosts="$known_hosts
+exechost $(printf '%s' "$pub" | cut -d' ' -f1,2)" ;;
+    esac
+  done
+  [ -n "$known_hosts" ] \
+    || die "the exec host presented no host keys this script could read." \
+           "Its sshd generates them on start (ssh-keygen -A), so an empty answer here means it never got that far."
+  # Down a pipe into the volume, owned by the engine's uid because the
+  # engine is what reads it, and 0600 because core's SSH transport
+  # refuses a credential path anything can write.
+  printf '%s\n' "$known_hosts" | toolbox -i -v "$v_keys:/keys" -- "
+      set -e
+      sed '/^$/d' > /keys/known_hosts
+      test -s /keys/known_hosts
+      chown $app_uid:$app_gid /keys/known_hosts
+      chmod 600 /keys/known_hosts
+    " >/dev/null \
+    || die "could not write the exec host's pinned host keys into $v_keys."
+  note "the exec host's host keys are pinned in $v_keys/known_hosts"
+fi
 
 # ------------------------------------------- configure the deployment
 
@@ -1035,26 +1773,323 @@ for pair in "payload.bin:$want_payload" "schema.sql:$want_schema" "notes.txt:$wa
 done
 note "three artifacts landed and every one matches the VPS by sha256"
 
+if [ "$workflows" = 1 ]; then
+  step "creating the workflow backup sets, one per scenario"
+  # Every one of them is a REAL backup set over a REAL SSH connection to
+  # a real directory, and that is what makes the scenarios mean
+  # anything: "the before hook failed, so the backup was skipped" is
+  # only a proof if the backup it skipped would otherwise have
+  # succeeded. Each gets its own local path so no two write over each
+  # other, and none is scheduled beyond the deployment's own poll.
+  #
+  # They pull from the EXEC HOST rather than from the VPS, and from a
+  # directory holding one small file rather than three files and three
+  # megabytes. Two reasons, both learned from running this:
+  #
+  #   The machine a hook quiesces is the machine being backed up. That
+  #   is what a workflow IS for, and here it makes the set's transfer
+  #   credential and its execution connection the same account on the
+  #   same host, which is the shape an operator would actually have.
+  #
+  #   And the deployment's own first cycle runs every set. With twelve
+  #   sets pulling three megabytes each, that cycle was four minutes of
+  #   the rig's wall clock, and a suite pressing "Run this backup set"
+  #   during it waited behind a queue it could not see. One small file
+  #   makes each of these runs seconds rather than tens of seconds --
+  #   and the hooks, not the transfer, are what these sets exist for.
+  #
+  # e2e/vps keeps the three-file payload and the digest assertions: it
+  # is the set the real-path cases are about.
+  for spec in "${wf_sets[@]}"; do
+    name="${spec%%:*}"
+    dir="${spec##*:}"
+    oneshot "$net_backhaul" \
+      /backupd backup-set create "$name" \
+        --config /etc/backupd/config \
+        --host exechost \
+        --user "$exec_user" \
+        --ssh-key-file /etc/backupd/keys/id_ed25519 \
+        --trust-host-key \
+        --remote-path "/home/$exec_user/hookdata" \
+        --local-path "/data/backups/$dir" \
+        --completion-strategy rename \
+        --read-only \
+        --state-database /data/state/state.db >/dev/null \
+      || die "creating the backup set $name failed." \
+             "The workflow scenarios each need a set of their own, so there is nothing to fall back to."
+  done
+  note "${#wf_sets[@]} workflow backup sets created, each pulling from $exec_user@exechost:/home/$exec_user/hookdata, read-only"
+fi
+
+
+if [ "$workflows" = 1 ]; then
+  step "configuring the workflows, before anything is serving"
+  # AFTER the seeding cycle above, and that order is the fixture rather
+  # than convenience. e2e/vps is about to be given a NAME.remote.sh hook
+  # over an internal-sftp-forced credential, and the run preflight
+  # (core/service/workflowpreflight.go) refuses a run whose hooks cannot
+  # execute BEFORE it transfers anything -- so a set configured first
+  # would have no artifacts at all and the SFTP-only case would be
+  # proving nothing about transfer. The cycle ran while the set had no
+  # hooks, which is the honest sequence: a deployment that backed this up
+  # yesterday and configured a hook today.
+  #
+  # The block is written AS A BLOCK, with a here-document, and the reason
+  # is that two of the four things in it have no CLI at all. `settings
+  # workflow patch` writes the root and the global stages; the runner's
+  # socket and credential are deliberately not settable that way (the two
+  # ends of that socket see different paths, which config/workflows.go
+  # argues at length), and neither is a declared execution connection. So
+  # this is what an operator writes, and every CLI write below
+  # re-marshals the whole document rather than editing it in place, which
+  # is what makes a hand-written field survive them.
+  #
+  # The paths are the CONTAINER's, because that is what the field means:
+  # the engine reads its token at the path IT sees, which is the whole of
+  # backupd#877's lesson -- an in-container token_file naming the
+  # installer's host path is a file that does not exist and every
+  # .local.sh hook fails authentication. container/compose.yaml binds
+  # that credential as a single file at /etc/backupd/workflow-runner.token;
+  # here it arrives in the secrets volume the runner also reads, which is
+  # the one deviation, and it is a deviation about Docker volumes versus
+  # bind-mounted files rather than about the contract: a volume is the
+  # only shape whose 0600-owned-by-1000 means that on every Docker
+  # implementation this rig runs on.
+  toolbox -i -v "$v_config:/c" -- "cat >> /c/config.yaml" <<YAML >/dev/null || die "could not write the workflows block into config.yaml."
+workflows:
+  root: /workflows
+  runner:
+    socket: /data/run/$runner_socket_name
+    token_file: $engine_token_path
+  exec_connections:
+    - id: $exec_connection
+      remote:
+        type: sftp
+        host: exechost
+        port: 22
+        user: $exec_user
+        key_file: /etc/backupd/keys/id_ed25519
+        known_hosts: /etc/backupd/keys/known_hosts
+YAML
+  note "workflows.root=/workflows, the runner's socket and credential, and the \"$exec_connection\" execution connection"
+
+  # And each set's own stage directories, through the CLI, which is what
+  # an operator has for this half. `backup-set workflow patch` is refused
+  # beside a serving engine with the file untouched, so it belongs here
+  # with the other pre-start writes rather than later.
+  for spec in "${wf_stages[@]}"; do
+    IFS='|' read -r name before after conn <<<"$spec"
+    args=(/backupd backup-set workflow patch "$name" --config /etc/backupd/config)
+    [ -z "$before" ] || args+=(--before-dir "$before")
+    [ -z "$after" ] || args+=(--after-dir "$after")
+    [ -z "$conn" ] || args+=(--exec-connection "$conn")
+    # The crash fixture gets a SHORT per-set bound, and the last run is
+    # why. Its before hook holds for forty-five seconds on purpose, and
+    # the bound it inherits is the built-in five minutes -- so a step
+    # this rig interrupts (the runner taken away, the engine killed)
+    # sits unresolved for up to five minutes, the run stays IN
+    # PROGRESS, and the scheduler correctly starts no new run for a set
+    # that already has one. A browser waiting to catch a live hook then
+    # sees neither a run nor a hold, which is exactly what the run
+    # before this one reported: "the scheduler did not run this set,
+    # with no hold on it to explain why" -- while the same run ended
+    # with the deployment holding two rows for that set, raised when
+    # the interrupted run finally finalised.
+    #
+    # Ninety seconds is twice what that hook needs to finish cleanly,
+    # so a run nobody interrupts is unaffected, and an interruption
+    # resolves inside a browser's patience rather than outside it. A
+    # per-set script_timeout exists precisely so a set whose hooks are
+    # not like the others can say so.
+    [ "$name" != "$wf_set_crash" ] || args+=(--script-timeout 90s)
+    oneshot none "${args[@]}" >/dev/null \
+      || die "configuring the hooks of $name failed." \
+             "Its stage directories are ${before:-none} and ${after:-none} under /workflows, seeded above."
+  done
+  note "${#wf_stages[@]} sets have hook stages; $wf_set_none has none, which is the state the empty surface renders"
+
+  # The secret-backed variable, on the one set whose hook reads it. A
+  # LOCATION and never material: the CLI takes no value for this and
+  # config.yaml holds the path rather than the secret, which is the same
+  # rule the repository passphrase follows.
+  oneshot none /backupd backup-set workflow env "$wf_set_secret" set "$wf_secret_env" \
+    --config /etc/backupd/config \
+    --secret-file "$engine_secret_path" >/dev/null \
+    || die "could not configure $wf_secret_env on $wf_set_secret."
+  note "$wf_secret_env on $wf_set_secret reads $engine_secret_path, which only the engine can see"
+
+  # Read back what was written, through the product's own resolver rather
+  # than by grepping the file this script just appended to. What matters
+  # is not that the text landed but that the CLI writes above did not
+  # drop it on their way through: a `backup-set workflow patch` that
+  # re-marshalled the document without the runner block would leave a
+  # deployment that cannot run a local hook, and every workflow case
+  # would then fail as a product defect.
+  resolved="$(oneshot none /backupd settings workflow --config /etc/backupd/config 2>&1 || true)"
+  case "$resolved" in
+    *"/data/run/$runner_socket_name"*) : ;;
+    *) die "the deployment does not report the host runner after its configuration was written." \
+           "\`settings workflow\` said: $(printf '%s' "$resolved" | tr '\n' ' ' | cut -c1-400)" ;;
+  esac
+  case "$resolved" in
+    *"$exec_connection"*) : ;;
+    *) die "the deployment does not report the \"$exec_connection\" execution connection." \
+           "A remote hook would then run over the backup set's own SFTP-only credential, which is the other case entirely." ;;
+  esac
+  note "the deployment reports both the runner and the execution connection"
+
+  # And the cadence, which is the one thing that decides whether a
+  # browser can watch a workflow run happen at all.
+  #
+  # It cannot start one. POST /api/v1/operations run_backup_set is
+  # refused 403 DESTRUCTIVE_OPERATIONS_DISABLED on every deployment this
+  # repository can build: apps/common/webhost ships exactly one
+  # DestructiveGate, NotYetImplementedGate, whose own doc says there is
+  # deliberately no parameter, variable or flag that can make it report
+  # true before #92. So the "Run this backup set" control cannot produce
+  # a run, and a suite that presses it waits out its timeout on a
+  # request the engine was never going to be allowed to accept.
+  #
+  # What DOES produce runs is the scheduler, and gate.go says so in as
+  # many words: "the scheduler runs the same destructive cycle on a
+  # timer whatever this reports". So the rig sets that timer to the
+  # product's own floor -- config.MinPollInterval, one minute, and a
+  # shorter value is refused rather than accepted -- and hands the
+  # number to the suite as RM_WF_POLL_SECONDS so no spec has to guess
+  # it. Each workflow set then gets a fresh run every poll interval plus
+  # its position in the cycle, which is what a spec waits for instead of
+  # asking.
+  #
+  # Edited in place rather than patched through the CLI because there is
+  # no `settings patch --poll-interval` in this build, and appended-block
+  # style would not work for a key `backup-set create` has already
+  # written: the line is replaced, and the replacement is verified by
+  # reading the file back rather than by trusting sed's exit status.
+  toolbox -v "$v_config:/c" -- "
+      set -e
+      sed -i 's/^poll_interval:.*/poll_interval: ${wf_poll_seconds}s/' /c/config.yaml
+      grep -q '^poll_interval: ${wf_poll_seconds}s\$' /c/config.yaml
+    " >/dev/null \
+    || die "could not set the deployment's poll_interval to ${wf_poll_seconds}s." \
+           "Without it the engine polls at its own default and a browser would wait an hour for the run it is meant to watch."
+  note "poll_interval is ${wf_poll_seconds}s (config.MinPollInterval, the product's floor), so every set runs on a timer a browser can wait for"
+fi
+
+# ------------------------------------------- the Host Workflow Runner
+
+if [ "$workflows" = 1 ]; then
+  step "starting the Host Workflow Runner, OUTSIDE the engine's container"
+  # This is the process the engine cannot be. `/backupd-web serve` is
+  # distroless, read-only, capability-dropped and non-root on purpose, so
+  # "run this operator's shell script on the host" is a thing it
+  # deliberately cannot do; docs/adr/0020-host-workflow-runner.md is the
+  # decision and this container is its shape in the rig. It holds the
+  # Docker socket -- which is the privilege the installer grants the
+  # runner's service account and withholds from the engine -- and the
+  # engine reaches it through one authenticated Unix socket and nothing
+  # else.
+  #
+  # The socket's GROUP is read back rather than assumed: inside a
+  # container it is 0 on Docker Desktop and the docker group's gid on a
+  # Linux host, and the runner refuses to run as root, so the membership
+  # is how a non-root process opens it. Exactly the `usermod -aG docker`
+  # the installer performs, expressed as --group-add.
+  docker_socket_gid="$(toolbox -v "$docker_socket:/var/run/docker.sock" \
+    -- 'stat -c %g /var/run/docker.sock' 2>/dev/null | tr -d '[:space:]')"
+  case "$docker_socket_gid" in
+    ''|*[!0-9]*) die "could not read the group of the Docker socket $docker_socket from inside a container." \
+                     "The runner runs as $app_uid:$app_gid and would be refused by the daemon without that group." ;;
+  esac
+
+  # --network none, because it needs none: it talks to the daemon over
+  # the socket and to the engine over its own. The config volume is
+  # mounted read-only and named as --config for the same reason the
+  # installer's unit does: the runner reads the script size bound from
+  # it, and nothing else.
+  docker run -d \
+    --name "$c_runner" \
+    --network none \
+    --label "$label" \
+    --user "$app_uid:$app_gid" \
+    --group-add "$docker_socket_gid" \
+    -e TMPDIR=/tmp \
+    -v "$docker_socket:/var/run/docker.sock" \
+    -v "$v_wfrun:/data/run" \
+    -v "$v_wfsecrets:/data/secrets" \
+    -v "$v_config:/etc/backupd/config:ro" \
+    -v "$wf_workspace:$wf_workspace" \
+    "$runner_image" /backupd workflow-runner serve \
+      --runtime-dir /data/run \
+      --workspace-dir "$wf_workspace" \
+      --secrets-dir /data/secrets \
+      --config /etc/backupd/config \
+      --docker /usr/local/bin/docker \
+      --hook-image "$hook_image" \
+      --hook-bash /usr/local/bin/bash >/dev/null \
+    || die "could not start the Host Workflow Runner."
+  created_containers+=("$c_runner")
+
+  # Readiness is the runner ANSWERING, not the container running: `serve`
+  # proves a docker client, a reachable daemon, the hook image and bash
+  # inside it before it binds anything (#865), so a container that is up
+  # and a runner that is serving are different facts and only the second
+  # is one the engine can use.
+  # In a SUBSHELL, because wait_or_die dies: it calls die, die exits, and
+  # an `if !` around it could never run its else branch. That made this
+  # diagnostic dead code on the rig's hardest failure mode -- a runner
+  # that refuses to serve says WHY on its own stdout (no docker client, no
+  # daemon, the hook image absent, the wrong platform), and that sentence
+  # was being thrown away. Run in a subshell the exit only leaves, so the
+  # logs are printed here and the refusal below is this script's.
+  if ! ( wait_or_die 120 "the workflow runner to answer its own status verb" runner_is_live ); then
+    echo "    the runner's own last words:" >&2
+    docker logs "$c_runner" 2>&1 | tail -20 >&2 || true
+    die "the Host Workflow Runner never came up." \
+        "Its startup proves a docker client, a reachable daemon, the hook image and bash inside it before it binds a socket (#865), and it prints which of those it could not do."
+  fi
+  note "$(docker logs "$c_runner" 2>&1 | sed -n '1,2p' | tr '\n' ' ')"
+  note "$c_runner is serving on the socket in $v_wfrun, as $app_uid:$app_gid with group $docker_socket_gid"
+fi
+
 # --------------------------------------------------------- the engine
 
 step "starting the engine (/backupd-web serve)"
 # The environment is container/compose.yaml's own for this service, and the
 # values that differ from it differ for a reason written beside them.
-docker run -d \
-  --name "$c_engine" \
-  --network "$net_internal" \
-  --network-alias engine \
-  --label "$label" \
-  --user "$app_uid:$app_gid" \
-  -e TMPDIR=/tmp \
-  -e LISTEN_ADDR=":8080" \
-  -e PUBLIC_BASE_URL="$base_url" \
-  -e TRUST_FORWARDED_HEADERS="true" \
-  -v "$v_config:/etc/backupd/config" \
-  -v "$v_state:/data/state" \
-  -v "$v_backups:/data/backups" \
-  -v "$v_keys:/etc/backupd/keys:ro" \
-  "$product_image" /backupd-web serve --profile=generic >/dev/null \
+# The workflow mounts are container/compose.yaml's own three, and the
+# differences between them are the whole security argument it makes: the
+# scripts READ-ONLY because this container reads each one once and
+# spools it, the runtime directory read-write because connecting to a
+# Unix socket is a write, and the credential because without it the
+# other two buy nothing. No capability, no privilege, no Docker socket
+# and no host root are added here: the engine stays exactly as hardened
+# as it was, and everything the hooks need lives on the other side of
+# that socket.
+engine_run=(
+  docker run -d
+  --name "$c_engine"
+  --network "$net_internal"
+  --network-alias engine
+  --label "$label"
+  --user "$app_uid:$app_gid"
+  -e TMPDIR=/tmp
+  -e LISTEN_ADDR=":8080"
+  -e PUBLIC_BASE_URL="$base_url"
+  -e TRUST_FORWARDED_HEADERS="true"
+  -v "$v_config:/etc/backupd/config"
+  -v "$v_state:/data/state"
+  -v "$v_backups:/data/backups"
+  -v "$v_keys:/etc/backupd/keys:ro"
+)
+if [ "$workflows" = 1 ]; then
+  engine_run+=(
+    -v "$v_workflows:/workflows:ro"
+    -v "$v_wfrun:/data/run"
+    -v "$v_wfsecrets:$engine_secrets_mount:ro"
+  )
+fi
+engine_run+=("$product_image" /backupd-web serve --profile=generic)
+"${engine_run[@]}" >/dev/null \
   || die "could not start the engine."
 created_containers+=("$c_engine")
 
@@ -1067,6 +2102,101 @@ docker network connect --alias manager "$net_backhaul" "$c_engine" \
 wait_or_die 180 "the engine to report itself live" \
   docker exec "$c_engine" /backupd-web healthcheck --url http://127.0.0.1:8080/health/live
 note "$c_engine is serving on the internal network as \"engine\", and is on the backhaul network as \"manager\""
+
+if [ "$workflows" = 1 ]; then
+  # The engine polls on start, and that first cycle is every set in the
+  # deployment, hooks and all. It must be OVER before a browser is handed
+  # the stack, and this is the lesson of a whole red run: a suite that
+  # pressed "Run this backup set" while it was in flight watched its
+  # sixty seconds go by with no new run appearing, because the engine was
+  # working through eleven other sets first -- including a hook that
+  # deliberately holds for forty-five seconds. Nothing was broken. The
+  # request was in a queue nobody could see, and the failure read as
+  # "the engine recorded nothing".
+  #
+  # The wait is on the engine's OWN structured event rather than on a
+  # sleep or on an API poll: `cycle_end` is what the product writes when
+  # a cycle is finished, and one of them is exactly the fact this needs.
+  # It also means every set has a first run and a settled state before
+  # the suite looks, which is a better deployment to hand over than a
+  # half-cycled one.
+  cycle_finished() {
+    docker logs "$c_engine" 2>&1 | grep -q '"event":"cycle_end"'
+  }
+  wait_or_die 600 "the engine's first poll cycle to finish, so a browser's run request is not queued behind it" \
+    cycle_finished
+  note "the engine's first cycle is done: every set has run once, hooks included"
+fi
+
+if [ "$workflows" = 1 ]; then
+  step "proving the engine can reach the runner, and that an SFTP-only credential cannot exec"
+  # `validate workflow` is the product's own answer to "could this set's
+  # hooks run?", asked from INSIDE the engine's container, which is the
+  # only place the question means anything: the socket and the credential
+  # are paths as THAT process sees them, and backupd#877 was exactly the
+  # case where both were configured, both existed on the host, and
+  # neither was there from in here.
+  #
+  # Every report is kept under the artifacts directory as well as
+  # asserted, because these three are the evidence that the fixture IS
+  # the fixture -- a suite case that later fails over an exec-capability
+  # finding is read completely differently depending on whether this
+  # deployment's own tooling agreed with it.
+  #
+  # validation_of <set> <file> prints one report and files it.
+  validation_of() {
+    local set_id="$1" name="$2" out=""
+    out="$(docker exec "$c_engine" /backupd validate workflow "$set_id" --config /etc/backupd/config 2>&1 || true)"
+    printf '%s\n' "$out" > "$artifacts_dir/validate-$name.txt"
+    printf '%s' "$out"
+  }
+
+  # says <report> <extended regex>
+  says() { printf '%s' "$1" | grep -Eq "$2"; }
+
+  # first_line_about <report> <check id>, for a refusal that has to quote
+  # what the product said rather than only that it disagreed.
+  first_line_about() {
+    printf '%s' "$1" | grep -E "^ +$2 " | head -1 | sed -e 's/^ *//' -e 's/  */ /g' | cut -c1-300
+  }
+
+  happy_validation="$(validation_of "$wf_set_happy" happy)"
+  says "$happy_validation" 'runner_health +ok' \
+    || die "the engine does not report a healthy Host Workflow Runner for $wf_set_happy." \
+           "The runner is serving on this host and the socket is mounted into the engine, so this is the backupd#877 shape: $(first_line_about "$happy_validation" runner_health)"
+  says "$happy_validation" 'the host workflow runner answered' \
+    || die "the runner's health check passed without the runner having answered, which is not a fact this rig can use."
+  says "$happy_validation" 'local_bash_syntax +ok' \
+    || die "the runner would not parse $wf_set_happy's local hooks." \
+           "$(first_line_about "$happy_validation" local_bash_syntax)"
+  says "$happy_validation" 'workflow valid: +true' \
+    || die "$wf_set_happy's hooks are not valid, so a browser would meet a deployment that cannot run one." \
+           "Every finding is in $artifacts_dir/validate-happy.txt"
+  note "$wf_set_happy validates: the engine reached the runner over the mounted socket, and the runner parsed both hooks"
+
+  # And the other half of #810, which is a REFUSAL and has to be proven
+  # as one. The same client key authenticates both accounts; the
+  # difference is what the server will let each run, so a refusal here is
+  # the sshd's own and not this rig's.
+  sftp_validation="$(validation_of "$backup_set" sftp-only)"
+  says "$sftp_validation" 'exec_capability +error' \
+    || die "$backup_set's remote hook was not refused for want of exec capability." \
+           "That set's credential is internal-sftp-forced, so a validation that passes means the fixture is not the fixture: $(first_line_about "$sftp_validation" exec_capability)"
+  says "$sftp_validation" 'valid for backup: +true' \
+    || die "$backup_set reports itself invalid for backup, and it is not: its artifacts are in the catalogue already." \
+           "The SFTP-only case is \"the transfer works and the hook is refused\", and half of it has just stopped being true."
+  note "$backup_set is refused an exec channel and is still valid for backup: $(first_line_about "$sftp_validation" exec_capability)"
+
+  # The exec-capable one, which must pass where that one failed.
+  exec_validation="$(validation_of "$wf_set_remote" exec)"
+  says "$exec_validation" 'exec_capability +ok' \
+    || die "$wf_set_remote cannot run a remote hook either, so the rig has no exec-capable posture at all." \
+           "$(first_line_about "$exec_validation" exec_capability)"
+  says "$exec_validation" 'workflow valid: +true' \
+    || die "$wf_set_remote's hooks are not valid, so no remote hook in this rig has anywhere to run." \
+           "Every finding is in $artifacts_dir/validate-exec.txt"
+  note "$wf_set_remote validates over the \"$exec_connection\" connection: $(first_line_about "$exec_validation" exec_capability)"
+fi
 
 # --------------------------------------------------------- the UI host
 
@@ -1223,6 +2353,11 @@ if [ "$break_engine" = 1 ]; then
   note "the control channel is live at $engine_control (write \"stop\" or \"start\", wait for \"stopped\" or \"started\")"
 fi
 
+if [ "$workflows" = 1 ] && [ "$keep_up" != 1 ]; then
+  start_workflow_watcher
+  note "the workflow control channel is live at $workflow_control (crash, runner-down, runner-up)"
+fi
+
 # ------------------------------------------------------- hand it over
 
 step "the stack is up"
@@ -1231,6 +2366,18 @@ note "RM_ADMIN_USERNAME $admin_user"
 note "RM_ADMIN_PASSWORD $admin_pass"
 note "RM_BACKUP_SET     $backup_set"
 note "RM_ARTIFACTS_DIR  /artifacts, mounted from $artifacts_dir"
+if [ "$workflows" = 1 ]; then
+  note "RM_WORKFLOW_SET   $wf_set_happy"
+  note "RM_EXEC_SET       $wf_set_remote"
+  note "RM_SFTP_ONLY_SET  $backup_set"
+  note "RM_WF_*_SET       $wf_set_none, $wf_set_before_fail, $wf_set_after_fail, $wf_set_hostile,"
+  note "                  $wf_set_secret, $wf_set_slow, $wf_set_crash, $wf_set_many,"
+  note "                  $wf_set_findings"
+  note "RM_WF_SCRIPT_PREFIX /workflows"
+  note "RM_WF_POLL_SECONDS $wf_poll_seconds (the scheduler's cadence: a browser cannot start a run, #92)"
+else
+  note "workflows        NOT provisioned (--no-workflows), so every workflow case skips itself"
+fi
 
 client_env=(
   -e "RM_BASE_URL=$base_url"
@@ -1248,6 +2395,41 @@ client_env=(
 # an empty case never expands to a stray argument.
 if [ "$front_proxy" = 1 ]; then
   client_env+=(-e "RM_IGNORE_HTTPS=1" -e "NODE_TLS_REJECT_UNAUTHORIZED=0" -e "NODE_NO_WARNINGS=1")
+fi
+# #816's contract. Unset without the machinery, so a spec that reads
+# RM_WORKFLOW_SET gets undefined and says why it skipped rather than
+# failing against a deployment that has no hooks at all.
+if [ "$workflows" = 1 ]; then
+  client_env+=(
+    -e "RM_WORKFLOW_SET=$wf_set_happy"
+    -e "RM_EXEC_SET=$wf_set_remote"
+    -e "RM_SFTP_ONLY_SET=$backup_set"
+    -e "RM_WF_NO_HOOKS_SET=$wf_set_none"
+    -e "RM_WF_BEFORE_FAIL_SET=$wf_set_before_fail"
+    -e "RM_WF_AFTER_FAIL_SET=$wf_set_after_fail"
+    -e "RM_WF_HOSTILE_SET=$wf_set_hostile"
+    -e "RM_WF_SECRET_SET=$wf_set_secret"
+    -e "RM_WF_SLOW_SET=$wf_set_slow"
+    -e "RM_WF_CRASH_SET=$wf_set_crash"
+    -e "RM_WF_MANY_STEPS_SET=$wf_set_many"
+    -e "RM_WF_FINDINGS_SET=$wf_set_findings"
+    -e "RM_WF_REJECTED_DIR=$wf_rejected_dir"
+    -e "RM_WF_SECRET_ENV=$wf_secret_env"
+    -e "RM_WF_SECRET_VALUE=$wf_secret"
+    -e "RM_WF_SCRIPT_PREFIX=/workflows"
+    -e "RM_WF_POLL_SECONDS=$wf_poll_seconds"
+    -e "RM_WF_GLOBAL_BEFORE_DIR=global-before"
+    -e "RM_WORKFLOW_RUNNER_NAME=$runner_display"
+  )
+  # The control channel goes the same way --break-engine's does, and is
+  # left off under --keep-up for the same reason: the watcher that acks
+  # these requests is a process of this script, and a suite holding a
+  # channel nobody answers would wait out its whole timeout and report
+  # this rig's silence as a product failure.
+  if [ "$keep_up" != 1 ]; then
+    client_env+=(-e "RM_WORKFLOW_CONTROL=$workflow_control_in_client")
+    note "RM_WORKFLOW_CONTROL $workflow_control_in_client, watched on this host at $workflow_control"
+  fi
 fi
 # backupd#795. The flag the suite branches on, and the directory it drives
 # the break from. Same appended-after-the-literal shape as the block
@@ -1353,6 +2535,17 @@ if [ "$keep_up" = 1 ]; then
     echo "        RM_ENGINE_UNREACHABLE=1 RM_ENGINE_CONTROL=$engine_control_in_client"
     echo "        rm -f $engine_control/stop  && docker stop  $c_engine && : > $engine_control/stopped"
     echo "        rm -f $engine_control/start && docker start $c_engine && : > $engine_control/started"
+  fi
+  if [ "$workflows" = 1 ]; then
+    echo ""
+    echo "    The workflow machinery IS up: the runner is $c_runner, the exec host is $c_exec,"
+    echo "    and the seeded script library is in the volume $v_workflows. RM_WORKFLOW_CONTROL is"
+    echo "    left off the command above for the watcher's reason, so the crash and runner-down"
+    echo "    cases skip themselves. By hand, which is all that watcher does:"
+    echo ""
+    echo "        docker kill  $c_engine && docker start $c_engine   # a crash, then the reconcile"
+    echo "        docker stop  $c_runner                             # the runner goes away"
+    echo "        docker start $c_runner                             # and comes back"
   fi
   exit 0
 fi

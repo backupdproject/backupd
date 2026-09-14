@@ -32,8 +32,15 @@
  * keyed by step: the follower, its cursor, its lines, its tally. So a
  * step change is a swap inside one instance rather than an unmount and a
  * mount — no DOM is thrown away, no scroll container is rebuilt, and
- * switching back to a step already read is instant AND resumes from the
- * cursor it reached instead of re-reading the log from the beginning.
+ * switching back to a step already read is instant.
+ *
+ * What "instant" costs is the other half of the contract, and #917
+ * settled it: a step held IN FULL -- its page read at least once,
+ * reported complete, with no error waiting to be retried -- is drawn
+ * from the kept scrollback and starts NO follower and no read. A step
+ * still running, or one whose page ended mid-log, is not held in full:
+ * it resumes its follower from the cursor it reached rather than
+ * re-reading the log from the beginning.
  *
  * The cache is bounded (`HISTORY_DEPTH`), because "quickly switchable"
  * for a hundred steps must not mean a hundred step's lines held at once.
@@ -191,8 +198,28 @@ export function StepLogTerminal({ runId, stepId, step, api }: StepLogTerminalPro
 
     const stream = entry.stream;
     pinnedToEnd.current = true;
-    if (following) void stream.start();
-    else void stream.pump();
+
+    // Coming back to a step this viewer already holds IN FULL costs
+    // nothing, and #917 is the case where it cost a read anyway. The
+    // scrollback is kept for HISTORY_DEPTH steps precisely so switching
+    // between them is instant; asking the engine for the log again on
+    // re-selection made that cache an optimisation of memory alone --
+    // the durable read happened regardless, and a reader comparing a
+    // failure with the step before it paid one per click.
+    //
+    // "In full" is the whole of the condition, and it is deliberately
+    // narrow: the page has been read at least once (so an empty log is
+    // not mistaken for an unread one), the source said it was COMPLETE
+    // (so a step still running, or one whose page ended mid-log,
+    // resumes its follower), and the stream has no error to retry. The
+    // ninth distinct step still evicts the oldest and still costs its
+    // one read, which is the bound HISTORY_DEPTH exists to state.
+    const cached = stream.status();
+    const alreadyHeldInFull = entry.read && cached.complete && cached.error === null;
+    if (!alreadyHeldInFull) {
+      if (following) void stream.start();
+      else void stream.pump();
+    }
 
     return () => {
       // Switching steps or unmounting stops the follower and keeps its
@@ -317,7 +344,19 @@ export function StepLogTerminal({ runId, stepId, step, api }: StepLogTerminalPro
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
-        minWidth: 0
+        // minWidth AND maxWidth, and #916 is the reason both are here.
+        // minWidth: 0 alone only stops this box from REFUSING to shrink
+        // as a flex or grid item; it does not stop it from being handed
+        // more width than its container has when something inside it has
+        // a wide min-content size (a mono script name, a SHA, a
+        // four-column fact grid). Measured in a 940px window, this
+        // section came back 1178px wide and the page scrolled sideways
+        // -- with wrapping ON, which is the one setting that promises it
+        // will not. 100% is the whole fix: the box is never wider than
+        // what it is read in, and `overflow: hidden` then keeps its own
+        // children inside it rather than out over the page.
+        minWidth: 0,
+        maxWidth: "100%"
       }}
     >
       <div
@@ -352,7 +391,12 @@ export function StepLogTerminal({ runId, stepId, step, api }: StepLogTerminalPro
       <dl
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+          // auto-fit down to 160px rather than to a fixed four columns,
+          // and 100% so the grid cannot be wider than the section even
+          // when a value is one unbreakable token (#916). The `dd`s
+          // below already break inside a word.
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(160px, 100%), 1fr))",
+          maxWidth: "100%",
           gap: "var(--space-2) var(--space-4)",
           margin: 0,
           padding: "var(--space-3) var(--space-4)",
@@ -499,6 +543,10 @@ export function StepLogTerminal({ runId, stepId, step, api }: StepLogTerminalPro
           minHeight: 120,
           overflowY: "scroll",
           overflowX: wrap ? "hidden" : "auto",
+          // The scroller is the widest thing in here when wrapping is
+          // off, and an `auto` overflow on a box with no width bound is
+          // a box that grows instead of scrolling (#916).
+          maxWidth: "100%",
           padding: "var(--space-3) var(--space-4)"
         }}
       >

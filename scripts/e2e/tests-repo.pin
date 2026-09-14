@@ -267,7 +267,7 @@ TESTS_REPO_URL=https://github.com/backupdproject/backupd-tests.git
 # #624, so #60's three cases are red over there until it moves to whatever
 # commit this branch merges as. That is the same manual half every paragraph
 # above keeps flagging.
-TESTS_REPO_SHA=d04314490ca6c0af5de295744cb6063fbb7c2d0e
+TESTS_REPO_SHA=0b691c59aebbc7bf891417975974c45e3df471fc
 #
 # Moved to bccd71c, backupd-tests#65, off their merged main and not
 # off the branch, for the reason the paragraph about a794c38 above already
@@ -324,3 +324,181 @@ TESTS_REPO_SHA=d04314490ca6c0af5de295744cb6063fbb7c2d0e
 # hook is red on main for that reason alone. It is the manual half of the
 # lockstep every paragraph above keeps flagging, and no bump on this side
 # can close it.
+#
+# ---------------------------------------------------------------------
+#
+# 5ff2ef5 is EPIC L's browser evidence: backupd-tests' feat/816-workflow-
+# e2e, carrying suites/web-ui's four workflow-*.spec.ts files and the
+# Suite C equivalence rows for every mutating workflow route. It is a
+# BRANCH HEAD rather than a merged main commit, which every paragraph
+# above would normally refuse, and the reason is lockstep: the rig those
+# specs need did not exist until this commit of THIS repository, so their
+# branch cannot be merged against a main that cannot run it and this one
+# cannot be proved against a pin that predates it. #816 lands both halves
+# together, and their merge is the follow-up.
+#
+# What this pin buys, run through scripts/e2e/three-machine-web-ui.sh
+# against a real stack on the machine this was written on: a Host
+# Workflow Runner in its own container (the product's own binary, the
+# host's Docker socket, non-root, socket and credential in volumes the
+# engine mounts the way container/compose.yaml does), an exec host whose
+# `hookuser` account genuinely runs a NAME.remote.sh, the VPS's
+# internal-sftp-forced account genuinely refusing one, and twelve
+# scenario backup sets whose hooks produce the states #816 is about --
+# including the two the epic exists for: `backup=skipped workflow=failed`
+# for a failing before hook, and `backup=success workflow=failed
+# cleanup=failed` for a failing after hook.
+#
+# And what it does NOT buy, stated here because a reader of this file is
+# the person who will next be surprised by it:
+#
+#   27 cases in suites/web-ui are RED, and they are red at
+#   d04314490 too. That was measured rather than assumed: the same rig,
+#   with --no-workflows so none of #816's fixture is in play, was run
+#   against both this sha and the previous one, and the two failure lists
+#   are identical -- sixteen wizard cases, four backup-sets, three
+#   quarantine-activity, and one each in auth, dashboard,
+#   provider-treatment and safety-invariants. They are product/suite
+#   drift on their main, tracked in #913, and no bump on this side closes
+#   them. This bump does not make the gate redder; it does not make it
+#   green either.
+#
+#   And the run cases in workflow-run.spec.ts and workflow-terminal.spec.ts
+#   cannot pass on ANY deployment this repository can build today, for a
+#   reason that is not the suite's fault and not the rig's: POST
+#   /api/v1/operations run_backup_set is refused 403
+#   DESTRUCTIVE_OPERATIONS_DISABLED, because apps/common/webhost's only
+#   DestructiveGate implementation is NotYetImplementedGate and its own
+#   doc says there is deliberately no flag that can make it report true
+#   until #92 is done. So a browser cannot start a backup on a real
+#   deployment at all, and the specs that press "Run this backup set"
+#   fail waiting for a run the engine was never going to be allowed to
+#   start. The runs those cases want DO happen -- the scheduler makes
+#   them on its own timer, which is what the evidence above was read from
+#   -- so the fix is for those cases to observe a scheduled run rather
+#   than to ask for one, and that is a change on their side. It is
+#   written up in #816 rather than worked around here, because a rig that
+#   opened that gate would be a rig proving something no operator can do.
+#
+# ---------------------------------------------------------------------
+#
+# b9d3c40 is the sha #816 was proved against, and it is the first pin in
+# this file with NO workflow case blocked behind an issue number.
+#
+# What moved between 5ff2ef5 and here was not the suite drifting: it was
+# four defects the rig found in a browser, each of which had to be fixed
+# in the product before the case that found it could assert rather than
+# skip.
+#
+#   #916  the step log terminal measured 1178px in a 940px window and
+#         the page scrolled sideways, with wrapping ON. Two halves: the
+#         terminal was not capped at its column, and the run page's step
+#         rows were a `repeat(auto-fit, minmax(130px, 1fr))` grid whose
+#         min-content width was 130px times the facts a step carries --
+#         about 1170px -- which the shell's `overflow: auto` main took
+#         rather than clipped.
+#   #917  coming back to a step re-read its log from the engine even
+#         though the viewer still held the whole page, so the bounded
+#         cache was an optimisation of memory alone.
+#   #919  no remote hook had run since L2/L3. The engine passed the
+#         step id as remoteexec's token, step ids carry a tilde, the
+#         token rule refuses one before a session opens, and the
+#         refusal was reported as transport_lost -- while the
+#         token-less capability preflight said the connection was fine.
+#         Fixed in #920.
+#   and the validation spool this PR fixes, which reported every set
+#   with a NAME.local.sh hook as having invalid hooks.
+#
+# Every one of those needed a real runner, a real exec-capable sshd and
+# a real browser at once. That is the whole argument for this file
+# existing, and it is the first time the argument has been paid back
+# four times in one bump.
+#
+# Still red, and still not this pin's business: the 28 product/suite
+# drift cases tracked in #913, which are red at every pin this file has
+# ever named, including the one before this.
+#
+# 859be963 is the sha #816 merged on, and the last thing to move in it
+# was the recovery pair becoming one case: "a crashed run is held, and
+# both ways out of the hold work". Two cases each crashing the engine
+# meant two waits for the slowest set in the deployment, and the second
+# one starved -- a set with an unsettled hold is a set the scheduler
+# will not run again, so the case that needed a live hook to crash into
+# never got one. One crash, both settlements asserted against the one
+# hold, is not a weaker claim: it is the same two exits from the same
+# hold, proved against a run that was genuinely interrupted rather than
+# against two that had to be manufactured in sequence.
+#
+# The other thing this pin records is worth more than the diff. Its
+# remote-hook case requires the host the SCRIPT printed to appear in the
+# executor the PRODUCT names, and when it went red it quoted both:
+#
+#   the hook printed that it ran on "exechost" and the product says it
+#   executed on "Remote · exec-host", so one of them is describing a
+#   different machine
+#
+# That was a fixture defect wearing a product defect's clothes -- two
+# names for one machine, in this repository's rig, at a moment when the
+# obvious reading was that remote execution was still broken. An
+# assertion that had only checked for "some hostname" would have passed
+# and proved nothing; one that compared against a literal would have
+# failed without saying why. The evidence was in the failure text, and
+# that is the argument for assertions that print what they saw.
+#
+# c30523ca is what #816 merged on, and the last thing to move was the
+# interaction nobody had thought about: taking the Host Workflow Runner
+# away is not scoped to a backup set.
+#
+# One case stops the runner to prove the validation report names it as
+# the reason. It names e2e/workflow-happy, so it reads like a
+# set-scoped act, and it is not: the runner is the facility every
+# NAME.local.sh hook executes through, so the outage interrupts
+# whichever set the scheduler happened to be mid-hook on. At this rig's
+# cadence -- measured at a run per set every ~77s, twelve cycles in
+# eight minutes -- that is very often the crash-fixture set, whose
+# before hook deliberately holds for forty-five seconds. The
+# interrupted run then owes a cleanup nobody settled, which is a HOLD,
+# and a held set is correctly never scheduled again. Twenty-five
+# minutes later the case that needs a live hook to crash into waited
+# five scheduler intervals for a run that could not come, and reported
+# it as the scheduler not running the set -- which was true, and whose
+# cause was four files away.
+#
+# Both halves are fixed at the source rather than waited out: the
+# outage settles what it caused across EVERY set and prints which ones
+# it cleared, and the crash case clears any hold on its own set before
+# it starts. Acknowledge, not resume, in both: a resume EXECUTES the
+# owed hooks, and nothing in a cleanup path should be deciding what a
+# hook does to a source machine.
+#
+# No assertion was relaxed and no budget grew, which is the only reason
+# this pin is worth having: what changed is the arrangement, not the
+# claim.
+#
+# 0b691c59 is the last move, and it is a WHEN rather than a what. The
+# run before this one proved the shape from both ends: the deployment
+# was asked for its facts on connect and answered "0 recovery hold(s)",
+# and the same suite's reporter ended the run with "still holding 2
+# workflow run(s) for recovery: e2e/workflow-crash,
+# e2e/workflow-crash" -- two rows being one interrupted run held at
+# both scopes, global and set, which is exactly what this rig produces
+# by hand. So the hold was real, and every attempt to settle it had
+# looked for it BEFORE it existed: an interrupted run does not raise
+# its hold until it finalises, which is after the case that caused the
+# outage has moved on and after a clear that ran once at another case's
+# entry.
+#
+# Both ends now settle at a moment the hold can actually be found: the
+# crash case acknowledges any hold on its own set on a callback while
+# it waits, so a hold appearing mid-wait is a legitimate starting state
+# rather than a race it lost, and the runner-outage case settles
+# deployment-wide at its file's end, by which time the run it
+# interrupted has finalised. Nothing waits longer and no assertion
+# moved.
+#
+# The reason this is worth a paragraph rather than a line: every red in
+# this sequence was diagnosed from a message a suite printed about what
+# it saw -- the executor names that disagreed, the hold count at
+# connect, the hold list at exit. None of it came from a debugger, and
+# none of it would have existed if the assertions had been written to
+# be easy to satisfy.
