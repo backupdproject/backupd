@@ -94,7 +94,7 @@ port is deliberately not enough. The token proves you can read the container's o
 which is what somebody else on the network cannot do. It is single use, it expires in
 thirty minutes, and the address in it is this machine's own rather than `localhost`,
 because the link is opened from whichever computer you are sitting at — printing
-`localhost` was, and over SSH on a laptop `localhost` is the laptop.
+`localhost` was the bug, and over SSH on a laptop `localhost` is the laptop.
 
 Nothing reissues that link while the engine keeps running, so a lapsed one has its own
 command:
