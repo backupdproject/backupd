@@ -267,7 +267,7 @@ TESTS_REPO_URL=https://github.com/backupdproject/backupd-tests.git
 # #624, so #60's three cases are red over there until it moves to whatever
 # commit this branch merges as. That is the same manual half every paragraph
 # above keeps flagging.
-TESTS_REPO_SHA=859be9631a2d9da99996b6515371d9b82f6ce81b
+TESTS_REPO_SHA=c30523caea37cec3e412ef49aed586bde19c14e1
 #
 # Moved to bccd71c, backupd-tests#65, off their merged main and not
 # off the branch, for the reason the paragraph about a794c38 above already
@@ -444,3 +444,33 @@ TESTS_REPO_SHA=859be9631a2d9da99996b6515371d9b82f6ce81b
 # and proved nothing; one that compared against a literal would have
 # failed without saying why. The evidence was in the failure text, and
 # that is the argument for assertions that print what they saw.
+#
+# c30523ca is what #816 merged on, and the last thing to move was the
+# interaction nobody had thought about: taking the Host Workflow Runner
+# away is not scoped to a backup set.
+#
+# One case stops the runner to prove the validation report names it as
+# the reason. It names e2e/workflow-happy, so it reads like a
+# set-scoped act, and it is not: the runner is the facility every
+# NAME.local.sh hook executes through, so the outage interrupts
+# whichever set the scheduler happened to be mid-hook on. At this rig's
+# cadence -- measured at a run per set every ~77s, twelve cycles in
+# eight minutes -- that is very often the crash-fixture set, whose
+# before hook deliberately holds for forty-five seconds. The
+# interrupted run then owes a cleanup nobody settled, which is a HOLD,
+# and a held set is correctly never scheduled again. Twenty-five
+# minutes later the case that needs a live hook to crash into waited
+# five scheduler intervals for a run that could not come, and reported
+# it as the scheduler not running the set -- which was true, and whose
+# cause was four files away.
+#
+# Both halves are fixed at the source rather than waited out: the
+# outage settles what it caused across EVERY set and prints which ones
+# it cleared, and the crash case clears any hold on its own set before
+# it starts. Acknowledge, not resume, in both: a resume EXECUTES the
+# owed hooks, and nothing in a cleanup path should be deciding what a
+# hook does to a source machine.
+#
+# No assertion was relaxed and no budget grew, which is the only reason
+# this pin is worth having: what changed is the arrangement, not the
+# claim.
