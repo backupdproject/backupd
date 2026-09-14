@@ -331,7 +331,7 @@ func (e RemoteExecutor) ExecuteStep(ctx context.Context, req StepRequest) (StepO
 	}
 
 	result, runErr := client.Run(ctx, remoteexec.Request{
-		Token:        req.Step.ID,
+		Token:        remoteexec.StepToken(req.RunID, req.Step.ID),
 		Environ:      req.Environ,
 		Script:       req.Script.Body,
 		Sink:         req.Sink,
@@ -350,9 +350,11 @@ func (e RemoteExecutor) ExecuteStep(ctx context.Context, req StepRequest) (StepO
 // The ORDER of these tests is the contract. A timeout and a cancellation
 // are told apart by sentinel before anything looks at the exit code,
 // because a step that was killed may still carry a signal name and must
-// not be read as having reported anything; and an observed exit code is
-// only believed when there is no error at all, which is what keeps
-// transport loss out of the exit-code field.
+// not be read as having reported anything; a refusal that happened BEFORE
+// the channel existed is not an outcome nobody saw but a step that never
+// started; and an observed exit code is only believed when there is no
+// error at all, which is what keeps transport loss out of the exit-code
+// field.
 func remoteOutcome(r remoteexec.Result, err error) StepOutcome {
 	out := StepOutcome{
 		Chunks:    r.Chunks,
@@ -368,6 +370,17 @@ func remoteOutcome(r remoteexec.Result, err error) StepOutcome {
 	case errors.Is(err, remoteexec.ErrStepSignaled):
 		out.Disposition = DispositionSignaled
 		out.Detail = "killed by " + r.Signal + " on the remote host"
+	case errors.Is(err, remoteexec.ErrConnection), errors.Is(err, remoteexec.ErrExecCapability):
+		// Nothing of the hook ran: the connection would not open, the
+		// request was refused before a session was asked for, or the
+		// account proved not to be exec-capable. Reporting that as
+		// transport loss says the side effects may be half applied,
+		// which sends an operator looking for a partially quiesced
+		// database that does not exist -- and it hid #919 for two
+		// milestones, where every remote step was refused by this
+		// package's own token rule and reported as a lost connection.
+		out.Disposition = DispositionNotAttempted
+		out.Detail = err.Error()
 	case err != nil:
 		out.Disposition = DispositionTransportLost
 		out.Detail = err.Error()
