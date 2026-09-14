@@ -267,7 +267,7 @@ TESTS_REPO_URL=https://github.com/backupdproject/backupd-tests.git
 # #624, so #60's three cases are red over there until it moves to whatever
 # commit this branch merges as. That is the same manual half every paragraph
 # above keeps flagging.
-TESTS_REPO_SHA=638a4cb65ad59a2a3fa97ea1826a3e6d81b3e437
+TESTS_REPO_SHA=91e9d514205c4a623057048c2192d019c63b813e
 #
 # Moved to bccd71c, backupd-tests#65, off their merged main and not
 # off the branch, for the reason the paragraph about a794c38 above already
