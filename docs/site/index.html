@@ -1,3 +1,4 @@
+```
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -15,6 +16,25 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="topbar.css">
+  <style>
+    .brand-pronunciation {
+      margin: 0.35rem 0 0.85rem;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.9rem;
+      line-height: 1.4;
+      opacity: 0.78;
+    }
+    .brand-pronunciation-word {
+      font-weight: 600;
+    }
+    .brand-pronunciation-ipa {
+      margin-left: 0.45rem;
+    }
+    .brand-pronunciation-say {
+      margin-left: 0.55rem;
+      font-family: "IBM Plex Sans", sans-serif;
+    }
+  </style>
   <script src="topbar.js" defer></script>
   <script src="copy.js" defer></script>
   <script src="tooltip.js" defer></script>
@@ -26,6 +46,11 @@
       <img src="assets/logo-mark-light.svg" alt="retnd mark: a broken ring standing for a transfer cycle in progress">
       <h1 class="brand-name">retn<span class="brand-dash">d</span></h1>
     </a>
+    <p class="brand-pronunciation" aria-label="retnd, pronounced retained">
+      <span class="brand-pronunciation-word">retnd</span>
+      <span class="brand-pronunciation-ipa">/rɪˈteɪnd/</span>
+      <span class="brand-pronunciation-say">pronounced <strong>ri-TAYND</strong> · “retained”</span>
+    </p>
     <p class="tagline">Pulls finished backups off a remote server, verifies them, commits them to the NAS, and only then deletes the original.</p>
     <div class="badges">
       <img src="https://img.shields.io/badge/go-1.27%2B-00ADD8?logo=go" alt="Go 1.27+">
@@ -333,3 +358,4 @@ retnd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enrol
 
 </body>
 </html>
+```
