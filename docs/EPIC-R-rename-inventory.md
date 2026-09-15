@@ -62,6 +62,10 @@ Owning sub-issue, and what each class costs. "Gated" means a check already fails
 it is missed; "guard" means the extended brand-drift guard of R1.2 is the only thing
 that would notice.
 
+The owners are the spec's sub-issues of tracker #885, and every class has one:
+R1.1 #886, R1.2 #887, R1.3 #888, R1.4 #889, R1.5 #890, R2.1 #891, R2.2 #892,
+R2.3 #893, R2.4 #894, R2.5 #895.
+
 | # | Token class | Target | Repos | Files / lines | Owner | Gated? | Compat note |
 |---|---|---|---|---|---|---|---|
 | 1 | `github.com/backupdproject/backupd` (module path, imports) | `github.com/retnd/retnd` | both | 840 / 2,163 occ | **R1.3** | gated: nothing compiles | One atomic commit. Module path does not match its fetch location until the cutover; that transient is declared and guarded (FR-41) |
