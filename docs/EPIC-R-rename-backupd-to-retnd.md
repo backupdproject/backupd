@@ -555,7 +555,7 @@ Checkable claims, not intentions. Each box is held to the outcome `docs/conforma
 ### Phase 2 exit gate
 
 - [ ] `check-brand-drift.sh` is green with an **empty `pending` list**, and every remaining occurrence of the old name in the tree is on the `aliases` list with its closing issue or on the `preexisting` list with its written reason. No third category exists.
-- [ ] Every one of the eleven providers' packaging manifests is regenerated through `distribution/packaging`'s derivation rather than hand-edited, the cross-provider conformance suite passes, and the packaging matrix tests are green.
+- [x] Every one of the eleven providers' packaging manifests is regenerated through `distribution/packaging`'s derivation rather than hand-edited, the cross-provider conformance suite passes, and the packaging matrix tests are green.
 - [ ] `docs/site/reference.html`'s command table matches the dispatch table; all five site pages, their `<title>`s and the wordmark say `retnd`; 44 screens are re-recorded through the four capture scripts against `createMockApi` with the clock pinned, and the landing PR names the pin the Playwright was borrowed at.
 - [ ] Every store-listing row in `docs/conformance/submission-preflight.md` whose screenshot shows the product name is **outstanding**, not passing, and `docs/submission/screenshots.md` says why it cannot be satisfied here.
 - [ ] The site's "What has not been proven" section states which surfaces were re-captured, which store screenshots still show the old name, and that no provider store listing has been re-reviewed.
