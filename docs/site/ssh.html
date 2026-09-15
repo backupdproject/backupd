@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SSH keys and proving a source: backupd</title>
-  <meta name="description" content="The backupd SSH authentication wizard, host key comparison, and the six-step connection check a backup set has to pass before it can be saved.">
+  <title>SSH keys and proving a source: retnd</title>
+  <meta name="description" content="The retnd SSH authentication wizard, host key comparison, and the six-step connection check a backup set has to pass before it can be saved.">
   <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
   <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
@@ -21,8 +21,8 @@
 <header class="topbar" id="topbar">
   <div class="topbar-content">
     <a class="topbar-brand" href="index.html">
-      <img src="assets/logo-mark-light.svg" alt="backupd mark: a broken ring standing for a transfer cycle in progress">
-      <h1 class="brand-name">backup<span class="brand-dash">d</span></h1>
+      <img src="assets/logo-mark-light.svg" alt="retnd mark: a broken ring standing for a transfer cycle in progress">
+      <h1 class="brand-name">retn<span class="brand-dash">d</span></h1>
     </a>
   </div>
 
@@ -144,11 +144,11 @@
     <figcaption><span class="clip-tag">clip</span>Six named steps: the key resolves and its permissions are unchanged, the hostname resolves, the socket opens, the host key matches what this set trusts, the server accepts the key, and the folder lists with a count of what is in it.</figcaption>
   </figure>
 
-    <p>The destination side has worked this way for a while and the source side is copying its shape rather than inventing a second one. <code>backupd medium add</code> verifies by default and <code>--no-verify</code> is an explicit opt-out that says nothing was proven. <code>backupd backup-set create</code> and <code>backupd backup-set patch</code> now do the same, and a set written with <code>--no-verify</code> stays marked unverified until a connection test passes.</p>
+    <p>The destination side has worked this way for a while and the source side is copying its shape rather than inventing a second one. <code>retnd medium add</code> verifies by default and <code>--no-verify</code> is an explicit opt-out that says nothing was proven. <code>retnd backup-set create</code> and <code>retnd backup-set patch</code> now do the same, and a set written with <code>--no-verify</code> stays marked unverified until a connection test passes.</p>
 
     <div class="note">
       <span class="note-label">From a terminal</span>
-      <pre style="margin-bottom:0"><code>backupd backup-set test-connection production/postgres-primary</code></pre>
+      <pre style="margin-bottom:0"><code>retnd backup-set test-connection production/postgres-primary</code></pre>
       <p style="margin-top:0.6rem">Six named outcomes and a non-zero exit when any of them fails. Beside a serving engine the check is made <em>by</em> that engine, so its steps reach the live feed rather than only your terminal; with nothing serving, it is made where you typed it.</p>
     </div>
   </section>
@@ -163,7 +163,7 @@
 </main>
 
 <footer>
-  <p>backupd is Apache-2.0 licensed. <a href="https://github.com/backupdproject/backupd">View on GitHub</a></p>
+  <p>retnd is Apache-2.0 licensed. <a href="https://github.com/backupdproject/backupd">View on GitHub</a></p>
   <p>Pictures taken against the development fixture API. No picture or clip on this page is evidence about a running engine.</p>
 </footer>
 

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>backupd: a backup lifecycle manager for a NAS</title>
-  <meta name="description" content="backupd pulls completed backup artifacts off a remote server over SFTP, verifies them, commits them durably to a NAS, and only then deletes the remote copy.">
+  <title>retnd: a backup lifecycle manager for a NAS</title>
+  <meta name="description" content="retnd pulls completed backup artifacts off a remote server over SFTP, verifies them, commits them durably to a NAS, and only then deletes the remote copy.">
   <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
   <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
@@ -23,8 +23,8 @@
 <header class="topbar is-hero" id="topbar">
   <div class="topbar-content">
     <a class="topbar-brand" href="index.html">
-      <img src="assets/logo-mark-light.svg" alt="backupd mark: a broken ring standing for a transfer cycle in progress">
-      <h1 class="brand-name">backup<span class="brand-dash">d</span></h1>
+      <img src="assets/logo-mark-light.svg" alt="retnd mark: a broken ring standing for a transfer cycle in progress">
+      <h1 class="brand-name">retn<span class="brand-dash">d</span></h1>
     </a>
     <p class="tagline">Pulls finished backups off a remote server, verifies them, commits them to the NAS, and only then deletes the original.</p>
     <div class="badges">
@@ -108,7 +108,7 @@
 <main>
 
   <section>
-    <p>A backup producer somewhere writes a dump, an archive or a snapshot to disk. That machine has finite space, so something has to move the artifact off it and something has to delete the original. backupd is the half of that job that runs on the NAS: it discovers finished artifacts on the remote server over SFTP, pulls them, verifies them, commits them durably, records that it did, and only then removes the remote copy.</p>
+    <p>A backup producer somewhere writes a dump, an archive or a snapshot to disk. That machine has finite space, so something has to move the artifact off it and something has to delete the original. retnd is the half of that job that runs on the NAS: it discovers finished artifacts on the remote server over SFTP, pulls them, verifies them, commits them durably, records that it did, and only then removes the remote copy.</p>
     <p>It is a standalone Go binary that embeds pinned rclone Go packages. It does not fork rclone, and it does not shell out to the <code>rclone</code> command line for normal data movement.</p>
   </section>
 
@@ -187,7 +187,7 @@ retnd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enrol
 
     <h3 style="margin-top:2rem">What it sets up</h3>
     <p>There is one product here, not eleven. Every supported platform wraps the same multi-architecture image and the same Compose topology, and the differences between them are host paths and metadata formats.</p>
-    <p>Two services, one image. <code>backupd</code> runs the engine, the scheduler, local authentication and <code>/api/v1</code> in one process, with no published port at all. <code>web-ui</code> serves the static interface and reverse-proxies the API to it, and it is the only service with a LAN-facing port. They meet on a private project-scoped bridge network, which is what makes the engine's isolation a topology rather than a convention.</p>
+    <p>Two services, one image. <code>retnd</code> runs the engine, the scheduler, local authentication and <code>/api/v1</code> in one process, with no published port at all. <code>web-ui</code> serves the static interface and reverse-proxies the API to it, and it is the only service with a LAN-facing port. They meet on a private project-scoped bridge network, which is what makes the engine's isolation a topology rather than a convention.</p>
     <div class="note warn">
       <span class="note-label">Only if you are writing the Compose file yourself</span>
       <p>The installer above already does this. If you are standing the stack up by hand instead: the runtime image is distroless and has no root step, and a bind mount does not chown its source, so create the host directories and chown them to the container's uid and gid before the first <code>docker compose up</code>, or the engine will not be able to write its own configuration, keys or journal.</p>
@@ -203,7 +203,7 @@ retnd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enrol
 
   <a href="reference.html" class="clipping">
     <span class="clipping-tag">Reference</span>
-    <p>Every screen of the web interface with a picture and a table of what each control does, every one of the twenty-four <code>backupd</code> commands, and every subcommand and flag of the installer with its default. The command table and the flag table are both checked against the code on every run of the gate, so a command or a flag that lands without a row fails the build rather than going quietly stale.</p>
+    <p>Every screen of the web interface with a picture and a table of what each control does, every one of the twenty-four <code>retnd</code> commands, and every subcommand and flag of the installer with its default. The command table and the flag table are both checked against the code on every run of the gate, so a command or a flag that lands without a row fails the build rather than going quietly stale.</p>
     <span class="clipping-read">Read the reference &rarr;</span>
   </a>
 
@@ -275,7 +275,7 @@ retnd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enrol
 
   <section>
     <h2 id="cli">The command line</h2>
-    <p>Everything the web interface does, and several things it does not, are reachable from <code>backupd</code>. Every command except <code>version</code> takes <code>--config</code>, defaulting to <code>/etc/backupd/config/config.yaml</code>, which is a file inside the config directory rather than a file mounted on its own; pass the directory and it resolves <code>config.yaml</code> inside it.</p>
+    <p>Everything the web interface does, and several things it does not, are reachable from <code>retnd</code>. Every command except <code>version</code> takes <code>--config</code>, defaulting to <code>/etc/retnd/config/config.yaml</code>, which is a file inside the config directory rather than a file mounted on its own; pass the directory and it resolves <code>config.yaml</code> inside it.</p>
     <div class="scroll-x">
       <table>
         <thead>
@@ -317,16 +317,17 @@ retnd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enrol
       <li><strong>No workflow run can be started from a browser, so none of the ones that were tested was.</strong> The gate above is why: <code>run_backup_set</code> is a destructive operation, so every workflow run the end-to-end suite observed was one the <em>scheduler</em> started, and the hook-bypass an administrator is allowed in principle lives on that same refused route. Remote hooks are worse than untested-looking: they had never executed at all between the feature landing and issue #919 being found by that suite and fixed, because the engine handed the remote-exec channel a step id its own token rule refused, and the refusal was mislabelled as a lost connection while a token-less capability probe went on reporting the channel healthy. <a href="workflows.html#honest">The workflows guide</a> lists the rest, including the two things the feature explicitly does not guarantee.</li>
       <li><strong>The 0.4.0 image is not on the registry.</strong> This release is cut and not pushed: <code>canonical.json</code> records <code>image.published: false</code> and the release manifest records a null digest per architecture, which are held together so neither can move alone. <code>0.3.3</code> is the newest tag that resolves, and it is signed. Until 0.4.0 is pushed, install it by building the image yourself or side-loading one.</li>
       <li><strong>No acceptance procedure has been run on real hardware.</strong> The procedures for TrueNAS, Unraid, OpenMediaVault, Synology and Proxmox VE are written, reviewed and specific, and nobody working on the repository has one of those machines to execute them on. Every one of those platforms is build-supported and uncertified.</li>
-      <li><strong>There is no restore execution.</strong> <code>backupd restore</code> asks a storage provider to make an archived copy readable again, which is a different thing. Getting a backup back onto a server is a documented manual procedure, and that procedure is the whole of it.</li>
+      <li><strong>There is no restore execution.</strong> <code>retnd restore</code> asks a storage provider to make an archived copy readable again, which is a different thing. Getting a backup back onto a server is a documented manual procedure, and that procedure is the whole of it.</li>
       <li><strong>There is no metrics endpoint.</strong> A Prometheus renderer exists in the tree and nothing imports it. No listener serves <code>/metrics</code>.</li>
       <li><strong>Every picture on this site comes from a mock.</strong> Every screenshot and every clip was recorded against the development server's in-memory fixture API, not against a running engine. The layout, the copy, the flow and the interaction are the real ones. The data is not, and each page says so.</li>
+      <li><strong>The rename is complete on this site and nowhere a store reviewer looks.</strong> This product was called <code>backupd</code> until <a href="https://github.com/backupdproject/backupd/issues/885">#885</a>. Everything with a picture on this site was re-recorded against the renamed interface through the capture scripts in <code>docs/site/tools/</code>: the 20 first-run and enrolment stills, the 15 reference screens, the 8 web-interface clips, the 2 SSH clips and the 10 workflow clips &mdash; 55 files, every one of them reproducible by re-running the script that made it. What was <em>not</em> re-captured, and cannot be here, is the store material: the screenshots each provider's listing shows are of the application running on that provider's own hardware, so every one that has ever been captured shows the old name, and every <code>Store screenshots</code> row in <a href="https://github.com/backupdproject/backupd/blob/main/docs/conformance/submission-preflight.md">the submission preflight</a> is recorded outstanding rather than passing. Substituting one of the pictures above would be substituting a mock into a store listing, which <code>docs/epic-checklist.md</code> §10 forbids and which is the one place on this site where "the data is not real" could not be written under the image. No provider store listing has been re-reviewed since the rename either: the listing copy, the icons and the release notes were rewritten in the tree, and whether each store accepts the listing under a new product name is an external decision nothing in the repository can record. The wordmark itself was re-fitted rather than re-lettered &mdash; six glyphs became four, so the optical spacing and the aspect ratio were rebuilt and the accent stayed on the trailing <code>d</code> &mdash; and the reasoning, including the 16-pixel favicon decision, is <a href="https://github.com/backupdproject/backupd/blob/main/docs/design/brand-assets.md">in the brand-asset manifest</a>. That manifest also records the two things about the art that are not proven: the lockup is a geometric construction rather than a designer's drawing, and the named human acceptance step &mdash; somebody looking at every asset and confirming none of them <em>depicts</em> the old name &mdash; has not been performed.</li>
     </ul>
   </section>
 
 </main>
 
 <footer>
-  <p>backupd is Apache-2.0 licensed. <a href="https://github.com/backupdproject/backupd">View on GitHub</a></p>
+  <p>retnd is Apache-2.0 licensed. <a href="https://github.com/backupdproject/backupd">View on GitHub</a></p>
   <p>Not affiliated with the rclone project. rclone is embedded as a pinned Go library under its own licence.</p>
 </footer>
 

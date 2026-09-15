@@ -1,4 +1,4 @@
-/* backupd docs shared header, used on every page.
+/* retnd docs shared header, used on every page.
  *
  * Three responsibilities:
  *   1. Scroll-collapse animation on the home page (.topbar.is-hero).

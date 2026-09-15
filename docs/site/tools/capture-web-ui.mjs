@@ -46,6 +46,39 @@ const WINDOW = VIEWPORT;
 const WIDTH = 1100;
 
 const clips = [];
+/**
+ * Settles the recovery hold this deployment's flagship set is under,
+ * BEFORE any frame is taken, and returns once the run control is live.
+ *
+ * Two of the clips below are about the run control, and
+ * `production/postgres-primary` is the set they use because it is the one
+ * the fixtures give a history worth photographing. #814 then gave that
+ * same set an outstanding workflow recovery hold in the default scenario
+ * (`WORKFLOW_HOLDS` in `src/api/mock.ts`), and a held set is one the
+ * engine will refuse to run: the button is disabled, with the reason in
+ * its `title`. So both clips sat waiting thirty seconds for a control
+ * that was never going to become enabled, and nothing had re-run this
+ * script since.
+ *
+ * The fix is the product's own way out rather than a different fixture:
+ * press "Resume cleanup", which is the primary action on the banner that
+ * explains the refusal, and wait for the control it unblocks. It happens
+ * off camera, the way collapsing the terminal dock does, because these
+ * two clips are about what the run control says and `wf-recovery` in
+ * capture-workflows.mjs is the clip that is about the hold itself.
+ *
+ * Not conditional on the hold existing: if the banner is gone the
+ * fixture has changed under this script, and the clip below would be
+ * photographing a claim nobody checked. A missing banner is a timeout
+ * naming this function, which is the failure worth having.
+ */
+async function settleRecoveryHold(page) {
+  await page.getByRole("button", { name: "Resume cleanup" }).click({ timeout: 20_000 });
+  await page
+    .getByRole("button", { name: "Run this backup set" })
+    .and(page.locator(":enabled"))
+    .waitFor({ state: "visible", timeout: 20_000 });
+}
 
 await withDevServer(async (app) => {
   // -------------------------------------------------- the terminal is pinned
@@ -151,6 +184,8 @@ await withDevServer(async (app) => {
   {
     const { page } = await openApp(app, { path: "/sets/production/postgres-primary", viewport: WINDOW });
     await settle(page, 1200);
+    await settleRecoveryHold(page);
+    await settle(page, 600);
     const clip = new Clip(page, "ui-run-controls", { width: WIDTH });
     await clip.frame(1.8);
     await page.getByRole("button", { name: "Run this backup set" }).hover();
@@ -186,6 +221,7 @@ await withDevServer(async (app) => {
   {
     const { page } = await openApp(app, { path: "/sets/production/postgres-primary", viewport: WINDOW });
     await settle(page, 1200);
+    await settleRecoveryHold(page);
     await page.getByRole("button", { name: "Hide terminal" }).click();
     const panel = page.locator("section[aria-label^=\'Activity for\']").first();
     await panel.scrollIntoViewIfNeeded();

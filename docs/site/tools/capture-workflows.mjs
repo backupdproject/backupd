@@ -55,7 +55,7 @@
 //                       the only rule today whose severity refuses a
 //                       save.
 //   wf-env-table        Precedence, and a secret that is a LOCATION. The
-//                       whole BACKUPD_ prefix is refused in
+//                       whole reserved `RETND_` prefix is refused in
 //                       configuration rather than silently overridden at
 //                       merge time, which is why the clip types one in.
 //   wf-settings-runner  The deployment-wide card, ending on the row that
@@ -375,8 +375,10 @@ await withDevServer(async (app) => {
   // THIS set configures. The second is what a hook ends up with after
   // the merge, with the layer each value came from and what it shadowed.
   //
-  // In between, the rule that is easiest to get wrong: the BACKUPD_
-  // prefix is refused in configuration, at validation time, rather than
+  // In between, the rule that is easiest to get wrong: the reserved
+  // `RETND_` prefix -- and, while this release still exports them, the
+  // pre-rename spellings it replaced -- is refused in configuration, at
+  // validation time, rather than
   // being accepted and then silently overridden at merge time. Typing
   // one in is the whole demonstration — the name is refused with a
   // reason and the save is off, so a request that could not succeed
@@ -434,7 +436,7 @@ await withDevServer(async (app) => {
   // inventing a health check. A cell that said "Answering" here would
   // report a configured-but-dead runner as healthy, which is the one
   // wrong answer this card must never give. The live answer comes from a
-  // set's own hook check, or from `backupd workflow-runner status`.
+  // set's own hook check, or from `retnd workflow-runner status`.
   {
     const { page } = await openApp(app, { path: "/settings", viewport: WINDOW });
     await settle(page, 1400);
