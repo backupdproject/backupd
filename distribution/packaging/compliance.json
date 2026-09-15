@@ -593,24 +593,24 @@
       },
       "openmediavault": {
         "artifacts": [
-          "apps/openmediavault/compose/backupd.env",
-          "apps/openmediavault/compose/backupd.yml"
+          "apps/openmediavault/compose/retnd.env",
+          "apps/openmediavault/compose/retnd.yml"
         ],
         "unbuiltReason": "",
         "licenceDelivery": "image"
       },
       "proxmox": {
         "artifacts": [
-          "apps/proxmox/compose/backupd.env",
-          "apps/proxmox/compose/backupd.yml"
+          "apps/proxmox/compose/retnd.env",
+          "apps/proxmox/compose/retnd.yml"
         ],
         "unbuiltReason": "",
         "licenceDelivery": "image"
       },
       "portainer": {
         "artifacts": [
-          "apps/portainer/compose/backupd.env",
-          "apps/portainer/compose/backupd.yml",
+          "apps/portainer/compose/retnd.env",
+          "apps/portainer/compose/retnd.yml",
           "apps/portainer/templates.json",
           "apps/portainer/logo.svg"
         ],
@@ -624,7 +624,7 @@
       },
       "casaos": {
         "artifacts": [
-          "apps/casaos/compose/backupd.yml",
+          "apps/casaos/compose/retnd.yml",
           "apps/casaos/icon.svg"
         ],
         "unbuiltReason": "",

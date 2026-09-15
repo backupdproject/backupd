@@ -91,9 +91,9 @@ chmod 600 /opt/backupd/secrets/id_ed25519
 
 The engine's start gate is a liveness question, not a backup-freshness verdict
 (issue #206). It declares
-`["CMD", "/backupd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]`,
-derived from `container/compose.yaml`, and `backupd-ui` waits on that with
-`condition: service_healthy`. `/backupd status` is still FR-24's freshness
+`["CMD", "/retnd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]`,
+derived from `container/compose.yaml`, and `web-ui` waits on that with
+`condition: service_healthy`. `/retnd status` is still FR-24's freshness
 verdict and still the image's own baked-in `HEALTHCHECK`, and it exits non-zero on a
 fresh install by design, which is exactly why nothing waits on it any more. So a
 **fresh install reaches the web UI**: an empty configuration directory is a legitimate
@@ -109,7 +109,7 @@ a hard startup failure rather than a first-run wizard, so an invalid one is wors
 none at all. Either finish setup in the browser and skip the file, or write it here.
 
 **If you take the file route, take it before Deploy.** Every field Portainer shows is
-one environment variable of `apps/portainer/compose/backupd.env`, and the stack
+one environment variable of `apps/portainer/compose/retnd.env`, and the stack
 deploys as soon as you press Deploy, so a hand-written `config.yaml` has to be on the
 host before that press or it is not the file the engine reads on its first start. Write
 it over SSH on the host running the Docker engine, not inside the Portainer container.
@@ -144,20 +144,20 @@ host and user.
 1. In Portainer, **Settings, App Templates**, set the templates URL to this
    repository's `apps/portainer/templates.json`, and save. On a host that cannot
    reach the repository, use **Custom Templates, Add** and paste
-   `apps/portainer/compose/backupd.yml` instead.
-2. **App Templates**, pick Backupd, and fill the form. Every field is one
-   variable of `apps/portainer/compose/backupd.env` and the defaults are
+   `apps/portainer/compose/retnd.yml` instead.
+2. **App Templates**, pick retnd, and fill the form. Every field is one
+   variable of `apps/portainer/compose/retnd.env` and the defaults are
    the same defaults.
 3. Deploy the stack.
 
 - [ ] The template appeared in Portainer's App Templates list
 - [ ] Every environment field Portainer showed matches a variable the stack reads
 - [ ] The stack deployed and both containers reach `running`
-- [ ] `backupd` reports healthy (it declares the liveness probe
-      `/backupd-web healthcheck --url http://127.0.0.1:8080/health/live`,
-      not the image's own `/backupd status`: the web UI waits on this, and
+- [ ] `retnd` reports healthy (it declares the liveness probe
+      `/retnd-web healthcheck --url http://127.0.0.1:8080/health/live`,
+      not the image's own `/retnd status`: the web UI waits on this, and
       the backup-freshness verdict is non-zero on a fresh install)
-- [ ] `backupd-ui` reports healthy, having overridden the image's own healthcheck
+- [ ] `web-ui` reports healthy, having overridden the image's own healthcheck
 - [ ] No Portainer agent was installed, and no Portainer extension or plugin was added
 
 ## Step 2 — Web UI
@@ -211,7 +211,7 @@ Portainer itself has the Docker socket. This product must not, and this is where
 that is decided against the running containers rather than against the file.
 
 ```bash
-docker inspect backupd backupd-ui \
+docker inspect retnd-retnd-1 retnd-web-ui-1 \
   --format '{{.Name}} priv={{.HostConfig.Privileged}} net={{.HostConfig.NetworkMode}} pid={{.HostConfig.PidMode}} caps={{.HostConfig.CapAdd}} binds={{.HostConfig.Binds}}'
 ```
 

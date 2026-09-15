@@ -160,7 +160,7 @@
       "workPackage": "4.4",
       "metadata": {
         "kind": "spk", "root": "apps/synology",
-        "files": ["README.md", "spk/assets/conf/privilege", "spk/assets/conf/resource", "spk/assets/ui/config", "cmd/spkctl/main.go", "compose/backupd.yml", "compose/backupd.env"],
+        "files": ["README.md", "spk/assets/conf/privilege", "spk/assets/conf/resource", "spk/assets/ui/config", "cmd/spkctl/main.go", "compose/retnd.yml", "compose/retnd.env"],
         "storeArtifacts": ["spk/assets/conf/privilege", "spk/assets/conf/resource", "spk/assets/ui/config"],
         "packageUIBundle": { "layout": "apps/synology/spk/layout.go", "startScript": "apps/synology/spk/assets/scripts/start-stop-status" },
         "architectureClaim": { "source": "apps/synology/spk/arch.go", "architectures": ["amd64", "arm64"] }
@@ -325,7 +325,7 @@
       "tier": "C",
       "epic": "B",
       "workPackage": "4.3",
-      "metadata": { "kind": "compose", "root": "apps/openmediavault", "compose": "compose/backupd.yml", "env": "compose/backupd.env", "files": ["README.md"], "storeArtifacts": [] },
+      "metadata": { "kind": "compose", "root": "apps/openmediavault", "compose": "compose/retnd.yml", "env": "compose/retnd.env", "files": ["README.md"], "storeArtifacts": [] },
       "scanRoots": ["apps/openmediavault"],
       "acceptance": "docs/acceptance/openmediavault-provider-acceptance.md",
       "workflowRunner": { "localHooks": "available", "platform": "openmediavault", "doc": "docs/acceptance/openmediavault-provider-acceptance.md" },
@@ -363,7 +363,7 @@
       "tier": "C",
       "epic": "B",
       "workPackage": "4.5",
-      "metadata": { "kind": "compose", "root": "apps/proxmox", "compose": "compose/backupd.yml", "env": "compose/backupd.env", "files": ["README.md"], "storeArtifacts": [] },
+      "metadata": { "kind": "compose", "root": "apps/proxmox", "compose": "compose/retnd.yml", "env": "compose/retnd.env", "files": ["README.md"], "storeArtifacts": [] },
       "scanRoots": ["apps/proxmox"],
       "acceptance": "docs/acceptance/proxmox-ve-deployment.md",
       "workflowRunner": { "localHooks": "available", "platform": "proxmox", "doc": "docs/acceptance/proxmox-ve-deployment.md" },
@@ -404,8 +404,8 @@
       "metadata": {
         "kind": "compose",
         "root": "apps/portainer",
-        "compose": "compose/backupd.yml",
-        "env": "compose/backupd.env",
+        "compose": "compose/retnd.yml",
+        "env": "compose/retnd.env",
         "files": [
           "README.md",
           "templates.json",
@@ -629,16 +629,16 @@
       "metadata": {
         "kind": "compose",
         "root": "apps/casaos",
-        "compose": "compose/backupd.yml",
+        "compose": "compose/retnd.yml",
         "files": [
           "README.md",
           "icon.svg"
         ],
         "storeArtifacts": [
-          "compose/backupd.yml"
+          "compose/retnd.yml"
         ],
         "architectureClaim": {
-          "source": "apps/casaos/compose/backupd.yml",
+          "source": "apps/casaos/compose/retnd.yml",
           "architectures": [
             "amd64",
             "arm64"

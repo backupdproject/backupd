@@ -1,4 +1,4 @@
-# Synology Container Manager project for Backupd (issue #169).
+# Synology Container Manager project for retnd (issue #169).
 #
 # THIS DOES NOT REPLACE THE .spk. apps/synology/spk still builds the DSM
 # package #85 shipped, and nothing here deprecates it. What this adds is
@@ -8,7 +8,7 @@
 # install is a choice, and apps/synology/README.md sets out the trade.
 #
 # Container Manager -> Project -> Create -> "Create docker-compose.yml",
-# paste this file, and paste backupd.env into the environment. See
+# paste this file, and paste retnd.env into the environment. See
 # https://kb.synology.com/en-us/DSM/help/ContainerManager/docker_project
 # for the current wording of that flow.
 #
@@ -17,13 +17,23 @@
 # `--profile=synology` selecting the platform identity and the UI bridge.
 # distribution/packaging derives every runtime field below from that one
 # definition and fails the build when any of them drifts.
+# The compose project name, stated rather than inherited (issue #891,
+# following container/compose.yaml). Compose defaults the project name to
+# the directory this file happens to sit in, and the project name is the
+# prefix of every default container name. With this line the containers
+# are `retnd-retnd-1` and `retnd-web-ui-1` here exactly as they are in the
+# canonical definition, so `docker ps` on a Synology NAS reads the same as
+# `docker ps` on a generic Docker host and the documented names are true
+# of both.
+name: retnd
+
 services:
   # The engine: local authentication, the versioned /api/v1 API and the
   # backup scheduler, one process sharing one shutdown context. It holds
   # the state database and the credentials, and publishes no port at all.
-  backupd:
+  retnd:
     image: ${IMAGE:-ghcr.io/backupdproject/backupd:0.4.0}
-    command: ["/backupd-web", "serve", "--profile=synology"]
+    command: ["/retnd-web", "serve", "--profile=synology"]
 
     user: "${PUID:-1026}:${PGID:-100}"
     read_only: true
@@ -63,20 +73,20 @@ services:
     # so a ${VAR:-default} here would put the backup root on the DSM
     # system volume and report healthy about it.
     volumes:
-      - ${APPDATA:?set APPDATA in backupd.env to the project directory, e.g. /volume1/docker/backupd}/state:/data/state
-      - ${BACKUP_ROOT:?set BACKUP_ROOT in backupd.env to the shared folder retained artifacts land in}:/data/backups
+      - ${APPDATA:?set APPDATA in retnd.env to the project directory, e.g. /volume1/docker/backupd}/state:/data/state
+      - ${BACKUP_ROOT:?set BACKUP_ROOT in retnd.env to the shared folder retained artifacts land in}:/data/backups
       # A writable directory holding config.yaml (issue #196): the engine
       # creates and atomically replaces that file, and its ssh_keys/ and
       # known_hosts.d/ stores are siblings of it.
-      - ${APPDATA:?set APPDATA in backupd.env to the project directory, e.g. /volume1/docker/backupd}/config:/etc/retnd/config
-      - ${APPDATA:?set APPDATA in backupd.env to the project directory, e.g. /volume1/docker/backupd}/secrets/id_ed25519:/etc/retnd/id_ed25519:ro
-      - ${APPDATA:?set APPDATA in backupd.env to the project directory, e.g. /volume1/docker/backupd}/secrets/known_hosts:/etc/retnd/known_hosts:ro
+      - ${APPDATA:?set APPDATA in retnd.env to the project directory, e.g. /volume1/docker/backupd}/config:/etc/retnd/config
+      - ${APPDATA:?set APPDATA in retnd.env to the project directory, e.g. /volume1/docker/backupd}/secrets/id_ed25519:/etc/retnd/id_ed25519:ro
+      - ${APPDATA:?set APPDATA in retnd.env to the project directory, e.g. /volume1/docker/backupd}/secrets/known_hosts:/etc/retnd/known_hosts:ro
 
     # The start gate, and a liveness question rather than a health
     # verdict (issue #206). The Web UI below declares
-    # `depends_on: backupd: condition: service_healthy`, so
+    # `depends_on: retnd: condition: service_healthy`, so
     # whatever this asks stands between an operator and the only
-    # container with a published port. `/backupd status` is
+    # container with a published port. `/retnd status` is
     # FR-24's backup-freshness verdict and exits non-zero on any
     # DEGRADED, STALE or FAILING set, and on a fresh install, which has
     # backed nothing up yet: gating the Web UI on it means a new install
@@ -87,12 +97,12 @@ services:
     # is the right default for a plain `docker run` and for the headless
     # `daemon` command, which serves no HTTP and so has no liveness
     # endpoint to ask. Backup freshness is not lost - read it with
-    # `docker exec backupd /backupd status`, or let the
+    # `docker compose exec retnd /retnd status`, or let the
     # alerts block deliver it.
     #
     # Derived from container/compose.yaml, never authored here.
     healthcheck:
-      test: ["CMD", "/backupd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]
+      test: ["CMD", "/retnd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]
       interval: 30s
       timeout: 5s
       start_period: 5s
@@ -107,12 +117,12 @@ services:
   # engine. The only container with a published port, and the only URL an
   # operator ever opens. There is no DSM desktop launcher on this path,
   # which is one of the two things the .spk still does that this does not.
-  backupd-ui:
+  web-ui:
     image: ${IMAGE:-ghcr.io/backupdproject/backupd:0.4.0}
-    command: ["/backupd-web", "serve-ui", "--profile=synology"]
+    command: ["/retnd-web", "serve-ui", "--profile=synology"]
 
     depends_on:
-      backupd:
+      retnd:
         condition: service_healthy
 
     user: "${PUID:-1026}:${PGID:-100}"
@@ -134,7 +144,7 @@ services:
       # engine's own line for it.
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       LISTEN_ADDR: ":8080"
-      UPSTREAM_ADDR: "http://backupd:8080"
+      UPSTREAM_ADDR: "http://retnd:8080"
       # The per-provider UI bundles the canonical image carries. With the
       # synology profile selected above, the bundle served is
       # /ui/bundles/synology, so an operator who installed through
@@ -146,10 +156,10 @@ services:
     # key, known_hosts, or either data directory.
 
     # Overrides the image's own HEALTHCHECK, which runs
-    # `/backupd status` and needs a config file and a state
+    # `/retnd status` and needs a config file and a state
     # database this container does not have.
     healthcheck:
-      test: ["CMD", "/backupd-web", "healthcheck"]
+      test: ["CMD", "/retnd-web", "healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 5s

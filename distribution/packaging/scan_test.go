@@ -43,7 +43,7 @@ func cleanFixture(t *testing.T) string {
 	root := t.TempDir()
 
 	mustWrite(t, filepath.Join(root, "README.md"), "# Example\n\nRun `sh -c true` is fine in prose.\n")
-	mustWrite(t, filepath.Join(root, "compose", "backupd.yml"), `services:
+	mustWrite(t, filepath.Join(root, "compose", "retnd.yml"), `services:
   engine:
     image: ghcr.io/backupdproject/backupd:1.0.0
     command: ["/backupd-web", "serve"]
@@ -128,7 +128,7 @@ func TestScanLifecycleCatchesViolations(t *testing.T) {
 		{
 			name: "an executable metadata file",
 			mutate: func(t *testing.T, root string) {
-				p := filepath.Join(root, "compose", "backupd.yml")
+				p := filepath.Join(root, "compose", "retnd.yml")
 				if err := os.Chmod(p, 0o755); err != nil {
 					t.Fatalf("chmod: %v", err)
 				}
@@ -138,7 +138,7 @@ func TestScanLifecycleCatchesViolations(t *testing.T) {
 		{
 			name: "a compose service that builds its own image",
 			mutate: func(t *testing.T, root string) {
-				mustWrite(t, filepath.Join(root, "compose", "backupd.yml"), `services:
+				mustWrite(t, filepath.Join(root, "compose", "retnd.yml"), `services:
   engine:
     build:
       context: ../..
@@ -150,7 +150,7 @@ func TestScanLifecycleCatchesViolations(t *testing.T) {
 		{
 			name: "a command wrapped in a shell",
 			mutate: func(t *testing.T, root string) {
-				mustWrite(t, filepath.Join(root, "compose", "backupd.yml"), `services:
+				mustWrite(t, filepath.Join(root, "compose", "retnd.yml"), `services:
   engine:
     image: ghcr.io/backupdproject/backupd:1.0.0
     command: ["/bin/sh", "-c", "/setup && /backupd-web serve"]
@@ -161,7 +161,7 @@ func TestScanLifecycleCatchesViolations(t *testing.T) {
 		{
 			name: "an entrypoint override",
 			mutate: func(t *testing.T, root string) {
-				mustWrite(t, filepath.Join(root, "compose", "backupd.yml"), `services:
+				mustWrite(t, filepath.Join(root, "compose", "retnd.yml"), `services:
   engine:
     image: ghcr.io/backupdproject/backupd:1.0.0
     entrypoint: ["/init"]
@@ -182,7 +182,7 @@ post_install: /usr/local/bin/seed-state.sh
 		{
 			name: "a privileged container",
 			mutate: func(t *testing.T, root string) {
-				mustWrite(t, filepath.Join(root, "compose", "backupd.yml"), `services:
+				mustWrite(t, filepath.Join(root, "compose", "retnd.yml"), `services:
   engine:
     image: ghcr.io/backupdproject/backupd:1.0.0
     command: ["/backupd-web", "serve"]
@@ -197,7 +197,7 @@ post_install: /usr/local/bin/seed-state.sh
 			// anything that is not the canonical image's own binary.
 			name: "an Unraid template whose command is not a canonical binary",
 			mutate: func(t *testing.T, root string) {
-				mustWrite(t, filepath.Join(root, "template", "backupd.xml"),
+				mustWrite(t, filepath.Join(root, "template", "retnd.xml"),
 					`<?xml version="1.0"?>`+"\n"+`<Container version="2">
   <Name>backupd</Name>
   <PostArgs>/usr/local/bin/seed.sh</PostArgs>
@@ -209,7 +209,7 @@ post_install: /usr/local/bin/seed-state.sh
 		{
 			name: "an Unraid template that chains a script onto the canonical command",
 			mutate: func(t *testing.T, root string) {
-				mustWrite(t, filepath.Join(root, "template", "backupd.xml"),
+				mustWrite(t, filepath.Join(root, "template", "retnd.xml"),
 					`<?xml version="1.0"?>`+"\n"+`<Container version="2">
   <Name>backupd</Name>
   <PostArgs>/backupd-web serve &amp;&amp; /usr/local/bin/seed.sh</PostArgs>
@@ -221,7 +221,7 @@ post_install: /usr/local/bin/seed-state.sh
 		{
 			name: "a privileged Unraid template",
 			mutate: func(t *testing.T, root string) {
-				mustWrite(t, filepath.Join(root, "template", "backupd.xml"),
+				mustWrite(t, filepath.Join(root, "template", "retnd.xml"),
 					`<?xml version="1.0"?>`+"\n"+`<Container version="2">
   <Name>backupd</Name>
   <Privileged>true</Privileged>
@@ -253,7 +253,7 @@ post_install: /usr/local/bin/seed-state.sh
 // that is correct, or it would just be a ban on Unraid templates.
 func TestScanLifecycleAcceptsACanonicalUnraidCommand(t *testing.T) {
 	root := cleanFixture(t)
-	mustWrite(t, filepath.Join(root, "template", "backupd.xml"),
+	mustWrite(t, filepath.Join(root, "template", "retnd.xml"),
 		`<?xml version="1.0"?>`+"\n"+`<Container version="2">
   <Name>backupd</Name>
   <PostArgs>/backupd-web serve</PostArgs>
@@ -301,7 +301,7 @@ func TestScanSecretsCatchesBundledCredentials(t *testing.T) {
 		},
 		{
 			name:   "a literal password in an env file",
-			file:   "compose/backupd.env",
+			file:   "compose/retnd.env",
 			body:   "PUID=1000\nADMIN_PASSWORD=s3cretValue99\n",
 			expect: true,
 		},
@@ -313,13 +313,13 @@ func TestScanSecretsCatchesBundledCredentials(t *testing.T) {
 		},
 		{
 			name:   "a placeholder is not a secret",
-			file:   "compose/backupd.env",
+			file:   "compose/retnd.env",
 			body:   "ADMIN_PASSWORD=CHANGEME_before_first_start\n",
 			expect: false,
 		},
 		{
 			name:   "an unexpanded variable is not a secret",
-			file:   "compose/backupd.env",
+			file:   "compose/retnd.env",
 			body:   "ADMIN_PASSWORD=${ADMIN_PASSWORD}\n",
 			expect: false,
 		},
@@ -334,7 +334,7 @@ func TestScanSecretsCatchesBundledCredentials(t *testing.T) {
 			// file itself is created on the host by the runner's
 			// installer, so there is no secret in the tree to find.
 			name:   "a mount whose host side is the runner's credential file",
-			file:   "compose/backupd.yml",
+			file:   "compose/retnd.yml",
 			body:   "services:\n  backupd:\n    volumes:\n      - /srv/backupd/secrets/workflow-runner.token:/etc/retnd/workflow-runner.token:ro\n",
 			expect: false,
 		},
@@ -352,7 +352,7 @@ func TestScanSecretsCatchesBundledCredentials(t *testing.T) {
 			// path separator in front of the key and a real credential
 			// after it, so only the value-side half keeps them caught.
 			name:   "a token in a webhook query string is still a secret",
-			file:   "compose/backupd.env",
+			file:   "compose/retnd.env",
 			body:   "WEBHOOK=https://example.com/api/v1/notify?token=abcdef0123456789\n",
 			expect: true,
 		},
@@ -503,11 +503,11 @@ func TestScanForBespokeAuthCatchesAnOwnAuthMechanism(t *testing.T) {
 		body   string
 		expect bool
 	}{
-		{"an OIDC block in a compose file", "compose/backupd.yml",
+		{"an OIDC block in a compose file", "compose/retnd.yml",
 			"services:\n  engine:\n    environment:\n      OIDC_ISSUER: \"https://idp.example\"\n", true},
 		{"an LDAP bind in a catalog file", "catalog/app.yaml", "auth: ldap\n", true},
 		{"an htpasswd file", "compose/users.yml", "htpasswd: /etc/nginx/.htpasswd\n", true},
-		{"an --auth-mode override", "compose/backupd.yml",
+		{"an --auth-mode override", "compose/retnd.yml",
 			"services:\n  engine:\n    command: [\"/backupd-web\", \"serve\", \"--auth-mode=ugos\"]\n", true},
 		{"a README explaining there is no SSO", "README.md",
 			"There is no SSO and no LDAP here: this platform uses the generic host's local auth.\n", false},
@@ -544,7 +544,7 @@ func TestScanForOMVPluginCatchesPluginMaterial(t *testing.T) {
 		{"a salt state tree", "salt/deploy.yml", "backupd: {}\n", true},
 		{"a Workbench navigation file", "workbench/navigation.yaml", "route: /services/backup\n", true},
 		{"an RPC service", "rpc/backupmanager.json", "{\"service\": \"Backupd\"}\n", true},
-		{"an omv-mkconf hook referenced from metadata", "compose/backupd.yml",
+		{"an omv-mkconf hook referenced from metadata", "compose/retnd.yml",
 			"services:\n  engine:\n    labels:\n      hook: omv-mkconf backupmanager\n", true},
 		{"a README saying the plugin is deferred", "README.md",
 			"There is no native OMV plugin here: no Workbench page, no RPC service, no debian package.\n", false},

@@ -47,9 +47,9 @@ type newAdapter struct {
 
 func newAdapters() []newAdapter {
 	return []newAdapter{
-		{id: "portainer", compose: "compose/backupd.yml", env: "compose/backupd.env", acceptance: "docs/acceptance/portainer-stack-deployment.md"},
+		{id: "portainer", compose: "compose/retnd.yml", env: "compose/retnd.env", acceptance: "docs/acceptance/portainer-stack-deployment.md"},
 		{id: "dockge", acceptance: "docs/acceptance/dockge-stack-import.md"},
-		{id: "casaos", compose: "compose/backupd.yml", acceptance: "docs/acceptance/casaos-app-store-install.md"},
+		{id: "casaos", compose: "compose/retnd.yml", acceptance: "docs/acceptance/casaos-app-store-install.md"},
 		{id: "zimaos", compose: "compose/backupd.yml", acceptance: "docs/acceptance/zimaos-app-store-install.md"},
 	}
 }
@@ -496,13 +496,13 @@ func TestNoNewAdapterWiresAuthenticationOfItsOwn(t *testing.T) {
 func TestThePortainerTemplateIsAStackTemplateAndNotAPlugin(t *testing.T) {
 	const (
 		root      = "apps/portainer"
-		stackfile = "apps/portainer/compose/backupd.yml"
+		stackfile = "apps/portainer/compose/retnd.yml"
 	)
 	tpl, err := ReadPortainerTemplates(Path(filepath.Join(root, "templates.json")))
 	if err != nil {
 		t.Fatalf("read the App Template: %v", err)
 	}
-	env, err := ReadEnvFile(Path(filepath.Join(root, "compose", "backupd.env")))
+	env, err := ReadEnvFile(Path(filepath.Join(root, "compose", "retnd.env")))
 	if err != nil {
 		t.Fatalf("read the env file: %v", err)
 	}
@@ -548,7 +548,7 @@ func TestThePortainerTemplateIsAStackTemplateAndNotAPlugin(t *testing.T) {
 // that currently satisfies all of them, and a rule nobody has watched
 // fail is a comment.
 func TestThePortainerTemplateCheckFailsOnEveryWayItCanBeWrong(t *testing.T) {
-	const stackfile = "apps/portainer/compose/backupd.yml"
+	const stackfile = "apps/portainer/compose/retnd.yml"
 	good := PortainerTemplates{
 		Version: "3",
 		Templates: []PortainerTemplate{{
@@ -614,7 +614,7 @@ func TestThePortainerTemplateCheckFailsOnEveryWayItCanBeWrong(t *testing.T) {
 			RulePortainerTemplate, "the stack reads it nowhere"},
 		{"defaults a variable to something the env file does not",
 			mutate(func(t *PortainerTemplates) { t.Templates[0].Env[0].Default = "/somewhere/else" }),
-			RulePortainerTemplate, "compose/backupd.env declares"},
+			RulePortainerTemplate, "compose/retnd.env declares"},
 		{"never offers a variable the stack needs",
 			mutate(func(t *PortainerTemplates) { t.Templates[0].Env = nil }),
 			RulePortainerTemplate, "never offers it"},
@@ -917,9 +917,17 @@ func TestTheDockgeStackIsTheCanonicalStack(t *testing.T) {
 func TestCasaOSAndZimaOSStoreMetadataDescribesTheStackBesideIt(t *testing.T) {
 	c := MustLoad()
 
-	for _, id := range []string{"casaos", "zimaos"} {
+	// One row per store, each naming its own compose file: #891 renames
+	// the eleven providers' artefacts in two halves, so for the length of
+	// one pull request CasaOS is already `retnd.yml` and ZimaOS is not.
+	// Collapse this back to a bare list once both say `retnd.yml`.
+	for _, store := range []struct{ id, compose string }{
+		{"casaos", "retnd.yml"},
+		{"zimaos", "backupd.yml"},
+	} {
+		id := store.id
 		t.Run(id, func(t *testing.T) {
-			path := filepath.Join(PlatformDir(id), "compose", "backupd.yml")
+			path := filepath.Join(PlatformDir(id), "compose", store.compose)
 			md, err := ReadCasaOSMetadata(path)
 			if err != nil {
 				t.Fatalf("read x-casaos: %v", err)
@@ -932,7 +940,7 @@ func TestCasaOSAndZimaOSStoreMetadataDescribesTheStackBesideIt(t *testing.T) {
 			if len(drift) > 0 {
 				t.Fatalf("could not reduce this adapter to roles:\n%s", FormatDrift(drift))
 			}
-			if v := CheckCasaOSMetadata(id+"/compose/backupd.yml", md, rt, c); len(v) > 0 {
+			if v := CheckCasaOSMetadata(id+"/compose/"+store.compose, md, rt, c); len(v) > 0 {
 				t.Errorf("the store metadata does not describe the services beside it:\n%s", format(v))
 			}
 		})
@@ -944,7 +952,7 @@ func TestCasaOSAndZimaOSStoreMetadataDescribesTheStackBesideIt(t *testing.T) {
 // fixture, so every branch runs against the shape actually shipped.
 func TestTheStoreMetadataCheckFailsOnADeliberateMismatch(t *testing.T) {
 	c := MustLoad()
-	path := filepath.Join(PlatformDir("casaos"), "compose", "backupd.yml")
+	path := filepath.Join(PlatformDir("casaos"), "compose", "retnd.yml")
 	base, err := ReadCasaOSMetadata(path)
 	if err != nil {
 		t.Fatal(err)

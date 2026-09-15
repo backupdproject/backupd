@@ -57,8 +57,8 @@ Everything an operator needs to find it has to be here instead, which is what th
 
 | Path | What it is |
 | --- | --- |
-| `compose/backupd.yml` | The deployment. Paste it into the File field of Services, Compose, Files, Add. |
-| `compose/backupd.env` | Every host path, the image reference, the uid/gid and the port. Paste it into the Environment field. This is the only file an operator edits. |
+| `compose/retnd.yml` | The deployment. Paste it into the File field of Services, Compose, Files, Add. |
+| `compose/retnd.env` | Every host path, the image reference, the uid/gid and the port. Paste it into the Environment field. This is the only file an operator edits. |
 | `frontend/platform.ts` | The shared platform bridge (§3.5). Provider identity and storage expectations only. |
 
 No Go, no shell, no install hook.
@@ -73,7 +73,7 @@ apt-get install openmediavault-compose
 
 ## The one substitution that matters
 
-`backupd.env` sets `DISK=/srv/dev-disk-by-uuid`, and that is a placeholder.
+`retnd.env` sets `DISK=/srv/dev-disk-by-uuid`, and that is a placeholder.
 A real OMV system mounts data filesystems at `/srv/dev-disk-by-uuid-<UUID>/`, with
 the UUID differing per machine, so no checked-in default can be literally correct.
 It matches what `frontend/platform.ts` already declares, so the two stay
@@ -90,12 +90,12 @@ UUID is substituted once rather than five times.
 
 ## Two containers, one image
 
-`backupd` runs `/backupd-web serve`: local authentication, the
+`retnd` runs `/retnd-web serve`: local authentication, the
 versioned `/api/v1` API and the backup scheduler in one process sharing one
 shutdown context. It holds the state database and the credentials, and it publishes
 no port.
 
-`backupd-ui` runs `/backupd-web serve-ui`: the shared static UI plus
+`web-ui` runs `/retnd-web serve-ui`: the shared static UI plus
 a reverse proxy to the engine. It is the only container with a published port, and
 it mounts nothing at all.
 
@@ -103,18 +103,18 @@ Same image, different argv. The image ships no `ENTRYPOINT` and no `CMD` on
 purpose, because no single default would be right for both of its binaries.
 
 Both containers override the image's baked-in healthcheck, for two different
-reasons. The image runs `/backupd status`, which needs a config file and a
+reasons. The image runs `/retnd status`, which needs a config file and a
 state database the Web UI container does not have, so left inherited there it
 would report unhealthy forever while working perfectly.
 
 The engine's override is the one that decides whether you get a page at all. The
-Web UI will not start until the engine reports healthy, and `backupd
+Web UI will not start until the engine reports healthy, and `retnd
 status` is FR-24's backup-freshness verdict: it exits non-zero on any DEGRADED,
 STALE or FAILING set, and on a fresh install, which has backed nothing up yet. So
 the engine asks `/health/live` instead, a liveness probe that needs no
 configuration. Backup freshness is still reported, by the image's own HEALTHCHECK
 for a plain `docker run`, by the alerts block, and by
-`docker exec backupd /backupd status`; it just no longer decides
+`docker compose exec retnd /retnd status`; it just no longer decides
 whether a container starts.
 
 ## Storage
@@ -136,7 +136,7 @@ disables all three. It may be empty on a fresh install. The SSH key and
 
 
 `DISK` is the only variable in any of these, and it is the only line of
-`backupd.env` you have to change. The compose file writes every host path
+`retnd.env` you have to change. The compose file writes every host path
 as `${DISK:?...}/...`, so an unset or misspelled `DISK` stops the deployment
 rather than creating five directories somewhere plausible. There is deliberately
 no per-path variable: five knobs whose values all repeated the same placeholder
@@ -166,7 +166,7 @@ container can fix ownership for you.
 http://<omv-host>:<WEB_PORT>/
 ```
 
-`WEB_PORT` is set in one place, `backupd.env`, and defaults to 8080. If that
+`WEB_PORT` is set in one place, `retnd.env`, and defaults to 8080. If that
 collides with something already on the host (OMV's own Workbench, or another
 container), change it there and re-run **Up**; nothing else needs editing.
 
@@ -180,7 +180,7 @@ host provides: first-run administrator enrollment through a single-use token the
 engine prints to its own log, Argon2id password hashing, an HTTP-only session
 cookie, CSRF protection and per-IP rate limiting.
 
-The OMV Workbench login cannot log into Backupd and Backupd's
+The OMV Workbench login cannot log into retnd and retnd's
 administrator cannot log into the Workbench. Nothing in this directory ships a
 credential, and `distribution/packaging` scans for one on every commit.
 

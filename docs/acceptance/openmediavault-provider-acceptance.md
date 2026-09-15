@@ -76,7 +76,7 @@ ssh root@<omv> 'gunzip -c /root/backupd.tar.gz | docker load'
 ```
 
 The compose file reads the image reference from a single `IMAGE` variable in
-`apps/openmediavault/compose/backupd.env`, so this is a one-line change in
+`apps/openmediavault/compose/retnd.env`, so this is a one-line change in
 one file, never an edit scattered through the compose YAML.
 
 - [ ] Canonical image resolvable on the NAS, reference recorded
@@ -96,7 +96,7 @@ Find yours:
 ls -d /srv/dev-disk-by-uuid-*
 ```
 
-Set `DISK` in `backupd.env` and change nothing else. Every host path in
+Set `DISK` in `retnd.env` and change nothing else. Every host path in
 the compose file is written `${DISK}/...`, so the UUID appears exactly once, and
 the compose file itself needs no editing. `DISK` is referenced in the
 fail-closed `${DISK:?...}` form, so leaving it unset or misspelling it stops the
@@ -162,7 +162,7 @@ reinstall would rewrite the retained backup store.
 > confirmed on that same step, and no `config.yaml` is written by hand
 > at all.
 
-`/backupd-web serve` starts without a `config.yaml` and serves the
+`/retnd-web serve` starts without a `config.yaml` and serves the
 first-run setup flow instead (#176), but a config file that EXISTS and does not
 validate is still a hard startup failure. Given the read-only mount above, create
 all three before the first start.
@@ -172,7 +172,7 @@ now a writable directory the application owns, so the container can create and r
 `config.yaml` itself, and an empty directory is a legitimate state rather than a broken
 deployment. Two things nonetheless keep this step here. The directory itself must exist
 and be owned by the app's uid/gid before the first start, because a bind mount does not
-create or chown its source. And `/backupd-web serve` still refuses to start
+create or chown its source. And `/retnd-web serve` still refuses to start
 without a valid config: removing that refusal, and serving a first-run flow instead, is
 #176's work and is not merged. Once it is, everything below except creating and owning
 the directory becomes optional.
@@ -200,23 +200,23 @@ Verify the host key fingerprint out of band. Then write
 ## Step 1 — Install
 
 1. **Services → Compose → Files → Add**.
-2. Name: `backupd`.
-3. Paste `apps/openmediavault/compose/backupd.yml` into the **File** field.
-4. Paste `apps/openmediavault/compose/backupd.env`, with your step 0
+2. Name: `retnd`.
+3. Paste `apps/openmediavault/compose/retnd.yml` into the **File** field.
+4. Paste `apps/openmediavault/compose/retnd.env`, with your step 0
    substitutions, into the **Environment** field.
 5. Save, then **Up**.
 
 - [ ] The compose file saves with no validation error
 - [ ] `Up` completes and both services reach **running**
 - [ ] The engine service reaches health **healthy** (it declares the
-      liveness probe, `/backupd-web healthcheck --url
+      liveness probe, `/retnd-web healthcheck --url
       http://127.0.0.1:8080/health/live`, and NOT the image's own
-      `HEALTHCHECK`, `/backupd status`. The Web UI will not start until
+      `HEALTHCHECK`, `/retnd status`. The Web UI will not start until
       this reports healthy, and `status` is the backup-freshness verdict, which
       is non-zero on a fresh install that has backed nothing up)
 - [ ] The Web UI service reaches health **healthy** via its own
-      `/backupd-web healthcheck` override, not the image's
-      `/backupd status` (which would fail: no config, no state database)
+      `/retnd-web healthcheck` override, not the image's
+      `/retnd status` (which would fail: no config, no state database)
 - [ ] The engine service publishes no port (`docker compose ps` shows a port
       mapping only for the Web UI service)
 
@@ -224,7 +224,7 @@ Verify the host key fingerprint out of band. Then write
 
 ## Step 2 — Verify from the Workbench
 
-- [ ] **Services → Compose → Files** lists `backupd` with status up
+- [ ] **Services → Compose → Files** lists `retnd` with status up
 - [ ] The plugin's **Logs** action shows both services' output
 - [ ] No error, warning or orphan-container notice appears in
       **System → Notifications**
@@ -257,7 +257,7 @@ Web host provides (§13A).
 1. Read the one-time enrollment link out of the **engine** service's log:
 
    ```bash
-   docker compose -p backupd logs backupd 2>&1 | grep -i enroll
+   docker compose -p retnd logs retnd 2>&1 | grep -i enroll
    ```
 
 2. Open it, enrol an administrator with a password you generate now, log out, log
@@ -283,7 +283,7 @@ Web host provides (§13A).
       hash, never a plaintext password, and holds the recovery address and SMTP
       settings with the SMTP password as a secret reference rather than a value:
       `grep` it for the password you typed and find nothing
-- [ ] Backupd's login is completely independent of the OMV Workbench
+- [ ] retnd's login is completely independent of the OMV Workbench
       login, and neither can log into the other
 
 ---
@@ -338,7 +338,7 @@ sets. Record only that it was taken, and the canary's hash, in the evidence tabl
    find $DISK/backups -type f -printf '%p %s\n' | sort > /tmp/before-update.txt
    ```
 2. Push or side-load a newer image tag and change `IMAGE` in the env file.
-3. **Services → Compose → Files → backupd → Pull**, then **Up**.
+3. **Services → Compose → Files → retnd → Pull**, then **Up**.
 4. Compare afterwards:
    ```bash
    find $DISK/backups -type f -printf '%p %s\n' | sort > /tmp/after-update.txt
@@ -363,8 +363,8 @@ Same image, destroyed and recreated containers. This is what an OMV reboot, a
 `Down` then `Up`, or a `docker system prune` does.
 
 ```bash
-docker compose -p backupd down
-docker compose -p backupd up -d
+docker compose -p retnd down
+docker compose -p retnd up -d
 ```
 
 - [ ] Both services come back healthy
@@ -381,7 +381,7 @@ storage step, because after the removal there is nothing left to compare
 against, and any deletion the comparison turns up is a release blocker rather
 than a finding to triage.
 
-1. **Services → Compose → Files → backupd → Down**.
+1. **Services → Compose → Files → retnd → Down**.
 2. Then **Delete** the file entry.
 
 - [ ] Both containers are gone

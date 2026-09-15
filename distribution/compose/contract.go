@@ -394,7 +394,7 @@ func (d Document) Mounts(service map[string]any) []Mount {
 // the SFTP private key" and ReadOnly false. Every prohibited-path
 // comparison against that HostPath then matched nothing, with no
 // diagnostic, which is a security gate failing open rather than a parse
-// bug. apps/proxmox/compose/backupd.yml was already being checked
+// bug. apps/proxmox/compose/retnd.yml was already being checked
 // that way. Compose's long volume syntax degraded the same way, through
 // a map rendered as one string.
 func (d Document) UnparseableMounts(service map[string]any) []string {

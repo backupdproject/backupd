@@ -1,4 +1,4 @@
-# Backupd on Portainer
+# retnd on Portainer
 
 Portainer CE deploys this product as a **stack**, from the App Template in
 [`templates.json`](templates.json) or from the same file pasted into Portainer's
@@ -30,7 +30,7 @@ under this directory.
 ## The Docker socket, which is the only interesting security question here
 
 Portainer holds `/var/run/docker.sock`. That is what Portainer is, and it is
-Portainer's business. **Backupd never inherits it.** The stack mounts no
+Portainer's business. **retnd never inherits it.** The stack mounts no
 socket, adds no capability, runs non-root on a read-only root filesystem, and
 would behave identically if it had been started with `docker compose up` and
 Portainer uninstalled.
@@ -68,7 +68,7 @@ shape every metadata format reduces to.
 3. Register the template. In Portainer, **Settings, App Templates**, and point
    the URL at this repository's `apps/portainer/templates.json`. On a host that
    cannot reach the repository, use **Custom Templates, Add, Repository** or
-   paste `compose/backupd.yml` in directly.
+   paste `compose/retnd.yml` in directly.
 
 4. Deploy it from **App Templates**, fill the form, and open the published port.
    The engine prints a one-time enrollment link on first start; read it from the
@@ -116,11 +116,11 @@ generic bridge says exactly that rather than claiming otherwise.
 
 ## Where the runtime definition comes from
 
-`compose/backupd.yml` is derived from `container/compose.yaml` at runtime
+`compose/retnd.yml` is derived from `container/compose.yaml` at runtime
 contract 1.2.0. Seven fields have one authority each and a mismatch names the
 field (`distribution/packaging/derive.go`), and on top of that the whole stack is
 held to the canonical one semantically, service by service, by
 `TestEveryNewAdapterIsSemanticallyEquivalentToTheCanonicalStack`. The App
-Template's environment list is checked against `compose/backupd.env` in
+Template's environment list is checked against `compose/retnd.env` in
 both directions, so the form an operator fills in and the file it feeds can
 never name different variables.
