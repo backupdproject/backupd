@@ -10,7 +10,7 @@ import (
 
 	"github.com/rclone/rclone/fs"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // This file is the in-process half of #264 and #355: how many connections

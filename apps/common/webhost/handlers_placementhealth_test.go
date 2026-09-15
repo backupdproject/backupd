@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // Issue #444's wire half. The verdict itself is internal/health's and is

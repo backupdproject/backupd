@@ -41,7 +41,7 @@ type VersionInfo struct {
 }
 
 // BuildVersionInfo assembles a VersionInfo. binaryVersion and commit are
-// normally the values cmd/backupd's main.go sets via -ldflags
+// normally the values cmd/retnd's main.go sets via -ldflags
 // (default "dev" / "none" in a non-release build, exactly like the
 // `version` subcommand that already existed before this package).
 //

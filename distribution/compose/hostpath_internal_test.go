@@ -11,7 +11,7 @@ package compose
 import (
 	"testing"
 
-	"github.com/backupdproject/backupd/distribution/packaging"
+	"github.com/retnd/retnd/distribution/packaging"
 )
 
 // TestTheTwoProhibitedHostPathEntryPointsGiveIdenticalVerdicts is the

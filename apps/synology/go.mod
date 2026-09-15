@@ -8,6 +8,6 @@
 // them. Everything in this module is packaging and conformance-checking
 // machinery, which is why its dependency set is the standard library and
 // nothing else.
-module github.com/backupdproject/backupd/apps/synology
+module github.com/retnd/retnd/apps/synology
 
 go 1.27.0

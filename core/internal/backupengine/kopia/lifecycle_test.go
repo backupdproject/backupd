@@ -28,9 +28,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
-	"github.com/backupdproject/backupd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/backupengine/kopia"
+	"github.com/retnd/retnd/core/internal/secretref"
 )
 
 // bigFileSize is large enough that copying it twice is unmistakable in the

@@ -23,15 +23,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // writeTestConfigFile builds a minimal, valid config.yaml against real temp
 // directories, wired through the "local" transport backend so this test
 // needs no network and no Docker — the same fixture shape
-// cmd/backupd/main_test.go's writeTestConfig uses for its own
+// cmd/retnd/main_test.go's writeTestConfig uses for its own
 // end-to-end smoke tests, reproduced here because Open is this package's
 // equivalent "load a real file off disk" entry point and had no direct
 // test of its own otherwise.

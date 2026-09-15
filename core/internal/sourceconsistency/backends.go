@@ -3,8 +3,8 @@ package sourceconsistency
 import (
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // This file is the projection Phase 0 promised and Phase 1 owes: the

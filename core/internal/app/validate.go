@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // FR-14's operator door: one artifact, checked right now, because somebody
@@ -40,7 +40,7 @@ import (
 // Service.MediumStore is filled in from the transport adapter (app.go), so
 // "this command needs no remote, it only reads a local file" is true right
 // up until it is asked about an artifact that has been moved. The comment
-// that keeps it wired lives on cmdValidate in cmd/backupd, next to
+// that keeps it wired lives on cmdValidate in cmd/retnd, next to
 // the argument that would be edited to break it again.
 //
 // The other thing worth knowing before changing anything here is that a

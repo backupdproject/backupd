@@ -28,8 +28,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // ErrBackupSetConfigured refuses a call that only applies to a backup set

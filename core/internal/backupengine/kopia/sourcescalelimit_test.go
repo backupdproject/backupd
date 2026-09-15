@@ -42,8 +42,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // supportedFlatDirectoryEntries is the widest single source directory

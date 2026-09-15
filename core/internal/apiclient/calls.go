@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/backupdproject/backupd/core/apicontract"
+	"github.com/retnd/retnd/core/apicontract"
 )
 
 // The typed calls.
@@ -276,7 +276,7 @@ func (c *Client) PreviewRetention(ctx context.Context, source, set string) (apic
 // running engine instead of being refused.
 //
 // They are here under this file's own rule and not in spite of it: each
-// one has a command that drives it (core/cmd/backupd/medium.go),
+// one has a command that drives it (core/cmd/retnd/medium.go),
 // so none of them is an untested wrapper claiming this client works
 // against a route nothing calls.
 

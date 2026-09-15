@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	src "github.com/backupdproject/backupd/core/internal/backupengine/source"
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
+	src "github.com/retnd/retnd/core/internal/backupengine/source"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
 )
 
 // TestRcloneObjectStreamsStraightIntoTheRepository is the whole wire, with no

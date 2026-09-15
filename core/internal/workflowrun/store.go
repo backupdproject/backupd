@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // Store is the durable half of this engine, named as an interface for one

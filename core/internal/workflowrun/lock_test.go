@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // The backup-set lock: it spans all five stages, it is per set, and it

@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // heldRun is a run at SUCCESS with a manifest: the only shape a hold can be

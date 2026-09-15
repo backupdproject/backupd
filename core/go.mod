@@ -1,4 +1,4 @@
-module github.com/backupdproject/backupd/core
+module github.com/retnd/retnd/core
 
 go 1.27.0
 

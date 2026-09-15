@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/capacity"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/capacity"
+	"github.com/retnd/retnd/core/internal/lifecycle"
 )
 
 // FR-21's second input, and the two opposite failure policies it is read

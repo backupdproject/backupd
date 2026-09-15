@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // The local hard drive as a first-class storage destination, and the

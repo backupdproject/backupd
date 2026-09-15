@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // bytesPerRun is the average heap allocated by one call to f.

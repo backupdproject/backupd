@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 func TestLiveActivity_CarriesTheResultTheEngineStated(t *testing.T) {

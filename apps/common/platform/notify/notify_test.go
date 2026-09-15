@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
-	"github.com/backupdproject/backupd/apps/common/platform/notify"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/apps/common/platform/notify"
+	"github.com/retnd/retnd/core/service"
 )
 
 // These tests cover the two things that make alerting a capability rather

@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // restoreOnlyTransport is a transport with nothing behind it: it satisfies

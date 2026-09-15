@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // Snapshot's suite, which is where #808's load-bearing claims are either

@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/discovery"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/reconcile"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/discovery"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/reconcile"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // One backup set's share of a cycle, on an operator's word rather than a

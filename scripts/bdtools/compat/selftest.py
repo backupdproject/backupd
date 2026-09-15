@@ -53,7 +53,7 @@ Ported from `scripts/compat/selftest.sh` under EPIC I (#672 / #662).
 `scripts/compat/selftest.sh` stays as a real, runnable shim:
 `scripts/tests/ci-local-gate.test.sh` FABRICATES a stand-in at that
 literal path, `scripts/ci-local.sh` still names it, and
-`core/cmd/backupd/usagepins_test.go` and two files under
+`core/cmd/retnd/usagepins_test.go` and two files under
 `core/tests/compat` cite it in their own comments. This file consumes
 `scripts/bdtools/selftest_swap.py`'s `AnchorTracker` rather than
 reimplementing anchor-matching a second time -- and rather than forking
@@ -329,7 +329,7 @@ def expect_unit_check_fails(
     medium-free surface renders one, so the corpus is exactly the wrong
     place to ask. Its verdict comes from internal/state's own
     both-directions test instead, or -- for the usage-pin controls --
-    from cmd/backupd's own guard test."""
+    from cmd/retnd's own guard test."""
     if tracker.stale_verdict(label):
         return
     if tracker.anchors_only(label):
@@ -634,7 +634,7 @@ def body(root: Path, dry_run: bool) -> int:
         # that has none, which is the single most likely way EPIC E
         # breaks this clause.
         tracker.swap(
-            d / "core/cmd/backupd/artifacts.go",
+            d / "core/cmd/retnd/artifacts.go",
             '\tif rec.RetentionTier != "" {\n\t\tfmt.Printf("retention_tier:      %s\\n", rec.RetentionTier)\n\t}',
             '\tfmt.Printf("placements:          local\\n")\n'
             '\tif rec.RetentionTier != "" {\n'
@@ -653,7 +653,7 @@ def body(root: Path, dry_run: bool) -> int:
         # there IS one, and FR-35's promise is that a deployment naming
         # no medium sees exactly what it saw before.
         tracker.swap(
-            d / "core/cmd/backupd/retention.go",
+            d / "core/cmd/retnd/retention.go",
             "\tdefault:\n\t\treturn \"\"\n\t}\n}",
             '\tdefault:\n\t\treturn " medium=local"\n\t}\n}',
         )
@@ -670,7 +670,7 @@ def body(root: Path, dry_run: bool) -> int:
         # not force a regeneration. This is the other direction: a line
         # an operator already reads, quietly reworded.
         tracker.swap(
-            d / "core/cmd/backupd/main.go",
+            d / "core/cmd/retnd/main.go",
             "  reconcile                                      run FR-17 reconciliation for every backup set",
             "  reconcile                                      reconcile every backup set",
         )
@@ -689,7 +689,7 @@ def body(root: Path, dry_run: bool) -> int:
         # whole time because additive-only forgives a line that is merely
         # new.
         #
-        # The guard that closes it lives in core/cmd/backupd rather
+        # The guard that closes it lives in core/cmd/retnd rather
         # than in the corpus package, because the list of registered
         # commands is a map only package main can read, and reading the
         # map beats parsing the file that declares it. It holds three
@@ -707,18 +707,18 @@ def body(root: Path, dry_run: bool) -> int:
             tally,
             "the registered-command pin guard on an unmutated tree",
             root,
-            "./cmd/backupd/",
+            "./cmd/retnd/",
             "TestUsage_EveryRegisteredCommandIsPinned",
         )
 
         d = mutant("command-registered-and-listed-but-never-pinned")
         tracker.swap(
-            d / "core/cmd/backupd/main.go",
+            d / "core/cmd/retnd/main.go",
             '\t"version":      cmdVersion,\n}',
             '\t"version":      cmdVersion,\n\t"vacuum":       cmdVersion,\n}',
         )
         tracker.swap(
-            d / "core/cmd/backupd/main.go",
+            d / "core/cmd/retnd/main.go",
             "  version                                        report version information",
             "  vacuum                                         compact the state database\n"
             "  version                                        report version information",
@@ -729,7 +729,7 @@ def body(root: Path, dry_run: bool) -> int:
             "a command registered and listed, with nothing pinning a word of what it prints",
             d,
             "is a registered command whose usage entry nothing pins",
-            "./cmd/backupd/",
+            "./cmd/retnd/",
             "TestUsage_EveryRegisteredCommandIsPinned",
         )
 
@@ -740,7 +740,7 @@ def body(root: Path, dry_run: bool) -> int:
         # still dispatch against string literals, so nothing holds their
         # subcommands against usage.
         tracker.swap(
-            d / "core/cmd/backupd/main.go",
+            d / "core/cmd/retnd/main.go",
             '\t"version":      cmdVersion,\n}',
             '\t"version":      cmdVersion,\n\t"vacuum":       cmdVersion,\n}',
         )
@@ -750,7 +750,7 @@ def body(root: Path, dry_run: bool) -> int:
             "a command that is dispatchable and undiscoverable",
             d,
             "is registered in the commands map and the usage block does not list it",
-            "./cmd/backupd/",
+            "./cmd/retnd/",
             "TestUsage_EveryRegisteredCommandIsPinned",
         )
 
@@ -759,7 +759,7 @@ def body(root: Path, dry_run: bool) -> int:
         # operator has, offering them a command that answers "unknown
         # command".
         tracker.swap(
-            d / "core/cmd/backupd/main.go",
+            d / "core/cmd/retnd/main.go",
             "  version                                        report version information",
             "  vacuum                                         compact the state database\n"
             "  version                                        report version information",
@@ -770,7 +770,7 @@ def body(root: Path, dry_run: bool) -> int:
             "a usage entry for a verb nothing dispatches",
             d,
             "and nothing dispatches it",
-            "./cmd/backupd/",
+            "./cmd/retnd/",
             "TestUsage_EveryRegisteredCommandIsPinned",
         )
 
@@ -868,7 +868,7 @@ def body(root: Path, dry_run: bool) -> int:
         # shipping.
         d = mutant("scoped-recapture-cannot-launder-another-cell")
         tracker.swap(
-            d / "core/cmd/backupd/main.go",
+            d / "core/cmd/retnd/main.go",
             "  reconcile                                      run FR-17 reconciliation for every backup set",
             "  reconcile                                      run FR-17 reconciliation across the deployment",
         )

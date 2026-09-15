@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/backupdproject/backupd/core/apicontract"
+	"github.com/retnd/retnd/core/apicontract"
 )
 
 // The three names on the wire that the generated binding does not carry.
@@ -66,7 +66,7 @@ const defaultTimeout = 30 * time.Second
 // The BINARY's own version is deliberately not read here. internal/app
 // reads build info to answer `version`, and its doc is explicit that a
 // second reader of it would be a second answer to a question that has one.
-// A caller that already knows its build (cmd/backupd does, from
+// A caller that already knows its build (cmd/retnd does, from
 // -ldflags) says so through Config.UserAgent, and this is what stands in
 // until one does.
 const defaultUserAgent = "backupd-cli (api " + apicontract.Version + ")"
@@ -135,7 +135,7 @@ type Config struct {
 	// #543's claim is that a command run through this route leaves the
 	// same audit trail as the Web UI, and a log line reading
 	// "Go-http-client/1.1" names no product, no version and no surface. A
-	// caller that knows its own build (cmd/backupd does, from
+	// caller that knows its own build (cmd/retnd does, from
 	// -ldflags) should say so here.
 	UserAgent string
 }

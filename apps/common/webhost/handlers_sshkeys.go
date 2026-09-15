@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The two reads the SSH surface never had (issue #592).

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/alert"
+	"github.com/retnd/retnd/core/internal/alert"
 )
 
 // This file is the whole of proactive alerting as anything outside core/

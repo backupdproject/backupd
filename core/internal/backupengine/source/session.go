@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // SessionOpener is the capability a transport advertises when it can hold

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // Two properties of the workflow half are load-bearing beyond this file,

@@ -70,7 +70,7 @@ export function importCredentialsCommand(): string {
  * **`medium` has no `--backend` flag.** Its whole set is json, stdin,
  * candidate, no-verify, type, region, endpoint, bucket, prefix,
  * storage-class, upload-verification and the four credential spellings
- * (`core/cmd/backupd/medium.go:183`). The line failed on execution
+ * (`core/cmd/retnd/medium.go:183`). The line failed on execution
  * with `flag provided but not defined: -backend`, which is exactly what
  * EPIC G's rule exists to prevent: a printed command that looks right and
  * does not work is worse than no command, because an operator only finds

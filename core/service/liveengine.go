@@ -7,8 +7,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // Issue #537, Phase 1 of #536: telling whether an engine is already
@@ -527,7 +527,7 @@ func (s *FirstRunServing) Release() error {
 var ErrNotAnnounced = errors.New("service: this deployment could not be announced, so it cannot be set up yet")
 
 // notAnnounced marks an error as that refusal without altering a word of
-// it, the same trick core/cmd/backupd's engineHeld plays.
+// it, the same trick core/cmd/retnd's engineHeld plays.
 //
 // The words matter here more than usual: what validateStateDir says
 // ("/data/state is not writable", "exists and is not a directory") is the

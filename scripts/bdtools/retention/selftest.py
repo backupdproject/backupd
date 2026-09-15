@@ -153,11 +153,11 @@ from bdtools import harness, selftest_swap
 
 PROGRAM = "retention selftest"
 
-PACKAGES = ("./service/", "./internal/retention/", "./cmd/backupd/")
+PACKAGES = ("./service/", "./internal/retention/", "./cmd/retnd/")
 
 PRUNE_GO = "core/internal/retention/prune.go"
 LASTKNOWNGOOD_GO = "core/internal/retention/lastknowngood.go"
-RETENTIONAPPLY_GO = "core/cmd/backupd/retentionapply.go"
+RETENTIONAPPLY_GO = "core/cmd/retnd/retentionapply.go"
 RETENTIONAPPLYEVIDENCE_TEST_GO = "core/service/retentionapplyevidence_test.go"
 
 PASS_PATTERN = (

@@ -258,7 +258,7 @@ def build_under_test(root: Path) -> dict[str, str]:
             f"-X main.version={short_sha} -X main.commit={build_commit}",
             "-o",
             str(work / "backupd"),
-            "./cmd/backupd",
+            "./cmd/retnd",
         ],
         capture=False,
         cwd=root / "core",
@@ -347,7 +347,7 @@ def main() -> int:
     root = harness.repo_root(Path(__file__))
     # The bash cd'd to the repository root and then used relative paths
     # (core, ui/shared, scripts/e2e/tests-repo.pin) throughout. Kept, so
-    # that `go build ./cmd/backupd` and every path in a diagnostic
+    # that `go build ./cmd/retnd` and every path in a diagnostic
     # read the same as they did. Arguments are ignored, as they were: this
     # gate takes none and the shim passes "$@" through.
     os.chdir(root)

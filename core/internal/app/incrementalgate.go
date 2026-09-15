@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // EPIC K's production feature gate, enforced (#789). The flag itself,

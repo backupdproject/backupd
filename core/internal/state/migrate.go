@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/migrations"
+	"github.com/retnd/retnd/core/migrations"
 )
 
 // The migration runner: how a database reaches the schema this binary

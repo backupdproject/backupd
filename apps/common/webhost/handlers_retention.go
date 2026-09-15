@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The retention preview and its apply, which are the two halves of the
@@ -57,7 +57,7 @@ type retentionVerdictResponse struct {
 	// a straight translation. It is what keeps a deployment that declares
 	// no storage medium serving exactly the bytes it served before this
 	// field existed, and `backupd retention` already states the
-	// same asymmetry the same way (mediumSuffix, core/cmd/backupd/
+	// same asymmetry the same way (mediumSuffix, core/cmd/retnd/
 	// retention.go), so the two operator surfaces read alike.
 	//
 	// The service-side value is not tested against the literal "local"

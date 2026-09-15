@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/secretref"
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // EPIC L's configuration surface (#807, this file is #808): where hook
@@ -119,7 +119,7 @@ type Workflows struct {
 	// runner is a process on the HOST and owns <prefix>/run; the engine
 	// is normally a distroless container that has that directory bind
 	// mounted somewhere else entirely (container/compose.yaml binds it
-	// at /data/run). cmd/backupd's `workflow-runner` verbs take the host
+	// at /data/run). cmd/retnd's `workflow-runner` verbs take the host
 	// paths as flags for exactly this reason, and its own file header
 	// makes the argument at length: a single field in config.yaml could
 	// not be right on both sides, so each side states the path it can

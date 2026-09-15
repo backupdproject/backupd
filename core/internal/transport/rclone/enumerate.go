@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // This file is the dispatch half of issue #792: which enumerator a source

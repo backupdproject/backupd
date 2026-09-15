@@ -15,8 +15,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // TestDiscover_AbsoluteAndControlCharacterPathsAreRejectedNotIngested rounds

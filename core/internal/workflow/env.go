@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
-	"github.com/backupdproject/backupd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/secretref"
 )
 
 // The environment a hook script runs with: what an operator may put in it,

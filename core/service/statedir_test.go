@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/testenv"
+	"github.com/retnd/retnd/core/internal/testenv"
 )
 
 func TestValidateStateDir_CreatesMissingDirectory(t *testing.T) {

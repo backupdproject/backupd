@@ -24,8 +24,8 @@ package contract
 import (
 	"context"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // Identity is the remote identity the manager would persist at discovery and

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
 )
 
 // Three cases, and only the first one is about success.

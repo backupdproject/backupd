@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/backupdproject/backupd/core/cliecho"
+	"github.com/retnd/retnd/core/cliecho"
 )
 
 // The process lifecycle: one HTTP server, optionally one scheduler, and
@@ -106,7 +106,7 @@ const DefaultShutdownGrace = 10 * time.Second
 // still safe: schedCtx, not ctx, is what stops the scheduler here. The
 // scheduler's own failure gets the exact same treatment, symmetrically:
 // this used to be missing (moved here from
-// apps/generic/cmd/backupd-web's former cmdServe, which only raced
+// apps/generic/cmd/retnd-web's former cmdServe, which only raced
 // ctx.Done() against the HTTP listener's own error channel - a scheduler
 // that failed on its own, independent of ctx cancellation or a listener
 // failure, was invisible until some other event eventually triggered
@@ -120,7 +120,7 @@ const DefaultShutdownGrace = 10 * time.Second
 // didn't stop within shutdownGrace") that don't themselves change
 // RunEngine's returned error - pass io.Discard to ignore them, or a real
 // writer (a caller's os.Stderr) to surface them the way
-// apps/generic/cmd/backupd-web's former cmdServe did.
+// apps/generic/cmd/retnd-web's former cmdServe did.
 func RunEngine(ctx context.Context, httpServer *http.Server, scheduler Scheduler, shutdownGrace time.Duration, warnings io.Writer) error {
 	serverErrCh := make(chan error, 1)
 	go func() { serverErrCh <- httpServer.ListenAndServe() }()

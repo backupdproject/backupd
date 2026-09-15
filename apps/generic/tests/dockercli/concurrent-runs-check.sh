@@ -13,7 +13,7 @@
 # notice now, and this script is what puts two real runs in each other's
 # way so that test has something to notice.
 #
-# Each worktree gets its own marker file under core/cmd/backupd,
+# Each worktree gets its own marker file under core/cmd/retnd,
 # which container/Dockerfile copies into the build. That is deliberate: it
 # makes the two images differ in content and not only in name, so a run
 # that picked up the other worktree's image would be running a different
@@ -57,7 +57,7 @@ for i in $(seq 1 "$runs"); do
   # The content divergence. An unused constant is legal Go, changes the
   # COPY layer container/Dockerfile builds from, and touches nothing the
   # suite asserts on.
-  cat > "$dir/core/cmd/backupd/zz_concurrency_marker.go" <<EOF
+  cat > "$dir/core/cmd/retnd/zz_concurrency_marker.go" <<EOF
 package main
 
 const concurrencyMarker = "worktree-$i-$stamp"

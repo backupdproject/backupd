@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	// Imported so this test binary's build info includes
-	// github.com/rclone/rclone, exactly as cmd/backupd's real binary
+	// github.com/rclone/rclone, exactly as cmd/retnd's real binary
 	// does (it blank-imports internal/transport/rclone for backend
-	// registration; see cmd/backupd/main.go). Without some test in
+	// registration; see cmd/retnd/main.go). Without some test in
 	// this package pulling rclone into the build closure,
 	// embeddedRcloneVersion would have nothing to find and this test could
 	// only ever assert "unknown", which would not prove anything.
-	_ "github.com/backupdproject/backupd/core/internal/transport/rclone"
+	_ "github.com/retnd/retnd/core/internal/transport/rclone"
 )
 
 // The one test whose import list is half the test.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // #810's exec client needs an ssh.Signer and a known_hosts path for a

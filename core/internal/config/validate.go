@@ -59,9 +59,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/secretref"
 )
 
 // Validate checks a Config for every problem this package knows how to
@@ -690,7 +690,7 @@ func (v *validator) refuseDeadEngineKey(path, key string, reader, running model.
 // their zero values.
 //
 // It exists for Validate's idempotency promise, which is not decoration
-// here: cmd/backupd's retention overrides re-validate a Config in
+// here: cmd/retnd's retention overrides re-validate a Config in
 // place, and a set switched from the incremental engine to the artifact
 // engine between two calls would otherwise keep a repository reference and
 // a source identity that the second call never resolved.

@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // FR-1's long-running mode, and why the loop is here rather than in the CLI.
 //
-// The loop is nine lines and cmd/backupd could hold it. It does not,
+// The loop is nine lines and cmd/retnd could hold it. It does not,
 // because two of this product's guarantees are properties of the loop's
 // shape: no two passes over a backup set ever overlap, and a shutdown stops
 // work at a boundary where nothing is half-written. Both are argued from the
@@ -54,7 +54,7 @@ import (
 // manager, not on any one source, so one set asking to be polled every
 // minute is not a reason to rebuild a health report every minute.
 //
-// cmd/backupd owns turning SIGTERM/SIGINT into ctx's cancellation
+// cmd/retnd owns turning SIGTERM/SIGINT into ctx's cancellation
 // (via signal.NotifyContext), exactly as FR-1 asks for "handle
 // SIGTERM/SIGINT" and "use Go context cancellation" to be read together:
 // this package only ever reacts to ctx, and never installs a signal
@@ -80,7 +80,7 @@ import (
 // Daemon returns nil whenever ctx becomes done, whether that is observed
 // right after a RunCycle call returns or while waiting out the interval
 // between cycles: either way this is FR-1's ordinary, expected shutdown
-// path, not an error condition cmd/backupd needs to distinguish
+// path, not an error condition cmd/retnd needs to distinguish
 // from a clean exit. It returns a non-nil error only for a configuration
 // problem (a non-positive poll_interval) caught before the loop ever
 // starts.

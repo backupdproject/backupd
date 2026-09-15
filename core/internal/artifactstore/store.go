@@ -132,7 +132,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // ErrNotPresent reports that a store does not hold the artifact asked

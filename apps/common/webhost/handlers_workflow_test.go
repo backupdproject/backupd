@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/core/service"
 )
 
 // EPIC L's API surface (#813), driven through the real router.

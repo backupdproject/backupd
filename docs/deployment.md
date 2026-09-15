@@ -483,7 +483,7 @@ would be a further hardening step beyond what this issue asked for.
 enrollment link straight to its own container log:
 
 ```
-backupd-web: no administrator account exists yet. Open http://localhost:8080/enroll?token=... to create one (valid 30 minutes, single use).
+retnd-web: no administrator account exists yet. Open http://localhost:8080/enroll?token=... to create one (valid 30 minutes, single use).
 ```
 
 `backupd` has no published port of its own (see above), so its own `--listen`

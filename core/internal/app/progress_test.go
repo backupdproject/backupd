@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // The live feed, and the two things a wrong denominator would hide.

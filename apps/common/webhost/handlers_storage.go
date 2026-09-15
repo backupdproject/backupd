@@ -18,7 +18,7 @@ package webhost
 import (
 	"net/http"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // storageStatusResponse is the wire shape of one backup set's capacity

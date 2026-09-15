@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"io/fs"
 
-	"github.com/backupdproject/backupd/core/internal/capacity"
+	"github.com/retnd/retnd/core/internal/capacity"
 )
 
 // StorageStatus is the plain, provider-agnostic shape of one backup set's

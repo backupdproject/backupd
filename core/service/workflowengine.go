@@ -7,15 +7,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/hostrunner"
-	"github.com/backupdproject/backupd/core/internal/metrics"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/remoteexec"
-	"github.com/backupdproject/backupd/core/internal/workflow"
-	"github.com/backupdproject/backupd/core/internal/workflowrun"
 	"github.com/google/uuid"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/hostrunner"
+	"github.com/retnd/retnd/core/internal/metrics"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/remoteexec"
+	"github.com/retnd/retnd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflowrun"
 )
 
 // Where EPIC L's engine is actually assembled and switched on (#813).
@@ -132,13 +132,13 @@ type workflowRuntime struct {
 // SetBuildVersion tells this service which release it is.
 //
 // A post-construction setter for EnableAlerts' reason: the value comes
-// from the provider binary (an -ldflags variable in cmd/backupd or
+// from the provider binary (an -ldflags variable in cmd/retnd or
 // backupd-web), and threading it through Open would make every core/ test
 // that opens a service state a version it has no opinion about.
 //
 // What it is FOR is the host runner's version check. The engine and the
 // runner are one program cut in half by a socket
-// (cmd/backupd/workflowrunner.go), so a runner built from a different
+// (cmd/retnd/workflowrunner.go), so a runner built from a different
 // tree is a mismatch nothing else could detect, and the runner refuses a
 // hello whose version is not its own. A process that never calls this
 // presents an empty version and is refused by that check, which is the
@@ -299,7 +299,7 @@ func (b *BackupService) WorkflowReconcileGate() error {
 }
 
 // BackupDataPlane is the internal/app.Service this BackupService wraps,
-// for the commands that execute a cycle IN THEIR OWN PROCESS: cmd/backupd's
+// for the commands that execute a cycle IN THEIR OWN PROCESS: cmd/retnd's
 // `run`, `daemon` and `fetch`.
 //
 // # Why this seam exists at all
@@ -322,7 +322,7 @@ func (b *BackupService) WorkflowReconcileGate() error {
 // lifecycle really installed, which is what this returns.
 //
 // It returns internal/app's type, which apps/ cannot import
-// (docs/EPIC-B-multi-nas.md §7.2) and cmd/backupd already does. That
+// (docs/EPIC-B-multi-nas.md §7.2) and cmd/retnd already does. That
 // asymmetry is deliberate: a provider binary composes this package's own
 // surfaces, and only the CLI drives a cycle in-process.
 //

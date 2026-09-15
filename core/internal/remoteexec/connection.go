@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // ErrConnection is every refusal about which connection a remote step runs

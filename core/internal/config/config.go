@@ -30,9 +30,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/secretref"
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // Config is the manager's whole runtime configuration (FR-5).
@@ -856,7 +856,7 @@ type BackupSet struct {
 	// a *Config has to remember: any mutation of the top-level Retention
 	// has to be followed by Validate (or ResolveBackupSetRetention), or
 	// every set goes on deciding under the policy that was in force when
-	// it was last resolved. cmd/backupd's retention override flags
+	// it was last resolved. cmd/retnd's retention override flags
 	// are the live instance of this, and were a silent no-op until they
 	// re-resolved.
 	Retention Retention `yaml:"-"`

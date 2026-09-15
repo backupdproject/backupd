@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/remoteexec"
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/remoteexec"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // The executor half of a plan's checks, asked of ONE captured plan, by

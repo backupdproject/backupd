@@ -137,7 +137,7 @@ console.log(`\nbuild-bundles: wrote ${targets.length} bundle(s) to ${outRoot}`);
 // `backupd-web` rather than `backupd-web`, which is what the image's
 // symlink is called since 0.3.3 renamed the CLI (core/cliecho's
 // cliname.WebBinary). The Go package directory is still
-// apps/generic/cmd/backupd-web and stays that way, because a
+// apps/generic/cmd/retnd-web and stays that way, because a
 // package path is not something an operator types: a developer building
 // from a checkout gets a binary named after the directory and would run
 // that instead.

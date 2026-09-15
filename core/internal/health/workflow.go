@@ -3,7 +3,7 @@ package health
 import (
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // This file is FR-24's workflow half (EPIC L, issue #813): not "is the

@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/snapshotretention"
+	"github.com/retnd/retnd/core/internal/snapshotretention"
 )
 
 // TestRetentionsRepositoryPortCannotReachRepositoryStorage pins the method

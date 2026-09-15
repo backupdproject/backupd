@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/health"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/remoteexec"
+	"github.com/retnd/retnd/core/internal/health"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/remoteexec"
 )
 
 // FR-24's workflow section, filled in (#813): can this deployment still

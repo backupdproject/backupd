@@ -8,8 +8,8 @@ import (
 	"github.com/rclone/rclone/lib/env"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // The SSH identity of a transport.Source, resolved once and exported for a

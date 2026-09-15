@@ -12,11 +12,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/retention"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/retention"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // This file is the envelope around the one routine in this product that
@@ -837,7 +837,7 @@ func declaresAStorageMedium(cfg *config.Config) bool {
 // reads like a fault.
 //
 // `backupd retention` already refuses to print exactly this, for
-// exactly this reason (printPlacementPlan, core/cmd/backupd/
+// exactly this reason (printPlacementPlan, core/cmd/retnd/
 // retention.go). This is the same rule on the second surface, so the two
 // tell the same story about the same deployment rather than two.
 //

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/workflow"
-	"github.com/backupdproject/backupd/core/internal/workflowrun"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflowrun"
 )
 
 // What a process does when its workflow reconciliation FAILED (#813).

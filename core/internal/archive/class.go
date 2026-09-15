@@ -43,7 +43,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // Behaviour is everything this product knows about reading an object back

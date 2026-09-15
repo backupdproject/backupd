@@ -20,7 +20,7 @@
 // asked about the wrong hop.
 //
 // So this suite composes NewUI in front of NewEngine, exactly as
-// apps/generic/cmd/backupd-web does, and attacks the composition.
+// apps/generic/cmd/retnd-web does, and attacks the composition.
 //
 // # Every attack proves it arrived before it asserts it was stopped
 //
@@ -52,13 +52,13 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/auth/local"
-	"github.com/backupdproject/backupd/apps/common/csrf"
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
-	"github.com/backupdproject/backupd/apps/common/platform/profile"
-	"github.com/backupdproject/backupd/apps/common/webhost"
-	"github.com/backupdproject/backupd/apps/common/webhost/serve"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/apps/common/auth/local"
+	"github.com/retnd/retnd/apps/common/csrf"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/apps/common/platform/profile"
+	"github.com/retnd/retnd/apps/common/webhost"
+	"github.com/retnd/retnd/apps/common/webhost/serve"
+	"github.com/retnd/retnd/core/service"
 )
 
 // loopbackCIDRs is the trusted-peer range that CONTAINS whatever httptest

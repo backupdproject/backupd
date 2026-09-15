@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // The cleanup obligation's vocabulary and its transition rule (#811).

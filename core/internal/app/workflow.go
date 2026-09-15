@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // Where EPIC L's five-stage lifecycle meets this package's two entry

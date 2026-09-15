@@ -36,8 +36,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // ReinstatementLog is the one journal read ReinstatedArtifacts needs:

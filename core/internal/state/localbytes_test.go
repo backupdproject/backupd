@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // This file covers LocalBytesInUse, the measurement issue #286's storage

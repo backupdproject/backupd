@@ -20,7 +20,7 @@
 // lifecycle, discovery, reconciliation, retention, capacity and health
 // exactly as the EPIC's cycle order requires (reconcile, then discover,
 // then per-artifact transfer/verify/commit/delete, then a retention
-// preview), and it does so in one place so that cmd/backupd's `run`
+// preview), and it does so in one place so that cmd/retnd's `run`
 // and `daemon` subcommands, and every other CLI command that needs a
 // use case (`status`, `fetch`, `retention`, `reconcile`, `validate`, ...),
 // call the exact same Service methods. A future HTTP API is meant to be
@@ -47,17 +47,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/alert"
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
-	"github.com/backupdproject/backupd/core/internal/capacity"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/obs"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/retry"
+	"github.com/retnd/retnd/core/internal/alert"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/backupengine/kopia"
+	"github.com/retnd/retnd/core/internal/capacity"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/retry"
 )
 
 // Journal is the slice of internal/state.Journal every use case in this
@@ -350,7 +350,7 @@ type Service struct {
 // Logger may be left nil by the caller afterward for read-only use cases
 // that do not need them; New itself never rejects a nil value here, since
 // which fields a given CLI command actually needs is that command's own
-// business (see cmd/backupd).
+// business (see cmd/retnd).
 //
 // # Issue #295's redaction wiring
 //

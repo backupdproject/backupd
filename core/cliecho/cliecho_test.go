@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/apicontract"
+	"github.com/retnd/retnd/core/apicontract"
 )
 
 // TestEveryRouteAnswersWithACommandOrANamedGap is this package's own half

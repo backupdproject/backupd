@@ -28,8 +28,8 @@ package classifytransport
 import (
 	"context"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
 )
 
 // Wrap decorates tr so every error it returns carries the category

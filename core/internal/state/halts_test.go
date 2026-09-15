@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // The halt table is the durable half of issue #245: a per-backup-set fact

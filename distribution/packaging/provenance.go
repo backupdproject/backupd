@@ -224,8 +224,8 @@ type GoBuildTarget struct {
 // binary appearing in the Dockerfile and not here is a difference someone
 // has to make on purpose.
 var ShippedGoBinaries = []GoBuildTarget{
-	{Binary: "backupd", ModuleDir: "core", Package: "./cmd/backupd"},
-	{Binary: "backupd-web", ModuleDir: "apps/generic", Package: "./cmd/backupd-web"},
+	{Binary: "backupd", ModuleDir: "core", Package: "./cmd/retnd"},
+	{Binary: "backupd-web", ModuleDir: "apps/generic", Package: "./cmd/retnd-web"},
 }
 
 // GoModuleRef is one module in a binary's linked graph.
@@ -237,7 +237,7 @@ type GoModuleRef struct {
 
 // firstPartyModulePrefix is this repository's own module namespace.
 // Modules under it are the product, not third-party dependencies of it.
-const firstPartyModulePrefix = "github.com/backupdproject/backupd/"
+const firstPartyModulePrefix = "github.com/retnd/retnd/"
 
 // GoLinkedModules lists the third-party modules linked into one binary
 // for one target platform.
@@ -320,7 +320,7 @@ func parseGoListModules(out string) ([]GoModuleRef, error) {
 // isFirstPartyModule reports whether a module path is this repository's
 // own. The prefix has a trailing slash, so the bare namespace is matched
 // separately rather than by loosening the prefix, which would also match
-// a hypothetical github.com/backupdproject/backupd-anything.
+// a hypothetical github.com/retnd/retnd-anything.
 func isFirstPartyModule(path string) bool {
 	return path == strings.TrimSuffix(firstPartyModulePrefix, "/") ||
 		strings.HasPrefix(path, firstPartyModulePrefix)

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/sourceconsistency"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/sourceconsistency"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // ErrUnstreamable is the refusal for a backend whose objects cannot be

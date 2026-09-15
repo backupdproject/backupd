@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/email"
+	"github.com/retnd/retnd/apps/common/email"
 )
 
 // The command-line path has to produce a record indistinguishable from the

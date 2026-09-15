@@ -3,7 +3,7 @@ package placement
 import (
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // This file is FR-30's move state machine, and it is written the way

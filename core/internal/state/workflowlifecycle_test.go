@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // The durable transitions #811 runs the five-stage lifecycle on, held to

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // This file unit-tests Capture and Changed, the two helpers the contract

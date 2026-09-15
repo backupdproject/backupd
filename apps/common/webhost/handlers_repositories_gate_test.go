@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 func TestListRepositories_TheProductionGateIsAConflictAndNotAnInternalError(t *testing.T) {

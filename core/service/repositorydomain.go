@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/health"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/health"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // Declaring a repository domain (issue #862): the write half of EPIC K's

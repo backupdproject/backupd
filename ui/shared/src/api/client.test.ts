@@ -1685,7 +1685,7 @@ describe("httpApi maps the wire shapes onto the domain types", () => {
    * a record that really is broken.
    *
    * The captions and the ranks here are agreed verbatim with
-   * core/cmd/backupd/activity.go's table, which derives the same
+   * core/cmd/retnd/activity.go's table, which derives the same
    * severity for `backupd activity --severity`. Issue #625 was the last time
    * those two drifted.
    */

@@ -43,9 +43,9 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/recovery"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/recovery"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // TestIssue662_ConvergedCommitRefusesToRestampTheManifestFromADamagedFile

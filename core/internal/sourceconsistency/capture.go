@@ -10,7 +10,7 @@ import (
 	"io/fs"
 	"slices"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // DigestAlgorithm is the content hash a capture records. It is named so the

@@ -198,7 +198,7 @@ func TestWhatThisGuardMustNotReport(t *testing.T) {
 	}{
 		{
 			"the placeholder pin this repository's own tests use",
-			"core/cmd/backupd/create_test.go",
+			"core/cmd/retnd/create_test.go",
 			"package main\n\nconst aKnownHostsLine = \"[source.example.internal]:2222 " + madeUpHostKey + "\"\n",
 		},
 		{

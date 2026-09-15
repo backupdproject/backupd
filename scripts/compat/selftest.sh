@@ -11,7 +11,7 @@
 #   * scripts/bdtools/selftest/check_anchors.py and
 #     scripts/selftest/check-anchors.sh both run it with --check-anchors
 #     for the same reason they run every other anchored selftest that way;
-#   * core/cmd/backupd/usagepins_test.go, core/tests/compat's own
+#   * core/cmd/retnd/usagepins_test.go, core/tests/compat's own
 #     capture_api.go/capture_upgrade.go/compat_test.go, README.md and
 #     docs/storage-mediums.md/docs/conformance/epic-e-matrix.md all name
 #     this literal path in their own comments and prose.

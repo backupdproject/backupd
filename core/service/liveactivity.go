@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // What a backup set is DOING, as opposed to what state it is in (issue

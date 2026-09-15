@@ -44,7 +44,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
 )
 
 // ID is a runtime profile's selector token, exactly as it appears after

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/metrics"
-	"github.com/backupdproject/backupd/core/internal/workflow"
-	"github.com/backupdproject/backupd/core/internal/workflowrun"
+	"github.com/retnd/retnd/core/internal/metrics"
+	"github.com/retnd/retnd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflowrun"
 )
 
 // The four properties of EPIC L's service surface that a plausible bug

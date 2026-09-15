@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/backupdproject/backupd/core/internal/artifactstore"
+	"github.com/retnd/retnd/core/internal/artifactstore"
 )
 
 // Tests for issue #234 (EPIC E, E1.2): the storage-medium config schema,

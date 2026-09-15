@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // placementsMigrationVersion is the version this file's subject is. It is

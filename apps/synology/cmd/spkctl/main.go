@@ -31,11 +31,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/backupdproject/backupd/apps/synology/spk"
+	"github.com/retnd/retnd/apps/synology/spk"
 )
 
 // main defers to run so the whole CLI is reachable from a test without a
-// process, the same split cmd/backupd-web uses.
+// process, the same split cmd/retnd-web uses.
 func main() { os.Exit(run(os.Args[1:])) }
 
 // run dispatches and returns the exit code. Two means the invocation was

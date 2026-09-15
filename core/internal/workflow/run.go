@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // The two durable records: one Run per backup cycle that had a workflow,

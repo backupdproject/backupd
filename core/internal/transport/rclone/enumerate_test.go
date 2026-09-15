@@ -16,8 +16,8 @@ import (
 
 	"github.com/rclone/rclone/fs/hash"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // This file is the adapter half of issue #792. The bounded enumerator

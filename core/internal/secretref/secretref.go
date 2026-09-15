@@ -76,7 +76,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // maxSecretSize bounds how many bytes this package will accept as secret

@@ -20,7 +20,7 @@
 // SubmitRunCycle) immediately, without an operator restarting the
 // process, and visible to `backupd sources`/any other CLI
 // invocation the next time one runs, since that command already reads
-// the same file fresh on every invocation (core/cmd/backupd/
+// the same file fresh on every invocation (core/cmd/retnd/
 // sources.go).
 //
 // This was previously out of core/service's scope by design (see
@@ -41,12 +41,12 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/obs"
-	"github.com/backupdproject/backupd/core/internal/sourcecheck"
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/sourcecheck"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
 )
 
 // defaultSourceName groups every backup set created through the API under
@@ -708,7 +708,7 @@ func (b *BackupService) CreateBackupSet(ctx context.Context, req CreateBackupSet
 
 	// Re-read from disk, not b.state.Load().inner.Config: this is the same "always
 	// read fresh" discipline `backupd sources` already uses
-	// (core/cmd/backupd/sources.go), and it is what makes this
+	// (core/cmd/retnd/sources.go), and it is what makes this
 	// method safe even if configPath was edited by hand (or by a second
 	// process) since this BackupService last loaded it — the write below
 	// is always based on the file's actual current content, never a

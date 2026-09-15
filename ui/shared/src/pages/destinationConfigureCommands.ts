@@ -19,7 +19,7 @@
  * This is the part worth reading. `backupd medium edit` takes the flags it
  * was written with - `--type`, `--region`, `--endpoint`, `--bucket`,
  * `--prefix`, `--storage-class`, `--upload-verification` and the four
- * credential spellings (core/cmd/backupd/medium.go:219) - and a
+ * credential spellings (core/cmd/retnd/medium.go:219) - and a
  * manifest can declare a field none of them names. `local_volume`'s
  * `path` is exactly that today: there is no `--path`, so a local volume
  * cannot be configured from a terminal at all.

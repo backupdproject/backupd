@@ -75,7 +75,7 @@ const SET_ID = "cicd-pipeline/var-backups";
  *  `state=FAILED` is reached with `ValidationPassed` still nil (nothing on
  *  the collision path records a verdict), and core/service/artifacts.go
  *  maps a nil verdict to "pending". Staging the issue's own sequence
- *  (core/cmd/backupd's stage662DeadEnd + drive662ToFailed, whose
+ *  (core/cmd/retnd's stage662DeadEnd + drive662ToFailed, whose
  *  own assertion is `stateOf(...) == FAILED`) and reading the journal back
  *  gives exactly the three values below.
  *

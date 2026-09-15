@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The BackupServiceClient doubles for EPIC L's workflow surface (#813),

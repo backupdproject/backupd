@@ -34,7 +34,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // Retention granularity names, re-exported from internal/config so a
@@ -260,7 +260,7 @@ type RetentionUpdate struct {
 	// (Retention.Tiers' own doc: an operator who wrote both is asking two
 	// different questions). This is exactly the rule the CLI's own -tier
 	// override already applies in applyRetentionOverrides
-	// (core/cmd/backupd/retention_flags.go), so the two write
+	// (core/cmd/retnd/retention_flags.go), so the two write
 	// paths cannot resolve the same submission differently.
 	//
 	// An explicitly EMPTY chain is refused rather than applied. In the

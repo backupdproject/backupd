@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // objectStream is one remote object seen as a stream the backup engine

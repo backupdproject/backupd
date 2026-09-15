@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // GET /api/v1/activity/live on the wire (issue #573).

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/metrics"
+	"github.com/retnd/retnd/core/internal/metrics"
 )
 
 // What these tests are for, and why they are shaped like this.

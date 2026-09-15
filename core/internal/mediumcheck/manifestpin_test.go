@@ -13,8 +13,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/mediumcheck"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/mediumcheck"
 )
 
 // TestTheProbeStepVocabularyMatchesMediumcheckSteps is issue #665's test

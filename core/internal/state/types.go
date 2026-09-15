@@ -3,7 +3,7 @@ package state
 import (
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // The values a caller hands to RecordTransition and gets back from the

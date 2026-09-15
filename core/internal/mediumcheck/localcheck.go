@@ -13,8 +13,8 @@ import (
 	"sort"
 	"syscall"
 
-	"github.com/backupdproject/backupd/core/internal/capacity"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/capacity"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // Test connection for the LOCAL hard drive (H2.2, issue #622).

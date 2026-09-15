@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/apicontract"
+	"github.com/retnd/retnd/core/apicontract"
 )
 
 // The offline stand-in for a running engine, and why it is built out of

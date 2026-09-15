@@ -66,7 +66,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/email/emailtest"
+	"github.com/retnd/retnd/apps/common/email/emailtest"
 )
 
 // The workload constants below ARE the workload definition. Changing any
@@ -586,8 +586,8 @@ func repoRoot(t *testing.T) string {
 // per-module jobs do.
 func buildEngine(t *testing.T, repoRoot string) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "backupd-web")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/backupd-web")
+	bin := filepath.Join(t.TempDir(), "retnd-web")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/retnd-web")
 	cmd.Dir = filepath.Join(repoRoot, "apps", "generic")
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := cmd.CombinedOutput(); err != nil {

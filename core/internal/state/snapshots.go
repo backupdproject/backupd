@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // The durable catalog of snapshot RUNS for the incremental engine (EPIC K,

@@ -2676,7 +2676,7 @@ class Proof:
             return
 
         # 1b. `reconcile` exits 0 exactly when it found nothing unresolved:
-        #     cmd/backupd/reconcile.go prints "reconciliation
+        #     cmd/retnd/reconcile.go prints "reconciliation
         #     complete; no unresolved findings" under `if exitCode == 0`,
         #     and no finding moves exitCode -- only r.Err and Report.Errors
         #     do. So the exit status IS that sentence, and it is the half of

@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/hostrunner"
-	"github.com/backupdproject/backupd/core/internal/remoteexec"
-	"github.com/backupdproject/backupd/core/internal/workflow"
-	"github.com/backupdproject/backupd/core/internal/workflowexec"
+	"github.com/retnd/retnd/core/internal/hostrunner"
+	"github.com/retnd/retnd/core/internal/remoteexec"
+	"github.com/retnd/retnd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflowexec"
 )
 
 // The one seam between "what to run next" and "how a hook actually runs".

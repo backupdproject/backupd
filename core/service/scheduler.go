@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // This file is the unattended driver: the loop that keeps running cycles
 // when nobody is asking it to, for a process that cannot reach the one
 // internal/app already has.
 //
-// cmd/backupd's `daemon` gets that loop from
+// cmd/retnd's `daemon` gets that loop from
 // internal/app.Service.Daemon directly. The generic Web host cannot, §7.2
 // sees to that, and reimplementing it above this boundary would put the
 // cadence, the single-flight decision and the panic policy in a package
@@ -100,7 +100,7 @@ var scheduleTimer = func(d time.Duration) (<-chan time.Time, func() bool) {
 // RunOnSchedule repeats one internal/app.Service.RunCycle pass until ctx
 // is done, at the cadence the running configuration asks for — the same
 // repeated-cycle shape
-// internal/app.Service.Daemon already gives cmd/backupd's own
+// internal/app.Service.Daemon already gives cmd/retnd's own
 // `daemon` command — but reachable from apps/ (core/internal is not,
 // docs/EPIC-B-multi-nas.md §7.2), which is what a process composing this
 // BackupService with an HTTP API (the generic Web host's `serve` command,

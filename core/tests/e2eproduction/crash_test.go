@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/snapshotlifecycle"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/snapshotlifecycle"
 )
 
 // harnessBinary builds core/tests/e2eproduction/harness once per test

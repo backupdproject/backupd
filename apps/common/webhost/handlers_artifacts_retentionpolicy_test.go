@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // ungovernedArtifactFixture is a backup whose set was removed: still on

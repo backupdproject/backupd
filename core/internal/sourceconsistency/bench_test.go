@@ -35,7 +35,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // benchLargeFileBytes is the single-file size the throughput rows use. Big

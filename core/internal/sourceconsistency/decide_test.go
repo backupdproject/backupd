@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 var now = time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)

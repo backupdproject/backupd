@@ -31,27 +31,33 @@
 # process. Two binaries, not one with two names, because apps/generic
 # needs to import apps/common/webhost and apps/common/auth/local, and
 # core/'s own module cannot depend on apps/ in either direction (§7.1) -
-# see apps/generic/cmd/backupd-web/main.go's own doc for the module
+# see apps/generic/cmd/retnd-web/main.go's own doc for the module
 # boundary reasoning (that half is unaffected by the rename; the name it
 # gives itself is a separate matter tracked on #651).
 #
-# THE BINARY NAMES (the 0.3.3 CLI rename)
+# THE BINARY NAMES (EPIC R's CLI rename, #888)
 #
-# The command an operator types is `backupd`, and the web host is `backupd-web`.
-# Those are the two files in the runtime stage and the only names anything
-# in this repository uses.
+# The command an operator types is `retnd`, and the web host is `retnd-web`.
+# Those are the names the two `go build` invocations below write, and the
+# names core/cliecho's Binary/WebBinary print.
 #
-# 0.3.3 is a clean cut. Images published before it carry the old names and
-# these carry the new ones, with nothing bridging the two, so an operator
+# The two FILES in the runtime stage are still /backupd and /backupd-web.
+# That is deliberate and temporary: container-internal paths, the compose
+# service names and the image reference move together in R1.5 (#890),
+# because moving them is an upgrade an existing deployment has to survive
+# (a compose `command:` naming a path the new image does not have is a
+# stack that will not start) and that is a different change from renaming
+# a command. So the COPY lines below take `retnd` out of the builder and
+# land it at `/backupd` until #890.
+#
+# The rename is a clean cut either way: nothing is aliased, so an operator
 # upgrading has to move any `docker exec`, cron entry or hand-written
-# compose onto `backupd`. container/compose.yaml says the same from the other
-# side, and scripts/install/install_docker_host.py refuses `--release`
-# below 0.3.3 rather than write a deployment an older image cannot start.
+# compose onto the new spelling once #890 lands. container/compose.yaml
+# says the same from the other side.
 #
-# What did NOT change is everything that is not the CLI: the image
+# What did NOT change here is everything that is not the command: the image
 # reference (ghcr.io/backupdproject/backupd), the compose service names,
-# the config directory at /etc/backupd, the Go package paths under
-# cmd/, and the product's own name.
+# the config directory at /etc/backupd, and the product's own name.
 
 # ---- core builder ---------------------------------------------------------
 # Pinned by digest, not just tag, so this stage resolves to the exact same
@@ -123,7 +129,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # apicontract is on this list because the CLI now speaks to a running
 # engine (#543): core/internal/apiclient resolves every path, status and
 # error code out of core/apicontract, so leaving it out builds a tree in
-# which `go build ./cmd/backupd` fails with "cannot find module
+# which `go build ./cmd/retnd` fails with "cannot find module
 # providing package .../core/apicontract" and nothing in the Go suite says
 # so, because a `go test` from a checkout has the whole module. It is
 # listed in the build-web stage too, for the same reason one step ahead:
@@ -171,8 +177,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         -trimpath \
         -buildvcs=false \
         -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-        -o /out/backupd \
-        ./cmd/backupd
+        -o /out/retnd \
+        ./cmd/retnd
 
 # ---- frontend builder -------------------------------------------------
 # ui/shared's static bundle (docs/EPIC-B-multi-nas.md §9.2/§11): built
@@ -303,8 +309,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         -trimpath \
         -buildvcs=false \
         -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-        -o /out/backupd-web \
-        ./cmd/backupd-web
+        -o /out/retnd-web \
+        ./cmd/retnd-web
 
 # ---- runtime ------------------------------------------------------------
 # distroless static, nonroot variant: no shell, no package manager, no libc
@@ -318,14 +324,16 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # rather than a value baked in here).
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
-COPY --from=build /out/backupd /backupd
-COPY --from=build-web /out/backupd-web /backupd-web
+COPY --from=build /out/retnd /backupd
+COPY --from=build-web /out/retnd-web /backupd-web
 
 # Those two lines are the whole of what this image carries as commands.
-# 0.3.3 retired `backupd` rather than aliasing it, so there is no
+# 0.3.3 retired `rbm` rather than aliasing it, so there is no
 # link under the old name beside either binary and nothing here creates
 # one: a compose file, cron entry or healthcheck written against the old
-# spelling has to be moved across to `/backupd`.
+# spelling has to be moved across to `/backupd`. R1.5 (#890) moves these
+# two destinations to /retnd and /retnd-web, and it is the issue that
+# decides what bridges that move for a running deployment.
 
 # The licence, the notices and the machine-readable inventory the other
 # two point at, at a fixed path a recipient can find without a shell
@@ -395,9 +403,9 @@ EXPOSE 8080
 # fails immediately with "no command specified" - a loud, safe failure,
 # not a silent no-op or an ambiguous guess.
 
-# `backupd status` (issue #26, FR-24) exits 0 only when every
+# `retnd status` (issue #26, FR-24) exits 0 only when every
 # configured backup set reports HEALTHY, and non-zero on DEGRADED, STALE or
-# FAILING (see core/cmd/backupd/status.go's own doc for the exact
+# FAILING (see core/cmd/retnd/status.go's own doc for the exact
 # contract). This is the real backup-freshness signal FR-24's health states
 # are meant to be read through - not process liveness, which is what the
 # previous `version`-based HEALTHCHECK could only ever answer. Verified

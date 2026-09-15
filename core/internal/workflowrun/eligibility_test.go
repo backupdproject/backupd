@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // The nested cleanup scope (#811's Nested cleanup scope section), as a

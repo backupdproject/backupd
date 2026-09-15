@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/service"
-	"github.com/backupdproject/backupd/core/tests/machines"
+	"github.com/retnd/retnd/core/service"
+	"github.com/retnd/retnd/core/tests/machines"
 )
 
 // Issue #852 driven through core/service against a real SFTP server: the

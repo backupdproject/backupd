@@ -24,8 +24,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // The journal's CHECK constraint and the state machine's set of states are a

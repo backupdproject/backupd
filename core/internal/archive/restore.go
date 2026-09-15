@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/apicontract"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/apicontract"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // This file is FR-34's restore, and it is the one operation in this

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The BackupServiceClient doubles for EPIC K's surface (#788), in their

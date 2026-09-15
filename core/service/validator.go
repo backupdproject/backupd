@@ -111,7 +111,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 //go:embed validators/*.sh

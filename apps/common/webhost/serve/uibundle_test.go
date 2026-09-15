@@ -12,7 +12,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/backupdproject/backupd/apps/common/webhost/serve"
+	"github.com/retnd/retnd/apps/common/webhost/serve"
 )
 
 // Bundle resolution, tested mostly through its refusals.

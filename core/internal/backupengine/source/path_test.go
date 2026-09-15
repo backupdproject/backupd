@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine/source"
+	"github.com/retnd/retnd/core/internal/backupengine/source"
 )
 
 // The named attacks, one row each, because a property test proves the

@@ -26,11 +26,11 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/auth/local"
-	"github.com/backupdproject/backupd/apps/common/platform/profile"
-	"github.com/backupdproject/backupd/apps/common/webhost/serve"
-	"github.com/backupdproject/backupd/core/apicontract"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/apps/common/auth/local"
+	"github.com/retnd/retnd/apps/common/platform/profile"
+	"github.com/retnd/retnd/apps/common/webhost/serve"
+	"github.com/retnd/retnd/core/apicontract"
+	"github.com/retnd/retnd/core/service"
 )
 
 // Issue #545, the last of #536: the two routes an operator can change this
@@ -129,7 +129,7 @@ type stack struct {
 // startStack brings up everything a real deployment has except the
 // container boundary, over the configuration configPath names.
 //
-// The order is the order apps/generic/cmd/backupd-web uses and it
+// The order is the order apps/generic/cmd/retnd-web uses and it
 // is load-bearing: AnnounceServing before service.Open, so a CLI that
 // arrives mid-start finds the announcement rather than a half-open
 // journal. core/service's liveengine.go has the whole arrangement.
@@ -423,7 +423,7 @@ func createArgs(configPath, keyPath, id string, extra ...string) []string {
 		// Every test in this package is about where the change LANDS, on
 		// which route, in which mode, so they skip the check the way an
 		// operator building configuration offline does. Whether the check
-		// happens at all is core/cmd/backupd's own suite, and
+		// happens at all is core/cmd/retnd's own suite, and
 		// whether it happens against two real machines is
 		// scripts/e2e/two-machine-backup.sh.
 		"--no-verify",
@@ -836,7 +836,7 @@ func newFixture(t *testing.T, bin string, s surface) fixture {
 // The verbs are read out of the binary's own usage block rather than typed
 // here, so a verb that lands over there fails here without anybody
 // remembering this file exists. What makes that sound is
-// core/cmd/backupd's TestUsage_NamesEveryTopLevelCommand, which pins
+// core/cmd/retnd's TestUsage_NamesEveryTopLevelCommand, which pins
 // the usage block against the dispatch map itself; without it a verb could be
 // dispatchable and unlisted, and this would be blind to exactly the verb
 // nobody had thought about. The same blindness is why `backup-set remove`
@@ -1468,11 +1468,11 @@ func TestARoutedWriteIsAcceptedByTheDeploymentItWasTypedAt(t *testing.T) {
 // above: the first-run announcement is main.go's to make.
 func buildWeb(t *testing.T, root string) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "backupd-web")
+	bin := filepath.Join(t.TempDir(), "retnd-web")
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/backupd-web")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/retnd-web")
 	cmd.Dir = filepath.Join(root, "apps", "generic")
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := cmd.CombinedOutput(); err != nil {

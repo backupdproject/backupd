@@ -101,7 +101,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // Kind is one alertable condition. Four of them are the ones §71's Work
