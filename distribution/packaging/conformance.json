@@ -283,7 +283,7 @@
       "tier": "B",
       "epic": "B",
       "workPackage": "4.3",
-      "metadata": { "kind": "unraid-template", "root": "apps/unraid", "templates": ["template/retnd.xml", "template/retnd-ui.xml"], "files": ["README.md", "frontend/webui.json"], "storeArtifacts": ["template/backupd.xml", "template/backupd-ui.xml"] },
+      "metadata": { "kind": "unraid-template", "root": "apps/unraid", "templates": ["template/retnd.xml", "template/retnd-ui.xml"], "files": ["README.md", "frontend/webui.json"], "storeArtifacts": ["template/retnd.xml", "template/retnd-ui.xml"] },
       "scanRoots": ["apps/unraid"],
       "acceptance": "docs/acceptance/unraid-provider-acceptance.md",
       "workflowRunner": { "localHooks": "unavailable", "platform": "unraid", "doc": "docs/acceptance/unraid-provider-acceptance.md" },
