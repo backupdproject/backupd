@@ -96,11 +96,12 @@ PROMOTED = (
 )
 
 LISTACTIVITY = (
-    "func (b *BackupService) ListActivity(ctx context.Context, limit int) ([]ActivityEvent, error) {"
+    "func (b *BackupService) ListActivity(ctx context.Context, limit int, before string) "
+    "([]ActivityEvent, string, error) {"
 )
 LISTACTIVITY_RENAMED = (
-    "func (b *BackupService) ListActivityRenamedBySelftest(ctx context.Context, limit int) "
-    "([]ActivityEvent, error) {"
+    "func (b *BackupService) ListActivityRenamedBySelftest(ctx context.Context, limit int, before string) "
+    "([]ActivityEvent, string, error) {"
 )
 
 
