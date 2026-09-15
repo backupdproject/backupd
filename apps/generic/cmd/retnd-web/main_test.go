@@ -138,19 +138,19 @@ func TestCmdServe_ServesTheFirstRunFlowRatherThanExitingOnAMissingConfig(t *test
 }
 
 func TestEnvOrDefault(t *testing.T) {
-	t.Setenv("BACKUP_MANAGER_WEB_TEST_VAR", "")
-	if got := envOrDefault("BACKUP_MANAGER_WEB_TEST_VAR", "fallback"); got != "fallback" {
+	t.Setenv("RETND_WEB_TEST_VAR", "")
+	if got := envOrDefault("RETND_WEB_TEST_VAR", "fallback"); got != "fallback" {
 		t.Errorf("envOrDefault(unset) = %q, want %q", got, "fallback")
 	}
 
-	t.Setenv("BACKUP_MANAGER_WEB_TEST_VAR", "set-value")
-	if got := envOrDefault("BACKUP_MANAGER_WEB_TEST_VAR", "fallback"); got != "set-value" {
+	t.Setenv("RETND_WEB_TEST_VAR", "set-value")
+	if got := envOrDefault("RETND_WEB_TEST_VAR", "fallback"); got != "set-value" {
 		t.Errorf("envOrDefault(set) = %q, want %q", got, "set-value")
 	}
 }
 
 func TestEnvBoolOrDefault(t *testing.T) {
-	const key = "BACKUP_MANAGER_WEB_TEST_BOOL_VAR"
+	const key = "RETND_WEB_TEST_BOOL_VAR"
 
 	t.Setenv(key, "")
 	if got := envBoolOrDefault(key, false); got != false {

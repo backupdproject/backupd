@@ -141,7 +141,7 @@ const (
 	// same way budgetEnv and graceEnv override the watchdog. The fixture's
 	// own tests use it to keep a deliberate retry loop short; nothing else
 	// should.
-	pullBackoffEnv = "RCLONE_MANAGER_SFTP_PULL_BACKOFF"
+	pullBackoffEnv = "RETND_SFTP_PULL_BACKOFF"
 	// pullBudget bounds the retries TOGETHER, which is the part retrying a
 	// five-minute timeout three times would otherwise get wrong: fifteen
 	// minutes of silence is not a fix for a gate that fails on network
@@ -171,8 +171,8 @@ const (
 	defaultGrace = 20 * time.Second
 	// budgetEnv and graceEnv override the two above, as Go durations.
 	// The fixture's own tests use them to keep a deliberate hang short.
-	budgetEnv = "RCLONE_MANAGER_SFTP_TEST_BUDGET"
-	graceEnv  = "RCLONE_MANAGER_SFTP_DEATH_GRACE"
+	budgetEnv = "RETND_SFTP_TEST_BUDGET"
+	graceEnv  = "RETND_SFTP_DEATH_GRACE"
 	// probeInterval is how often the watchdog asks docker whether the
 	// container is still there.
 	probeInterval = 500 * time.Millisecond

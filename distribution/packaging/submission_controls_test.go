@@ -133,7 +133,7 @@ func TestEachHardRuleFiresOnTheShapeItIsAbout(t *testing.T) {
 			path: "fixture/compose.yaml",
 			trips: []string{
 				"      TELEMETRY_ENABLED: \"true\"\n",
-				"      BACKUP_MANAGER_ANALYTICS: on\n",
+				"      RETND_ANALYTICS: on\n",
 				"      SENTRY_DSN: https://key@sentry.invalid/1\n",
 				"      REPORT_URL: https://metrics.example.invalid/v1/ingest\n",
 				"      USAGE_STATS: 1\n",

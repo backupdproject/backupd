@@ -10,7 +10,7 @@
 # browsers only negotiate h2 over TLS, so the plain-HTTP rig drives the whole
 # stack over HTTP/1.1 and never exercises the transport the operator's does.
 #
-# This container is that missing hop, added in front of `backupd-web serve-ui`:
+# This container is that missing hop, added in front of `retnd-web serve-ui`:
 #
 #     browser --TLS/h2--> THIS nginx --http/1.1--> serve-ui --> serve
 #
@@ -30,8 +30,8 @@ RUN apk add --no-cache openssl \
  && openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
       -keyout /etc/nginx/tls/key.pem \
       -out /etc/nginx/tls/cert.pem \
-      -subj "/CN=backupd" \
-      -addext "subjectAltName=DNS:backupd,DNS:localhost" \
+      -subj "/CN=retnd" \
+      -addext "subjectAltName=DNS:retnd,DNS:localhost" \
  && chmod 0644 /etc/nginx/tls/key.pem
 
 # The upstream is reached by the edge-network alias the rig gives serve-ui

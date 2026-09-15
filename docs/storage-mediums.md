@@ -346,7 +346,7 @@ One consequence is worth knowing before you meet it. Clearing the mark is a
 configuration write, so `medium test-connection <id>` now goes through the door
 the other configuration writes go through: beside an engine serving this
 deployment it is carried out there, and it is refused when nothing has said how
-to reach that engine (`BACKUP_MANAGER_API_URL`). It used to answer from this
+to reach that engine (`RETND_API_URL`). It used to answer from this
 host's own file. `medium list` and `medium show` are unchanged and still read
 locally, so looking at your own destinations works on a stock install.
 

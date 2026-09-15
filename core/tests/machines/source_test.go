@@ -190,8 +190,8 @@ func TestFixtureFailsFastWhenDockerStopsAnswering(t *testing.T) {
 	const window = 45 * time.Second
 	shim := hangingDocker(t)
 	out, exited, code := runSourceHelper(t, "TestHelperFixtureAgainstAHangingDocker", window,
-		"RCLONE_MANAGER_SFTP_TEST_BUDGET=5s",
-		"RCLONE_MANAGER_SFTP_DEATH_GRACE=2s",
+		"RETND_SFTP_TEST_BUDGET=5s",
+		"RETND_SFTP_DEATH_GRACE=2s",
 		"PATH="+shim+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	if !exited {
@@ -234,7 +234,7 @@ func TestFixtureNamesAGenuineHangAndLeavesNoContainer(t *testing.T) {
 
 	const window = 90 * time.Second
 	out, exited, code := runSourceHelper(t, "TestHelperFixtureHangsWithAHealthyContainer", window,
-		"RCLONE_MANAGER_SFTP_TEST_BUDGET=5s", "RCLONE_MANAGER_SFTP_DEATH_GRACE=2s")
+		"RETND_SFTP_TEST_BUDGET=5s", "RETND_SFTP_DEATH_GRACE=2s")
 
 	if !exited {
 		t.Fatalf("a test that hangs with a perfectly healthy fixture container was still running %s later; it has to name itself long before the package's 25-minute timeout.\nhelper output:\n%s", window, out)

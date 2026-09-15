@@ -92,7 +92,7 @@ RUN printf '%s\n' \
       'PasswordAuthentication no' \
       'KbdInteractiveAuthentication no' \
       'PubkeyAuthentication yes' \
-      'AuthorizedKeysFile /etc/ssh/authorized/backupd.pub' \
+      'AuthorizedKeysFile /etc/ssh/authorized/retnd.pub' \
       'StrictModes no' \
       'UsePAM no' \
       'PermitUserEnvironment no' \

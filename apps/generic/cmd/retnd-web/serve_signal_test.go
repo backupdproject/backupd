@@ -39,14 +39,14 @@ import (
 // for the same reason: the child runs the same run() main dispatches to,
 // so what it exits with is what the shipped binary exits with.
 const (
-	serveChildEnv       = "BACKUP_MANAGER_WEB_TEST_SERVE_CHILD"
-	serveChildConfig    = "BACKUP_MANAGER_WEB_TEST_SERVE_CONFIG"
-	serveChildAuthStore = "BACKUP_MANAGER_WEB_TEST_SERVE_AUTH_STORE"
+	serveChildEnv       = "RETND_WEB_TEST_SERVE_CHILD"
+	serveChildConfig    = "RETND_WEB_TEST_SERVE_CONFIG"
+	serveChildAuthStore = "RETND_WEB_TEST_SERVE_AUTH_STORE"
 	// serveChildStateDB is optional: a child that is given one names the
 	// journal a FIRST-RUN start would announce about, which is the only
 	// way a test can put a broken state directory in front of this
 	// binary's own startup.
-	serveChildStateDB = "BACKUP_MANAGER_WEB_TEST_SERVE_STATE_DB"
+	serveChildStateDB = "RETND_WEB_TEST_SERVE_STATE_DB"
 )
 
 // serveShutdownNotice is the line `serve` prints once its own shutdown

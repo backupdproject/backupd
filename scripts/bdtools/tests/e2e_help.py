@@ -181,6 +181,26 @@ _SUBJECT_SHIM = {
 INSERTED = "# An unrelated implementation note, added later, above the help block."
 
 
+# The #514 defect, as a detector: a line range applied to THE SCRIPT
+# ITSELF. `sed -n '2,110p' "$0"` is help as coordinates, and any edit
+# above the boundary rewrites it silently, which is the whole reason this
+# suite exists.
+#
+# Both halves are needed, and the second half was missing. Checking only
+# for a range flagged `docker logs "$c_runner" 2>&1 | sed -n '1,2p'` --
+# which trims a container's first two log lines and addresses no help at
+# all. #816 added that line to the three-machine rig and assertion B has
+# been red ever since, on a driver that renders through render_help and
+# slices nothing of itself, which is the shape a guard gets deleted for.
+_LINE_RANGE = re.compile(r"(sed|awk|head|tail)[^|]*['\"]?[0-9]+,[0-9]+p")
+_OWN_FILE = re.compile(r'"\$0"|\$0\b')
+
+
+def slices_itself(line: str) -> bool:
+    """Whether `line` addresses the running script's own text by number."""
+    return bool(_LINE_RANGE.search(line) and _OWN_FILE.search(line))
+
+
 def subject_file(name: str) -> str:
     return _SUBJECT_FILE[name]
 
@@ -352,16 +372,35 @@ shim entry in subject_shim so the branch above compares the two.""",
             source_text = script.read_text()
             source_lines = source_text.splitlines()
 
-            by_number = []
-            pattern = re.compile(r"(sed|awk|head|tail)[^|]*['\"]?[0-9]+,[0-9]+p")
-            for lineno, line in enumerate(source_lines, 1):
-                if pattern.search(line) and not re.match(r"^\s*#", line):
-                    by_number.append(f"{lineno}:{line}")
+            by_number = [
+                f"{lineno}:{line}"
+                for lineno, line in enumerate(source_lines, 1)
+                if not re.match(r"^\s*#", line) and slices_itself(line)
+            ]
             suite.check(
                 not by_number,
                 f"B {subject} renders no part of itself by line number",
                 f"B {subject} renders no part of itself by line number",
                 "\n".join(by_number),
+            )
+
+            # The control for the assertion above, because it is a NEGATIVE
+            # one: "no line matches" and "the detector matches nothing" read
+            # identically, and narrowing the pattern is exactly the edit that
+            # turns the first into the second. So the detector is run over
+            # the defect it was written for and over the line that used to be
+            # a false positive, and required to tell them apart.
+            suite.check(
+                slices_itself("""sed -n '2,110p' "$0" | sed 's/^# \\{0,1\\}//'"""),
+                f"B {subject}'s detector still catches #514's own defect",
+                f"B {subject}'s detector no longer catches `sed -n '2,110p' \"$0\"`, "
+                "so the assertion above is green because it measures nothing",
+            )
+            suite.check(
+                not slices_itself("""  note "$(docker logs "$c" 2>&1 | sed -n '1,2p' | tr '\\n' ' ')\""""),
+                f"B {subject}'s detector does not flag a line range over other output",
+                f"B {subject}'s detector flags a line range applied to something "
+                "that is not the script, which is how this assertion became noise",
             )
 
             for marker in ("# HELP-START", "# HELP-END"):

@@ -582,7 +582,7 @@ Two things a non-default port changes:
 - `POST /api/v1/ssh/host-key-probe` takes the port and opens a real connection, so it
   is the honest way to get the pinned line rather than typing one.
 
-The installer takes it as `--source-port`, or as `RCLONE_MANAGER_SOURCE_PORT` in the
+The installer takes it as `--source-port`, or as `RETND_SOURCE_PORT` in the
 environment, which is the one to prefer: a port on the command line is in shell history
 and in this host's process listing for as long as the install runs, and one in the
 environment is not. There is no default and nothing infers one. Supply it and preflight
@@ -591,6 +591,12 @@ which is the check that turns the field failure below into a refusal at the door
 Supply it as an empty string, which is what `--source-port "$SSH_PORT"` does when
 `SSH_PORT` is not exported, and it refuses rather than read that as silence. The value
 is never printed, never written into `.env`, and never written into this repository.
+
+`RETND_SOURCE_PORT` is the name from EPIC R onward. A host whose configuration
+management still exports the pre-rename `RCLONE_MANAGER_SOURCE_PORT` keeps working for
+one release: the installer reads it, prefers `RETND_SOURCE_PORT` when both are set, and
+prints one line naming the replacement. It is removed in the release after the one that
+ships EPIC R (#895), so move the variable at your convenience and before then.
 
 That preflight check exists because of a real failure. Pin a host key for a source on a
 non-default port using the line `ssh` showed you, without the port, and rclone reports

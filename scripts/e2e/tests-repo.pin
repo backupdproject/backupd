@@ -87,7 +87,7 @@
 # row is not a command.
 #
 # Verified before the bump rather than after: a stamped build of this branch
-# through RM_MODE=local runs the whole of Suite A green, 72 of 72. Their
+# through RETND_MODE=local runs the whole of Suite A green, 72 of 72. Their
 # build-under-test.json names 1bed795 and still has to move to this branch's
 # merge commit by hand, which is the half of the lockstep with no automation.
 # Moved to 90c3bb1, backupd-tests#46, read off their merged main and
@@ -106,7 +106,7 @@
 # main, so `global/g3-usage-lists-every-command` cannot see it.
 #
 # Verified before the bump rather than after, the way the note above asks:
-# a stamped build of this branch through RM_MODE=local runs Suite A green,
+# a stamped build of this branch through RETND_MODE=local runs Suite A green,
 # 76 of 76, and Suite B green against this branch's ui/shared, 198 of 198
 # across the generic and small-window projects. The control matters as much
 # as the pass: the same Suite B file run against a clean checkout of main
@@ -129,7 +129,7 @@
 # implicit.
 #
 # Verified before the bump, again: a stamped build of this branch through
-# RM_MODE=local runs Suite A green, 78 of 78.
+# RETND_MODE=local runs Suite A green, 78 of 78.
 #
 # Still outstanding on their side, and still with no automation: their
 # build-under-test.json names 1bed795 of this repository and has to move to
@@ -173,7 +173,7 @@
 #
 # Verified before the bump rather than after, the way the notes above ask.
 # All five fail against this repository's main at 51f5f4f2 and pass against
-# this branch, checked by pointing RM_UI_DIR at each checkout in turn, so
+# this branch, checked by pointing RETND_UI_DIR at each checkout in turn, so
 # they are a test of the product and not of the component. #53's assertion
 # is checked both ways round too: that button is enabled under the default
 # scenario and disabled under version-mismatch, so it is not trivially
@@ -267,21 +267,21 @@ TESTS_REPO_URL=https://github.com/backupdproject/backupd-tests.git
 # #624, so #60's three cases are red over there until it moves to whatever
 # commit this branch merges as. That is the same manual half every paragraph
 # above keeps flagging.
-TESTS_REPO_SHA=0b691c59aebbc7bf891417975974c45e3df471fc
+TESTS_REPO_SHA=e5eeb5ab4a35e6bfd473886413222a0be86032cd
 #
 # Moved to bccd71c, backupd-tests#65, off their merged main and not
 # off the branch, for the reason the paragraph about a794c38 above already
 # gives. It is #687's OPEN item: "suite/web-ui-real-backend is pushed and
 # green on the rig but nothing points at it." Suite B now drives a real
-# deployment over RM_BASE_URL instead of starting ui/shared's own Vite
-# dev server over a mock through RM_UI_DIR, which #65 retires along with
+# deployment over RETND_BASE_URL instead of starting ui/shared's own Vite
+# dev server over a mock through RETND_UI_DIR, which #65 retires along with
 # the fixture-driven suite it drove.
 #
 # The product half rides with it, in this same branch:
 # scripts/e2e/run-tests-repo-gate.sh now stands the deployment up with
 # scripts/e2e/three-machine-web-ui.sh and hands the checkout to it with
-# --suite, instead of picking a free port and exporting RM_UI_DIR. Either
-# half alone leaves the gate red: RM_UI_DIR is gone over there, and
+# --suite, instead of picking a free port and exporting RETND_UI_DIR. Either
+# half alone leaves the gate red: RETND_UI_DIR is gone over there, and
 # nothing here called the rig before this bump.
 #
 # Verified before the bump, the way the notes above ask: 191 passed, 69
@@ -502,3 +502,78 @@ TESTS_REPO_SHA=0b691c59aebbc7bf891417975974c45e3df471fc
 # connect, the hold list at exit. None of it came from a debugger, and
 # none of it would have existed if the assertions had been written to
 # be easy to satisfy.
+#
+# ---------------------------------------------------------------------
+#
+# e5eeb5ab is the rename, and it is the first bump in this file whose two
+# halves could not have landed apart at all. EPIC R (#885) renames this
+# product from `backupd` to `retnd`, and those suites assert on the CLI's
+# own name, its usage block, its diagnostics and the paths it prints --
+# so their expectations move with the binary. Measured over there before
+# the merge: the PRE-sweep suite is 44 of 97 RED against a stamped build
+# of the renamed tree, and the SWEPT suite is 59 of 97 RED against a
+# build of the pin this line held two bumps ago. Either half alone is a
+# red gate, which is what this file has been saying about every bump
+# since a794c38 and is finally true in both directions at once.
+#
+# The `RM_*` environment contract went with it. Those 23 token-and-path
+# pairs were another repository's interface and had been on
+# check-brand-drift.sh's `preexisting` list since #794 for exactly that
+# reason: renaming them here alone breaks the gate, and renaming them
+# there alone breaks it too. They are `RETND_*` on both sides as of this
+# bump, a straight prefix swap with NO read-compat alias, because the
+# only writers are scripts/bdtools/e2e/run_tests_repo_gate.py and
+# scripts/e2e/three-machine-web-ui.sh and the only reader is that
+# harness -- a compat window would protect nobody and leave an undated
+# shim, which is what FR-43 refuses. The `preexisting` entries are
+# deleted rather than moved to `aliases`.
+#
+# ONE THING THIS BUMP DID THAT A NORMAL ONE DOES NOT, and it is the part
+# worth reading if this file's history ever has to be reconstructed. The
+# sha this line held before, 0b691c5, was a BRANCH HEAD of their
+# feat/816-workflow-e2e and was never on their main -- the "follow-up
+# merge" the paragraph above about 5ff2ef5 flagged as owed and nobody
+# came back to. So the rename could not simply be branched off their
+# main: a rename branched off main alone would have produced a pin with
+# the rename and WITHOUT EPIC L's 3,596 lines of browser evidence, and
+# the loss would have looked like a clean forward bump. That merge landed
+# first, as backupd-tests#84, and deliberately as a MERGE rather than a
+# squash so 0b691c5 stays a reachable ancestor and this file's own
+# history still resolves. ced2cb3 therefore carries both.
+#
+# Verified at e5eeb5ab on a clean checkout: scripts/gate-local.sh green
+# end to end -- source mode built ./cmd/retnd and ./cmd/retnd-web from
+# 72c940e9 and the identity handshake agreed (rclone v1.75.1, go
+# go1.27.1), Suite A ran 97 of 97 with no failures, both `tsc --noEmit`
+# checks clean, Suite B 65 of 65 unit tests. Which it was not before:
+# tools/getbuild's TestParseVersionIgnoresAnUnrelatedFirstWord was red on
+# their main for a reason that had nothing to do with any pin, and was
+# fixed in the same PR.
+#
+# The sha is e5eeb5ab rather than ced2cb3, the rename's own merge, and the
+# difference between the two is README.md alone -- 25 insertions, 6
+# deletions, `git diff --name-status` returning exactly `M README.md`, so
+# it cannot move the gate either way. It is the one to pin because that
+# README is where the tests repository enumerates FR-43's allowlist, and
+# docs/conformance/epic-r-matrix.md cites it: a pin naming the tree whose
+# README listed five of the eight surviving-old-name categories would
+# have the matrix cite an allowlist the pinned sha does not contain,
+# which is the same defect as a matrix row citing a suite that does not
+# exist.
+#
+# The one-sided-bump control, watched rather than described, because that
+# is this file's whole reason for existing: restoring the pin to 87a9dc7
+# while the tree is renamed makes their `make build` fail with
+# `core/cmd/retnd: directory not found`, since 87a9dc7's build-under-test
+# names a tree whose command directory still carried this product's
+# SECOND name, two renames back. A
+# stale pin therefore yields NO run rather than a wrong one, which is the
+# better of the two failure modes and not one anybody designed.
+#
+# Their build-under-test.json names 72c940e9 of this repository, which is
+# this tree's main as the rename was proved against and predates the
+# commit this bump lands in. That is the manual half every paragraph
+# above flags, and this time it is deliberate rather than owed: what
+# changes on this side after 72c940e9 is provenance records, the
+# brand-drift guard's lists and the conformance matrix, none of which any
+# of those suites observes. Nothing over there is red for it.

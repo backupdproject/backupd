@@ -717,7 +717,7 @@ func TestConnection_MigratesImportedKeyToAtRestEncryptionWhenConfigured(t *testi
 		t.Fatalf("reading imported key file: %v", err)
 	}
 
-	const envName = "RCLONE_MANAGER_TEST_TESTCONNECTION_MIGRATION_DEK"
+	const envName = "RETND_TEST_TESTCONNECTION_MIGRATION_DEK"
 	t.Setenv(envName, "test-connection-level-dek")
 	svc.state.Load().inner.Config.KeyEncryption = config.KeyEncryption{Env: envName}
 

@@ -21,7 +21,7 @@ repository_domains:
     description: Production snapshots for this deployment
     isolation: shared
     passphrase:
-      file: /run/secrets/backupd_repo_production
+      file: /run/secrets/retnd_repo_production
   - id: customer-a
     description: One customer's data, deliberately not deduplicated against anybody else's
     isolation: isolated

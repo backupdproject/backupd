@@ -21,7 +21,7 @@ import (
 // something confusing, a stray write changes a deployment they were not
 // looking at. It was driven rather than argued about: two deployments on
 // one host, a `backup-set create` typed at the first with the second's
-// address in $BACKUP_MANAGER_API_URL, and the set landed in the second
+// address in $RETND_API_URL, and the set landed in the second
 // with the first's config.yaml untouched and both surfaces reporting
 // success.
 //
@@ -123,7 +123,7 @@ func misaimedRoute(address, stateDatabase, local, served string) *routeRefusal {
 		reason:  fmt.Sprintf("the engine at %s serves a different deployment", address),
 		detail: fmt.Sprintf(
 			"the engine at %s serves a different deployment from the one this command was typed at, so nothing was written and nothing was sent: it reports deployment %s, and this deployment (state database %s) is %s. A write sent there would have changed a deployment you are not looking at and left this one exactly as it is, so check $%s",
-			address, served, stateDatabase, local, apiURLEnv),
+			address, served, stateDatabase, local, routeEnvName(apiURLRoute)),
 	}
 }
 
@@ -145,7 +145,7 @@ func misaimedRoute(address, stateDatabase, local, served string) *routeRefusal {
 // from its .db alone, beside an engine still holding the old identity,
 // one `backupd status` renamed the deployment and every routed
 // write afterwards refused against its own engine while pointing the
-// operator at $BACKUP_MANAGER_API_URL.
+// operator at $RETND_API_URL.
 //
 // The refusal below for a deployment with no identity is reachable
 // because of that change. It could not fire before: anything that got
@@ -167,7 +167,7 @@ func confirmDeployment(ctx context.Context, client *apiclient.Client, engine *se
 		return &routeRefusal{
 			address: address,
 			reason:  fmt.Sprintf("the engine at %s did not answer when this command asked which deployment it serves", address),
-			detail:  fmt.Sprintf("$%s names an engine that did not answer when this command asked which deployment it serves, so nothing was written: %v", apiURLEnv, err),
+			detail:  fmt.Sprintf("$%s names an engine that did not answer when this command asked which deployment it serves, so nothing was written: %v", routeEnvName(apiURLRoute), err),
 			cause:   err,
 		}
 	}

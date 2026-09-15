@@ -167,9 +167,9 @@ func (e *fakeEngine) requests() []string {
 // than follow it.
 func (e *fakeEngine) attach(t *testing.T) {
 	t.Helper()
-	t.Setenv("BACKUP_MANAGER_API_URL", e.baseURL())
-	t.Setenv("BACKUP_MANAGER_API_USERNAME", e.username)
-	t.Setenv("BACKUP_MANAGER_API_PASSWORD", e.password)
+	t.Setenv("RETND_API_URL", e.baseURL())
+	t.Setenv("RETND_API_USERNAME", e.username)
+	t.Setenv("RETND_API_PASSWORD", e.password)
 }
 
 func (e *fakeEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -271,9 +271,9 @@ func TestAnEngineAttachedWriteIsRefusedWhenTheRouteDoesNotAnswer(t *testing.T) {
 
 	// A port nothing is listening on. 127.0.0.1 rather than a name, so
 	// this test never depends on how the machine running it resolves.
-	t.Setenv("BACKUP_MANAGER_API_URL", "http://127.0.0.1:1")
-	t.Setenv("BACKUP_MANAGER_API_USERNAME", "operator")
-	t.Setenv("BACKUP_MANAGER_API_PASSWORD", "not-a-real-password")
+	t.Setenv("RETND_API_URL", "http://127.0.0.1:1")
+	t.Setenv("RETND_API_USERNAME", "operator")
+	t.Setenv("RETND_API_PASSWORD", "not-a-real-password")
 
 	args := []string{"backup-set", "--config", cliConfig, "patch", cliSet, "--stale-after", "48h"}
 	var code int
@@ -372,9 +372,9 @@ func TestAnUnusableRouteIsRefusedAndNeverPrinted(t *testing.T) {
 			attachEngineTo(t, cliConfig)
 			before := readFile(t, cliConfig)
 
-			t.Setenv("BACKUP_MANAGER_API_URL", tc.url)
-			t.Setenv("BACKUP_MANAGER_API_USERNAME", "operator")
-			t.Setenv("BACKUP_MANAGER_API_PASSWORD", "not-a-real-password")
+			t.Setenv("RETND_API_URL", tc.url)
+			t.Setenv("RETND_API_USERNAME", "operator")
+			t.Setenv("RETND_API_PASSWORD", "not-a-real-password")
 
 			args := []string{"backup-set", "--config", cliConfig, "patch", cliSet, "--stale-after", "48h"}
 			var code int
@@ -582,4 +582,122 @@ func TestEngineRouteCarriesThePollIntervalBothWays(t *testing.T) {
 	if _, err := route.UpdateBackupSet(ctx, cliSet, service.UpdateBackupSetRequest{PollInterval: &odd}); err == nil {
 		t.Error("a sub-second poll interval was sent to the engine; the wire carries whole seconds, so it would arrive as a different cadence from the one asked for")
 	}
+}
+
+// TestTheRouteAnswersToTheDeprecatedVariableNames is EPIC R's (#885)
+// compatibility window on the three route settings, held for the one
+// release in which both spellings work (FR-37, core/envcompat).
+//
+// It is here rather than in core/envcompat's own suite because the
+// mechanism is not what can break. What can break is this package's
+// READERS: route.go builds the write route and readmode.go builds the
+// read one, and a build where one of them consults the pair and the other
+// calls os.Getenv on the current name alone passes every test in
+// core/envcompat and leaves an upgraded deployment with half a CLI.
+//
+// The symptom it exists to prevent is the silent one. An operator whose
+// provisioning script exports the old names against a build that no
+// longer reads them is told nothing at all: the address is simply absent,
+// so a routed write is refused as though they had never configured one
+// and a read answers out of config.yaml. Nothing names the variable, and
+// the deployment they were looking at is not the one that answered.
+func TestTheRouteAnswersToTheDeprecatedVariableNames(t *testing.T) {
+	// The environment an in-place upgrade runs in: the old spellings, and
+	// nothing else. Spelled out rather than read from legacyAPIURLEnv and
+	// its neighbours for fakeEngine.attach's reason -- these are an
+	// operator-facing contract, so this test has to NOTICE a rename
+	// rather than follow one.
+	t.Run("the deprecated names alone still reach the engine", func(t *testing.T) {
+		cliConfig := writeTestConfig(t)
+		engine := startFakeEngineFor(t, cliConfig)
+		t.Setenv("BACKUP_MANAGER_API_URL", engine.baseURL())
+		t.Setenv("BACKUP_MANAGER_API_USERNAME", engine.username)
+		t.Setenv("BACKUP_MANAGER_API_PASSWORD", engine.password)
+
+		before := readFile(t, cliConfig)
+		args := []string{"backup-set", "--config", cliConfig, "patch", cliSet, "--stale-after", "72h"}
+		var code int
+		stderr := captureStderr(t, func() {
+			code = captureStdoutCode(t, func() int { return run(args) })
+		})
+		if code != 0 {
+			t.Fatalf("a backup-set patch exited %d with the route configured under the deprecated variable names alone, want 0: an in-place upgrade reads exactly this environment, and a refusal here is the setting an operator made being ignored\nstderr: %s", code, stderr)
+		}
+		if after := readFile(t, cliConfig); after != before {
+			t.Error("the patch changed the CLI's own config.yaml, so the deprecated names did not route it: that is the write the serving engine never sees")
+		}
+		got, err := engine.svc.GetBackupSet(t.Context(), cliSet)
+		if err != nil {
+			t.Fatalf("reading the patched set back off the engine: %v", err)
+		}
+		if got.StaleAfter != 72*time.Hour {
+			t.Errorf("the engine's stale_after is %s after a patch routed under the deprecated names, want 72h", got.StaleAfter)
+		}
+	})
+
+	// Both sets of names, disagreeing, which is what an operator who has
+	// added the new spellings to a compose file without removing the old
+	// ones is running. The value they just wrote has to win.
+	//
+	// The deprecated names are pointed at an address nothing serves AND
+	// carry credentials the engine rejects, so precedence is observed on
+	// all three rather than on the address alone: a build that took the
+	// legacy URL fails to connect, and one that took the legacy
+	// credentials against the right address fails to sign in. Either way
+	// this write does not land.
+	t.Run("the current names win when both are set", func(t *testing.T) {
+		cliConfig := writeTestConfig(t)
+		engine := startFakeEngineFor(t, cliConfig)
+		engine.attach(t)
+		t.Setenv("BACKUP_MANAGER_API_URL", "http://127.0.0.1:1")
+		t.Setenv("BACKUP_MANAGER_API_USERNAME", "somebody-else")
+		t.Setenv("BACKUP_MANAGER_API_PASSWORD", "not-this-engine's-password")
+
+		args := []string{"backup-set", "--config", cliConfig, "patch", cliSet, "--stale-after", "36h"}
+		var code int
+		stderr := captureStderr(t, func() {
+			code = captureStdoutCode(t, func() int { return run(args) })
+		})
+		if code != 0 {
+			t.Fatalf("a backup-set patch exited %d with the route configured under both spellings, want 0: the deprecated names shadowed the ones this release reads\nstderr: %s", code, stderr)
+		}
+		got, err := engine.svc.GetBackupSet(t.Context(), cliSet)
+		if err != nil {
+			t.Fatalf("reading the patched set back off the engine: %v", err)
+		}
+		if got.StaleAfter != 36*time.Hour {
+			t.Errorf("the engine's stale_after is %s, and the patch that reached it asked for 36h", got.StaleAfter)
+		}
+	})
+
+	// The read half, which has a reader of its own: readmode.go's
+	// dialEngine, reached by `sources`, `status`, `artifacts` and the
+	// retention preview. It is the half an operator actually looks at,
+	// and a build where only the write path consults both spellings
+	// leaves it silently answering out of config.yaml.
+	//
+	// dialEngine is exercised directly rather than through a command,
+	// because a command would also compare configurations and refuse on
+	// the divergence this fixture is built to have (the CLI and the
+	// engine hold different files on purpose, so that "reached the
+	// engine" cannot be confused with "written here"). What is under test
+	// is which environment the route is built from, and an authenticated
+	// call is what proves all three names arrived: every route past
+	// /auth is refused without a session, so credentials that did not
+	// come through cannot answer.
+	t.Run("the read half builds its route from them too", func(t *testing.T) {
+		cliConfig := writeTestConfig(t)
+		engine := startFakeEngineFor(t, cliConfig)
+		t.Setenv("BACKUP_MANAGER_API_URL", engine.baseURL())
+		t.Setenv("BACKUP_MANAGER_API_USERNAME", engine.username)
+		t.Setenv("BACKUP_MANAGER_API_PASSWORD", engine.password)
+
+		client, err := dialEngine()
+		if err != nil {
+			t.Fatalf("a read could not build a route from the deprecated variable names: %v", err)
+		}
+		if _, err := client.GetSettings(t.Context()); err != nil {
+			t.Fatalf("a read route built from the deprecated variable names could not reach the engine: %v", err)
+		}
+	})
 }

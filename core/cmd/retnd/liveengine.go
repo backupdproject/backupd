@@ -160,7 +160,7 @@ const (
 // the conditional it actually is.
 //
 // The remedy is the caller's rather than this function's, and #571 is why.
-// It used to be one sentence for both, ending in $BACKUP_MANAGER_API_URL
+// It used to be one sentence for both, ending in $RETND_API_URL
 // and the four verbs an address can carry, and that reads as an
 // instruction to somebody who has just been refused. On a first
 // configuration it is an instruction into a loop: no address carries a
@@ -193,7 +193,7 @@ var routableRemedy = fmt.Sprintf(
 //
 // It says so out loud rather than leaving the variable unmentioned. An
 // operator who has met the routable remedy once, or read it in the usage
-// block, will reach for $BACKUP_MANAGER_API_URL here, and being told
+// block, will reach for $RETND_API_URL here, and being told
 // plainly that it is not the answer for this one write is shorter than
 // finding out by setting it.
 var firstConfigRemedy = fmt.Sprintf(

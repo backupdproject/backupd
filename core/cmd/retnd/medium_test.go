@@ -236,7 +236,7 @@ func TestMediumFlagsSpec_LeavesUnwrittenFlagsAlone(t *testing.T) {
 // and no route was named. That is right for a write, because a change left
 // in the file is one the serving process would never read. It is wrong for
 // a read: the ordinary install has an engine running and no
-// BACKUP_MANAGER_API_URL set, so a routed `medium list` would refuse to
+// RETND_API_URL set, so a routed `medium list` would refuse to
 // show an operator their own destinations on every deployment that has
 // one.
 //

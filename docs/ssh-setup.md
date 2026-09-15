@@ -296,7 +296,7 @@ model.
 ```yaml
 key_encryption:
   file: /etc/retnd/secrets/key.dek
-  # env: BACKUP_MANAGER_KEY_DEK
+  # env: RETND_KEY_DEK
   # command: ["op", "read", "op://infra/retnd/key-encryption-key"]
 ```
 

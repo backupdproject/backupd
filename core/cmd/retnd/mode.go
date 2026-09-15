@@ -78,7 +78,7 @@ import (
 // #555 added a third way to fail here, and it is the one an operator is
 // most likely to cause. A route can be named, built and reachable and
 // still lead to a DIFFERENT deployment, which is what one wrong character
-// in $BACKUP_MANAGER_API_URL looks like on a host running two of these.
+// in $RETND_API_URL looks like on a host running two of these.
 // That used to succeed silently. It is now settled in the same act as the
 // other two, before anything is sent, and it announces itself in words of
 // its own rather than borrowing the no-route sentence; deploymentcheck.go
@@ -133,7 +133,7 @@ const (
 	// the change belongs to it. Whether this build can hand it over
 	// depends on the verb and on whether an address was given: the three
 	// mutating backup-set verbs and `settings patch` route (#543) when
-	// $BACKUP_MANAGER_API_URL names an engine, and everything else is
+	// $RETND_API_URL names an engine, and everything else is
 	// still a refusal, including a `backup-set retention` that sets or
 	// clears a policy, a first configuration, and any write at all beside
 	// a `daemon`, which serves no HTTP for a route to reach.
@@ -220,7 +220,7 @@ type modeDecision struct {
 	// It is a third refusal shape rather than a variation on the second
 	// because they are different facts about an operator's host. "No
 	// route to the engine serving this deployment" sends somebody to set
-	// $BACKUP_MANAGER_API_URL; "the route was named and this command will
+	// $RETND_API_URL; "the route was named and this command will
 	// not send a change through it" sends them to correct one they have
 	// already set. Printing the first when the second is true would send
 	// them looking for a setting they made.

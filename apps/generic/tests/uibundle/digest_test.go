@@ -260,7 +260,7 @@ func TestBridgeSelectionIsNotACompileTimeInput(t *testing.T) {
 	}
 
 	base := build()
-	withPlatform := build("VITE_PLATFORM=synology", "BACKUP_MANAGER_PLATFORM=synology")
+	withPlatform := build("VITE_PLATFORM=synology", "RETND_PLATFORM=synology")
 	if base != withPlatform {
 		t.Fatalf("naming a provider at build time changed the binary: %s vs %s", base, withPlatform)
 	}

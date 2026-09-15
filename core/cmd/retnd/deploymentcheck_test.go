@@ -38,7 +38,7 @@ import (
 // beside an engine still holding the old one, a single `backupd
 // status` renamed the deployment, and every routed write afterwards
 // refused against its own engine while telling the operator to go and
-// check $BACKUP_MANAGER_API_URL. Minting now belongs to core/service's
+// check $RETND_API_URL. Minting now belongs to core/service's
 // AnnounceServing, so only a process about to serve can name a
 // deployment, and TestNoCommandOnThisSideMintsThisDeploymentsIdentity
 // watches that from the outside.
@@ -235,7 +235,7 @@ func TestNoCommandOnThisSideMintsThisDeploymentsIdentity(t *testing.T) {
 // finding.
 //
 // mode.go argues the distinction itself: "no route to the engine serving
-// this deployment" sends an operator to set $BACKUP_MANAGER_API_URL, and
+// this deployment" sends an operator to set $RETND_API_URL, and
 // "the route goes somewhere this command will not write" sends them to
 // correct one they have already set. The announcement filled its reason in
 // from one error type, so four of the five ways a named route is refused

@@ -698,6 +698,31 @@ jobs:
       - name: the proof's own verdict is still a number nothing else produces (#551)
         run: bash scripts/tests/two-machine-exit-status.test.sh
 
+      # `provenance/**` records artifacts that have been PUSHED, and FR-43's
+      # word for how it changes is "forward". This is the check behind that
+      # sentence (#895, R2.5, row R2.8): four facts about a published
+      # release -- the flag, the recorded build version, the architectures
+      # and the per-architecture registry digests -- and a refusal if any of
+      # them is restated. It belongs in this job rather than in one of its
+      # own for the reason the job's header gives: it is seconds of Python
+      # over one `git show`, and it fails in the dangerous direction, with
+      # this project's compliance record quietly describing an artifact
+      # nobody can fetch.
+      #
+      # The baseline is the merge base with `main`, and `actions/checkout`
+      # fetches one commit, so the fetch below is what makes this step a
+      # real comparison here rather than a tree compared against itself.
+      # Without it the step is vacuously green in CI and only the
+      # pre-commit path is doing any work.
+      - name: Fetch main, so a published provenance record has a baseline
+        run: git fetch --no-tags --depth=200 origin main:refs/remotes/origin/main
+
+      - name: no published release's provenance record has been restated (#895)
+        run: bash scripts/release/check-published-provenance.sh
+
+      - name: and that guard can actually fail (mutation self-test)
+        run: bash scripts/tests/published-provenance-guards.test.sh
+
   workflow-gate:
     name: EPIC L workflow security, adversarial and performance gate (#812)
     runs-on: ubuntu-latest

@@ -10,7 +10,7 @@
 # loopback port, because on Docker Desktop for macOS a host process cannot
 # sit on a bridge network. core/tests/machines was written with a seam for
 # this (Source.Addr answers 127.0.0.1:<published> on the host and
-# source:22 inside the network, chosen by RCLONE_MANAGER_MACHINES_NETWORK),
+# source:22 inside the network, chosen by RETND_MACHINES_NETWORK),
 # and this script is the other side of it.
 #
 # What it stands up:
@@ -24,7 +24,7 @@
 #     per test, from scripts/e2e/source-machine.Dockerfile.
 #
 # Then it runs the machine-tier packages inside the manager with
-# RCLONE_MANAGER_MACHINES_NETWORK set, so nothing publishes a port and every
+# RETND_MACHINES_NETWORK set, so nothing publishes a port and every
 # address a test uses is the address a real manager would use.
 #
 # It runs them under core/cmd/gotestwatch rather than under a bare
@@ -513,7 +513,7 @@ def stand_up_the_machines(root: Path, run: Run) -> None:
             "-e",
             "HOME=/tmp",
             "-e",
-            f"RCLONE_MANAGER_MACHINES_NETWORK={run.net}",
+            f"RETND_MACHINES_NETWORK={run.net}",
             "-e",
             "CI_LOCAL=" + os.environ.get("CI_LOCAL", ""),
             "-e",
@@ -616,7 +616,7 @@ def run_the_tier(run: Run, options: Options) -> None:
     if options.run_filter:
         harness.note(f"filter:   -run {options.run_filter}")
     harness.note(
-        f"no port is published by any source or medium: RCLONE_MANAGER_MACHINES_NETWORK={run.net}"
+        f"no port is published by any source or medium: RETND_MACHINES_NETWORK={run.net}"
     )
 
     started = int(time.time())

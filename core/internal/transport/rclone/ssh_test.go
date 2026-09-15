@@ -279,7 +279,7 @@ func TestSftpConfig_DirChainCheckAppliesToAnEncryptedKeyToo(t *testing.T) {
 		t.Fatalf("writing a real test key over the placeholder: %v", err)
 	}
 
-	const envName = "RCLONE_MANAGER_TEST_SFTPCONFIG_DIRCHAIN_KEYENC_ENV"
+	const envName = "RETND_TEST_SFTPCONFIG_DIRCHAIN_KEYENC_ENV"
 	t.Setenv(envName, "dirchain-encrypted-key-dek")
 	src.KeyEncryptionEnv = envName
 
@@ -552,7 +552,7 @@ func TestSftpConfig_KeyEnvResolvesToKeyPem(t *testing.T) {
 		t.Fatalf("reading generated test key: %v", err)
 	}
 
-	const envName = "RCLONE_MANAGER_TEST_SFTPCONFIG_KEY_ENV"
+	const envName = "RETND_TEST_SFTPCONFIG_KEY_ENV"
 	t.Setenv(envName, string(pem))
 
 	src := validSource(t, dir)
@@ -618,7 +618,7 @@ func TestSftpConfig_KeyResolverFailureNeverLeaksIntoTheError(t *testing.T) {
 	dir := t.TempDir()
 	const secretLookingJunk = "s3kr1t-value-that-is-not-actually-a-key"
 
-	const envName = "RCLONE_MANAGER_TEST_SFTPCONFIG_KEY_ENV_JUNK"
+	const envName = "RETND_TEST_SFTPCONFIG_KEY_ENV_JUNK"
 	t.Setenv(envName, secretLookingJunk)
 
 	src := validSource(t, dir)
@@ -679,7 +679,7 @@ func TestSftpConfig_KeyFileEncryptedAtRestResolvesToKeyPem(t *testing.T) {
 		t.Fatalf("writing a real test key over the placeholder: %v", err)
 	}
 
-	const envName = "RCLONE_MANAGER_TEST_SFTPCONFIG_KEYENC_ENV"
+	const envName = "RETND_TEST_SFTPCONFIG_KEYENC_ENV"
 	t.Setenv(envName, "sftpconfig-level-migration-dek")
 	src.KeyEncryptionEnv = envName
 
@@ -727,7 +727,7 @@ func TestSftpConfig_KeyFileEncryptionWrongDEKFails(t *testing.T) {
 		t.Fatalf("writing a pre-encrypted key over the placeholder: %v", err)
 	}
 
-	const envName = "RCLONE_MANAGER_TEST_SFTPCONFIG_KEYENC_WRONG"
+	const envName = "RETND_TEST_SFTPCONFIG_KEYENC_WRONG"
 	t.Setenv(envName, "not-the-right-dek")
 	src.KeyEncryptionEnv = envName
 

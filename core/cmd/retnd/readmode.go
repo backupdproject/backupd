@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 
+	"github.com/retnd/retnd/core/envcompat"
 	"github.com/retnd/retnd/core/internal/apiclient"
 	"github.com/retnd/retnd/core/internal/config"
 	"github.com/retnd/retnd/core/service"
@@ -325,14 +325,14 @@ func (d readDecision) unconfirmed(because string, announceTo io.Writer) readDeci
 // write it anywhere either: it is held in memory for the life of one
 // invocation.
 func dialEngine() (*apiclient.Client, error) {
-	base := strings.TrimSpace(os.Getenv(apiURLEnv))
+	urlEnv, base := routeAddress()
 	if base == "" {
-		return nil, fmt.Errorf("%s is not set, so this command does not know where this deployment's engine is; set it to the engine's own address (http://127.0.0.1:8080 from inside its container) or to the published Web UI port, together with %s and %s", apiURLEnv, apiUsernameEnv, apiPasswordEnv)
+		return nil, fmt.Errorf("%s is not set, so this command does not know where this deployment's engine is; set it to the engine's own address (http://127.0.0.1:8080 from inside its container) or to the published Web UI port, together with %s and %s", urlEnv, apiUsernameEnv, apiPasswordEnv)
 	}
 	return apiclient.New(apiclient.Config{
 		BaseURL:   base,
-		Username:  os.Getenv(apiUsernameEnv),
-		Password:  os.Getenv(apiPasswordEnv),
+		Username:  envcompat.Value(apiUsernameRoute),
+		Password:  envcompat.Value(apiPasswordRoute),
 		UserAgent: "backupd-cli/" + version,
 	})
 }
@@ -357,7 +357,7 @@ func dialEngine() (*apiclient.Client, error) {
 func configDivergence(engine *service.RunningEngine, configFile, local, served string, unconfirmedDeployment bool) error {
 	also := ""
 	if unconfirmedDeployment {
-		also = fmt.Sprintf(" This command also could not confirm the two are the same deployment, because one of them could not name itself, so the other possibility is that $%s reaches a different deployment on this host rather than a stale copy of this one.", apiURLEnv)
+		also = fmt.Sprintf(" This command also could not confirm the two are the same deployment, because one of them could not name itself, so the other possibility is that $%s reaches a different deployment on this host rather than a stale copy of this one.", routeEnvName(apiURLRoute))
 	}
 	return fmt.Errorf(
 		"the process serving this deployment (state database %s) is holding a different configuration from %s, so nothing was printed: it is serving configuration %s and this command loaded %s, and nothing re-reads that file, so an answer from here would describe a deployment that process does not have.%s Restart that process to make it read %s, or make the change through the Web UI or HTTP API it serves",
@@ -380,7 +380,7 @@ func configDivergence(engine *service.RunningEngine, configFile, local, served s
 func wrongDeploymentRead(engine *service.RunningEngine, address, mine, theirs string) error {
 	return fmt.Errorf(
 		"the engine at %s is not the process serving this deployment, so nothing was printed: it serves deployment %s, and this deployment (state database %s) is %s. An answer checked against that engine would describe a different deployment on this host, so check $%s",
-		address, theirs, engine.StateDatabase, mine, apiURLEnv)
+		address, theirs, engine.StateDatabase, mine, routeEnvName(apiURLRoute))
 }
 
 // disagreement is what a command reports when the engine answered its

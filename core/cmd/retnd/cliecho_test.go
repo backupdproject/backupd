@@ -72,6 +72,15 @@ func TestEveryEchoedCommandParses(t *testing.T) {
 	// here on purpose: a command echoed by a browser that happens to have
 	// these set must be identical to one echoed by a browser that does
 	// not.
+	//
+	// Every name each setting answers to, not only the current three. A
+	// deprecated spelling left set in the environment this binary
+	// inherited is one this build still reads (route.go), so clearing
+	// three of six would leave the route present on exactly the machine
+	// the compatibility window exists for.
+	t.Setenv("RETND_API_URL", "")
+	t.Setenv("RETND_API_USERNAME", "")
+	t.Setenv("RETND_API_PASSWORD", "")
 	t.Setenv("BACKUP_MANAGER_API_URL", "")
 	t.Setenv("BACKUP_MANAGER_API_USERNAME", "")
 	t.Setenv("BACKUP_MANAGER_API_PASSWORD", "")

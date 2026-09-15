@@ -214,7 +214,7 @@ scripts/e2e/three-machine-web-ui.sh \
   --image ghcr.io/backupdproject/backupd:0.4.0 \
   --front-proxy-tls
 # optionally enlarge the authenticated /api/v1/activity payload:
-RM_SEED_CYCLES=8 scripts/e2e/three-machine-web-ui.sh \
+RETND_SEED_CYCLES=8 scripts/e2e/three-machine-web-ui.sh \
   --image ghcr.io/backupdproject/backupd:0.4.0 --front-proxy-tls
 ```
 
@@ -263,7 +263,7 @@ for it.
 The client container has no Docker socket, deliberately: a browser that can
 stop containers is not the browser under test. So the capability is held by a
 watcher on the host and exposed as files in the directory named by
-`RM_ENGINE_CONTROL` (inside the already-mounted `/artifacts`):
+`RETND_ENGINE_CONTROL` (inside the already-mounted `/artifacts`):
 
 | file | written by | meaning |
 | --- | --- | --- |
@@ -287,7 +287,7 @@ timeout.
 
 A request file is removed as it is picked up, so one request is never
 acknowledged by the leavings of the last, and `start` against an engine that
-is already running is a no-op that still acknowledges. `RM_ENGINE_UNREACHABLE=1`
+is already running is a no-op that still acknowledges. `RETND_ENGINE_UNREACHABLE=1`
 is set alongside it, and a suite branches on that: assert the failure surface
 when it is set, assert the healthy feed when it is not, so a banner that never
 goes away fails the default run.
@@ -306,7 +306,7 @@ exists to produce fails there, rather than handing a suite a healthy stack to
 pass against.
 
 The built-in `web-ui-smoke.mjs` drives the whole window when
-`RM_ENGINE_UNREACHABLE=1`: the Activity page has to surface an alert rather
+`RETND_ENGINE_UNREACHABLE=1`: the Activity page has to surface an alert rather
 than a blank page or an empty feed, in the wording for a service that did not
 answer rather than one whose answer could not be read, with no literal
 `correlation id unavailable` anywhere on it, a Try again that really

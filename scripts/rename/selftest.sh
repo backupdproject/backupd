@@ -530,10 +530,23 @@ green "the replacement RETND_/retnd_ names are green" "$tree"
 # A listed token is allowed ANYWHERE, including in a file that did not exist:
 # a rename in flight touches new files, and pinning in-transit names to a file
 # list would turn every one of those into a gate failure.
+#
+# The token is `backupdproject`, and that is a deliberate choice rather
+# than an arbitrary one: after R2.5 (#895) the `pending` list is the three
+# tokens FR-41's organisation cutover deletes and nothing else, so a case
+# that needs a genuinely-pending token has to use one of those three. It
+# used to be `backupd_internal`, which #895 both renamed and took off the
+# list -- so these three cases were asserting against a list entry that no
+# longer existed, and the self-test said so rather than passing.
+#
+# `backupdproject` is also the only one of the three that tokenises on its
+# own: a planted `backupdproject/backupd` would be reported twice, once per
+# token, and a case that asserts on one finding is clearer than one that
+# has to tolerate a second.
 tree="$(new_repo)"
 commit "$tree" core/brandnewfile.go 'package core
 
-const Internal = "backupd_internal"'
+const Org = "backupdproject"'
 green "a pending token is allowed in a file that did not exist" "$tree"
 
 # The same tree, with that entry deleted from the list. This is the
@@ -543,13 +556,13 @@ green "a pending token is allowed in a file that did not exist" "$tree"
 tree="$(new_repo)"
 commit "$tree" core/session.go 'package core
 
-const Internal = "backupd_internal"'
+const Org = "backupdproject"'
 commit "$tree" apps/common/csrf/csrf.go 'package csrf
 
-const Internal = "backupd_internal"'
-mutant="$(guard_without_pending backupd_internal)"
+const Org = "backupdproject"'
+mutant="$(guard_without_pending backupdproject)"
 red_with "$mutant" "a pending entry deleted while its occurrences still exist goes red" "$tree" \
-  "backupd_internal" "core/session.go:3:" "apps/common/csrf/csrf.go:3:"
+  "backupdproject" "core/session.go:3:" "apps/common/csrf/csrf.go:3:"
 
 # And the other end of the same mutation, which is the one the R1.2 row names
 # second: the occurrence was deleted, the entry went with it, and the name
@@ -559,9 +572,9 @@ tree="$(new_repo)"
 commit "$tree" core/service/newsurface.go 'package service
 
 // Copied from a pre-rename branch.
-const Internal = "backupd_internal"'
+const Org = "backupdproject"'
 red_with "$mutant" "a deleted occurrence re-added after its pending entry went goes red" "$tree" \
-  "backupd_internal" "core/service/newsurface.go:4:"
+  "backupdproject" "core/service/newsurface.go:4:"
 rm -f "$mutant"
 
 echo "==> brand-drift guard self-test: $checks checks, $failures failure(s)"

@@ -249,7 +249,7 @@ func TestMaterializeValidators_RepairsATamperedScript(t *testing.T) {
 	if strings.Contains(string(got), "exit 0") {
 		t.Fatalf("the tampered script was left in place:\n%s", got)
 	}
-	if !strings.Contains(string(got), "RCLONE-MANAGER-BACKUP-COMPLETE") {
+	if !strings.Contains(string(got), "RETND-BACKUP-COMPLETE") {
 		t.Fatalf("the repaired script is not the embedded trailer-marker script:\n%s", got)
 	}
 }

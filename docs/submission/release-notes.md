@@ -67,9 +67,9 @@ told where that server is. Nothing is written behind the server's back and there
 restart afterwards.
 
 The command has to be told where the server is, and it is told through the environment.
-`BACKUP_MANAGER_API_URL` is the server's address, which is `http://127.0.0.1:8080` from inside
+`RETND_API_URL` is the server's address, which is `http://127.0.0.1:8080` from inside
 its own container or the published web port from a shell on the machine, and
-`BACKUP_MANAGER_API_USERNAME` and `BACKUP_MANAGER_API_PASSWORD` are the local administrator
+`RETND_API_USERNAME` and `RETND_API_PASSWORD` are the local administrator
 account the web interface already uses. The password is held in memory for the one command and
 written nowhere. These are environment variables rather than options because a password typed
 as an option is visible in every process listing on the machine.

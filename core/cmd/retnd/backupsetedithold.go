@@ -86,7 +86,10 @@ func cmdBackupSetEditHold(args []string) int {
 		return fail(err)
 	}
 	if !mode.attached() {
-		return fail(fmt.Errorf("an edit hold is held in memory by the process serving this deployment, and this command has no route to one, so there is nothing to report and nothing to release. Set BACKUP_MANAGER_API_URL and the two credential variables beside it to reach that process; with nothing serving at all there is no hold, because a hold does not survive the process that took it"))
+		// The variable is named from the constant rather than spelled out
+		// here, so a sentence telling an operator what to set cannot come
+		// to disagree with what this build reads (route.go).
+		return fail(fmt.Errorf("an edit hold is held in memory by the process serving this deployment, and this command has no route to one, so there is nothing to report and nothing to release. Set %s and the two credential variables beside it to reach that process; with nothing serving at all there is no hold, because a hold does not survive the process that took it", apiURLEnv))
 	}
 
 	if *release {

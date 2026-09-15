@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/retnd/retnd/core/apicontract"
+	"github.com/retnd/retnd/core/envcompat"
 	"github.com/retnd/retnd/core/internal/apiclient"
 	"github.com/retnd/retnd/core/service"
 )
@@ -94,6 +95,13 @@ import (
 // declared twice, once for the write path and once for the read path, with
 // nothing comparing the two, which is the drift this package spends a
 // contract test preventing one layer down.
+//
+// Each of them has a second, deprecated spelling beside it, for the one
+// release in which EPIC R's rename (#885) keeps an existing deployment
+// working. That pairing is declared here too, for the same reason the
+// names are: a reader that resolved the pair itself would be a second
+// place the compatibility window can close, and the two would disagree
+// the first time one of them was updated.
 
 const (
 	// apiURLEnv names the engine's address: the scheme, host and port
@@ -105,14 +113,72 @@ const (
 	// Setting it is what makes engine-attached mode carryable. Leaving it
 	// unset is not an error: a host with nothing running never reaches the
 	// question, and one with an engine gets the refusal it got before.
-	apiURLEnv = "BACKUP_MANAGER_API_URL"
+	apiURLEnv = "RETND_API_URL"
 
 	// apiUsernameEnv and apiPasswordEnv are the local administrator's, the
 	// same pair the Web UI's login page takes. They are read into memory,
 	// used to sign in, and written nowhere.
-	apiUsernameEnv = "BACKUP_MANAGER_API_USERNAME"
-	apiPasswordEnv = "BACKUP_MANAGER_API_PASSWORD"
+	apiUsernameEnv = "RETND_API_USERNAME"
+	apiPasswordEnv = "RETND_API_PASSWORD"
+
+	// legacyAPIURLEnv, legacyAPIUsernameEnv and legacyAPIPasswordEnv are
+	// the names the three settings had before this product was renamed to
+	// retnd (EPIC R, #885). They are READ for one release and are never
+	// documented, written or suggested.
+	//
+	// They are read rather than dropped because this is FR-37's silent
+	// class. An operator whose provisioning script exports the old names
+	// and whose CLI has stopped reading them is not told anything: the
+	// address is simply absent, so every routed write beside a serving
+	// engine is refused and every read-mode command answers from the file
+	// instead of the engine. The symptom is "this release stopped finding
+	// my engine", a long way from the variable that caused it.
+	legacyAPIURLEnv      = "BACKUP_MANAGER_API_URL"
+	legacyAPIUsernameEnv = "BACKUP_MANAGER_API_USERNAME"
+	legacyAPIPasswordEnv = "BACKUP_MANAGER_API_PASSWORD"
 )
+
+// apiURLRoute, apiUsernameRoute and apiPasswordRoute are the three
+// settings as every reader in this package consults them. The current
+// name wins when both are set, and reading a deprecated one prints one
+// notice per name per process (core/envcompat).
+var (
+	apiURLRoute      = envcompat.Rename{Current: apiURLEnv, Legacy: []string{legacyAPIURLEnv}}
+	apiUsernameRoute = envcompat.Rename{Current: apiUsernameEnv, Legacy: []string{legacyAPIUsernameEnv}}
+	apiPasswordRoute = envcompat.Rename{Current: apiPasswordEnv, Legacy: []string{legacyAPIPasswordEnv}}
+)
+
+// routeEnvName is the name a refusal has to print for one of the three
+// settings: the spelling the operator ACTUALLY set.
+//
+// An operator whose compose file says BACKUP_MANAGER_API_URL and who is
+// told to go and check $RETND_API_URL is sent looking for a variable that
+// is not in their file, which is the mistake envcompat.Which exists to
+// make avoidable. Nothing set means there is nothing to name, so the
+// current spelling is returned: a sentence asking somebody to SET a
+// variable has to ask for the one this release reads.
+func routeEnvName(r envcompat.Rename) string {
+	if name, _, found := envcompat.Which(r); found {
+		return name
+	}
+
+	return r.Current
+}
+
+// routeAddress is this invocation's engine address, trimmed, beside the
+// name that carried it.
+//
+// Both, from one lookup, because every caller needs the pair: the address
+// decides whether there is a route at all, and the name is what the
+// refusal about that route prints.
+func routeAddress() (name, address string) {
+	name, value, found := envcompat.Which(apiURLRoute)
+	if !found {
+		return apiURLEnv, ""
+	}
+
+	return name, strings.TrimSpace(value)
+}
 
 // backupSetRoute is every operation the mutating backup-set commands
 // perform, in the one vocabulary both destinations are expressed in.
@@ -306,14 +372,14 @@ type configWriteRoute interface {
 // engine which deployment it serves; deploymentcheck.go holds the
 // reasoning and the refusals.
 func attachToEngine(ctx context.Context, engine *service.RunningEngine) (configWriteRoute, string, error) {
-	base := strings.TrimSpace(os.Getenv(apiURLEnv))
+	urlEnv, base := routeAddress()
 	if base == "" {
 		return nil, "", nil
 	}
 	client, err := apiclient.New(apiclient.Config{
 		BaseURL:  base,
-		Username: strings.TrimSpace(os.Getenv(apiUsernameEnv)),
-		Password: os.Getenv(apiPasswordEnv),
+		Username: strings.TrimSpace(envcompat.Value(apiUsernameRoute)),
+		Password: envcompat.Value(apiPasswordRoute),
 		// The product and the build, so a request from this command is one
 		// an operator can pick out of an access log. #543's claim is that a
 		// routed command leaves the same audit trail as the Web UI, and
@@ -327,8 +393,8 @@ func attachToEngine(ctx context.Context, engine *service.RunningEngine) (configW
 		// says an address was given and could not be used, rather than
 		// saying this build has no route at all (mode.go's announce).
 		return nil, "", &routeRefusal{
-			reason: fmt.Sprintf("$%s does not name an engine this command can reach", apiURLEnv),
-			detail: fmt.Sprintf("$%s does not name an engine this command can reach, so nothing was written: %v", apiURLEnv, err),
+			reason: fmt.Sprintf("$%s does not name an engine this command can reach", urlEnv),
+			detail: fmt.Sprintf("$%s does not name an engine this command can reach, so nothing was written: %v", urlEnv, err),
 			cause:  err,
 		}
 	}
@@ -344,21 +410,29 @@ func attachToEngine(ctx context.Context, engine *service.RunningEngine) (configW
 }
 
 // clearInheritedRouteSettings removes the three route settings from this
-// process's environment.
+// process's environment, under every name they answer to.
 //
 // It exists for the test binary, and it is here rather than in a test file
 // so the reason sits beside the variables it is about. Every refusal case
 // in this package's suite asserts what happens when a serving process is
 // found and nothing has said how to reach it, and "nothing has said" is a
 // fact about the environment the test binary inherited. A developer with
-// $BACKUP_MANAGER_API_URL exported for their own deployment would run a
+// $RETND_API_URL exported for their own deployment would run a
 // different suite from CI, and the difference would be that half the
 // refusals under test quietly became routed writes aimed at their engine.
+//
+// The deprecated spellings are cleared beside the current ones, because a
+// developer who has not yet updated their own shell profile exports those
+// instead, and this build reads them: a scrub that missed them would let
+// exactly the environment the window exists for run a different suite.
 //
 // A test that needs the settings sets them itself, through t.Setenv, which
 // restores them afterwards.
 func clearInheritedRouteSettings() {
-	for _, name := range []string{apiURLEnv, apiUsernameEnv, apiPasswordEnv} {
+	for _, name := range []string{
+		apiURLEnv, apiUsernameEnv, apiPasswordEnv,
+		legacyAPIURLEnv, legacyAPIUsernameEnv, legacyAPIPasswordEnv,
+	} {
 		_ = os.Unsetenv(name)
 	}
 }

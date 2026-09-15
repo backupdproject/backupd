@@ -61,7 +61,7 @@ func TestSFTPKeyResolvers(t *testing.T) {
 	})
 
 	t.Run("env", func(t *testing.T) {
-		const envName = "RCLONE_MANAGER_TEST_SFTP_KEY_ENV"
+		const envName = "RETND_TEST_SFTP_KEY_ENV"
 		t.Setenv(envName, string(keyPEM))
 		s := base
 		s.KeyEnv = envName
@@ -139,7 +139,7 @@ func TestSFTPKeyResolvers_Passphrase(t *testing.T) {
 	})
 
 	t.Run("key_file with key.passphrase.env succeeds", func(t *testing.T) {
-		const envName = "RCLONE_MANAGER_TEST_SFTP_PASSPHRASE_ENV"
+		const envName = "RETND_TEST_SFTP_PASSPHRASE_ENV"
 		t.Setenv(envName, passphrase)
 		s := base
 		s.KeyFile = encryptedKeyPath
@@ -175,8 +175,8 @@ func TestSFTPKeyResolvers_Passphrase(t *testing.T) {
 	})
 
 	t.Run("key_env with key.passphrase.env succeeds", func(t *testing.T) {
-		const keyEnvName = "RCLONE_MANAGER_TEST_SFTP_KEY_ENCRYPTED_ENV"
-		const passEnvName = "RCLONE_MANAGER_TEST_SFTP_PASSPHRASE_ENV2"
+		const keyEnvName = "RETND_TEST_SFTP_KEY_ENCRYPTED_ENV"
+		const passEnvName = "RETND_TEST_SFTP_PASSPHRASE_ENV2"
 		t.Setenv(keyEnvName, string(encryptedPEM))
 		t.Setenv(passEnvName, passphrase)
 		s := base

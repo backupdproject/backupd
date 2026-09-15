@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/retnd/retnd/core/envcompat"
 	"github.com/retnd/retnd/core/internal/config"
 )
 
@@ -74,7 +75,8 @@ import (
 // authentication check into something an operator can fix.
 
 // sshDiscoveryDirEnv names an optional directory this deployment mounts
-// read-only for discovery to scan.
+// read-only for discovery to scan, and sshDiscoveryDirEnvLegacy is the
+// name it had before EPIC R (#885) renamed this product.
 //
 // It exists so that widening the search to an operator's own keys is a
 // MOUNT decision rather than a code one. The packaged engine is
@@ -84,7 +86,35 @@ import (
 // mounted in. Reading the directory from the environment means an
 // operator adds one line to .env and one mount to compose, and the scan
 // gains a location instead of gaining a way to name arbitrary paths.
-const sshDiscoveryDirEnv = "BACKUP_MANAGER_SSH_DISCOVERY_DIR"
+//
+// Both names are read for one release, through core/envcompat, because
+// this is the silent half of FR-37: an operator whose .env still says
+// BACKUP_MANAGER_SSH_DISCOVERY_DIR would otherwise get a scan that
+// quietly stopped looking where they told it to, and the symptom is a
+// key missing from a listing rather than an error. #895 deletes the old
+// name in the release after the one that ships this EPIC.
+const (
+	sshDiscoveryDirEnv       = "RETND_SSH_DISCOVERY_DIR"
+	sshDiscoveryDirEnvLegacy = "BACKUP_MANAGER_SSH_DISCOVERY_DIR"
+)
+
+// sshDiscoveryDirRename is the pair above as core/envcompat reads it: the
+// current name wins when both are set, and each legacy name that carries
+// a value produces one deprecation notice per process.
+var sshDiscoveryDirRename = envcompat.Rename{
+	Current: sshDiscoveryDirEnv,
+	Legacy:  []string{sshDiscoveryDirEnvLegacy},
+}
+
+// discoveryDirFromEnv is the directory either spelling names, or the
+// empty string if neither does. The value and not the name, because the
+// caller adds it to the scan as a path; the NAME the operator set is
+// what core/envcompat's notice reports, once per process.
+func discoveryDirFromEnv() string {
+	_, value, _ := envcompat.Which(sshDiscoveryDirRename)
+
+	return value
+}
 
 // sshDiscoveryMountDir is where the canonical compose file mounts the
 // installer's own generated key: install_docker_host.py writes
@@ -95,7 +125,20 @@ const sshDiscoveryDirEnv = "BACKUP_MANAGER_SSH_DISCOVERY_DIR"
 // deployment that mounts a second key beside it is described too, and it
 // is reported as searched even on a machine where it does not exist,
 // because "not mounted here" is an answer and silence is not.
-const sshDiscoveryMountDir = "/etc/backupd"
+//
+// sshDiscoveryMountDirLegacy is the pre-rename container path, and it is
+// scanned as well for the same reason FR-38 adopts a state directory
+// found at the old location: an operator running an UNEDITED pre-rename
+// compose file still mounts their key at /etc/backupd/id_ed25519, and a
+// scan that only looked at the new path would report "no keys found" on a
+// deployment that has one. That is the whole shape FR-42 refuses. R1.5
+// (#890) renamed this constant's neighbours and left this one pointing at
+// the old path with a comment describing the new one, so between #890 and
+// #895 the mount location was scanned on no deployment at all.
+const (
+	sshDiscoveryMountDir       = "/etc/retnd"
+	sshDiscoveryMountDirLegacy = "/etc/backupd"
+)
 
 // ErrSSHKeyCandidateNotFound is returned by ImportSSHKeyCandidate when
 // the id does not resolve against a fresh scan of the fixed locations.
@@ -484,8 +527,9 @@ func discoverSSHKeyCandidates(configuredKeyFiles []string, stored []SSHKeyListin
 		kind string
 	}{
 		{sshDiscoveryMountDir, "mount"},
+		{sshDiscoveryMountDirLegacy, "mount-legacy"},
 		{homeSSHDir(), "home"},
-		{os.Getenv(sshDiscoveryDirEnv), "discovery-dir"},
+		{discoveryDirFromEnv(), "discovery-dir"},
 	} {
 		if dir.path == "" {
 			continue

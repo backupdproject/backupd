@@ -33,8 +33,8 @@ import (
 // dispatches to, so what it exits with is what the shipped binary exits
 // with.
 const (
-	daemonChildEnv    = "BACKUP_MANAGER_TEST_DAEMON_CHILD"
-	daemonChildConfig = "BACKUP_MANAGER_TEST_DAEMON_CONFIG"
+	daemonChildEnv    = "RETND_TEST_DAEMON_CHILD"
+	daemonChildConfig = "RETND_TEST_DAEMON_CONFIG"
 )
 
 // TestDaemonChildProcess is not a test. It is the entry point of the

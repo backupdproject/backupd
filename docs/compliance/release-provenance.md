@@ -52,6 +52,48 @@ build rather than an omission nobody looks for. Determinism is a prerequisite
 for that check rather than a nicety, which is why the SBOM's SPDX creation
 timestamp is read out of the release manifest instead of off the clock.
 
+### Forward only: what a regeneration may not restate
+
+`provenance/**` records artifacts that have been **pushed**, so it is
+regenerated forward and never rewritten. Most of the bundle is a derivation
+over the current tree and moves whenever a distributed artifact does — the
+digests of `NOTICE`, the licence inventory, the SBOM and the checksum manifest
+changed in most of the commits that have ever touched
+`release-provenance.json`, and they are supposed to. Four facts cannot move
+once a version's record says `published`:
+
+| Field | Why it is frozen |
+| --- | --- |
+| `releaseManifest.published` | a release that shipped did not un-ship |
+| `releaseManifest.recordedBuildVersion` | what the shipped binaries answer with |
+| `releaseManifest.architectures` | what was built |
+| `releaseManifest.registryDigests` | what was pushed, per architecture |
+
+```
+bash scripts/release/check-published-provenance.sh
+```
+
+refuses a change to any of them, naming the field, the value it was published
+as and the value the tree now claims. It runs in `scripts/ci-local.sh` and in
+`.github/workflows/ci.yml`'s `gate-guards` job, and
+`scripts/tests/published-provenance-guards.test.sh` is the proof it can still
+go red — four refusals and five controls, in throwaway repositories.
+
+`imageReference` and `signing.identity` are deliberately **not** frozen.
+EPIC R's FR-41 moves the registry path and re-issues the OIDC identity, and
+the documented `verify` command below presents the old identity for releases
+published before that cutover and the new one for releases after it. A guard
+that froze those two would refuse the cutover rather than protect anything;
+their correctness is held by `TestThePublishGateAgreesWithTheSigningIdentity`
+and `TestOnlyTheReleaseRefCanPublish` instead.
+
+The baseline is the merge base with `main` rather than the first record of a
+version ever written, because 0.4.0's registry digests were corrected three
+times before that release was really out (`b5825f60`, `aa752b0c`, `44d92fc7`).
+Anchoring on the first record would report those pre-release corrections as
+rewrites; anchoring on `main` enforces the claim that is actually wanted,
+which is that nothing landing from here restates a published fact.
+
 ## Signing: the key design
 
 **There is no signing key in this repository, and there should never be one.**

@@ -316,7 +316,7 @@ func TestResolveKeyEncryptionSecret_FromFile_TrimsTrailingNewline(t *testing.T) 
 }
 
 func TestResolveKeyEncryptionSecret_FromEnv_DoesNotTrim(t *testing.T) {
-	const envName = "RCLONE_MANAGER_TEST_KEYENCRYPTION_ENV"
+	const envName = "RETND_TEST_KEYENCRYPTION_ENV"
 	t.Setenv(envName, "my-dek-value\n")
 	secret, ok, err := resolveKeyEncryptionSecret(transport.Source{KeyEncryptionEnv: envName})
 	if err != nil {
@@ -346,7 +346,7 @@ func TestResolveKeyEncryptionSecret_FromCommand(t *testing.T) {
 }
 
 func TestResolveKeyEncryptionSecret_MissingEnvVariableFails(t *testing.T) {
-	_, _, err := resolveKeyEncryptionSecret(transport.Source{KeyEncryptionEnv: "RCLONE_MANAGER_TEST_DOES_NOT_EXIST_298"})
+	_, _, err := resolveKeyEncryptionSecret(transport.Source{KeyEncryptionEnv: "RETND_TEST_DOES_NOT_EXIST_298"})
 	if err == nil {
 		t.Fatal("an unset key_encryption.env variable was accepted")
 	}
@@ -494,7 +494,7 @@ func TestResolveKeyFileForSFTP_MigratesPlaintextKeyInPlace(t *testing.T) {
 		t.Fatalf("simulating a pre-#298 plaintext key file: %v", err)
 	}
 
-	const envName = "RCLONE_MANAGER_TEST_MIGRATION_DEK"
+	const envName = "RETND_TEST_MIGRATION_DEK"
 	t.Setenv(envName, "the-configured-dek")
 	src := transport.Source{KeyFile: path, KeyEncryptionEnv: envName}
 
@@ -560,7 +560,7 @@ func TestResolveKeyFileForSFTP_DecryptsAlreadyEncryptedFile(t *testing.T) {
 	path := filepath.Join(dir, "imported_key")
 	plaintext := mustUnencryptedKeyPEM(t)
 
-	const envName = "RCLONE_MANAGER_TEST_STEADYSTATE_DEK"
+	const envName = "RETND_TEST_STEADYSTATE_DEK"
 	t.Setenv(envName, "the-steady-state-dek")
 	ciphertext, err := encryptKeyMaterial(obs.NewSecret("the-steady-state-dek"), plaintext)
 	if err != nil {
@@ -598,7 +598,7 @@ func TestResolveKeyFileForSFTP_UpgradesLegacyV1FileInPlace(t *testing.T) {
 	path := filepath.Join(dir, "imported_key")
 	plaintext := mustUnencryptedKeyPEM(t)
 
-	const envName = "RCLONE_MANAGER_TEST_V1UPGRADE_DEK"
+	const envName = "RETND_TEST_V1UPGRADE_DEK"
 	t.Setenv(envName, "the-v1-dek")
 	legacyDEK := deriveKeyEncryptionDEKV1(obs.NewSecret("the-v1-dek"))
 	legacyCiphertext, err := encryptKeyMaterialV1ForTest(legacyDEK, plaintext)
@@ -672,7 +672,7 @@ func TestResolveKeyFileForSFTP_WrongDEKFailsClearly(t *testing.T) {
 		t.Fatalf("writing pre-encrypted key file: %v", err)
 	}
 
-	const envName = "RCLONE_MANAGER_TEST_WRONGDEK"
+	const envName = "RETND_TEST_WRONGDEK"
 	t.Setenv(envName, "a-completely-different-dek")
 
 	_, ok, err := resolveKeyFileForSFTP(transport.Source{KeyFile: path, KeyEncryptionEnv: envName})

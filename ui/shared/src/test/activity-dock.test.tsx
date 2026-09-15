@@ -314,7 +314,7 @@ describe("the text an operator takes away", () => {
   it("puts the environment the commands need first, said once, and never the password", () => {
     const preamble = environmentPreamble("http://nas.local:8080", "alice");
     expect(preamble).toBe(
-      "export BACKUP_MANAGER_API_URL=http://nas.local:8080 BACKUP_MANAGER_API_USERNAME=alice BACKUP_MANAGER_API_PASSWORD=<your password>"
+      "export RETND_API_URL=http://nas.local:8080 RETND_API_USERNAME=alice RETND_API_PASSWORD=<your password>"
     );
 
     // Composed from the origin the page was loaded from rather than by
@@ -322,11 +322,11 @@ describe("the text an operator takes away", () => {
     // would type at their own shell; behind a proxy it is not what the
     // engine listens on.
     expect(environmentPreamble("https://nas.example.com", null)).toBe(
-      "export BACKUP_MANAGER_API_URL=https://nas.example.com BACKUP_MANAGER_API_USERNAME=<the administrator you sign in as> BACKUP_MANAGER_API_PASSWORD=<your password>"
+      "export RETND_API_URL=https://nas.example.com RETND_API_USERNAME=<the administrator you sign in as> RETND_API_PASSWORD=<your password>"
     );
     // A name a shell would split is quoted, so the line is still one an
     // operator can paste.
-    expect(environmentPreamble("http://nas.local:8080", "the admin")).toContain("BACKUP_MANAGER_API_USERNAME='the admin'");
+    expect(environmentPreamble("http://nas.local:8080", "the admin")).toContain("RETND_API_USERNAME='the admin'");
 
     const text = dockText(
       [{ kind: "event", event: event(1, { event: "api_action", scope: "deployment", fields: { actor: "alice", command: "retnd catalog rebuild" } }) }],
@@ -335,7 +335,7 @@ describe("the text an operator takes away", () => {
     );
     expect(text.split("\n")[0]).toBe(preamble);
     // Once, at the top, and not again beside the command.
-    expect(text.split("BACKUP_MANAGER_API_URL").length).toBe(2);
+    expect(text.split("RETND_API_URL").length).toBe(2);
   });
 });
 
@@ -475,9 +475,9 @@ describe("the panel itself", () => {
   it("draws the environment header at the top of the scrollback, from this page's own origin", async () => {
     renderDock(dockApi([reading({ deployment: deployment([event(1, { scope: "deployment", event: "startup", message: "retnd starting" })]) })]));
     await screen.findByText(/retnd starting/);
-    const header = screen.getByText(/^export BACKUP_MANAGER_API_URL=/);
-    expect(header.textContent).toContain("BACKUP_MANAGER_API_URL=" + window.location.origin);
-    expect(header.textContent).toContain("BACKUP_MANAGER_API_PASSWORD=<your password>");
+    const header = screen.getByText(/^export RETND_API_URL=/);
+    expect(header.textContent).toContain("RETND_API_URL=" + window.location.origin);
+    expect(header.textContent).toContain("RETND_API_PASSWORD=<your password>");
   });
 });
 

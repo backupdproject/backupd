@@ -657,7 +657,7 @@ const (
 	// underneath produced it. A supervisor replacing a container meets it
 	// while the outgoing process still holds the lock, and that clears on
 	// its own in seconds. An engine serving steadily on a host where
-	// $BACKUP_MANAGER_API_URL was never set meets it on every invocation
+	// $RETND_API_URL was never set meets it on every invocation
 	// for as long as that engine runs, because refusal() fires on a nil
 	// route and the sentence beside it says to stop the process. A script
 	// that read the old row and retried on 3 would loop forever on the

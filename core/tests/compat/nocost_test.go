@@ -54,7 +54,36 @@ var forbiddenFieldWord = regexp.MustCompile(`(?i)(^|[^a-z])(cost|costs|price|pri
 // of the whole operation, because no honest denominator for the whole
 // exists. What would be caught, and should be, is anything spelling
 // "percent" next to it.
-var allowedDespiteTheRule = map[string]string{}
+var allowedDespiteTheRule = map[string]string{
+	// The four entries below are one operator setting crossing the
+	// contract in four places: the resolved value a read reports, the
+	// value a create carries, the value a patch changes, and a one-run
+	// override on the verify operation. They are declared together
+	// because they stand or fall on the same argument, and each one
+	// states it, because an exception nobody can read is an exception
+	// nobody can withdraw.
+	"BackupSet.verification_sample_percent": "The sample size this set's content_sample verifications read, reported back on a read of the set. " +
+		"An operator supplies it through `retnd backup-set create --verification-sample-percent` or the equivalent API body, config.Validate refuses anything outside 1 through 100, " +
+		"core/service stores it as the set's VerificationSamplePercentConfig in config.yaml, and this field hands that stored value back unchanged. " +
+		"FR-34 forbids a number the backend would have to invent -- a price, a billing total, an invented restore ETA, a percentage of a restore's progress -- " +
+		"and an operator's own setting read back out is none of those. EPIC K (#788) added it with the incremental engine's operator surface (#855).",
+
+	"BackupSetSpec.verification_sample_percent": "How much of a snapshot's file content a sampled verification reads, on the spec an operator submits to create or replace a backup set. " +
+		"The operator chooses the number and validation holds it to 1 through 100; the only thing the backend derives from it is how many FILES kopia's planVerification re-reads, " +
+		"through backupengine.VerifyRequest.SamplePercent, which defaults to DefaultVerifySamplePercent when the key is left out. " +
+		"That makes it an instruction travelling in rather than a figure travelling out, so FR-34's ban on numbers this backend cannot compute honestly does not reach it. " +
+		"EPIC K (#788), the incremental engine's operator surface (#855).",
+
+	"SnapshotVerifyRequest.sample_percent": "The one-run override on POST /operations' verify_snapshot action: how much of this snapshot's file content to read back now, whatever the set is configured for. " +
+		"Whoever submits the operation supplies it, through `retnd snapshot verify --sample-percent` or the request body; app.VerifySnapshot falls back to the set's stored setting when it is omitted, " +
+		"and the kopia adapter normalises it into 1 through 100. Nothing on that path is money or a prediction: the number selects files the backend then actually re-reads, " +
+		"so there is no figure left for it to invent, which is the thing FR-34 is about. EPIC K (#788), the incremental engine's operator surface (#855).",
+
+	"UpdateBackupSetRequest.verification_sample_percent": "The patch half of the same operator setting: it changes an existing set's sampled-verification size, and it is absent when the caller is not changing it, " +
+		"which is why the contract marks it a pointer. The value comes from the operator, backupsetupdate writes it to VerificationSamplePercentConfig, and validation keeps it in 1 through 100. " +
+		"A setting being written by the person who owns it is the opposite of the cost figure or the invented restore ETA FR-34 forbids, neither of which this backend can compute at all. " +
+		"EPIC K (#788), the incremental engine's operator surface (#855).",
+}
 
 // TestTheContractServesNoCostFigureAndNoInventedETA is EPIC E's Phase 2
 // exit-gate line "no surface anywhere renders a cost figure or an invented

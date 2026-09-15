@@ -1,4 +1,4 @@
-# The MANAGER machine for the Go machine tier (#451): the box backupd
+# The MANAGER machine for the Go machine tier (#451): the box retnd
 # runs on, playing the NAS, with the toolchain to run core/tests inside it
 # and a docker client to reach the daemon that stands the other machines up.
 #

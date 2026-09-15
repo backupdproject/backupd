@@ -1555,10 +1555,10 @@ services:
 
     environment:
       TZ: ${TZ}
-      BACKUP_MANAGER_LOG_LEVEL: ${LOG_LEVEL}
-      BACKUP_MANAGER_AUTH_MODE: ugos
-      BACKUP_MANAGER_DATA_DIR: /var/lib/retnd
-      BACKUP_MANAGER_BACKUP_ROOT: /data/backups
+      RETND_LOG_LEVEL: ${LOG_LEVEL}
+      RETND_AUTH_MODE: ugos
+      RETND_DATA_DIR: /var/lib/retnd
+      RETND_BACKUP_ROOT: /data/backups
 
     volumes:
       - <verified-private-state-source>:/var/lib/retnd

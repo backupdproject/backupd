@@ -77,9 +77,18 @@ func RunRestoreCheck(ctx context.Context, cmd config.Command, localPath string) 
 	// which could carry secrets this manager holds (an sftp private key
 	// path, ambient credentials). Mirrors verify.go's runValidator exactly,
 	// including the env var duplicating argv[1] for a hook that prefers
-	// reading its target from the environment.
+	// reading its target from the environment, and including the legacy
+	// name exported beside it: RCLONE_MANAGER_ARTIFACT_PATH is what this
+	// variable was called before EPIC R (#885) renamed the product, and
+	// dropping it in the same release as the rename would break an
+	// operator's own hook silently, because an unset variable is the
+	// empty string rather than an error. See runValidator for the full
+	// reasoning; issue #895 removes the second entry in the release after
+	// the one that ships this EPIC, and it has to happen in both places
+	// at once.
 	c.Env = []string{
 		"PATH=/usr/local/bin:/usr/bin:/bin",
+		"RETND_ARTIFACT_PATH=" + localPath,
 		"RCLONE_MANAGER_ARTIFACT_PATH=" + localPath,
 	}
 
