@@ -132,8 +132,8 @@ type composeProfile struct {
 type uiHealthcheckStrategy int
 
 const (
-	// overrideHealthcheck: the profile replaces the test with
-	// `/backupd-web healthcheck`.
+	// overrideHealthcheck: the profile replaces the test with the
+	// canonical `healthcheck` command.
 	overrideHealthcheck uiHealthcheckStrategy = iota
 	// disableHealthcheck: the profile turns it off. Unraid's only seam is
 	// `docker run --health-cmd`, which is shell form, and the distroless
@@ -574,17 +574,25 @@ func TestArchitectureParityAndRecordedBinaryHashes(t *testing.T) {
 	for _, a := range manifest.Architectures {
 		built = append(built, a.Architecture)
 		for _, binary := range c.Binaries {
-			// The manifest's own key for this binary, which is not the
-			// path any more (the 0.3.3 CLI rename): the image carries
-			// /backupd and /backupd-web, the manifest still records
-			// backupd and backupd-web, and
-			// manifestBinaryKey is the single place those two are
-			// bridged. Reading the path here instead would report every
-			// binary missing on every architecture.
-			name := manifestBinaryKey(binary)
-			if a.BinarySHA256[name] == "" {
-				t.Errorf("release manifest records no SHA-256 for %s (canonical binary %s) on %s, but the packages ship an image claiming to contain it",
-					name, binary, a.Architecture)
+			// The manifest's own key for this binary, which is not simply
+			// the path: #890 renamed the files the image carries to
+			// /retnd and /retnd-web, while an entry recorded for an
+			// already-published release keeps the keys it went out under
+			// (0.4.0's say backupd and backupd-web). manifestBinaryKeys
+			// is the single place the two spellings are bridged, and it
+			// prefers the new one. Reading the path here instead would
+			// report every binary missing on every architecture for as
+			// long as the overlap release lasts.
+			recorded := ""
+			for _, key := range manifestBinaryKeys(binary) {
+				if h := a.BinarySHA256[key]; h != "" {
+					recorded = h
+					break
+				}
+			}
+			if recorded == "" {
+				t.Errorf("release manifest records no SHA-256 under any of %q (canonical binary %s) on %s, but the packages ship an image claiming to contain it",
+					manifestBinaryKeys(binary), binary, a.Architecture)
 			}
 		}
 	}
@@ -829,7 +837,7 @@ func TestOnlyTheWebUIContainerPublishesAPort(t *testing.T) {
 
 // TestTheWebUIContainerDoesNotRunTheImageHealthcheck is WP4.3's own
 // warning made executable: the canonical image bakes in
-// `HEALTHCHECK /backupd status`, which needs a config file and a
+// `HEALTHCHECK /retnd status`, which needs a config file and a
 // state database the Web UI container does not have, so every profile has
 // to override or disable it.
 func TestTheWebUIContainerDoesNotRunTheImageHealthcheck(t *testing.T) {
@@ -846,12 +854,12 @@ func TestTheWebUIContainerDoesNotRunTheImageHealthcheck(t *testing.T) {
 					if svc.HealthcheckDisabled {
 						t.Error("the Web UI service disables its healthcheck; this profile can express an override, so it should")
 					}
-					if !healthcheckMatches(svc.HealthcheckTest, c.Commands.Healthcheck) {
+					if !healthcheckMatches(c, svc.HealthcheckTest, c.Commands.Healthcheck) {
 						t.Errorf("the Web UI service's healthcheck is %v, want one running %v", svc.HealthcheckTest, c.Commands.Healthcheck)
 					}
 				case disableHealthcheck:
 					if !svc.HealthcheckDisabled {
-						t.Errorf("the Web UI template does not disable the image healthcheck (ExtraParams = %q); left inherited, `/backupd status` fails forever in a container with no config and no state database",
+						t.Errorf("the Web UI template does not disable the image healthcheck (ExtraParams = %q); left inherited, `/retnd status` fails forever in a container with no config and no state database",
 							svc.ExtraParams)
 					}
 				}
@@ -924,12 +932,13 @@ func TestEachContainerRunsItsCanonicalCommand(t *testing.T) {
 				default:
 					continue
 				}
-				// runsCanonicalCommand, not string equality: since #167
-				// the canonical commands may carry a `--profile=` flag.
-				// The binary and every positional argument still have to
-				// match exactly; see that helper for what it does and
-				// does not allow.
-				if !runsCanonicalCommand(svc.Command, want) {
+				// Canonical.RunsCommand, not string equality: since #167
+				// the canonical commands may carry a `--profile=` flag,
+				// and since #890 the image answers to one pre-rename
+				// entrypoint as well. The binary and every positional
+				// argument still have to match exactly; see that method
+				// for what it does and does not allow.
+				if !c.RunsCommand(svc.Command, want) {
 					t.Errorf("service %q (%s) runs %v, want %v", svc.Name, svc.Source, svc.Command, want)
 				}
 			}
@@ -1335,17 +1344,32 @@ func TestTrueNASCatalogDefaultsArePinnedToCanonical(t *testing.T) {
 // helpers
 // ---------------------------------------------------------------------
 
-func healthcheckMatches(test, want []string) bool {
+// healthcheckMatches reports whether test runs one of the spellings of
+// want the canonical image answers to. Every argument of the wanted
+// command has to appear, in one string or spread over several, which is
+// what lets a template's single `--health-cmd` line and a compose list
+// answer the same question.
+//
+// Spellings rather than the one canonical argv because of #890's
+// one-release entrypoint overlap: see Canonical.CommandSpellings.
+func healthcheckMatches(c Canonical, test, want []string) bool {
 	if len(test) == 0 {
 		return false
 	}
 	joined := strings.Join(test, " ")
-	for _, arg := range want {
-		if !strings.Contains(joined, arg) {
-			return false
+	for _, spelling := range c.CommandSpellings(want) {
+		ok := true
+		for _, arg := range spelling {
+			if !strings.Contains(joined, arg) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 func containsString(haystack []string, needle string) bool {

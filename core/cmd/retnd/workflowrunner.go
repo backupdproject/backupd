@@ -41,7 +41,7 @@ import (
 // The runner's paths are HOST paths: <prefix>/run, <prefix>/workspace and
 // <prefix>/secrets as they exist on the machine, not as they appear
 // inside the container. The same config.yaml is read from both sides --
-// the engine sees /data/state and /etc/backupd/config, a shell on the
+// the engine sees /data/state and /etc/retnd/config, a shell on the
 // host sees <prefix>/state and <prefix>/config -- so a field in that file
 // could not be right in both places. route.go makes exactly this argument
 // about where the engine's address comes from, and this is the same fact

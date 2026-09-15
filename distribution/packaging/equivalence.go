@@ -100,12 +100,18 @@ var EquivalenceProperties = []struct {
 // Both sides are already reduced to roles by command, never by service
 // name, so an adapter that renames its services is still compared against
 // the right half of the canonical definition.
-func CheckStackEquivalence(adapter, canonical AdapterRuntime) []Divergence {
+//
+// A method on Canonical because two of the comparisons below have to know
+// which command spellings name the same image entrypoint: #890 moved the
+// canonical stack's argv to /retnd-web and #891 moves the adapters', so
+// between the two an adapter that is byte-for-byte the canonical runtime
+// still spells one argument differently (renameoverlap.go).
+func (c Canonical) CheckStackEquivalence(adapter, canonical AdapterRuntime) []Divergence {
 	var out []Divergence
 
 	out = append(out, equivalentRoleSet(adapter, canonical)...)
-	out = append(out, equivalentRole("engine", adapter.Engine, canonical.Engine)...)
-	out = append(out, equivalentRole("web-ui", adapter.WebUI, canonical.WebUI)...)
+	out = append(out, c.equivalentRole("engine", adapter.Engine, canonical.Engine)...)
+	out = append(out, c.equivalentRole("web-ui", adapter.WebUI, canonical.WebUI)...)
 	out = append(out, equivalentEngineEnvironment(adapter, canonical)...)
 
 	sort.Slice(out, func(i, j int) bool {
@@ -167,21 +173,26 @@ func equivalentRoleSet(adapter, canonical AdapterRuntime) []Divergence {
 // silent pass: equivalentRoleSet has already reported the missing role,
 // and reporting it again as four more divergences would bury the one
 // fact that matters under its consequences.
-func equivalentRole(role string, got, want *Service) []Divergence {
+func (c Canonical) equivalentRole(role string, got, want *Service) []Divergence {
 	if got == nil || want == nil {
 		return nil
 	}
 	var out []Divergence
 
-	if a, b := withoutProfile(got.Command), withoutProfile(want.Command); !equalStrings(a, b) {
+	// The retained entrypoint name is set aside for the same reason the
+	// runtime profile is: it is not a difference in what runs. #890's
+	// /backupd-web is a hardlink to the /retnd-web the canonical stack
+	// names, so an adapter #891 has not moved yet is running the same
+	// inode and the same subcommand.
+	if a, b := c.sameEntrypoint(withoutProfile(got.Command)), withoutProfile(want.Command); !equalStrings(a, b) {
 		out = append(out, Divergence{PropCommand, role,
-			fmt.Sprintf("runs %v and the canonical stack runs %v (the runtime profile is set aside on both sides, because selecting one is what an adapter is for)", a, b),
+			fmt.Sprintf("runs %v and the canonical stack runs %v (the runtime profile is set aside on both sides, because selecting one is what an adapter is for)", withoutProfile(got.Command), b),
 			whyFor(PropCommand)})
 	}
 
 	out = append(out, equivalentMounts(role, got, want)...)
 	out = append(out, equivalentPorts(role, got, want)...)
-	out = append(out, equivalentHealth(role, got, want)...)
+	out = append(out, c.equivalentHealth(role, got, want)...)
 	return out
 }
 
@@ -326,7 +337,7 @@ func containerPorts(svc *Service) []string {
 // same thing, and comparing test commands alone would call an adapter
 // with no health check equivalent to one that has the canonical check,
 // since neither declares a differing test.
-func equivalentHealth(role string, got, want *Service) []Divergence {
+func (c Canonical) equivalentHealth(role string, got, want *Service) []Divergence {
 	why := whyFor(PropHealthCheck)
 	gotSeam, wantSeam := SeamOf(got), SeamOf(want)
 	if gotSeam != wantSeam {
@@ -336,7 +347,7 @@ func equivalentHealth(role string, got, want *Service) []Divergence {
 	if gotSeam != SeamDeclared {
 		return nil
 	}
-	if !sameTest(got.HealthcheckTest, want.HealthcheckTest) {
+	if !c.sameTest(got.HealthcheckTest, want.HealthcheckTest) {
 		return []Divergence{{PropHealthCheck, role,
 			fmt.Sprintf("declares health check %v and the canonical stack declares %v", got.HealthcheckTest, want.HealthcheckTest), why}}
 	}

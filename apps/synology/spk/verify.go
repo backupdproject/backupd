@@ -254,7 +254,7 @@ func verifyBinaries(rep *Report, payload map[string]archiveEntry, payloadErr err
 
 		if err == nil {
 			got := sha256Bytes(member.Body)
-			want := entry.BinarySHA256[name]
+			want, _, _ := entry.Hash(name)
 			if got != want {
 				parity = append(parity, fmt.Sprintf(
 					"%s: packaged SHA-256 %s, but the release manifest records %s for %s. This package was NOT built from the release binary (§3.7 requires the exact same core binary digest).",

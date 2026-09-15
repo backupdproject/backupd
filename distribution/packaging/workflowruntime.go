@@ -173,8 +173,15 @@ func readPlatformIDConsts(path string) (map[string]string, error) {
 // instruction, and a check that only accepted one of them would be
 // satisfied by rewording rather than by documenting.
 var (
-	// runnerUnitRe: the thing that gets installed.
-	runnerUnitRe = regexp.MustCompile(`backupd-workflow-runner\.service`)
+	// runnerUnitRe: the thing that gets installed. Both spellings for
+	// exactly one release: #890 renamed the unit to
+	// retnd-workflow-runner.service (the installer's
+	// WORKFLOW_RUNNER_UNIT moved with it, and it keeps the old name as a
+	// lookup-and-remove spelling), and the provider procedures that name
+	// the unit are #891's to reword. A document naming either one is
+	// telling its operator a true thing until then; #895 drops the
+	// alternative.
+	runnerUnitRe = regexp.MustCompile(`(retnd|backupd)-workflow-runner\.service`)
 	// dockerGroupRe: the grant the runner's account needs. #865's whole
 	// cost is this one membership, and the installer's refusal names the
 	// same command.
@@ -231,7 +238,7 @@ func LocalHookDocStates(path, doc, answer string) (bool, string) {
 	switch answer {
 	case LocalHooksAvailable:
 		required = []requirement{
-			{runnerUnitRe, "name the systemd unit the runner is installed as (backupd-workflow-runner.service)"},
+			{runnerUnitRe, "name the systemd unit the runner is installed as (retnd-workflow-runner.service, or the pre-#890 backupd-workflow-runner.service until #891 rewords it)"},
 			{dockerGroupRe, "say that the runner's account needs the Docker socket's group (the `usermod -aG` grant)"},
 			{hookImageRe, "name the hook image local hooks run in, which has to be present because the runner refuses to pull one"},
 		}

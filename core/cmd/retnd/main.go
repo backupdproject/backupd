@@ -580,7 +580,7 @@ commands:
                                                   than accepted and ignored
   version                                        report version information
 
-every command except version accepts --config (default /etc/backupd/config/config.yaml;
+every command except version accepts --config (default /etc/retnd/config/config.yaml;
 a directory resolves to config.yaml inside it, which is what packaging mounts)
 
 a configuration write goes one of three ways, and says which on a "mode:" line. With nothing

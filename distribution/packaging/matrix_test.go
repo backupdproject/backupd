@@ -546,7 +546,7 @@ func checkBackupRootContainment(p providerUnderTest) (bool, string) {
 // finding", and TestOnlyTheWebUIContainerPublishesAPort's sibling in
 // conformance_test.go already treats it as one. Skipping it here made two
 // safety-relevant checks, state persistence and backup-root containment,
-// fail OPEN: a profile that bind-mounts a whole /etc/backupd, or a
+// fail OPEN: a profile that bind-mounts a whole /etc/retnd, or a
 // stray /data, was invisible to both.
 func roleMounts(p providerUnderTest) (map[string]Mount, string) {
 	svcs, err := p.services()
@@ -608,34 +608,12 @@ func checkAuthModeExplicit(p providerUnderTest) (bool, string) {
 // the shape that matters is: exactly one published port in the whole
 // profile, and it belongs to the container running the Web UI command,
 // never the engine that holds the state database and the credentials.
-// runsCanonicalCommand reports whether got is want, optionally followed
-// by runtime flags.
 //
-// Exact equality was right until issue #167 standardised "command and
-// runtime profile" as one contract field, which appends
-// `--profile=<name>` to both canonical commands. What this check exists
-// to catch is a deployment that publishes the ENGINE on its edge port, or
-// runs the wrong subcommand entirely, and neither of those is a flag. So
-// the binary and every positional argument still have to match exactly,
-// and only leading-dash arguments may follow: `serve-ui --profile=ugos`
-// passes, `serve` does not, and neither does `serve-ui something-else`.
-func runsCanonicalCommand(got, want []string) bool {
-	if len(got) < len(want) {
-		return false
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	for _, extra := range got[len(want):] {
-		if !strings.HasPrefix(extra, "-") {
-			return false
-		}
-	}
-	return true
-}
-
+// The command comparison is Canonical.RunsCommand, which this file used
+// to re-implement as a local runsCanonicalCommand. They were the same
+// rule written out twice, and one of them had to be found and changed
+// again when #890 gave the canonical commands a second accepted
+// spelling; see that method for what it does and does not allow.
 func checkAPIPathIsolation(p providerUnderTest) (bool, string) {
 	if p.spec.Metadata.Kind == "spk" {
 		return checkSPKPortIsolation(p)
@@ -664,7 +642,7 @@ func checkAPIPathIsolation(p providerUnderTest) (bool, string) {
 	if len(edge.Ports) != 1 {
 		return false, fmt.Sprintf("service %q publishes %v, want exactly one port", edge.Name, edge.Ports)
 	}
-	if !runsCanonicalCommand(edge.Command, p.canonical.Commands.WebUI) {
+	if !p.canonical.RunsCommand(edge.Command, p.canonical.Commands.WebUI) {
 		return false, fmt.Sprintf("the published service %q runs %v, not the Web UI command %v, so the engine is on the edge",
 			edge.Name, edge.Command, p.canonical.Commands.WebUI)
 	}
@@ -985,7 +963,7 @@ func bridgeReachesAShippedArtifact(p providerUnderTest) (bool, string) {
 
 	var webUI *Service
 	for i := range svcs {
-		if runsCanonicalCommand(svcs[i].Command, p.canonical.Commands.WebUI) {
+		if p.canonical.RunsCommand(svcs[i].Command, p.canonical.Commands.WebUI) {
 			webUI = &svcs[i]
 			break
 		}

@@ -16,7 +16,7 @@ export const API_BASE_PATH = "/api/v1";
  *  A contract edited without regenerating changes this value, so the
  *  change is visible in review as well as to
  *  scripts/api/check-contract-drift.sh. */
-export const CONTRACT_SHA256 = "53f1ba05f4f78a703f3f83eb4a4125fc80fbb869f208453df7292ec03971e4b9";
+export const CONTRACT_SHA256 = "8e90590ca46f00cc39114455d31178f3df44523873650773c5346feb41d9ee19";
 
 /** Codes a server may actually put on the wire. */
 export const WIRE_ERROR_CODES = [
@@ -2064,6 +2064,18 @@ export interface WireActivityEvent {
   to: string;
 }
 
+/** One of this deployment's locations that is being served from a
+ *  pre-rename path, and the renamed path it would otherwise have
+ *  used. A location is adopted only when the renamed path holds
+ *  nothing and the pre-rename path holds the data; two populated
+ *  locations that are different directories make the runtime refuse
+ *  to start instead, and are therefore never reported here. */
+export interface WireAdoptedPath {
+  renamed: string;
+  serving: string;
+  what: string;
+}
+
 /** POST /backup-sets/{source}/{set}/retention/apply. */
 export interface WireApplyRetentionRequest {
   plan_id: string;
@@ -3979,6 +3991,7 @@ export interface WireVerifyEmailRequest {
 /** GET /system/version. Nothing here names an implementation: no
  *  rclone, no SQLite, no filesystem path. */
 export interface WireVersionResponse {
+  adopted_paths: WireAdoptedPath[];
   api_version: string;
   commit: string;
   config_revision: string;
@@ -4037,7 +4050,7 @@ export interface WireWorkflowFinding {
   target?: string;
 }
 
-/** One thing retnd's own shell rules reported about one hook
+/** One thing backupd's own shell rules reported about one hook
  *  script. These are this product's own checks, carrying its own BSH
  *  codes, and they are NOT ShellCheck: ShellCheck is GPL-3.0 and this
  *  product is Apache-2.0, so the analysis is implemented here against
@@ -4115,19 +4128,19 @@ export interface WireWorkflowRun {
 }
 
 /** How THIS PROCESS reaches the Host Workflow Runner, the component
- *  that executes a `.local.sh` hook on the machine retnd is
- *  installed on. Reported and not writable here: the two paths differ
- *  between a container and a bare-metal install of the same
- *  deployment, so they are a deployment-shape fact the installer
- *  writes rather than a policy an operator tunes, exactly like the
- *  SSH key, the known_hosts file and the state database. */
+ *  that executes a `.local.sh` hook on the machine retnd is installed
+ *  on. Reported and not writable here: the two paths differ between a
+ *  container and a bare-metal install of the same deployment, so they
+ *  are a deployment-shape fact the installer writes rather than a
+ *  policy an operator tunes, exactly like the SSH key, the
+ *  known_hosts file and the state database. */
 export interface WireWorkflowRunnerSettings {
   configured?: boolean;
   socket?: string;
   token_file?: string;
 }
 
-/** What retnd's own shell verification established about one hook
+/** What backupd's own shell verification established about one hook
  *  script's exact bytes, without running any of them. Three states,
  *  kept distinguishable on purpose: examined and parsed, examined and
  *  refused (a parse error with its position), and NOT EXAMINED, which

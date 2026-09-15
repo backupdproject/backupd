@@ -335,7 +335,7 @@ func TestScanSecretsCatchesBundledCredentials(t *testing.T) {
 			// installer, so there is no secret in the tree to find.
 			name:   "a mount whose host side is the runner's credential file",
 			file:   "compose/backupd.yml",
-			body:   "services:\n  backupd:\n    volumes:\n      - /srv/backupd/secrets/workflow-runner.token:/etc/backupd/workflow-runner.token:ro\n",
+			body:   "services:\n  backupd:\n    volumes:\n      - /srv/backupd/secrets/workflow-runner.token:/etc/retnd/workflow-runner.token:ro\n",
 			expect: false,
 		},
 		{
@@ -365,7 +365,7 @@ func TestScanSecretsCatchesBundledCredentials(t *testing.T) {
 		{
 			name:   "a literal assigned to a path-shaped key is still a secret",
 			file:   "catalog/values.yaml",
-			body:   "/etc/backupd/admin_password: hunter2hunter2\n",
+			body:   "/etc/retnd/admin_password: hunter2hunter2\n",
 			expect: true,
 		},
 	}

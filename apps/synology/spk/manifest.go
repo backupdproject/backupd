@@ -70,12 +70,12 @@ func LoadReleaseManifest(path string) (ReleaseManifest, error) {
 			return ReleaseManifest{}, fmt.Errorf("release manifest %s: architecture %q has an empty binary_sha256", path, entry.Architecture)
 		}
 		for _, name := range CoreBinaries {
-			sum, ok := entry.BinarySHA256[name]
+			sum, key, ok := entry.Hash(name)
 			if !ok {
-				return ReleaseManifest{}, fmt.Errorf("release manifest %s: architecture %q records no binary_sha256 for %q", path, entry.Architecture, name)
+				return ReleaseManifest{}, fmt.Errorf("release manifest %s: architecture %q records no binary_sha256 for %q under either accepted key %q", path, entry.Architecture, name, ManifestKeys(name))
 			}
 			if !isSHA256(sum) {
-				return ReleaseManifest{}, fmt.Errorf("release manifest %s: architecture %q records %q for %q, which is not a SHA-256", path, entry.Architecture, sum, name)
+				return ReleaseManifest{}, fmt.Errorf("release manifest %s: architecture %q records %q for %q, which is not a SHA-256", path, entry.Architecture, sum, key)
 			}
 		}
 	}
@@ -97,6 +97,49 @@ func (m ReleaseManifest) Arch(goarch string) (ArchEntry, error) {
 	}
 	slices.Sort(have)
 	return ArchEntry{}, fmt.Errorf("the release manifest records no %s entry (it has %v), so there is nothing to check a %s package against", goarch, have, goarch)
+}
+
+// manifestKeySpellings maps a core binary to the binary_sha256 keys a
+// release manifest may record its hash under, most preferred first.
+//
+// Two spellings, for exactly one release. #890 renamed the files the
+// canonical image carries to /retnd and /retnd-web, but a manifest entry
+// for an ALREADY-PUBLISHED release keeps the keys it went out under
+// (0.4.0's say backupd and backupd-web), because those keys identify a
+// build that really shipped and re-keying evidence to tidy a label stops
+// it being evidence. So this reader accepts either and prefers the new
+// one, and the legacy spelling goes away when the shim window closes
+// (#895), taking this table with it.
+//
+// A name the table does not know is looked up as itself, so an
+// unrecognised binary is reported missing rather than quietly borrowing
+// one of these hashes -- which is the whole reason a parity check exists.
+var manifestKeySpellings = map[string][]string{
+	"retnd":       {"retnd", "backupd"},
+	"backupd":     {"retnd", "backupd"},
+	"retnd-web":   {"retnd-web", "backupd-web"},
+	"backupd-web": {"retnd-web", "backupd-web"},
+}
+
+// ManifestKeys returns the binary_sha256 keys binary may be recorded
+// under, most preferred first. See manifestKeySpellings.
+func ManifestKeys(binary string) []string {
+	if keys, ok := manifestKeySpellings[binary]; ok {
+		return keys
+	}
+	return []string{binary}
+}
+
+// Hash returns this architecture's recorded SHA-256 for a core binary,
+// whichever accepted spelling the manifest keyed it under, and the key it
+// was actually found at so an error can name the real file.
+func (e ArchEntry) Hash(binary string) (sum, key string, ok bool) {
+	for _, k := range ManifestKeys(binary) {
+		if v, present := e.BinarySHA256[k]; present {
+			return v, k, true
+		}
+	}
+	return "", "", false
 }
 
 // isSHA256 reports whether s is exactly 64 hex characters.

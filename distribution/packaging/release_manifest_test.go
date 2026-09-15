@@ -577,15 +577,17 @@ func fixtureManifest(p providerUnderTest, commit string) ReleaseManifest {
 	for _, arch := range p.canonical.Architectures {
 		hashes := map[string]string{}
 		for _, b := range p.canonical.Binaries {
-			// manifestBinaryKey, not a bare TrimPrefix: since the 0.3.3
-			// CLI rename the canonical binary paths (/backupd, /backupd-web) and
-			// the keys container/release-manifest.json records a hash
-			// under (backupd, backupd-web) are different
-			// strings, and a fixture that keyed on the path would be a
-			// manifest the real reader cannot read. Every positive
-			// control built on this would then fail for the fixture's
-			// reason rather than pass for the code's.
-			hashes[manifestBinaryKey(b)] = strings.Repeat("a", 64)
+			// manifestBinaryKeys, not a bare TrimPrefix: the canonical
+			// binary paths (/retnd, /retnd-web, and /backupd-web for the
+			// hardlink) and the keys container/release-manifest.json
+			// records a hash under are not the same strings while the
+			// #890 overlap release lasts, and the fixture has to key the
+			// way the real reader reads. Keying on the path would make
+			// every positive control built on this fail for the
+			// fixture's reason rather than pass for the code's; keying
+			// only on the legacy spelling would stop exercising the
+			// preferred one. [0] is the preferred key.
+			hashes[manifestBinaryKeys(b)[0]] = strings.Repeat("a", 64)
 		}
 		arches = append(arches, ReleaseArchitecture{Architecture: arch, BinarySHA256: hashes})
 	}

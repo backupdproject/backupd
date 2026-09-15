@@ -37,7 +37,7 @@ const (
 // hashes api/v1/openapi.json and compares. The full byte-for-byte
 // comparison still lives in scripts/api/check-contract-drift.sh, which is
 // the only thing that can also catch a hand edit to the body of this file.
-const ContractSHA256 = "53f1ba05f4f78a703f3f83eb4a4125fc80fbb869f208453df7292ec03971e4b9"
+const ContractSHA256 = "8e90590ca46f00cc39114455d31178f3df44523873650773c5346feb41d9ee19"
 
 // ErrorCode is a stable, machine-readable failure token. The human-readable
 // message beside it on the wire MAY change without notice; this may not.
@@ -1402,6 +1402,18 @@ type ActivityEvent struct {
 	SetName      string `json:"set_name"`
 	SourceName   string `json:"source_name"`
 	To           string `json:"to"`
+}
+
+// AdoptedPath is one of this deployment's locations that is being served from a
+// pre-rename path, and the renamed path it would otherwise have
+// used. A location is adopted only when the renamed path holds
+// nothing and the pre-rename path holds the data; two populated
+// locations that are different directories make the runtime refuse
+// to start instead, and are therefore never reported here.
+type AdoptedPath struct {
+	Renamed string `json:"renamed"`
+	Serving string `json:"serving"`
+	What    string `json:"what"`
 }
 
 // ApplyRetentionRequest is POST /backup-sets/{source}/{set}/retention/apply.
@@ -3321,15 +3333,16 @@ type VerifyEmailRequest struct {
 // VersionResponse is GET /system/version. Nothing here names an implementation: no
 // rclone, no SQLite, no filesystem path.
 type VersionResponse struct {
-	APIVersion     string `json:"api_version"`
-	Commit         string `json:"commit"`
-	ConfigRevision string `json:"config_revision"`
-	Configured     bool   `json:"configured"`
-	CoreVersion    string `json:"core_version"`
-	DeploymentID   string `json:"deployment_id"`
-	EngineVersion  string `json:"engine_version"`
-	GoVersion      string `json:"go_version"`
-	Ready          bool   `json:"ready"`
+	AdoptedPaths   []AdoptedPath `json:"adopted_paths"`
+	APIVersion     string        `json:"api_version"`
+	Commit         string        `json:"commit"`
+	ConfigRevision string        `json:"config_revision"`
+	Configured     bool          `json:"configured"`
+	CoreVersion    string        `json:"core_version"`
+	DeploymentID   string        `json:"deployment_id"`
+	EngineVersion  string        `json:"engine_version"`
+	GoVersion      string        `json:"go_version"`
+	Ready          bool          `json:"ready"`
 }
 
 // WorkflowAcknowledgementRequest is take responsibility, by hand, for a workflow run this product
@@ -3457,12 +3470,12 @@ type WorkflowRun struct {
 }
 
 // WorkflowRunnerSettings is how THIS PROCESS reaches the Host Workflow Runner, the component
-// that executes a `.local.sh` hook on the machine backupd is
-// installed on. Reported and not writable here: the two paths differ
-// between a container and a bare-metal install of the same
-// deployment, so they are a deployment-shape fact the installer
-// writes rather than a policy an operator tunes, exactly like the
-// SSH key, the known_hosts file and the state database.
+// that executes a `.local.sh` hook on the machine retnd is installed
+// on. Reported and not writable here: the two paths differ between a
+// container and a bare-metal install of the same deployment, so they
+// are a deployment-shape fact the installer writes rather than a
+// policy an operator tunes, exactly like the SSH key, the
+// known_hosts file and the state database.
 type WorkflowRunnerSettings struct {
 	Configured bool   `json:"configured"`
 	Socket     string `json:"socket"`
@@ -3622,7 +3635,7 @@ type WorkflowStepLogRecord struct {
 }
 
 // WorkflowValidatedScript is one hook this backup set would run, as validation found it on
-// disk, with what backupd's own shell verification established about
+// disk, with what retnd's own shell verification established about
 // its bytes. Nothing here was executed: the syntax verdict and the
 // findings come from parsing and walking the bytes in this process,
 // and the only things validation ever hands an interpreter are `bash
@@ -3667,6 +3680,7 @@ type WorkflowValidationResponse struct {
 // added to the contract cannot quietly go unchecked.
 var SchemaTypes = map[string]any{
 	"ActivityEvent":                      ActivityEvent{},
+	"AdoptedPath":                        AdoptedPath{},
 	"ApplyRetentionRequest":              ApplyRetentionRequest{},
 	"Artifact":                           Artifact{},
 	"ArtifactCheckResponse":              ArtifactCheckResponse{},

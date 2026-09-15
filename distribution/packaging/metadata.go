@@ -102,12 +102,12 @@ type Service struct {
 	// read whichever of the two a platform actually uses.
 	ExtraParams string
 	// HealthcheckDisabled records `--no-healthcheck`. The canonical image
-	// bakes in `HEALTHCHECK /backupd status`, which needs a config
+	// bakes in `HEALTHCHECK /retnd status`, which needs a config
 	// file and a state database. The Web UI container has neither, so
 	// every profile has to do something about it: the compose profiles
-	// override the test with `/backupd-web healthcheck`, and Unraid,
-	// whose --health-cmd would run through a shell the distroless image
-	// does not contain, disables it instead.
+	// override the test with the canonical `healthcheck` command, and
+	// Unraid, whose --health-cmd would run through a shell the distroless
+	// image does not contain, disables it instead.
 	HealthcheckDisabled bool
 	// WaitsForHealthy is every service this one refuses to start before,
 	// naming the ones it waits on for HEALTH specifically

@@ -92,6 +92,7 @@ needs a Docker build and so cannot be exercised through the
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -107,6 +108,15 @@ PROGRAM = "publish-image"
 CANONICAL_RELATIVE = "distribution/packaging/canonical.json"
 MANIFEST_RELATIVE = "container/release-manifest.json"
 SBOM_RELATIVE = "provenance/sbom.spdx.json"
+
+# Guard 7's two literals, and the only two in this file that name a
+# package rather than reading one. Everything guard 7 DECIDES with comes
+# out of canonical.json's `image` block; these exist for the single
+# refusal that fires because that block is gone, where there is nothing
+# left to read the retained path or the closing issue out of. They die
+# with the guard when the mirror window closes.
+MIRROR_RETIREMENT_ISSUE = 895
+LEGACY_PACKAGE_PATH = "ghcr.io/backupdproject/backupd"
 
 KEY_PATHSPECS = [
     "*.key", "*.pem", "cosign.key", "*cosign*.key", "*.p12", "*.pfx",
@@ -293,22 +303,138 @@ def guard_6_provenance(root: Path, guards_only: bool) -> None:
         )
 
 
-def run_guards(root: Path, guards_only: bool) -> tuple[str, str]:
-    _canonical, manifest, reference = guard_1_reads(root)
+def _split_reference(reference: str) -> tuple[str, str]:
+    """(package path, tag) for an image reference.
+
+    The colon that matters is the one after the LAST slash, so a registry
+    host carrying a port (`registry.invalid:5000/x/y`) is not mistaken for
+    a tagged reference, and a digest reference keeps its whole
+    `@sha256:...` as the tag half rather than being split down the middle.
+    """
+    path, sep, digest = reference.partition("@")
+    if sep:
+        return path, "@" + digest
+    head, sep, tail = path.rpartition(":")
+    if sep and "/" not in tail:
+        return head, tail
+    return path, ""
+
+
+def canonical_image(canonical: Path) -> dict:
+    """canonical.json's `image` object.
+
+    A real parse rather than `json_string`'s line scan, because guard 7
+    reads a NESTED value (image.mirror.reference) and the scan cannot tell
+    one `"reference"` line from another. `json` is stdlib, so this is not
+    the dependency the scan was avoiding.
+    """
+    try:
+        with open(canonical, encoding="utf-8") as fh:
+            document = json.load(fh)
+    except (OSError, ValueError) as exc:
+        refuse(f"{CANONICAL_RELATIVE} does not parse as JSON ({exc}), so this script cannot tell what it would push.")
+    image = document.get("image") if isinstance(document, dict) else None
+    if not isinstance(image, dict):
+        refuse(f"{CANONICAL_RELATIVE} carries no `image` object, so this script cannot tell what it would push.")
+    return image
+
+
+def guard_7_mirror(canonical: Path, reference: str) -> list[str]:
+    """FR-39: while the GHCR mirror window is open, a release pushes the
+    retained package path as well as the current one. Returns the full tag
+    set the push has to carry, canonical first.
+
+    A GHCR package path is not a repository. Transferring or renaming a
+    GitHub repository leaves redirects behind; moving a PACKAGE leaves
+    nothing, so every `docker pull ghcr.io/<old>/<old>:<tag>` 404s from the
+    first release that stops pushing it, and a registry tag cannot be
+    corrected the way a file can. So the retained path is published
+    alongside the new one for exactly one release.
+
+    image.mirror NAMES the retained path, and it is the whole of what this
+    decides with: `publish` pushes the list this returns, and guard 1 read
+    `reference` out of the same `image` object. There is deliberately no
+    second list of package names to drift from it.
+
+    Three states, and only the first two are legal:
+
+      * mirror names the same package path as image.reference. Nothing has
+        moved yet, so the one push already reaches the retained path. This
+        is where #890 leaves the tree.
+      * mirror names a different package path. The reference has moved
+        (#895), and both are pushed, same build, same digest.
+      * no mirror at all. The run would push whatever image.reference says
+        and abandon the other package path silently, which is the failure
+        FR-39 exists for. Refused.
+    """
+    image = canonical_image(canonical)
+    reference_path, reference_tag = _split_reference(reference)
+
+    mirror = image.get("mirror")
+    mirror_reference = ""
+    if isinstance(mirror, dict):
+        mirror_reference = str(mirror.get("reference") or "").strip()
+    if not mirror_reference:
+        refuse(
+            f"{CANONICAL_RELATIVE} declares image.reference {reference} and no image.mirror, so this run "
+            f"would push the {reference_path} package and nothing else.",
+            f"Until #{MIRROR_RETIREMENT_ISSUE} closes the mirror window, a release has to reach BOTH "
+            f"{reference_path} and the retained package path image.mirror names "
+            f"({LEGACY_PACKAGE_PATH} when this guard was written). A GHCR package path is not covered by "
+            "GitHub's repository-transfer redirects (FR-39), so an existing `docker pull` of the retained "
+            "path 404s the moment a release stops pushing it, and nothing tells the operator why.",
+            f"If you are CLOSING the window, that is #{MIRROR_RETIREMENT_ISSUE}: delete this guard, its "
+            "arms in scripts/bdtools/tests/publish_image_guards.py and image.mirror in the same commit, "
+            "rather than deleting the declaration and leaving the guard blind.",
+        )
+
+    mirror_path, mirror_tag = _split_reference(mirror_reference)
+    closing = (mirror.get("retiredBy") if isinstance(mirror, dict) else None) or MIRROR_RETIREMENT_ISSUE
+
+    if mirror_tag != reference_tag:
+        refuse(
+            f"{CANONICAL_RELATIVE} would push {reference} but mirrors {mirror_reference}, so this release "
+            f"reaches {reference_path} and never reaches {mirror_path} under this tag.",
+            "The mirror is the SAME release under the retained package path, so it carries the same tag. "
+            "A mirror left behind on the previous tag is a mirror that silently stopped mirroring "
+            "(FR-39), and the first symptom is an operator's pinned pull 404ing.",
+            f"The window closes with #{closing}, which removes image.mirror and this guard together.",
+        )
+
+    if mirror_path == reference_path:
+        print(
+            f"==> GHCR mirror window open (closes with #{closing}): image.reference is still the retained "
+            f"path {reference_path}, so the one push reaches both names",
+            file=sys.stderr,
+        )
+        return [reference]
+
+    print(
+        f"==> GHCR mirror window open (closes with #{closing}): pushing {reference} and the retained "
+        f"{mirror_reference}",
+        file=sys.stderr,
+    )
+    return [reference, mirror_reference]
+
+
+def run_guards(root: Path, guards_only: bool) -> tuple[list[str], str]:
+    canonical, manifest, reference = guard_1_reads(root)
     manifest_commit = guard_2_reachability(root, manifest)
     guard_2b_checkable(root, manifest_commit)
     guard_3_unsafe(manifest)
     guard_4_dirty(root)
     guard_5_keys(root)
     guard_6_provenance(root, guards_only)
-    return reference, manifest_commit
+    tags = guard_7_mirror(canonical, reference)
+    return tags, manifest_commit
 
 
-def publish(root: Path, reference: str, manifest_commit: str, manifest: Path) -> int:
+def publish(root: Path, tags: list[str], manifest_commit: str, manifest: Path) -> int:
     platforms = os.environ.get("PLATFORMS", "linux/amd64,linux/arm64")
     sign = os.environ.get("SIGN", "1") == "1"
+    reference = tags[0]
 
-    print(f"==> Publishing {reference} ({platforms}) from {manifest_commit}", file=sys.stderr)
+    print(f"==> Publishing {', '.join(tags)} ({platforms}) from {manifest_commit}", file=sys.stderr)
     if os.environ.get("DRY_RUN", "0") == "1":
         print("==> DRY_RUN=1: stopping before docker buildx build --push", file=sys.stderr)
         return harness.EXIT_OK
@@ -322,6 +448,12 @@ def publish(root: Path, reference: str, manifest_commit: str, manifest: Path) ->
     )
 
     version = json_string(manifest, "version")
+    tag_args: list[str] = []
+    for tag in tags:
+        tag_args += ["-t", tag]
+    # One build, every tag, one `--push`. Guard 7 decided this list, and
+    # building twice would put two different image ids behind the two
+    # package paths for the same release.
     harness.sh(
         [
             "docker", "buildx", "build",
@@ -329,7 +461,7 @@ def publish(root: Path, reference: str, manifest_commit: str, manifest: Path) ->
             "--build-arg", f"VERSION={version}",
             "--build-arg", f"COMMIT={manifest_commit}",
             "-f", "container/Dockerfile",
-            "-t", reference,
+            *tag_args,
             "--push",
             ".",
         ],
@@ -344,7 +476,11 @@ def publish(root: Path, reference: str, manifest_commit: str, manifest: Path) ->
     print(f"==> index digest: {index_digest}", file=sys.stderr)
 
     if sign:
-        harness.sh(["cosign", "sign", "--yes", f"{reference}@{index_digest}"], capture=False)
+        # Every pushed path, not just the canonical one: a signature over
+        # one package name does not verify a pull of the other, and the
+        # mirror is there to be pulled.
+        for tag in tags:
+            harness.sh(["cosign", "sign", "--yes", f"{tag}@{index_digest}"], capture=False)
 
     print(file=sys.stderr)
     raw = harness.sh_out(["docker", "buildx", "imagetools", "inspect", reference, "--raw"])
@@ -379,19 +515,19 @@ def main(argv: list[str]) -> int:
     root = resolve_toplevel()
     guards_only = os.environ.get("GUARDS_ONLY", "0") == "1"
 
-    reference, manifest_commit = run_guards(root, guards_only)
+    tags, manifest_commit = run_guards(root, guards_only)
 
     if guards_only:
         platforms = os.environ.get("PLATFORMS", "linux/amd64,linux/arm64")
         print(
-            f"==> GUARDS_ONLY=1: every guard passed; stopping before the push. Would publish {reference} "
-            f"for {platforms}",
+            f"==> GUARDS_ONLY=1: every guard passed; stopping before the push. Would publish "
+            f"{', '.join(tags)} for {platforms}",
             file=sys.stderr,
         )
         return harness.EXIT_OK
 
     manifest = root / MANIFEST_RELATIVE
-    return harness.finish(lambda: publish(root, reference, manifest_commit, manifest))
+    return harness.finish(lambda: publish(root, tags, manifest_commit, manifest))
 
 
 if __name__ == "__main__":

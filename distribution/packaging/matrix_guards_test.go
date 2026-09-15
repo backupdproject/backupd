@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -254,43 +255,58 @@ func TestReleaseManifest_RecordsEveryBinary(t *testing.T) {
 // between canonical.json's binary paths and
 // container/release-manifest.json's keys.
 //
-// There is nothing to translate any more: 0.3.3 moved the manifest's keys
-// onto the binaries' own names, so this is the path minus its leading
-// slash. The guard still earns its place, because the risk never came
-// from the translation being wrong, it came from a mapping nobody
-// constrained. A function that returned one of the two recorded keys for
-// absolutely everything would satisfy every provider row in the matrix,
-// and it would turn "this binary is not in the manifest" into "some
-// binary is", which is the architecture-parity and artifact-provenance
-// columns reporting a hash nobody asked for. So it is checked from the
-// side that matters: on names the map must NOT recognise.
+// There are two accepted spellings for one release: #890 renamed the
+// files the image carries to /retnd and /retnd-web while an
+// already-published entry keeps the keys it went out under, so a lookup
+// takes either and prefers the new one. The guard still earns its place,
+// and the reason is unchanged: the risk never came from the translation
+// being wrong, it came from a mapping nobody constrained. A function that
+// returned one of the recorded keys for absolutely everything would
+// satisfy every provider row in the matrix, and it would turn "this
+// binary is not in the manifest" into "some binary is", which is the
+// architecture-parity and artifact-provenance columns reporting a hash
+// nobody asked for. So it is checked from the side that matters: on names
+// the table must NOT recognise.
 func TestTheManifestKeyCannotPairAHashWithTheWrongBinary(t *testing.T) {
-	for _, tc := range []struct{ in, want string }{
-		{"/backupd", "backupd"},
-		{"backupd", "backupd"},
-		{"/backupd-web", "backupd-web"},
-		{"backupd-web", "backupd-web"},
+	for _, tc := range []struct {
+		in   string
+		want []string
+	}{
+		{"/retnd", []string{"retnd", "backupd"}},
+		{"retnd", []string{"retnd", "backupd"}},
+		{"/retnd-web", []string{"retnd-web", "backupd-web"}},
+		{"/backupd", []string{"retnd", "backupd"}},
+		{"/backupd-web", []string{"retnd-web", "backupd-web"}},
+		{"backupd-web", []string{"retnd-web", "backupd-web"}},
 
-		// Anything else keeps its own name and therefore fails the lookup,
-		// which is the whole point: an invented binary must be reported
-		// missing rather than borrowing one of the two above.
-		{"/rclone", "rclone"},
-		{"/backupd-webhook", "backupd-webhook"},
-		{"/rbmx", "rbmx"},
+		// Anything else keeps its own name and only its own name, and
+		// therefore fails the lookup: an invented binary must be reported
+		// missing rather than borrowing one of the pairs above.
+		{"/rclone", []string{"rclone"}},
+		{"/retnd-webhook", []string{"retnd-webhook"}},
+		{"/backupd-webhook", []string{"backupd-webhook"}},
+		{"/rbmx", []string{"rbmx"}},
 	} {
-		if got := manifestBinaryKey(tc.in); got != tc.want {
-			t.Errorf("manifestBinaryKey(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := manifestBinaryKeys(tc.in); !slices.Equal(got, tc.want) {
+			t.Errorf("manifestBinaryKeys(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 
-	// And the negative control the map itself cannot give: a canonical
+	// And the negative control the table itself cannot give: a canonical
 	// binary the manifest does not record has to come back refused, not
 	// translated onto one it does.
 	m := ReleaseManifest{Architectures: []ReleaseArchitecture{
 		{Architecture: "amd64", BinarySHA256: map[string]string{"backupd": "a", "backupd-web": "b"}},
 	}}
-	if ok, detail := m.RecordsEveryBinary([]string{"/backupd", "/backupd-web", "/backupd-sidecar"}); ok {
+	if ok, detail := m.RecordsEveryBinary([]string{"/retnd", "/retnd-web", "/backupd-sidecar"}); ok {
 		t.Errorf("a binary with no hash of its own was accepted: %s", detail)
+	}
+
+	// The positive control for the pair above, and the overlap release's
+	// actual shape: the 0.4.0 entry's legacy keys satisfy the renamed
+	// canonical binaries, including the /backupd-web hardlink.
+	if ok, detail := m.RecordsEveryBinary([]string{"/retnd", "/retnd-web", "/backupd-web"}); !ok {
+		t.Errorf("a manifest keyed under the published spelling was refused: %s", detail)
 	}
 }
 
@@ -631,13 +647,13 @@ func TestRoleMountsRefusesAMountWithNoKnownRole(t *testing.T) {
     volumes:
       - /srv/app/state:/data/state
       - /srv/app/backups:/data/backups
-      - /srv/app/etc:/etc/backupd
+      - /srv/app/etc:/etc/retnd
 `)
 	p.spec.Metadata.Kind = "compose"
 	p.spec.Metadata.Compose = "compose.yaml"
 
 	if mounts, detail := roleMounts(p); mounts != nil {
-		t.Errorf("a mount at /etc/backupd has no canonical role and must be refused, got %v", mounts)
+		t.Errorf("a mount at /etc/retnd has no canonical role and must be refused, got %v", mounts)
 	} else if !strings.Contains(detail, "not a container path the canonical image knows about") {
 		t.Errorf("the refusal should say what it could not place, got: %s", detail)
 	}

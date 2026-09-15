@@ -31,7 +31,7 @@ Not "the container started". Two shipped behaviours decide the success
 condition:
 
   * the engine's start gate is a LIVENESS probe and deliberately not
-    `backupd status` (issue #206), because `status` is a backup
+    `retnd status` (issue #206), because `status` is a backup
     freshness verdict that a fresh install legitimately fails, and gating
     the UI on it means the page you would fix a backup problem from never
     loads;
@@ -101,8 +101,9 @@ Usage:
     python3 install_docker_host.py install    [options]
     python3 install_docker_host.py status     [options]
     python3 install_docker_host.py uninstall  [options]
-    python3 install_docker_host.py network-doctor [options]
-    python3 install_docker_host.py network-undo   [options]
+    python3 install_docker_host.py network-doctor   [options]
+    python3 install_docker_host.py network-undo     [options]
+    python3 install_docker_host.py migrate-identity [options]
 
 Run --help for the full flag list.
 """
@@ -155,6 +156,18 @@ EXIT_EXISTING_INSTALL = 20
 # refusal: the remedy is different (there is none short of a restore),
 # and a caller scripting an upgrade wants to tell the two apart.
 EXIT_DOWNGRADE_REFUSED = 21
+
+# A host half way through #890's unit rename: an old-name unit and its
+# new-name counterpart both enabled at once (FR-39). Its own code rather
+# than a generic existing-install refusal because it is the one state in
+# this block that neither a flag nor a re-run resolves. Both units are
+# armed and both will fire, so two copies of the same oneshot re-assert
+# the same firewall rules, or two runners answer for the same socket, and
+# which one wins depends on which systemd started last. The remedy is a
+# `systemctl disable` an operator has to run, or `migrate-identity`, and
+# a wrapper scripting an upgrade needs to tell that apart from "an
+# install is already here", which it resolves by passing --mode.
+EXIT_HALF_MIGRATED_UNITS = 22
 EXIT_RUNTIME = 30
 EXIT_VERIFY = 31
 
@@ -187,9 +200,18 @@ EXIT_RELEASE_TOO_OLD = 52
 # right to, where one retrying this would loop for ever.
 EXIT_ENROLLMENT_CLOSED = 53
 
-# The release that renamed the binaries inside the image. The embedded
-# compose runs /backupd-web, which exists from here onwards and in no image
-# published before it, so --release cannot honestly go lower.
+# The release that renamed the binaries inside the image. The compose
+# definition this installer stages names a `-web` binary by absolute
+# path, and images published before that release carry none at all, so
+# --release cannot honestly go lower.
+#
+# The name staged is `/retnd-web` from #890 onwards, and `/backupd-web`
+# is the name 0.3.3 introduced -- so this floor is the floor for the
+# PRE-rename spelling, and the release that first carries the retnd
+# entrypoints raises it again. That bump belongs to whoever cuts that
+# release: the version number does not exist yet, because
+# container/release-manifest.json records 0.4.0 as the newest published
+# release and its images carry `/backupd` and `/backupd-web`.
 FIRST_RELEASE_WITH_RBM = "0.3.3"
 EXIT_RELEASE_DIGEST_MISMATCH = 52
 
@@ -205,9 +227,42 @@ SUPPORTED_ARCH = {
 
 # Fixed in-container paths. These mirror container/compose.yaml's own
 # volume shape and are never host paths.
-CONTAINER_CONFIG_DIR = "/etc/backupd/config"
+#
+# CONTAINER_ETC_DIR is the one directory of the four that carries the
+# product's name, which is why #890 moves it and leaves /data/state and
+# /data/backups exactly where they are: there is no brand in them, so
+# moving them would be churn that costs an operator a mount.
+#
+# LEGACY_CONTAINER_ETC_DIR is the pre-rename spelling. It is not a path
+# this installer mounts anything at any more; it is the path an
+# already-installed deployment's config.yaml still names and the path a
+# rolled-back image still looks in, so the rollback-window override
+# (render_rollback_override) and the config rewriter
+# (rewrite_container_paths) both have to be able to name it. #895 deletes
+# both of them together with the override.
+CONTAINER_ETC_DIR = "/etc/retnd"
+LEGACY_CONTAINER_ETC_DIR = "/etc/backupd"
+CONTAINER_CONFIG_DIR = CONTAINER_ETC_DIR + "/config"
+LEGACY_CONTAINER_CONFIG_DIR = LEGACY_CONTAINER_ETC_DIR + "/config"
 CONTAINER_STATE_DIR = "/data/state"
 CONTAINER_BACKUP_DIR = "/data/backups"
+
+# The engine binary inside the image, by the absolute path the compose
+# definition and the CLI wrapper both name it at (#890). The image's
+# entrypoints are /retnd and /retnd-web from this release on; /backupd-web
+# survives one release as a hardlink to /retnd-web so an unedited pinned
+# compose file still starts, and there is deliberately no /backupd at all,
+# so a wrapper or a `command:` still naming it execs nothing.
+ENGINE_BINARY = "/retnd"
+
+# What the CLI wrapper under <prefix>/bin is called, and what an install
+# made before #890 called it. The legacy name is never created any more,
+# and it is rewritten rather than orphaned where it already exists: it
+# execs ENGINE_BINARY like the new one, so `backupd status` keeps working
+# for one release on a host that has been upgraded. #895 stops rewriting
+# it and removes it.
+CLI_WRAPPER_NAME = "retnd"
+LEGACY_CLI_WRAPPER_NAME = "backupd"
 
 # Minimum free space on the filesystem holding the backup directory. Not
 # a guess about how big a backup is: it is the floor below which a first
@@ -215,7 +270,7 @@ CONTAINER_BACKUP_DIR = "/data/backups"
 # failure this exists to turn into a refusal.
 MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
 
-DEFAULT_PROJECT = "backupd"
+DEFAULT_PROJECT = "retnd"
 DEFAULT_LISTEN_PORT = 8080
 
 # The SFTP source's SSH port, and the environment variable it is read from
@@ -504,11 +559,18 @@ class Preflight:
         wait on a registry timeout to find out; and the release identity
         before the pull, so an operator sees which reference is about to
         arrive before a multi-gigabyte download rather than after it.
+
+        The unit-rename check sits with the tool checks rather than with
+        the ones about this run's own inputs, because that is what it is:
+        a question about the state of THIS HOST's service manager, like
+        check_docker. A host half way through #890's rename cannot be
+        installed onto whatever the rest of the flags say.
         """
         self.check_python()
         self.check_arch()
         self.check_docker()
         self.check_compose()
+        self.check_unit_rename_is_not_half_done()
         self.check_payload()
         self.check_paths()
         self.check_credentials()
@@ -1308,6 +1370,69 @@ class Preflight:
             )
         self.note(f"uid {uid} can reach the Docker daemon, so local hooks can run in containers")
 
+    # -- the rename in flight (#890) -----------------------------------
+
+    @staticmethod
+    def unit_is_enabled(systemctl: str, unit: str) -> bool:
+        """Whether systemd will start `unit` at boot.
+
+        `is-enabled` and not `is-active`, and the difference is the whole
+        check: a half-migrated host is one where two units will BOTH come
+        back after a reboot, which is a claim about the enablement
+        symlinks rather than about what happens to be running right now.
+        A oneshot that has already fired is `inactive` and still enabled.
+
+        Anything other than enabled/enabled-runtime is a no, including
+        the `not-found` a renamed-away unit answers with, so a host that
+        finished the migration reads as cleanly as one that never had the
+        old unit.
+        """
+        got = run([systemctl, "is-enabled", unit], check=False, timeout=30)
+        return got.stdout.strip() in ("enabled", "enabled-runtime")
+
+    def check_unit_rename_is_not_half_done(self) -> None:
+        """Refuse a host where both spellings of a renamed unit are
+        enabled (FR-39).
+
+        #890 renames three units, and the rename is one step precisely so
+        that this state is never reached deliberately. It is reachable by
+        accident in one way that matters: an operator who copied the new
+        unit file onto the host by hand, or who ran the migration and then
+        re-enabled the old unit from a saved command line, ends up with
+        two units armed for the same job. Tolerating it is worse than
+        refusing, because both fire: two oneshots re-assert the same four
+        firewall rules against each other, and two runners answer for the
+        same socket, so which one an operator is debugging depends on
+        which systemd started last.
+
+        A host with no systemctl has no units to be half-renamed, which is
+        a real state on this product's platforms (DSM, a container host
+        with a different supervisor) rather than an unknown: the installer
+        stages the unit file and prints the commands there, so there is
+        nothing enabled either way.
+        """
+        systemctl = find_tool("systemctl")
+        if systemctl is None:
+            self.note("no systemctl on this host, so no unit can be half-renamed")
+            return
+        both = [(old, new) for old, new in renamed_units()
+                if self.unit_is_enabled(systemctl, old) and self.unit_is_enabled(systemctl, new)]
+        if not both:
+            self.note("no unit is enabled under both its pre-rename and its current name")
+            return
+        pairs = "\n".join(f"  {old}  and  {new}" for old, new in both)
+        disable = "\n".join(f"  sudo systemctl disable --now {old}" for old, _new in both)
+        raise Refusal(
+            EXIT_HALF_MIGRATED_UNITS,
+            "this host is half way through the unit rename: both names of the same unit are "
+            f"enabled, and both will start at boot:\n{pairs}",
+            "Two units doing one job is a deployment whose behaviour depends on which one "
+            "systemd started last, so this refuses rather than install over it. Either finish "
+            "the rename with `install_docker_host.py migrate-identity`, which stops, disables, "
+            "renames and re-enables in one step, or disable the pre-rename unit yourself:\n"
+            f"{disable}",
+        )
+
 
 # ---------------------------------------------------------------------
 # The install itself
@@ -1348,7 +1473,7 @@ def render_env(args) -> str:
         "",
         "# The runner's installation-scoped CREDENTIAL, bound into the engine",
         "# read-only as a single file at the fixed container path",
-        "# /etc/backupd/workflow-runner.token. It is a path, not a secret:",
+        f"# {CONTAINER_RUNNER_TOKEN}. It is a path, not a secret:",
         "# the token itself stays in <prefix>/secrets, 0600, and only this one",
         "# file of that directory is ever mounted. The engine reads it from the",
         "# path workflows.runner.token_file names AS THE ENGINE SEES IT, so that",
@@ -1396,7 +1521,7 @@ def render_env(args) -> str:
 
 
 def render_cli_wrapper(args) -> str:
-    """The `backupd` an operator types after a CLI-only install.
+    """The `retnd` an operator types after a CLI-only install.
 
     `run --rm`, not `exec`, and that is the design rather than a fallback.
     A CLI-only install starts nothing until a config.yaml exists, so the
@@ -1409,48 +1534,57 @@ def render_cli_wrapper(args) -> str:
 
     --no-deps because a read should never start the engine as a side
     effect: without it `compose run` brings up whatever the service
-    depends on, and `backupd status` would silently become `backupd status` plus a
-    deployment somebody did not ask to start.
+    depends on, and `retnd status` would silently become `retnd status`
+    plus a deployment somebody did not ask to start.
 
     The guard on an empty invocation is the awkward part, and it is not
     defensive padding. `docker compose run` cannot express "no command":
     given none it runs what the compose file says the service runs, which
-    on a CLI-only deployment is `/backupd daemon`. So a bare `backupd` would have
-    become `/backupd /backupd daemon`, and the operator would have read `unknown
-    command "/backupd"` naming something they did not type. backupd answers a bare
-    invocation with its own usage and exit 2, and there is no argv that
-    reproduces that through compose, so the wrapper says it itself and
-    exits the same 2 rather than letting the fall-through happen.
+    on a CLI-only deployment is `/retnd daemon`. So a bare `retnd` would
+    have become `/retnd /retnd daemon`, and the operator would have read
+    `unknown command "/retnd"` naming something they did not type. The
+    engine answers a bare invocation with its own usage and exit 2, and
+    there is no argv that reproduces that through compose, so the wrapper
+    says it itself and exits the same 2 rather than letting the
+    fall-through happen.
+
+    The wrapper the installer WRITES is CLI_WRAPPER_NAME; stage_payload
+    rewrites a pre-rename `backupd` wrapper with this same text where one
+    already exists, so the old name keeps working for one release rather
+    than being left execing an entrypoint the image no longer has (#895
+    removes it).
 
     Rewritten on every run of the installer, like everything else it
     stages, which is why it says so at the top rather than inviting edits.
     """
     quoted = " ".join(shlex.quote(part) for part in compose_argv(args))
+    name = CLI_WRAPPER_NAME
     return (
         "#!/bin/sh\n"
         "# Generated by scripts/install/install_docker_host.py --cli-only.\n"
         "# Rewritten on every run of the installer, so keep your own edits elsewhere.\n"
         "#\n"
-        "# Every backupd subcommand: `backupd status`, `backupd sources`, `backupd run`,\n"
-        "# `backupd backup-set create ...`.\n"
+        f"# Every {name} subcommand: `{name} status`, `{name} sources`, `{name} run`,\n"
+        f"# `{name} backup-set create ...`.\n"
         "set -e\n"
         "\n"
         "# docker compose run cannot express \"no command\": given none it runs\n"
         "# what the compose file says this service runs, which here is\n"
-        "# `/backupd daemon`. A bare `backupd` would become `/backupd /backupd daemon` and\n"
-        "# report an unknown command nobody typed, so it stops here instead,\n"
-        "# with the same exit code backupd itself uses for a missing command.\n"
+        f"# `{ENGINE_BINARY} daemon`. A bare `{name}` would become\n"
+        f"# `{ENGINE_BINARY} {ENGINE_BINARY} daemon` and report an unknown command\n"
+        f"# nobody typed, so it stops here instead, with the same exit code the\n"
+        "# engine itself uses for a missing command.\n"
         "if [ \"$#\" -eq 0 ]; then\n"
-        "  echo \"usage: backupd <command> [flags]\" >&2\n"
+        f"  echo \"usage: {name} <command> [flags]\" >&2\n"
         "  echo \"\" >&2\n"
-        "  echo \"This runs backupd inside the engine's own container and needs a\" >&2\n"
-        "  echo \"command to run. 'backupd status' is a safe first one; every command\" >&2\n"
+        f"  echo \"This runs {name} inside the engine's own container and needs a\" >&2\n"
+        f"  echo \"command to run. '{name} status' is a safe first one; every command\" >&2\n"
         "  echo \"is listed at https://backupdproject.github.io/backupd/reference.html\" >&2\n"
         "  exit 2\n"
         "fi\n"
         "\n"
         "exec " + quoted + " \\\n"
-        "  run --rm --no-deps --entrypoint /backupd " + ENGINE_SERVICE + " \"$@\"\n"
+        f"  run --rm --no-deps --entrypoint {ENGINE_BINARY} " + ENGINE_SERVICE + " \"$@\"\n"
     )
 
 
@@ -1475,8 +1609,8 @@ def render_image_override(args) -> str:
             "# nothing here publishes a port and nothing here serves HTTP.\n"
             "#\n"
             "# The two keys past image and pull_policy are the whole of what CLI-only\n"
-            "# means. `command:` runs /backupd daemon rather than /backupd-web serve, so the\n"
-            "# backupd-web binary is not executed anywhere in this deployment. Disabling\n"
+            "# means. `command:` runs /retnd daemon rather than /retnd-web serve, so the\n"
+            "# web host binary is not executed anywhere in this deployment. Disabling\n"
             "# the health check follows from that and is not a relaxation: the\n"
             "# canonical check is an HTTP liveness probe against 127.0.0.1:8080, and a\n"
             "# process with no listener would fail it forever. What replaces it is the\n"
@@ -1484,10 +1618,10 @@ def render_image_override(args) -> str:
             "# it started rather than restarting, which is the only claim there is to\n"
             "# make about a process that serves nothing.\n"
             "services:\n"
-            f"  backupd:\n"
+            f"  {ENGINE_SERVICE}:\n"
             f"    image: {args.image}\n"
             "    pull_policy: never\n"
-            '    command: ["/backupd", "daemon"]\n'
+            f'    command: ["{ENGINE_BINARY}", "daemon"]\n'
             "    healthcheck:\n"
             "      disable: true\n"
         )
@@ -1512,8 +1646,78 @@ def render_image_override(args) -> str:
         "# quietly pulling a different copy of a tag is how a host ends up\n"
         "# running something other than what was installed.\n"
         "services:\n"
-        f"  backupd:\n    image: {args.image}\n    pull_policy: never\n"
+        f"  {ENGINE_SERVICE}:\n    image: {args.image}\n    pull_policy: never\n"
         f"  web-ui:\n    image: {args.image}\n    pull_policy: never\n"
+    )
+
+
+# The rollback-window override's filename, layered by compose_argv as a
+# third -f (#890, FR-38). Its own file rather than three more lines in
+# compose.image.yaml because it has its own lifetime: the image override
+# is permanent and this one is deleted by #895, and a whole file is
+# easier to remove correctly than a hunk inside a file that stays.
+ROLLBACK_OVERRIDE_NAME = "compose.rollback.yaml"
+
+
+def render_rollback_override(args) -> str:
+    """One release of overlap between /etc/retnd and /etc/backupd (FR-38).
+
+    #890 moves the engine's configuration mount from
+    /etc/backupd/config to /etc/retnd/config. The HOST directory does not
+    move -- CONFIG_DIR in .env names the same directory before and after
+    -- so this mounts that one host directory at BOTH container paths for
+    one release.
+
+    What it buys is a downgrade that works. An operator who rolls the
+    image back to the previous build gets a binary whose compiled default
+    config path is /etc/backupd/config/config.yaml, and with only the new
+    mount present that path does not exist in the container at all: the
+    engine would serve a first-run setup flow over a perfectly good
+    configuration and ask somebody to create an administrator who already
+    exists. With both mounted, the old build and the new one read the same
+    file.
+
+    It is also the reason the engine's state-adoption preflight must NOT
+    refuse here (FR-38). That preflight computes the legacy counterpart of
+    every path it resolves and refuses when both exist and disagree, which
+    is the ambiguity it exists to catch. These two do not disagree: they
+    are one directory reached by two names, so a stat of each returns the
+    same st_dev and st_ino, and same-device-and-inode is precisely the
+    case that preflight has to read as "already adopted" rather than as
+    two rival states.
+
+    The host path is written out literally rather than as ${CONFIG_DIR},
+    which the canonical file uses: this file is rewritten from the same
+    args that write .env on the same run, so the two cannot drift, and a
+    literal keeps the one property this file exists to state -- that both
+    container paths are the same host directory -- readable on the host
+    without resolving a variable.
+
+    Through the override layering compose_argv already does, never by
+    editing the staged copy of the canonical file: that copy is held byte
+    for byte to container/compose.yaml, and a deployment whose
+    compose.yaml differs from the runtime contract is one no gate has ever
+    checked. #895 stops writing this file and removes it.
+    """
+    config_dir = args.host_dirs["--config-dir"]
+    return (
+        "# Generated by scripts/install/install_docker_host.py.\n"
+        "# Overlaid on the canonical container/compose.yaml, never in place of it.\n"
+        "#\n"
+        "# The rollback window for the configuration mount (issue #890).\n"
+        "# ONE host directory, mounted at both container paths, so a downgrade to\n"
+        "# the previous build still finds the configuration at the path that build\n"
+        "# was compiled to look in. Both targets are the same directory, so they\n"
+        "# report the same device and inode and the engine's state-adoption\n"
+        "# preflight reads them as one state rather than as two rival ones.\n"
+        "#\n"
+        "# Deleted one release from now (issue #895), together with the legacy\n"
+        "# container path itself.\n"
+        "services:\n"
+        f"  {ENGINE_SERVICE}:\n"
+        "    volumes:\n"
+        f"      - {config_dir}:{CONTAINER_CONFIG_DIR}\n"
+        f"      - {config_dir}:{LEGACY_CONTAINER_CONFIG_DIR}\n"
     )
 
 
@@ -1522,19 +1726,28 @@ def compose_argv(args):
 
     Built in a single place because the arguments are not a convenience:
     the project name decides which containers Compose considers ours,
-    and the two -f files are the canonical definition plus the image
-    override, in that order, which is what pins the deployment to a
-    reference instead of a build. A caller that assembled its own would
-    sooner or later leave one of them out and operate on a different
-    stack than the one it reported on.
+    and the -f files are the canonical definition, then the image
+    override, then the rollback-window override, in that order, which is
+    what pins the deployment to a reference instead of a build. A caller
+    that assembled its own would sooner or later leave one of them out
+    and operate on a different stack than the one it reported on.
     """
-    return [
+    argv = [
         "docker", "compose",
         "-p", args.project,
         "--env-file", str(args.prefix / ".env"),
         "-f", str(args.prefix / "compose.yaml"),
         "-f", str(args.prefix / "compose.image.yaml"),
     ]
+    # Last, so it is the final word on the mounts, and only when it is
+    # really there: a deployment staged before #890 has no such file, and
+    # naming a -f that does not exist makes every `docker compose` call in
+    # this installer fail outright rather than ignoring it. #895 removes
+    # the file, and this with it.
+    rollback = args.prefix / ROLLBACK_OVERRIDE_NAME
+    if rollback.is_file():
+        argv += ["-f", str(rollback)]
+    return argv
 
 
 # The three things `install` can be asked to do. One flag with three
@@ -1855,7 +2068,12 @@ def describe_what_is_here(container_count: int, running_count: int,
 # version question is about THAT container: web-ui runs the same image
 # today and is not required to forever, and an orphan or a stopped
 # leftover from an older layout is neither.
-ENGINE_SERVICE = "backupd"
+#
+# Renamed with the deployment identity (#890), so the default container
+# names are retnd-retnd-1 and retnd-web-ui-1: the compose project is
+# DEFAULT_PROJECT and this is the service inside it. web-ui keeps its
+# name, which never carried the product's.
+ENGINE_SERVICE = "retnd"
 
 
 def _image_from_override(prefix: Path) -> str:
@@ -2565,7 +2783,7 @@ def other_running_containers(project: str):
 # healthchecks and the engine-to-UI topology the security posture depends
 # on, so the same silent drift here would be worse than a stale tag.
 EMBEDDED_COMPOSE_YAML = """\
-# Generic Docker deployment shape for backupd (A3.9, extended by
+# Generic Docker deployment shape for retnd (A3.9, extended by
 # issue #82/B4.1). See docs/deployment.md for the reasoning behind every
 # one of these settings and how to build and run it.
 #
@@ -2579,42 +2797,76 @@ EMBEDDED_COMPOSE_YAML = """\
 # credential material (the SSH private key) lives only at the host path
 # SSH_KEY_FILE points to, mounted read-only into the container.
 #
-# THE COMMANDS BELOW ARE `/backupd-web`, AND THEY NEED 0.3.3 OR NEWER
+# THE COMMANDS BELOW ARE `/retnd-web`, AND THEY NEED AN IMAGE BUILT AT
+# R1.5 (#890) OR NEWER
 #
-# 0.3.3 renamed the binaries an operator runs: `backupd` for the engine CLI and
-# `backupd-web` for the web host. This file names them, because it is the
-# definition every adapter derives from and it should say what the product
-# is called.
+# 0.3.3 renamed the binaries an operator runs: `backupd` for the engine CLI
+# and `backupd-web` for the web host. That is history, and it stays true of
+# every image published from 0.3.3 up to this change.
 #
-# That makes this file forward-only, which is worth stating plainly. `/backupd`
-# and `/backupd-web` exist in images built from 0.3.3 onwards and in no image
-# published before it, and 0.3.0, 0.3.1 and 0.3.2 are all still on the
-# registry. So pointing `IMAGE` at one of those while using this file gives
-# you two containers that die with "exec /backupd-web: no such file or
-# directory". Use the compose file that shipped with the version you are
-# installing.
+# R1.5 (#890) moves the half 0.3.3 deliberately left alone: the
+# deployment's own identity.
+#
+#   * the entrypoints in the image are `/retnd` (the engine CLI) and
+#     `/retnd-web` (the web host);
+#   * the engine service below is `retnd`, where it was `backupd`.
+#     `web-ui` is unchanged, because it never named the product;
+#   * the compose project is named explicitly (`name: retnd` below), so
+#     the default container names are `retnd-retnd-1` and
+#     `retnd-web-ui-1`;
+#   * the container config directory is /etc/retnd, where it was
+#     /etc/backupd. The two DATA mounts, /data/state and /data/backups,
+#     carry no brand and do not move, so nothing an operator stores
+#     changes place inside the container.
+#
+# What is on the LEFT of every `:` below is a HOST path, chosen by the
+# operator in .env, and #890 does not touch an existing one. Nothing reads
+# the product's name out of a host path. container/.env.example's own
+# example values did move to /volume1/retnd/..., because that file is what
+# a FRESH install copies; an existing deployment keeps its directories
+# exactly where they are.
+#
+# That makes this file forward-only, which is worth stating plainly. An
+# image older than #890 has no `/retnd-web` in it at all, so pointing
+# `image:` at one while using this file gives you two containers that die
+# with "exec /retnd-web: no such file or directory". Use the compose file
+# that shipped with the version you are installing.
 #
 # scripts/install/install_docker_host.py embeds a copy of this file and
-# refuses `--release` below 0.3.3 for exactly that reason, so the one path
-# that could have produced the broken combination on its own no longer can.
+# refuses a `--release` older than the images these paths exist in, for
+# exactly that reason, so the one path that could have produced the broken
+# combination on its own no longer can.
 #
-# What did NOT change is everything that names the project rather than
-# the command: `image: backupd:...`, the `backupd` and
-# `web-ui` service names, and the container config directory at
-# /etc/backupd. Renaming any of those would move an operator's
-# data or break their tooling for no gain.
+# THE OTHER DIRECTION IS BRIDGED, ONCE. An operator who pinned the PREVIOUS
+# compose file still has `command: ["/backupd-web", ...]` in their copy,
+# and "your stack no longer starts" is not an acceptable upgrade. So the
+# image also carries `/backupd-web` as a REAL HARDLINK to `/retnd-web`: one
+# inode, two names, no second copy of a ~40 MB binary and no shell wrapper
+# (the runtime image is distroless and has no shell). It is kept for
+# exactly one release and removed by #895. There is deliberately no
+# `/backupd` beside it: no compose file this project has ever shipped named
+# `/backupd` in a `command:` or a `healthcheck:`, so there is no pinned
+# file that would need one.
+#
+# What this change does NOT move is the IMAGE REFERENCE. `image:` below
+# stays `backupd:${VERSION:-dev}`, and the published one stays
+# ghcr.io/backupdproject/backupd. A registry path is not covered by
+# GitHub's repository-transfer redirects, so moving it means publishing
+# under both names for an overlap release; that is #895's job, with its own
+# mirror window, and doing it here would strand every existing
+# `docker pull`.
 #
 # TWO SERVICES, ONE IMAGE (project-owner requirement, folded in before
-# this issue merged): `backupd` is the engine - core service,
+# this issue merged): `retnd` is the engine - core service,
 # scheduler, local authentication, and the versioned /api/v1 API, all in
 # one process sharing one shutdown context (§9.3) - and has NO published
 # port at all; it is reachable only from `web-ui`, over the `internal`
 # network below. `web-ui` serves the shared static UI and reverse-proxies
-# API requests to `backupd`, and is the ONLY service with a
+# API requests to `retnd`, and is the ONLY service with a
 # LAN-facing published port. Both run the exact same
-# `/backupd-web` binary from the exact same image - only `command:`
+# `/retnd-web` binary from the exact same image - only `command:`
 # differs - matching the "one canonical image, vary command" principle
-# already applied to `/backupd` vs. `/backupd-web`
+# already applied to `/retnd` vs. `/retnd-web`
 # themselves; no nginx or other new runtime dependency was introduced for
 # this (see apps/common/webhost/serve's own doc comment for the plain
 # net/http/httputil.ReverseProxy this uses instead).
@@ -2622,7 +2874,7 @@ EMBEDDED_COMPOSE_YAML = """\
 # Network isolation is plain compose topology, nothing more: `internal`
 # below is a private bridge network scoped to just this project (compose
 # creates one per project by default; this just names it explicitly for
-# clarity), so `backupd` is reachable by `web-ui` (same network)
+# clarity), so `retnd` is reachable by `web-ui` (same network)
 # and by nothing else on the NAS - no other container, and nothing on the
 # host's own LAN interfaces, since it publishes no port and joins no
 # other network. This does NOT block `web-ui`'s own outbound internet
@@ -2642,6 +2894,18 @@ EMBEDDED_COMPOSE_YAML = """\
 # distribution/compose's own suite by name, with the reason the contract
 # gives for requiring it.
 # ---------------------------------------------------------------------
+# The compose project name, stated rather than inherited (issue #890).
+# Compose defaults the project name to the NAME OF THE DIRECTORY this file
+# sits in, and the project name is the prefix of every default container
+# name. With this line the containers are `retnd-retnd-1` and
+# `retnd-web-ui-1`; without it they are whatever the operator happened to
+# call the folder they cloned into. Those two names are a documented part
+# of this deployment's identity - the installer names them, the deployment
+# documentation names them, and an operator reads them back out of
+# `docker ps` - so leaving them to an accident of the filesystem would be
+# leaving the product's own name to it.
+name: retnd
+
 x-canonical-runtime:
   # The contract version this definition was written against, so a
   # contract change is a visible edit here rather than a silent
@@ -2713,7 +2977,7 @@ x-security: &security
     - no-new-privileges:true
 
 services:
-  backupd:
+  retnd:
     build:
       context: ..
       dockerfile: container/Dockerfile
@@ -2728,15 +2992,15 @@ services:
         COMMIT: ${COMMIT:-none}
     image: backupd:${VERSION:-dev}
 
-    # `/backupd-web serve` (issue #82/B4.1, docs/EPIC-B-multi-nas.md
+    # `/retnd-web serve` (issue #82/B4.1, docs/EPIC-B-multi-nas.md
     # §9.2's "Generic Web App host") is the engine: local authentication,
     # the versioned /api/v1 API, and the backup scheduler, all in one
     # process sharing one shutdown context (§9.3). No static UI - that is
     # web-ui's job, over the `internal` network below, never a published
-    # port here. `/backupd` (no "-web") is still in this same image
+    # port here. `/retnd` (no "-web") is still in this same image
     # for headless-only use with no web listener at all: override
-    # `command` with `["/backupd", "daemon"]` for that, or `docker
-    # compose run --rm backupd /backupd version` / `... check`
+    # `command` with `["/retnd", "daemon"]` for that, or `docker
+    # compose run --rm retnd /retnd version` / `... check`
     # for a one-shot check; see the `restart` note below, which assumes
     # the default `serve` command specifically.
     # `command` carries the runtime profile, which is one contract field
@@ -2745,7 +3009,7 @@ services:
     # the profile with no host integration at all, so defaulting to it can
     # only ever under-claim; RUNTIME_PROFILE in .env selects another one
     # out of x-canonical-runtime.profiles above.
-    command: ["/backupd-web", "serve", "--profile=${RUNTIME_PROFILE:-generic}"]
+    command: ["/retnd-web", "serve", "--profile=${RUNTIME_PROFILE:-generic}"]
 
     <<: *security
 
@@ -2814,9 +3078,10 @@ services:
       #
       # RETND_DEBUG=1 is the same switch as LOG_LEVEL=debug, kept as
       # the shortcut an operator can be told over a phone call; it wins
-      # if both are set. RM_DEBUG=1 is that shortcut's deprecated old
-      # name (issue #794): still honoured, for one release, so an
-      # upgrade does not turn a diagnosing operator's logs back off.
+      # if both are set. BACKUPD_DEBUG=1 (before EPIC R, #885) and
+      # RM_DEBUG=1 (before #794) are its deprecated older names: both
+      # still read, for one release, so an upgrade does not turn a
+      # diagnosing operator's logs back off.
       # An unparseable value falls back to `info` rather than refusing
       # to start, because a typo in a diagnostic knob must never take a
       # backup host down. See docs/deployment.md's "Turning on
@@ -2832,18 +3097,18 @@ services:
       # process-level default match the host rather than the image.
       TZ: ${TZ:-UTC}
 
-      # `/backupd-web serve`'s own `--listen` flag defaults to this
+      # `/retnd-web serve`'s own `--listen` flag defaults to this
       # variable when set (falling back to :8080 otherwise), so it binds
       # this address inside the container without it needing to be an
       # explicit command-line argument above. Never published to the
       # host (see the top-of-file note): only reachable from `web-ui`,
       # over the `internal` network, at this same port via the service
-      # name `backupd` (Docker's own embedded DNS).
+      # name `retnd` (Docker's own embedded DNS).
       LISTEN_ADDR: ":8080"
 
       # This container has no published port at all (see the top-of-file
       # note), so its OWN --listen address is never something an operator
-      # can actually open - `/backupd-web serve` used to print the
+      # can actually open - `/retnd-web serve` used to print the
       # one-time enrollment link against that internal address anyway,
       # which was always wrong once this two-container split shipped
       # (issue #119's review). PUBLIC_BASE_URL is what `web-ui`'s own
@@ -2857,7 +3122,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:${LISTEN_PORT:-8080}}
 
       # Config.TrustForwardedHeaders (apps/common/auth/local): safe here
-      # SPECIFICALLY because `backupd` joins only the `internal`
+      # SPECIFICALLY because `retnd` joins only the `internal`
       # network below, which only `web-ui` also joins - nothing else can
       # ever be this container's direct peer, so trusting the
       # X-Forwarded-For/X-Forwarded-Proto headers `web-ui`'s own reverse
@@ -2901,7 +3166,7 @@ services:
 
     volumes:
       # Persistent SQLite lifecycle journal (FR-9). A directory, per the
-      # WAL note above, not a single file. `/backupd-web serve` also
+      # WAL note above, not a single file. `/retnd-web serve` also
       # keeps its local-authentication administrator record
       # (apps/common/auth/local) at /data/state/local-auth.json — the
       # Argon2id password hash only, never a plaintext password — so
@@ -2927,14 +3192,14 @@ services:
       # bind mount cannot say "not configured yet" about a file: Docker
       # creates a directory at a source path that does not exist, so the
       # state a fresh install actually starts in was not representable.
-      - ${CONFIG_DIR:?set CONFIG_DIR in .env to the directory holding config.yaml}:/etc/backupd/config
+      - ${CONFIG_DIR:?set CONFIG_DIR in .env to the directory holding config.yaml}:/etc/retnd/config
 
       # Credentials stay read-only single files. Nothing in this
       # container writes them, and the shapes are two different claims.
       # Nothing here is baked into the image or into this file — only
       # host paths, resolved at `docker compose up` time.
-      - ${SSH_KEY_FILE:?set SSH_KEY_FILE in .env to the SFTP private key}:/etc/backupd/id_ed25519:ro
-      - ${KNOWN_HOSTS_FILE:?set KNOWN_HOSTS_FILE in .env to the pinned known_hosts file}:/etc/backupd/known_hosts:ro
+      - ${SSH_KEY_FILE:?set SSH_KEY_FILE in .env to the SFTP private key}:/etc/retnd/id_ed25519:ro
+      - ${KNOWN_HOSTS_FILE:?set KNOWN_HOSTS_FILE in .env to the pinned known_hosts file}:/etc/retnd/known_hosts:ro
 
       # EPIC L (#808, #809): the hook scripts, the door to the host
       # runner, and the credential that door requires. Three mounts, and
@@ -2980,7 +3245,7 @@ services:
       #   workflows:
       #     runner:
       #       socket: /data/run/workflow-runner.sock
-      #       token_file: /etc/backupd/workflow-runner.token
+      #       token_file: /etc/retnd/workflow-runner.token
       #
       # A single FILE and read-only, exactly like the SSH key and
       # known_hosts above and for the same two reasons: nothing in this
@@ -2996,23 +3261,23 @@ services:
       # installer creates them.
       - ${WORKFLOWS_DIR:-./workflows}:/workflows:ro
       - ${RUNTIME_DIR:-./run}:/data/run
-      - ${RUNNER_TOKEN_FILE:-./secrets/workflow-runner.token}:/etc/backupd/workflow-runner.token:ro
+      - ${RUNNER_TOKEN_FILE:-./secrets/workflow-runner.token}:/etc/retnd/workflow-runner.token:ro
 
     # `unless-stopped`: restart across crashes and NAS reboots, but stay
     # down if an operator deliberately stops it — the right policy now that
-    # `command` above (`/backupd-web serve`) is a real long-running
+    # `command` above (`/retnd-web serve`) is a real long-running
     # process rather than the immediately-exiting `version` this file used
     # to default to. For a one-shot check, use `docker compose run --rm
-    # backupd /backupd version` (or `... check`) instead of
+    # retnd /retnd version` (or `... check`) instead of
     # `up -d`, which bypasses `restart` entirely.
     restart: unless-stopped
 
-    # Liveness, deliberately, and NOT `backupd status`.
+    # Liveness, deliberately, and NOT `retnd status`.
     #
     # This is the check web-ui waits on: it declares `depends_on:
-    # backupd: condition: service_healthy` below, so whatever this
+    # retnd: condition: service_healthy` below, so whatever this
     # asks is what stands between an operator and the only LAN-facing
-    # listener in the deployment. `backupd status` answers backup
+    # listener in the deployment. `retnd status` answers backup
     # freshness (HEALTHY/DEGRADED/STALE/FAILING) and exits non-zero on a
     # DEGRADED, STALE or FAILING set, and also when it cannot open the
     # service at all - so gating on it means a stale backup set, or an
@@ -3029,10 +3294,10 @@ services:
     #
     # Backup freshness is not lost, it moves back to being the thing it
     # was built as: the image's own HEALTHCHECK instruction still runs
-    # `backupd status` (container/Dockerfile, so a plain `docker
+    # `retnd status` (container/Dockerfile, so a plain `docker
     # run` still reports backup health), the alerts block delivers it
     # proactively, and an operator reads it directly with
-    # `docker compose exec backupd /backupd status`.
+    # `docker compose exec retnd /retnd status`.
     #
     # Declared here rather than inherited from the image (issue #167):
     # the runtime contract requires an operator to be able to read what
@@ -3049,7 +3314,7 @@ services:
     # freshness verdict, so inheriting it here would be inheriting the
     # wrong question.
     healthcheck:
-      test: ["CMD", "/backupd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]
+      test: ["CMD", "/retnd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]
       interval: 30s
       timeout: 5s
       start_period: 5s
@@ -3072,8 +3337,8 @@ services:
       - internal
 
   web-ui:
-    # SAME image as backupd, no separate `build:` block: this
-    # service reuses whatever `backupd`'s own build already
+    # SAME image as retnd, no separate `build:` block: this
+    # service reuses whatever `retnd`'s own build already
     # produced and tagged (docker compose resolves `image:` against
     # whatever is already built/pulled under that tag). Same digest, same
     # binary, different command - never a second image to keep in sync.
@@ -3081,28 +3346,28 @@ services:
 
     # Wait for the engine to report healthy before starting: a NAS reboot
     # (or `docker compose up`) starting both containers at once would
-    # otherwise let web-ui begin proxying before backupd is even
+    # otherwise let web-ui begin proxying before retnd is even
     # listening, surfacing as a confusing "bad gateway" instead of a
     # simple "please wait." What "healthy" means here is the engine's
     # liveness probe and nothing else - see its healthcheck above for why
     # backup freshness must never be the condition this waits on.
     depends_on:
-      backupd:
+      retnd:
         condition: service_healthy
 
-    # `/backupd-web serve-ui`: the shared static UI plus a reverse
+    # `/retnd-web serve-ui`: the shared static UI plus a reverse
     # proxy to the engine (apps/common/webhost/serve's own doc comment has the
     # full routing shape). --upstream defaults to
-    # http://backupd:8080 (the engine's own compose service name,
+    # http://retnd:8080 (the engine's own compose service name,
     # resolved through Docker's embedded DNS on the `internal` network
     # below), set explicitly here via UPSTREAM_ADDR anyway so the
     # dependency is visible in this file, not just in the binary's own
     # default.
-    command: ["/backupd-web", "serve-ui", "--profile=${RUNTIME_PROFILE:-generic}"]
+    command: ["/retnd-web", "serve-ui", "--profile=${RUNTIME_PROFILE:-generic}"]
 
     <<: *security
 
-    # Same non-root reasoning as backupd above, even though this
+    # Same non-root reasoning as retnd above, even though this
     # service has no host directory of its own to write into: consistent
     # hardening costs nothing, and this process may as well run with the
     # same reduced privilege.
@@ -3121,13 +3386,14 @@ services:
       # and how much of it actually got copied to the browser - which is
       # only half of each story without the engine's own line for the
       # same request. RETND_DEBUG=1 is the shortcut, and wins over
-      # this; RM_DEBUG=1 is its deprecated old name (issue #794).
+      # this; BACKUPD_DEBUG=1 and RM_DEBUG=1 are its deprecated older
+      # names (EPIC R #885, and #794).
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Published to the host (see `ports:` below); LISTEN_ADDR is this
       # container's own internal bind address, always :8080 regardless of
       # what host port LISTEN_PORT maps it to.
       LISTEN_ADDR: ":8080"
-      UPSTREAM_ADDR: "http://backupd:8080"
+      UPSTREAM_ADDR: "http://retnd:8080"
 
       # THE trust boundary for a gateway runtime profile (issue #87).
       # This is the only container with a published port, so this is the
@@ -3148,7 +3414,7 @@ services:
       #    is the only thing that can reach this port at all, or put the
       #    gateway and this container on a network nothing else joins.
       #  - The range names the GATEWAY, never the internal network. A
-      #    range containing `backupd` or this container itself is
+      #    range containing `retnd` or this container itself is
       #    the vulnerability restated as configuration. That is why the
       #    engine reads TRUSTED_UPSTREAM_CIDRS above and not this
       #    variable: the two hops trust different peers, and a single
@@ -3179,14 +3445,14 @@ services:
 
     restart: unless-stopped
 
-    # Overrides the image's own HEALTHCHECK (`/backupd status`,
+    # Overrides the image's own HEALTHCHECK (`/retnd status`,
     # which needs a config file and a state database neither of which
-    # this container has): `/backupd-web healthcheck` just GETs
+    # this container has): `/retnd-web healthcheck` just GETs
     # its own listener and checks for a non-error response - "is this
     # web server up," the only question that applies to a container with
     # no backup state of its own to report on.
     healthcheck:
-      test: ["CMD", "/backupd-web", "healthcheck"]
+      test: ["CMD", "/retnd-web", "healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 5s
@@ -3210,7 +3476,7 @@ services:
 """
 
 # Written by scripts/install/embed_compose.py alongside the blob above.
-EMBEDDED_COMPOSE_SHA256 = "b79bf2a920f2c44b922f5174b3a45808c7506d237f58751bf927528536bed56c"
+EMBEDDED_COMPOSE_SHA256 = "c63835e859f06ca7858117572ff978d8c244d12ce6a7219d2978d21d07a9c014"
 
 
 def embedded_compose_bytes() -> bytes:
@@ -3329,7 +3595,7 @@ def warn_about_writable_ancestors(path: Path, stop_at: Path) -> list:
 # The host workflow runner (EPIC L, issue #809)
 # ---------------------------------------------------------------------
 #
-# A `.local.sh` hook means "run this on the machine backupd is installed
+# A `.local.sh` hook means "run this on the machine the engine is installed
 # on". The engine cannot: container/Dockerfile is distroless with no
 # shell, compose.yaml runs it read-only, non-root, cap_drop ALL and
 # no-new-privileges, and docs/runtime-contract.md pins all of that. Every
@@ -3338,7 +3604,7 @@ def warn_about_writable_ancestors(path: Path, stop_at: Path) -> list:
 # bind mount -- is that contract deleted.
 #
 # So the runner is a HOST process beside the container: the same
-# `backupd` binary, extracted from the same image, run by the host's own
+# `retnd` binary, extracted from the same image, run by the host's own
 # service manager as an unprivileged account, reachable only over a Unix
 # socket in <prefix>/run -- which holds that socket and nothing else, so
 # that the one directory the engine can write is not also the directory
@@ -3379,11 +3645,39 @@ CONTAINER_RUNTIME_DIR = "/data/run"
 # FILE, exactly like the SSH key mount, rather than the secrets
 # directory: the repository passphrase and every medium credential live
 # in there too, and none of them is the engine's business.
-CONTAINER_RUNNER_TOKEN = "/etc/backupd/workflow-runner.token"
+CONTAINER_RUNNER_TOKEN = CONTAINER_ETC_DIR + "/workflow-runner.token"
 
 # WORKFLOW_RUNNER_UNIT is the systemd unit's name, and the name of the
 # file staged under the prefix on a host with no systemd.
-WORKFLOW_RUNNER_UNIT = "backupd-workflow-runner.service"
+#
+# LEGACY_WORKFLOW_RUNNER_UNIT is what an install made before #890 called
+# the same unit. Nothing creates it any more; every place that LOOKS for
+# the unit or removes it names both, because a rename that only teaches
+# the installer the new name leaves the old unit enabled on every host
+# that already had one -- which is a runner still answering the socket
+# after an uninstall said it was gone. #895 drops the legacy spelling.
+WORKFLOW_RUNNER_UNIT = "retnd-workflow-runner.service"
+LEGACY_WORKFLOW_RUNNER_UNIT = "backupd-workflow-runner.service"
+
+# The runner binary's names under <prefix>/bin: the stable name the unit
+# points at, and the prefix the version-stamped copies beside it carry
+# (extract_runner_binary writes retnd-<tag> and points retnd-workflow-
+# runner at it). Both have a pre-rename spelling for the same reason the
+# unit does, and for one more: the versioned copies are what make a
+# rollback a symlink move rather than a re-download, so they are found
+# and removed under both names rather than left behind as a bin
+# directory full of binaries nothing references. #895 drops these two.
+RUNNER_BINARY_NAME = "retnd-workflow-runner"
+LEGACY_RUNNER_BINARY_NAME = "backupd-workflow-runner"
+RUNNER_BINARY_VERSIONED_PREFIX = "retnd-"
+LEGACY_RUNNER_BINARY_VERSIONED_PREFIX = "backupd-"
+
+# Where a systemd unit goes on this host. One constant rather than the
+# literal in four places: #890 renames three units, and every path that
+# writes, enables, reads back or deletes one has to be looking in the
+# same directory as the others or a migration reports a rename it did
+# not perform.
+SYSTEMD_UNIT_DIR = "/etc/systemd/system"
 
 # WORKFLOW_RUNNER_TOKEN is the installation-scoped credential's file
 # name, inside the secrets directory beside the SSH key. It matches
@@ -3797,7 +4091,7 @@ def render_workflow_runner_unit(args) -> str:
             "command it needs through sudoers.",
         )
 
-    binary = args.prefix / "bin" / "backupd-workflow-runner"
+    binary = args.prefix / "bin" / RUNNER_BINARY_NAME
 
     # Resolved ONCE, and used for all three of the things that have to
     # agree: the client the unit names, the connection it carries, and
@@ -3824,11 +4118,11 @@ def render_workflow_runner_unit(args) -> str:
         "# Generated by scripts/install/install_docker_host.py for the",
         f"# deployment under {args.prefix}. Re-running the installer rewrites it.",
         "#",
-        "# This is the host half of backupd: it executes a backup set's",
+        "# This is the host half of the deployment: it executes a backup set's",
         "# .local.sh hooks on this machine, because the engine container is",
         "# distroless and has no shell. It listens on a Unix socket only.",
         "[Unit]",
-        "Description=backupd host workflow runner",
+        "Description=retnd host workflow runner",
         "Documentation=https://github.com/backupdproject/backupd/blob/main/docs/adr/0020-host-workflow-runner.md",
         "After=network.target",
         "",
@@ -3896,7 +4190,7 @@ def render_workflow_runner_unit(args) -> str:
 
 
 def extract_runner_binary(args) -> Path:
-    """Copy the `backupd` binary OUT of the image being installed, and
+    """Copy the `retnd` binary OUT of the image being installed, and
     point the stable name at it.
 
     Out of the image, rather than downloaded separately or built here,
@@ -3915,15 +4209,15 @@ def extract_runner_binary(args) -> Path:
     """
     bindir = args.prefix / "bin"
     make_secure_dir(bindir)
-    versioned = bindir / f"backupd-{args.image_tag}"
-    stable = bindir / "backupd-workflow-runner"
+    versioned = bindir / f"{RUNNER_BINARY_VERSIONED_PREFIX}{args.image_tag}"
+    stable = bindir / RUNNER_BINARY_NAME
 
     if not versioned.exists():
         created = run(["docker", "create", args.image], timeout=300)
         container = created.stdout.strip().splitlines()[-1].strip()
         try:
             staging = versioned.with_suffix(".incoming")
-            run(["docker", "cp", f"{container}:/backupd", str(staging)], timeout=600)
+            run(["docker", "cp", f"{container}:{ENGINE_BINARY}", str(staging)], timeout=600)
             os.chmod(staging, 0o755)
             # Renamed into place only once the whole file is there, so a
             # copy interrupted half way leaves no binary a supervisor
@@ -3935,7 +4229,7 @@ def extract_runner_binary(args) -> Path:
     # A symlink replaced atomically: os.replace over a symlink is one
     # rename, so there is no instant at which the stable name is absent
     # and a restarting unit could fail to find it.
-    tmp = bindir / ".backupd-workflow-runner.incoming"
+    tmp = bindir / f".{RUNNER_BINARY_NAME}.incoming"
     if tmp.is_symlink() or tmp.exists():
         tmp.unlink()
     os.symlink(versioned.name, tmp)
@@ -3958,12 +4252,34 @@ def supervise_workflow_runner(args) -> str:
     with no explanation anywhere, and an installer that escalated to root
     to write into /etc would be doing something an operator did not ask
     for on the machine they are most careful about.
+
+    Both are one step, and that is the #890 part: the legacy-named unit
+    is stopped, disabled and deleted BEFORE the new one is written and
+    enabled, in this one function, so an upgrade cannot leave a host with
+    both units armed -- which is the state Preflight refuses over
+    (EXIT_HALF_MIGRATED_UNITS), and an installer that manufactured a
+    state its own preflight refuses would be unusable twice over.
     """
+    # First, so that at no point are two units enabled for one job. A
+    # host that never had the legacy unit is a no-op here (#890; #895
+    # deletes this call and the constant with it).
+    retire_unit(LEGACY_WORKFLOW_RUNNER_UNIT)
+
     staged = args.prefix / WORKFLOW_RUNNER_UNIT
     staged.write_text(render_workflow_runner_unit(args), encoding="utf-8")
     os.chmod(staged, 0o644)
+    legacy_staged = args.prefix / LEGACY_WORKFLOW_RUNNER_UNIT
+    if legacy_staged.exists():
+        # Staged by a pre-rename install on a host with no systemd, where
+        # the file under the prefix IS the deliverable and the commands
+        # printed below name it. Leaving it would leave two unit files
+        # with different names and the same ExecStart under the prefix,
+        # and an operator copying the wrong one gets the name this
+        # installer now refuses to see enabled alongside the other.
+        legacy_staged.unlink()
+        say(f"==> Removed the pre-rename unit staged at {legacy_staged}; it is {WORKFLOW_RUNNER_UNIT} now.")
 
-    unit_dir = Path("/etc/systemd/system")
+    unit_dir = Path(SYSTEMD_UNIT_DIR)
     if not shutil.which("systemctl") or not os.access(unit_dir, os.W_OK):
         say(f"==> The workflow runner's unit is staged at {staged}.")
         say("    This host has no systemd, or this account cannot write a unit. Install it with:")
@@ -4033,34 +4349,97 @@ def provision_workflow_runner(args) -> str:
     return supervise_workflow_runner(args)
 
 
+def retire_unit(unit_name: str) -> bool:
+    """Disable and delete one systemd unit, tolerating every way it can
+    already be gone.
+
+    Disable BEFORE unlink, in that order: deleting the file first leaves
+    the enablement symlink in /etc/systemd/system/*.wants pointing at
+    nothing, and systemd then reports a unit that cannot be disabled by
+    name because there is no unit by that name to read.
+
+    Returns whether this call actually removed anything, so a caller can
+    report a rename it performed rather than one it hoped for. A host
+    where the file is there and this account cannot write /etc gets the
+    two commands printed instead, which is the same answer
+    supervise_workflow_runner gives for the same reason.
+    """
+    unit = Path(SYSTEMD_UNIT_DIR) / unit_name
+    if not unit.exists():
+        return False
+    if not shutil.which("systemctl") or not os.access(unit.parent, os.W_OK):
+        say(f"NOT removed (this account cannot write {unit.parent}): {unit}")
+        say(f"  sudo systemctl disable --now {unit_name} && sudo rm {unit}")
+        return False
+    run(["systemctl", "disable", "--now", unit_name], check=False, timeout=120)
+    unit.unlink()
+    run(["systemctl", "daemon-reload"], check=False, timeout=120)
+    say(f"removed {unit}")
+    return True
+
+
+def remove_runner_binaries(args, *, legacy_only: bool = False) -> None:
+    """Delete the runner binary and every version-stamped copy of it,
+    under the current AND the pre-rename name (#890).
+
+    These are this installer's own files, they are worthless without the
+    deployment, and the pre-rename spelling is named here for the one
+    reason that matters: an install made before the rename carries
+    `backupd-workflow-runner` and `backupd-<tag>` in <prefix>/bin, and a
+    remover that only knew the new names would leave an executable copy
+    of the engine on a host it had just told an operator was clean. #895
+    drops the legacy names.
+
+    `legacy_only` is the migration's use of the same sweep: there the
+    deployment stays, and what has to go is whatever is left under the
+    pre-rename name once rename_runner_binaries has moved the live
+    binary, because after the unit is rewritten nothing on the host
+    references it. Passing it here rather than writing a second walk of
+    the same directory keeps one answer to "which files in bin are the
+    runner's".
+    """
+    bindir = args.prefix / "bin"
+    if not bindir.is_dir():
+        return
+    stable = {LEGACY_RUNNER_BINARY_NAME} if legacy_only else {RUNNER_BINARY_NAME,
+                                                              LEGACY_RUNNER_BINARY_NAME}
+    versioned = ((LEGACY_RUNNER_BINARY_VERSIONED_PREFIX,) if legacy_only
+                 else (RUNNER_BINARY_VERSIONED_PREFIX, LEGACY_RUNNER_BINARY_VERSIONED_PREFIX))
+    for entry in sorted(bindir.iterdir()):
+        if entry.name in stable or entry.name.startswith(versioned):
+            # is_symlink first: the stable name is a symlink, and a
+            # dangling one answers False to exists().
+            if entry.is_symlink() or entry.exists():
+                entry.unlink()
+                say(f"removed {entry}")
+
+
 def remove_workflow_runner(args) -> None:
     """Take the runner down, and say what is deliberately left behind.
 
-    The unit, the socket and the transient run directory go: they are
-    this installer's, they are worthless without the deployment, and a
-    socket left behind is a path a later install would have to reason
-    about.
+    The unit, the binary, the socket and the transient run directory go:
+    they are this installer's, they are worthless without the deployment,
+    and a socket left behind is a path a later install would have to
+    reason about.
 
     The SCRIPTS do not. <prefix>/workflows holds files an operator wrote,
     which makes them the same kind of thing as the backups themselves:
     an uninstall that deleted them by default would be a data-loss bug
     with a friendly name, which is the rule this command already follows
     for the state and backup directories.
-    """
-    unit = Path("/etc/systemd/system") / WORKFLOW_RUNNER_UNIT
-    if shutil.which("systemctl") and unit.exists() and os.access(unit.parent, os.W_OK):
-        run(["systemctl", "disable", "--now", WORKFLOW_RUNNER_UNIT], check=False, timeout=120)
-        unit.unlink()
-        run(["systemctl", "daemon-reload"], check=False, timeout=120)
-        say(f"removed {unit}")
-    elif unit.exists():
-        say(f"NOT removed (this account cannot write {unit.parent}): {unit}")
-        say(f"  sudo systemctl disable --now {WORKFLOW_RUNNER_UNIT} && sudo rm {unit}")
 
-    staged = args.prefix / WORKFLOW_RUNNER_UNIT
-    if staged.exists():
-        staged.unlink()
-        say(f"removed {staged}")
+    Every name here is looked for in both spellings (#890): the host this
+    runs on may have been installed before the rename, and "removed what
+    the installer made" has to be true of the installer that made it.
+    """
+    for unit_name in (WORKFLOW_RUNNER_UNIT, LEGACY_WORKFLOW_RUNNER_UNIT):
+        retire_unit(unit_name)
+        staged = args.prefix / unit_name
+        if staged.exists():
+            staged.unlink()
+            say(f"removed {staged}")
+
+    remove_runner_binaries(args)
     if args.runtime_dir.exists():
         shutil.rmtree(args.runtime_dir, ignore_errors=True)
         say(f"removed {args.runtime_dir} (the runner socket)")
@@ -4097,7 +4476,7 @@ def ensure_credentials(args) -> None:
                 f"no SSH key at {args.ssh_key} and ssh-keygen is not on {PRIVILEGED_PATH}.",
                 "Generate an ed25519 key by hand and point --ssh-key at it, or install openssh-client.",
             )
-        run([keygen, "-q", "-t", "ed25519", "-N", "", "-C", "backupd",
+        run([keygen, "-q", "-t", "ed25519", "-N", "", "-C", CLI_WRAPPER_NAME,
              "-f", str(args.ssh_key)], timeout=120)
         os.chmod(args.ssh_key, 0o600)
         pub = args.ssh_key.with_suffix(args.ssh_key.suffix + ".pub")
@@ -4124,6 +4503,60 @@ def ensure_credentials(args) -> None:
         say(f"     WARNING: {d} is group- or world-writable, and the engine walks the whole")
         say("              ancestry when it validates the key. If the first cycle refuses with")
         say(f"              key_permissions, run: chmod go-w {d}")
+
+
+def replace_file_atomically(path: Path, data, *, mode: int = 0o600) -> None:
+    """Write `data` over `path` so no reader ever sees a partial file,
+    through the discipline issue #196 established for config.yaml.
+
+    Four steps, and every one of them is load-bearing:
+
+      1. The temp file is created IN path's own directory, never in /tmp.
+         A config directory is a bind mount, so /tmp is on a different
+         filesystem: os.replace across a device boundary raises OSError,
+         and the copy-then-delete people reach for instead is exactly the
+         non-atomic write this exists to avoid.
+      2. Written, flushed, then os.fsync on the FILE, so the bytes are on
+         the device before anything names them. Without it the rename can
+         be durable while the contents are not, which is how a power cut
+         produces a zero-length config.yaml that parses as an empty
+         document and reads as a deployment with nothing configured.
+      3. os.replace, which is atomic within one filesystem: a reader
+         holds either the whole old file or the whole new one, and there
+         is no instant in which the name does not exist.
+      4. os.fsync on the DIRECTORY, because the rename is a metadata
+         change of its own: a crash after step 3 can otherwise lose the
+         new name and leave the temp one.
+
+    The temp name is dot-prefixed and carries this process's pid, so two
+    runs cannot collide on it and a leftover is recognisable as this
+    installer's rather than as something the engine wrote. The mode is
+    applied to the temp file BEFORE the rename, so the final path never
+    exists with a mode it should not have, which for a .env or a
+    config.yaml is the whole reason the argument is there.
+    """
+    payload = data if isinstance(data, bytes) else data.encode("utf-8")
+    tmp = path.parent / f".{path.name}.{os.getpid()}.incoming"
+    try:
+        # Through os.open with the mode rather than write_bytes, so the
+        # file is never briefly readable by anyone it should not be.
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        # The open above is subject to the umask; this is not.
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        if tmp.is_symlink() or tmp.exists():
+            tmp.unlink()
+        raise
+    dirfd = os.open(str(path.parent), os.O_RDONLY)
+    try:
+        os.fsync(dirfd)
+    finally:
+        os.close(dirfd)
 
 
 def note_replaced_compose(dest: Path, incoming: bytes) -> None:
@@ -4219,8 +4652,15 @@ def stage_payload(args) -> None:
     incoming = (embedded_compose_bytes() if args.compose_file is None
                 else args.compose_file.read_bytes())
     note_replaced_compose(dest, incoming)
-    dest.write_bytes(incoming)
-    (args.prefix / "compose.image.yaml").write_text(render_image_override(args), encoding="utf-8")
+    replace_file_atomically(dest, incoming, mode=0o644)
+    replace_file_atomically(args.prefix / "compose.image.yaml",
+                            render_image_override(args), mode=0o644)
+    # The rollback window (#890, FR-38), staged on every run so that an
+    # upgrade, a converge and the migration all leave the same three
+    # files behind. One release only: #895 deletes the renderer, this
+    # call, and the file itself.
+    replace_file_atomically(args.prefix / ROLLBACK_OVERRIDE_NAME,
+                            render_rollback_override(args), mode=0o644)
 
     # Only on a CLI-only install, because only there is it the whole
     # interface. A full install has a Web UI, and shipping a second way in
@@ -4228,13 +4668,24 @@ def stage_payload(args) -> None:
     if getattr(args, "cli_only", False):
         bindir = args.prefix / "bin"
         make_secure_dir(bindir)
-        wrapper = bindir / "backupd"
-        wrapper.write_text(render_cli_wrapper(args), encoding="utf-8")
-        os.chmod(wrapper, 0o755)
+        body = render_cli_wrapper(args)
+        replace_file_atomically(bindir / CLI_WRAPPER_NAME, body, mode=0o755)
+        # A pre-rename wrapper is REWRITTEN, not left and not deleted
+        # (#890). Left alone it would keep execing `/backupd`, which the
+        # image no longer has at all, so the command an operator has in
+        # their shell history would start failing with `exec /backupd: no
+        # such file or directory`; deleted, that command would fail too,
+        # just differently. Rewritten with this same text it goes on
+        # working for the one release the old name survives, and #895
+        # removes it -- the same window the image's /backupd-web hardlink
+        # keeps open for an unedited pinned compose file.
+        legacy_wrapper = bindir / LEGACY_CLI_WRAPPER_NAME
+        if legacy_wrapper.exists():
+            replace_file_atomically(legacy_wrapper, body, mode=0o755)
+            say(f"==> Kept {legacy_wrapper} working as well: the command is `{CLI_WRAPPER_NAME}` "
+                f"now, and the old name is rewritten for one release rather than left broken.")
 
-    env_path = args.prefix / ".env"
-    env_path.write_text(render_env(args), encoding="utf-8")
-    os.chmod(env_path, 0o600)
+    replace_file_atomically(args.prefix / ".env", render_env(args), mode=0o600)
 
 
 def wait_for_engine_health(args, timeout: int):
@@ -4242,15 +4693,15 @@ def wait_for_engine_health(args, timeout: int):
 
     Read out of the daemon rather than inferred from the container being
     up, and it is the LIVENESS probe specifically: container/compose.yaml
-    declares `/backupd-web healthcheck --url .../health/live` for
-    the engine and explains at length why it is not `backupd
+    declares `/retnd-web healthcheck --url .../health/live` for
+    the engine and explains at length why it is not `retnd
     status` (issue #206). A fresh install fails `status` by design, and
     gating on it means the Web UI never starts.
     """
     deadline = time.time() + timeout
     last = "no container yet"
     while time.time() < deadline:
-        proc = run([*compose_argv(args), "ps", "-q", "backupd"], check=False, timeout=60,
+        proc = run([*compose_argv(args), "ps", "-q", ENGINE_SERVICE], check=False, timeout=60,
                    cwd=str(args.prefix))
         cid = proc.stdout.strip().splitlines()
         if cid:
@@ -4678,7 +5129,8 @@ def cmd_install(args) -> int:
                 "browser will hang. That hop is container to container over the compose network, and the\n"
                 "usual cause is the host, not this deployment: check whether ANY container on this machine\n"
                 "can open a TCP connection, with\n"
-                "  docker run --rm --network " + args.project + "_internal alpine wget -T5 -O- http://backupd:8080/health/live\n"
+                "  docker run --rm --network " + args.project + "_internal alpine wget -T5 -O- "
+                "http://" + ENGINE_SERVICE + ":8080/health/live\n"
                 "A host whose bridge networking cannot pass container-originated traffic cannot run this\n"
                 "deployment, and cannot reach an SFTP source either, so fixing it is not optional."
             )
@@ -4693,7 +5145,7 @@ def cmd_install(args) -> int:
 
     # Read here rather than left to the operator. Until #803 the last
     # step of a fresh install was a hand-typed 200-character `docker
-    # compose ... logs backupd | grep enroll`, every part of which this
+    # compose ... logs <engine> | grep enroll`, every part of which this
     # program had written itself minutes earlier. After the checks, so a
     # link is never printed under an "Installed." that is not said.
     notice = wait_for_enrollment_notice(args)
@@ -4781,7 +5233,7 @@ def finish_cli_only_install(args) -> int:
 
     The not-bringing-up half is the part worth reading. A full install has
     a first-run wizard, so it can come up with no configuration at all and
-    hand the operator a link. `backupd daemon` has no such thing: it is
+    hand the operator a link. `retnd daemon` has no such thing: it is
     refused rather than started when there is no config.yaml, so starting
     it on a fresh host would produce a container that exits, gets
     restarted, exits again, and an installer that either claims success
@@ -4798,7 +5250,7 @@ def finish_cli_only_install(args) -> int:
     """
     take_down_web_ui(args)
 
-    wrapper = args.prefix / "bin" / "backupd"
+    wrapper = args.prefix / "bin" / CLI_WRAPPER_NAME
     compose = " ".join(compose_argv(args))
 
     if not (args.config_dir / "config.yaml").is_file():
@@ -4972,17 +5424,17 @@ def cli_only_staged_epilog(args: argparse.Namespace) -> list[str]:
     enrolment link at all, which is the whole point of the flag (#689),
     and the site shows it precisely to make that absence visible.
     """
-    wrapper = args.prefix / "bin" / "backupd"
+    wrapper = args.prefix / "bin" / CLI_WRAPPER_NAME
     compose = " ".join(compose_argv(args))
     return [
         "",
         "==> Installed. Nothing is running yet, and that is what --cli-only means here:",
-        "    `backupd daemon` is refused rather than started without a config.yaml, and a CLI-only",
+        "    `retnd daemon` is refused rather than started without a config.yaml, and a CLI-only",
         "    install has no first-run wizard to write one. Creating the first backup set writes",
         "    the first config.yaml with it:",
         f"      {wrapper} backup-set create <source>/<backup-set> \\",
         "          --host HOST --user USER --remote-path /remote/path --local-path /backups/path \\",
-        "          --ssh-key-file /etc/backupd/id_ed25519 --trust-host-key \\",
+        f"          --ssh-key-file {CONTAINER_ETC_DIR}/id_ed25519 --trust-host-key \\",
         "          --completion-strategy stable",
         "",
         "    Then start the scheduler:",
@@ -5040,7 +5492,28 @@ PRIVILEGED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # Every rule this installer adds carries this comment, which is what makes
 # the set idempotent (check before insert) and reversible (delete by
 # comment). Nothing else in the ruleset is ever touched.
-RULE_TAG = "backupd-bridge"
+RULE_TAG = "retnd-bridge"
+
+# The pre-rename spelling of that comment, and why renaming a tag is not
+# the same kind of edit as renaming a constant (#890).
+#
+# This string is not written into a file. It is written into LIVE KERNEL
+# RULES, by an earlier release, on hosts that are already installed. Every
+# rule such a host is carrying says `backupd-bridge`, and nothing that
+# looks for `retnd-bridge` can see any of them: `network-undo` would
+# report success having deleted nothing, `uninstall` would print a remedy
+# that removes nothing, and the rules would stay in that firewall until
+# somebody found them by hand.
+#
+# So NEW rules carry RULE_TAG, and every SEARCH -- the delete, and the
+# report of what was removed -- covers both. The insert deliberately does
+# not: re-tagging a rule that is already doing its job would mean
+# deleting and re-inserting a firewall rule for a cosmetic reason, and
+# the legacy rule is found and deleted by the same undo either way.
+# #895 drops the legacy tag, by which time the release that inserted it
+# is two releases behind.
+LEGACY_RULE_TAG = "backupd-bridge"
+RULE_TAGS = (RULE_TAG, LEGACY_RULE_TAG)
 
 # docker0 is the default bridge's interface, unconditionally: it is a
 # hardcoded name in the Docker daemon rather than something derived from a
@@ -5530,7 +6003,7 @@ class BridgeDoctor:
 
     # -- remediation ---------------------------------------------------
 
-    def rule_specs(self):
+    def rule_specs(self, tag: str = RULE_TAG):
         """Every rule this installer would add, as argv tails.
 
         Two families, one per chain the measurement can implicate.
@@ -5550,13 +6023,30 @@ class BridgeDoctor:
         as seen from outside. What it restores is the posture a stock
         Docker host already has, where INPUT's policy is ACCEPT and a
         container may talk to its own gateway.
+
+        `tag` is the comment the rules carry, defaulting to the one this
+        release inserts. all_rule_specs() below asks for the pre-rename
+        one as well, which is the only caller that passes anything.
         """
         specs = []
         ifaces = self.bridge_interfaces()
         for iface in ifaces:
-            specs.append(("DOCKER-USER", ["-i", iface, "-m", "comment", "--comment", RULE_TAG, "-j", "RETURN"]))
+            specs.append(("DOCKER-USER", ["-i", iface, "-m", "comment", "--comment", tag, "-j", "RETURN"]))
         for iface in ifaces:
-            specs.append(("INPUT", ["-i", iface, "-m", "comment", "--comment", RULE_TAG, "-j", "ACCEPT"]))
+            specs.append(("INPUT", ["-i", iface, "-m", "comment", "--comment", tag, "-j", "ACCEPT"]))
+        return specs
+
+    def all_rule_specs(self):
+        """Every rule spelling a host may be carrying: this release's tag
+        and the pre-rename one (#890).
+
+        What the DELETE has to work from. An undo that only knew the
+        current tag would leave every rule an earlier release inserted in
+        the firewall while reporting that it had removed them.
+        """
+        specs = []
+        for tag in RULE_TAGS:
+            specs.extend(self.rule_specs(tag))
         return specs
 
     def insert_script(self) -> str:
@@ -5583,10 +6073,14 @@ class BridgeDoctor:
         has to succeed on a half-repaired host, and on a host that rebooted
         since the insert, or it is an undo people stop trusting. The rules
         are named from the same rule_specs() the insert uses, which is what
-        keeps the two from drifting into deleting something else.
+        keeps the two from drifting into deleting something else -- and
+        from all_rule_specs(), so the pre-rename tag is deleted too
+        (#890): a host installed before the rename is carrying rules under
+        the old comment and nothing else on this machine will ever look
+        for them again.
         """
         lines = []
-        for chain, spec in self.rule_specs():
+        for chain, spec in self.all_rule_specs():
             tail = " ".join(spec)
             lines.append(f"{self.iptables} -w 5 -C {chain} {tail} 2>/dev/null && "
                          f"{self.iptables} -w 5 -D {chain} {tail} || true")
@@ -5640,9 +6134,18 @@ class BridgeDoctor:
     # part of the boot sequence rather than up to a timer interval later.
     # The timer's OnBootSec is the safety net for the case where that
     # ordering turns out to be wrong on some host.
-    SERVICE_UNIT = "backupd-bridge.service"
-    TIMER_UNIT = "backupd-bridge.timer"
-    UNIT_DIR = "/etc/systemd/system"
+    SERVICE_UNIT = "retnd-bridge.service"
+    TIMER_UNIT = "retnd-bridge.timer"
+
+    # What an install made before #890 called the same two units. Nothing
+    # writes them any more: unit_install_script disables and deletes them
+    # BEFORE writing the current pair, so the rename is one step and an
+    # upgrade never leaves both enabled (which is what Preflight refuses
+    # over), and unit_remove_script takes both away so an undo works on a
+    # host that predates the rename. #895 drops these two.
+    LEGACY_SERVICE_UNIT = "backupd-bridge.service"
+    LEGACY_TIMER_UNIT = "backupd-bridge.timer"
+    UNIT_DIR = SYSTEMD_UNIT_DIR
 
     # Two minutes, chosen rather than inherited. The work is four
     # `iptables -C` calls, single-digit milliseconds, so the cost of the
@@ -5666,7 +6169,7 @@ class BridgeDoctor:
         """
         lines = [
             "[Unit]",
-            "Description=backupd: re-assert this deployment's own Docker bridge firewall rules",
+            "Description=retnd: re-assert this deployment's own Docker bridge firewall rules",
             "Documentation=https://github.com/backupdproject/backupd/blob/main/docs/install.md",
             "# Ordered after everything that constructs the ruleset, so this runs on top of",
             "# whatever they built rather than underneath it. After= only, never Requires=:",
@@ -5718,7 +6221,7 @@ class BridgeDoctor:
         """
         return "\n".join([
             "[Unit]",
-            "Description=backupd: periodically re-assert the Docker bridge firewall rules",
+            "Description=retnd: periodically re-assert the Docker bridge firewall rules",
             "Documentation=https://github.com/backupdproject/backupd/blob/main/docs/install.md",
             "",
             "[Timer]",
@@ -5741,13 +6244,21 @@ class BridgeDoctor:
         are rewritten with identical content, `systemctl enable` on an
         already-enabled unit is a no-op, and the rules themselves are
         check-before-insert. Running this twice converges.
+
+        It opens by taking the PRE-RENAME pair away (#890), which is what
+        makes the rename one step rather than an install followed by a
+        cleanup somebody has to remember: at no point are two units
+        enabled to re-assert the same four rules, and an upgrade cannot
+        produce the half-migrated host Preflight refuses over. On a host
+        that never had them those lines find nothing and say nothing.
         """
         systemctl = find_tool("systemctl") or "/bin/systemctl"
         service = f"{self.UNIT_DIR}/{self.SERVICE_UNIT}"
         timer = f"{self.UNIT_DIR}/{self.TIMER_UNIT}"
         return (
             "set -e\n"
-            f"cat > {service} <<'RCLONE_MANAGER_UNIT'\n{self.unit_service_text()}RCLONE_MANAGER_UNIT\n"
+            + self.legacy_unit_remove_script()
+            + f"cat > {service} <<'RCLONE_MANAGER_UNIT'\n{self.unit_service_text()}RCLONE_MANAGER_UNIT\n"
             f"cat > {timer} <<'RCLONE_MANAGER_UNIT'\n{self.unit_timer_text()}RCLONE_MANAGER_UNIT\n"
             f"{systemctl} daemon-reload\n"
             f"{systemctl} enable {self.SERVICE_UNIT}\n"
@@ -5755,21 +6266,48 @@ class BridgeDoctor:
             f"{systemctl} start {self.SERVICE_UNIT}\n"
         )
 
+    def _unit_remove_lines(self, service: str, timer: str) -> str:
+        """Disable, delete and forget one service-and-timer pair.
+
+        The timer first, then the service: disabling the service while a
+        timer still points at it leaves systemd able to start it again
+        between the two commands.
+        """
+        systemctl = find_tool("systemctl") or "/bin/systemctl"
+        return (
+            f"{systemctl} disable --now {timer} 2>/dev/null || true\n"
+            f"{systemctl} disable --now {service} 2>/dev/null || true\n"
+            f"rm -f {self.UNIT_DIR}/{service} {self.UNIT_DIR}/{timer}\n"
+            f"{systemctl} daemon-reload\n"
+            f"{systemctl} reset-failed {service} 2>/dev/null || true\n"
+        )
+
+    def legacy_unit_remove_script(self) -> str:
+        """The pre-rename pair, removed and forgotten (#890).
+
+        Its own method because it has two callers with different jobs:
+        unit_install_script runs it as the first half of the rename, and
+        unit_remove_script runs it because an undo on a host installed
+        before the rename has nothing else that will ever name those
+        units again. #895 deletes it.
+        """
+        return self._unit_remove_lines(self.LEGACY_SERVICE_UNIT, self.LEGACY_TIMER_UNIT)
+
     def unit_remove_script(self) -> str:
         """Take the units away and leave nothing behind.
 
         Every step tolerates the thing already being gone, because undo has
         to work on a half-installed machine as well as a fully installed
         one, and an undo that fails partway is worse than no undo at all.
+
+        Both spellings, for the reason LEGACY_SERVICE_UNIT exists: the
+        host this runs on may have been installed before #890, and an
+        uninstall that reported success over an enabled
+        backupd-bridge.timer would leave a timer re-asserting firewall
+        rules for a deployment that is gone.
         """
-        systemctl = find_tool("systemctl") or "/bin/systemctl"
-        return (
-            f"{systemctl} disable --now {self.TIMER_UNIT} 2>/dev/null || true\n"
-            f"{systemctl} disable --now {self.SERVICE_UNIT} 2>/dev/null || true\n"
-            f"rm -f {self.UNIT_DIR}/{self.SERVICE_UNIT} {self.UNIT_DIR}/{self.TIMER_UNIT}\n"
-            f"{systemctl} daemon-reload\n"
-            f"{systemctl} reset-failed {self.SERVICE_UNIT} 2>/dev/null || true\n"
-        )
+        return (self._unit_remove_lines(self.SERVICE_UNIT, self.TIMER_UNIT)
+                + self.legacy_unit_remove_script())
 
     def restart_docker_script(self) -> str:
         """Restart the Docker daemon, as a script for the one sudo call.
@@ -6015,6 +6553,23 @@ def persistence_complaints(service_unit, service_state, service_active,
     return complaints
 
 
+def renamed_units():
+    """The unit renames #890 performs, as (pre-rename, current) pairs.
+
+    A function rather than a constant so that it reads the same names the
+    rest of this file uses -- BridgeDoctor's two pairs and
+    WORKFLOW_RUNNER_UNIT -- instead of restating them. A fourth spelling
+    of `retnd-bridge.timer` written down here is exactly how a
+    half-migrated host stops being detected, and this is the list both
+    the refusal and the migration read. #895 empties it.
+    """
+    return (
+        (BridgeDoctor.LEGACY_SERVICE_UNIT, BridgeDoctor.SERVICE_UNIT),
+        (BridgeDoctor.LEGACY_TIMER_UNIT, BridgeDoctor.TIMER_UNIT),
+        (LEGACY_WORKFLOW_RUNNER_UNIT, WORKFLOW_RUNNER_UNIT),
+    )
+
+
 def install_persistence(doctor, args) -> None:
     """Install the unit and the timer, then read back what systemd thinks,
     and refuse rather than merely report if either did not arm as expected.
@@ -6077,7 +6632,9 @@ def cmd_network_undo(args) -> int:
     Reversibility is what makes the repair defensible: it escalates to
     root and touches a firewall on a machine reachable only through the
     SSH session running it. Every rule it inserts carries a tag, so
-    this can delete exactly those and never flush a chain.
+    this can delete exactly those and never flush a chain -- under both
+    spellings of the tag (#890), because a host repaired before the
+    rename is carrying rules nothing else will ever look for again.
     """
     doctor = BridgeDoctor(args)
     if doctor.iptables is None:
@@ -6091,7 +6648,7 @@ def cmd_network_undo(args) -> int:
                                    "and only those")
     say("")
     say(f"==> Removed {doctor.SERVICE_UNIT}, {doctor.TIMER_UNIT}, and every rule carrying the comment "
-        f"{RULE_TAG}. Nothing else was touched.")
+        f"{RULE_TAG} or {LEGACY_RULE_TAG}. Nothing else was touched.")
     return EXIT_OK
 
 
@@ -6303,7 +6860,7 @@ def cmd_uninstall(args) -> int:
 
     The exception: if `install` or `network-doctor` ever repaired this
     host's bridge networking (the default, `--fix-network=auto`), that
-    repair inserted backupd-bridge-tagged iptables rules directly
+    repair inserted retnd-bridge-tagged iptables rules directly
     on the host firewall. Detecting whether they are still there needs
     the same root read `_iptables_dump()` does, which this command has
     never otherwise needed - uninstall stays a command that touches only
@@ -6324,11 +6881,24 @@ def cmd_uninstall(args) -> int:
     if down.returncode != 0:
         raise Refusal(EXIT_RUNTIME, "docker compose down failed:\n" + (down.stderr or down.stdout).strip(), "")
 
-    for name in ("compose.yaml", "compose.image.yaml", ".env"):
+    for name in ("compose.yaml", "compose.image.yaml", ROLLBACK_OVERRIDE_NAME, ".env"):
         p = args.prefix / name
         if p.exists():
             p.unlink()
             say(f"removed {p}")
+
+    # The CLI wrapper, under both names (#890). It is this installer's own
+    # file and it is a `docker compose run` against a project that stopped
+    # existing four lines ago; the pre-rename name is here for the reason
+    # every other legacy spelling in this file is, that the host may have
+    # been installed before the rename and an uninstall which left a
+    # runnable command pointing at a deleted deployment did not do what it
+    # said. #895 drops the legacy name.
+    for name in (CLI_WRAPPER_NAME, LEGACY_CLI_WRAPPER_NAME):
+        wrapper = args.prefix / "bin" / name
+        if wrapper.exists():
+            wrapper.unlink()
+            say(f"removed {wrapper}")
 
     # EPIC L (#809). The unit, the socket and the transient run directory
     # are this installer's and go with it; the hook scripts are the
@@ -6346,11 +6916,456 @@ def cmd_uninstall(args) -> int:
     say("Remove them by hand if that is really what you want.")
     say("")
     say("NOT removed by this command: if `install` or `network-doctor` ever repaired this host's")
-    say("bridge networking, the backupd-bridge-tagged iptables rules it inserted are still on")
+    say("bridge networking, the retnd-bridge-tagged iptables rules it inserted are still on")
     say("the host firewall. Remove exactly those, and nothing else, with:")
     say("  python3 install_docker_host.py network-undo")
     return EXIT_OK
 
+
+# ---------------------------------------------------------------------
+# The deployment-identity migration (#890, FR-38 and FR-39)
+# ---------------------------------------------------------------------
+
+# The container paths a config.yaml written before #890 can name, and
+# what each becomes. DIRECTORY prefixes rather than whole values,
+# because the engine's own settings name files UNDER these directories
+# (known_hosts.d/<host>, ssh_keys/<id>, the runner token), so the
+# directory is the unit that moves and everything below it comes along.
+#
+# /data/state and /data/backups are deliberately absent. They carry no
+# brand, they do not move, and a rewriter that touched them would be
+# relocating an operator's catalog for no reason at all --
+# core/service's DefaultStateDatabase is still /data/state/state.db on
+# both sides of this rename.
+#
+# /var/lib/backupd is here because a hand-written config.yaml can name
+# it: it is not a compiled default anywhere, but it is the path the
+# earlier documentation used for a bind-mounted state directory, so a
+# `state.database` under it is a real value on a real host and it has to
+# move with everything else.
+CONTAINER_PATH_MOVES = (
+    (LEGACY_CONTAINER_ETC_DIR, CONTAINER_ETC_DIR),
+    ("/var/lib/backupd", "/var/lib/retnd"),
+)
+
+# One `key: value` line whose value is an absolute path: a mapping key,
+# a scalar, optionally quoted, optionally followed by a comment.
+#
+# A regex over lines, in read_env_file's own style, and NOT a YAML parse,
+# for two reasons. This file is standard library only, on purpose (a NAS
+# may not let anything be installed), so there is no YAML library to
+# parse with; and a reparse-and-redump would rewrite an operator's
+# comments, quoting and key order as a side effect of moving one path,
+# which is a diff nobody asked for in the one file they hand-edit.
+CONFIG_PATH_LINE = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<key>[A-Za-z0-9_.\-]+):[ \t]+"
+    r"(?P<quote>['\"]?)(?P<value>/[^'\"#\s]*)(?P=quote)[ \t]*(?P<comment>#.*)?$"
+)
+
+
+def moved_container_path(value: str) -> str:
+    """`value` with its pre-rename container directory substituted, or ""
+    when nothing in it moves.
+
+    The boundary is the point: /etc/backupd and
+    /etc/backupd/known_hosts.d/nas both move, and /etc/backupdx -- which
+    starts with the same characters and is somebody else's directory --
+    does not.
+    """
+    for old, new in CONTAINER_PATH_MOVES:
+        if value == old:
+            return new
+        if value.startswith(old + "/"):
+            return new + value[len(old):]
+    return ""
+
+
+def rewrite_container_paths(text: str):
+    """A persisted config.yaml with every pre-rename container path
+    moved, as (new text, one description per change) (FR-39).
+
+    Line oriented and targeted: only a scalar whose value is a path being
+    moved is touched, and a comment that names one is substituted too --
+    left alone, it would be stale documentation inside the operator's own
+    file AND would make the verification below refuse a migration that is
+    actually complete.
+
+    A line that names a moved path in a shape this does not understand is
+    a REFUSAL, never a skip. Skipping it is the failure mode that matters:
+    the mount has moved by the time this runs, so a surviving
+    /etc/backupd value is an engine that starts, reports healthy, and
+    cannot read its own known_hosts -- which is discovered at the first
+    backup cycle rather than here. An operator can edit one line and
+    re-run; nobody can debug a green deployment that does not work.
+    """
+    out, changes = [], []
+    for number, raw in enumerate(text.splitlines(keepends=True), start=1):
+        body = raw.rstrip("\n")
+        if not any(old in body for old, _new in CONTAINER_PATH_MOVES):
+            out.append(raw)
+            continue
+        ending = raw[len(body):]
+        if body.lstrip().startswith("#"):
+            moved_body = body
+            for old, new in CONTAINER_PATH_MOVES:
+                moved_body = moved_body.replace(old, new)
+            out.append(moved_body + ending)
+            changes.append(f"line {number}: comment now names {CONTAINER_ETC_DIR}")
+            continue
+        match = CONFIG_PATH_LINE.match(body)
+        moved = moved_container_path(match.group("value")) if match else ""
+        if not moved:
+            raise Refusal(
+                EXIT_EXISTING_INSTALL,
+                f"line {number} of the installed config.yaml names a pre-rename container path "
+                f"in a shape this installer will not rewrite:\n  {body.strip()}",
+                "The migration moves the configuration mount, so every absolute path in this file "
+                "that points inside it has to move with it, and this one is not a plain "
+                "`key: /path` scalar -- a list entry, a flow mapping or a multi-line scalar, none "
+                f"of which this rewrites blind. Change it to name {CONTAINER_ETC_DIR} by hand and "
+                "re-run `migrate-identity`. Nothing has been changed.",
+            )
+        line = (f"{match.group('indent')}{match.group('key')}: "
+                f"{match.group('quote')}{moved}{match.group('quote')}")
+        if match.group("comment"):
+            line += f" {match.group('comment')}"
+        out.append(line + ending)
+        changes.append(f"line {number}: {match.group('key')} {match.group('value')} -> {moved}")
+    return "".join(out), changes
+
+
+def config_path_complaints(text: str) -> list:
+    """Every pre-rename container path still named in a config.yaml.
+
+    The read-back half of the rewrite, and the reason it is a separate
+    function from the rewrite itself: "I rewrote it" and "nothing
+    pre-rename is left in it" are different claims, and only the second
+    one is what the deployment actually depends on. Read from the file on
+    disk rather than from the string that was written, so a rewrite that
+    was computed correctly and not persisted reads as the failure it is.
+    """
+    complaints = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        for old, _new in CONTAINER_PATH_MOVES:
+            if old in line:
+                complaints.append(f"line {number} still names {old}: {line.strip()}")
+                break
+    return complaints
+
+
+def rewrite_persisted_config(args):
+    """Move the absolute container paths in the installed config.yaml,
+    atomically (FR-39, through #196's discipline).
+
+    Returns (the original text, the changes made). The caller keeps the
+    original until the whole transaction has succeeded: this is the only
+    step that edits a file an operator owns, so it is the only one worth
+    being able to put back.
+    """
+    path = args.config_dir / "config.yaml"
+    if not path.is_file():
+        say(f"==> No {path}, so there is no persisted path to move. A deployment whose first run "
+            "has not happened yet has nothing here.")
+        return "", []
+    original = path.read_text(encoding="utf-8")
+    rewritten, changes = rewrite_container_paths(original)
+    if not changes:
+        say(f"==> {path} names no pre-rename container path.")
+        return original, []
+    say(f"==> Rewriting {path}")
+    for change in changes:
+        say(f"     {change}")
+    replace_file_atomically(path, rewritten, mode=path.stat().st_mode & 0o777)
+    return original, changes
+
+
+def rename_runner_binaries(args) -> list:
+    """Move the runner binary and its version-stamped copies onto the
+    current names, by renaming the FILES (#890).
+
+    Renamed rather than re-extracted out of the image, and that is the
+    whole point: these exact bytes are the ones the running engine will
+    accept, because it refuses a runner whose version is not exactly its
+    own (core/internal/hostrunner's Hello). Re-extracting would make the
+    migration depend on which image reference this invocation happens to
+    name, which on a host running something other than the carried
+    release is a version mismatch introduced by a rename. A rename cannot
+    change a version.
+
+    The stable name is a symlink, so it is recreated rather than moved:
+    its TARGET moves too, and a symlink carrying the old target would
+    point at a file this function has just renamed away. Recreated
+    through the same tmp-and-os.replace as extract_runner_binary, so
+    there is no instant in which the name a unit points at is absent.
+
+    Returns one description per rename, for the migration to report.
+    """
+    bindir = args.prefix / "bin"
+    if not bindir.is_dir():
+        return []
+    moved = []
+    for entry in sorted(bindir.iterdir()):
+        if entry.is_symlink() or not entry.name.startswith(LEGACY_RUNNER_BINARY_VERSIONED_PREFIX):
+            continue
+        target = bindir / (RUNNER_BINARY_VERSIONED_PREFIX
+                           + entry.name[len(LEGACY_RUNNER_BINARY_VERSIONED_PREFIX):])
+        os.replace(entry, target)
+        moved.append(f"{entry.name} -> {target.name}")
+
+    legacy_stable = bindir / LEGACY_RUNNER_BINARY_NAME
+    if legacy_stable.is_symlink():
+        was = os.readlink(legacy_stable)
+        now = (RUNNER_BINARY_VERSIONED_PREFIX + was[len(LEGACY_RUNNER_BINARY_VERSIONED_PREFIX):]
+               if was.startswith(LEGACY_RUNNER_BINARY_VERSIONED_PREFIX) else was)
+        tmp = bindir / f".{RUNNER_BINARY_NAME}.incoming"
+        if tmp.is_symlink() or tmp.exists():
+            tmp.unlink()
+        os.symlink(now, tmp)
+        os.replace(tmp, bindir / RUNNER_BINARY_NAME)
+        legacy_stable.unlink()
+        moved.append(f"{LEGACY_RUNNER_BINARY_NAME} -> {RUNNER_BINARY_NAME} (pointing at {now})")
+    for description in moved:
+        say(f"     {description}")
+    return moved
+
+
+def migrate_units(args) -> list:
+    """Stop, disable, rename and re-enable the three units, in one step
+    (FR-39).
+
+    Through the two mechanisms `install` already uses and no third one:
+    install_persistence for the bridge pair (Sudo.run_script over
+    unit_install_script, which removes the pre-rename pair before writing
+    the current one, and then reads the state back through
+    persistence_complaints), and supervise_workflow_runner for the runner
+    (which retires the pre-rename unit first, for the same reason). A
+    second way to talk to systemd would be a second set of bugs and a
+    second thing to keep in step with the unit texts.
+
+    Each half runs only where there is something to rename: a host that
+    never installed bridge persistence has no pair to move, and a
+    deployment with no local hooks has no runner. Both are read from the
+    unit FILE as well as from `is-enabled`, because a unit file that was
+    copied in and never enabled is still a file the next `systemctl
+    enable` by the old name would arm.
+
+    The runner's BINARY is renamed before its unit is written, because
+    the unit names the binary by absolute path: the other order enables a
+    unit pointing at a file that does not exist yet.
+
+    A host with no systemctl still has a rename to perform. The unit file
+    staged under the prefix IS the deliverable there -- the installer
+    writes it and prints the three commands -- so a pre-rename staged
+    file is restaged under the current name rather than left beside a
+    binary it no longer matches.
+    """
+    systemctl = find_tool("systemctl")
+    staged_legacy = args.prefix / LEGACY_WORKFLOW_RUNNER_UNIT
+    if systemctl is None:
+        if not staged_legacy.exists():
+            say("==> No systemctl on this host and no pre-rename unit staged under the prefix, "
+                "so there is no unit to rename.")
+            return []
+        say(f"==> No systemctl on this host. Restaging the unit staged at {staged_legacy} as "
+            f"{WORKFLOW_RUNNER_UNIT}")
+        rename_runner_binaries(args)
+        supervise_workflow_runner(args)
+        remove_runner_binaries(args, legacy_only=True)
+        return [WORKFLOW_RUNNER_UNIT]
+    unit_dir = Path(SYSTEMD_UNIT_DIR)
+
+    def installed(unit: str) -> bool:
+        return (unit_dir / unit).exists() or Preflight.unit_is_enabled(systemctl, unit)
+
+    renamed = []
+    bridge = [u for u in (BridgeDoctor.LEGACY_SERVICE_UNIT, BridgeDoctor.LEGACY_TIMER_UNIT)
+              if installed(u)]
+    if bridge:
+        say(f"==> Renaming {', '.join(bridge)} to {BridgeDoctor.SERVICE_UNIT} and "
+            f"{BridgeDoctor.TIMER_UNIT}")
+        # Refuses by itself when the read-back disagrees
+        # (EXIT_PERSISTENCE_UNVERIFIED), which is the whole reason this
+        # goes through it rather than around it.
+        install_persistence(BridgeDoctor(args), args)
+        renamed += [BridgeDoctor.SERVICE_UNIT, BridgeDoctor.TIMER_UNIT]
+
+    if installed(LEGACY_WORKFLOW_RUNNER_UNIT) or staged_legacy.exists():
+        say(f"==> Renaming {LEGACY_WORKFLOW_RUNNER_UNIT} to {WORKFLOW_RUNNER_UNIT}")
+        # The binary first: the unit names it by absolute path, so
+        # enabling the unit before the file is under its current name
+        # arms a unit pointing at nothing.
+        rename_runner_binaries(args)
+        state = supervise_workflow_runner(args)
+        if state == "failed":
+            raise Refusal(
+                EXIT_PERSISTENCE_UNVERIFIED,
+                f"{WORKFLOW_RUNNER_UNIT} was installed and systemd would not start it, so the "
+                "runner half of this migration did not complete.",
+                f"The unit's own reason is in `systemctl status {WORKFLOW_RUNNER_UNIT}` and "
+                f"`journalctl -u {WORKFLOW_RUNNER_UNIT}`. The mounts and config.yaml have "
+                "already moved and the stack is up; re-run `migrate-identity` once the unit "
+                "starts.",
+            )
+        if state == "running" and not Preflight.unit_is_enabled(systemctl, WORKFLOW_RUNNER_UNIT):
+            raise Refusal(
+                EXIT_PERSISTENCE_UNVERIFIED,
+                f"systemctl enable --now {WORKFLOW_RUNNER_UNIT} reported success and reading "
+                "is-enabled back does not say 'enabled'.",
+                "enable succeeding says the symlink was made, not that the unit is valid. Check "
+                f"`systemctl status {WORKFLOW_RUNNER_UNIT}` on the host directly.",
+            )
+        if Preflight.unit_is_enabled(systemctl, LEGACY_WORKFLOW_RUNNER_UNIT):
+            raise Refusal(
+                EXIT_HALF_MIGRATED_UNITS,
+                f"{LEGACY_WORKFLOW_RUNNER_UNIT} is still enabled after the rename, so this host "
+                f"would boot with both it and {WORKFLOW_RUNNER_UNIT} armed.",
+                f"Disable it by hand: sudo systemctl disable --now "
+                f"{LEGACY_WORKFLOW_RUNNER_UNIT}. Everything else has already moved.",
+            )
+        renamed.append(WORKFLOW_RUNNER_UNIT)
+        # Anything still under the pre-rename name in <prefix>/bin is now
+        # referenced by nothing: the unit names the current spelling.
+        remove_runner_binaries(args, legacy_only=True)
+
+    if not renamed:
+        say("==> No pre-rename unit is installed on this host, so there is none to rename.")
+    return renamed
+
+
+def cmd_migrate_identity(args) -> int:
+    """Move an installed deployment onto the retnd identity, as one
+    transaction (#890, FR-39).
+
+    Three things move, and "together" is the whole command: the compose
+    MOUNTS (/etc/backupd/... becomes /etc/retnd/...), the persisted
+    config.yaml's absolute container PATHS, and the three systemd UNITS.
+    Any one of them alone is a deployment that does not work. New mounts
+    with an old config.yaml is an engine whose known_hosts path is not
+    mounted at all; an old compose file with a rewritten config.yaml is
+    the same failure from the other end; and renamed units beside an old
+    compose file is a runner pointing at a binary under a name nothing
+    writes any more.
+
+    THE ORDER, AND WHY IT IS TRANSACTIONAL
+
+      1. Take the stack DOWN. Everything below edits files the engine has
+         open, and stop_stack exists because copying or moving a live
+         SQLite database is not a copy.
+      2. Stage the payload: the compose file with the new mounts, the
+         image override, the ROLLBACK-WINDOW override, and .env. Every
+         file here is one this installer owns and rewrites on every run.
+      3. Rewrite config.yaml, keeping the original.
+      4. Rename the units.
+      5. Bring the stack back up.
+
+    The mounts move BEFORE the config.yaml is rewritten, which is the
+    opposite of the intuitive order, and the rollback-window override is
+    the reason. After step 2 the ONE host config directory is mounted at
+    both /etc/retnd/config and /etc/backupd/config, so the old,
+    un-rewritten config.yaml still resolves every path it names: the
+    intermediate state starts. Rewriting config.yaml first would create
+    the opposite window -- a config naming /etc/retnd paths under a
+    compose file that mounts nothing there -- and that one does not
+    start, so a host that lost power inside it would come back broken
+    rather than merely un-migrated.
+
+    Everything after step 3 restores config.yaml from the original on any
+    failure, and every step before it is idempotent, so the promise is
+    literal: whatever fails, the deployment that comes back up is one
+    whose compose file and config.yaml agree. `up` is attempted even
+    after a restore, so the operator is left with something running.
+
+    Idempotent by construction, and worth being: a re-run after a
+    corrected unit finds nothing pre-rename to move, rewrites the same
+    files with the same bytes, and says so.
+    """
+    payload, containers, installed_env = detect_existing(args)
+    if not payload and not containers:
+        say("nothing to migrate: no payload and no containers for project " + args.project)
+        say("A deployment that is not installed here has no identity to move; `install` writes "
+            "the current one from the start.")
+        return EXIT_OK
+
+    # The same adoption install does, and for the same reason: every path
+    # this command restages has to be the one the deployment is really
+    # using, not this invocation's computed default.
+    adopt_installed_credentials(args, installed_env)
+    adopt_installed_shape(args, installed_env)
+    check_layout_matches(args, installed_env)
+
+    say(f"==> Migrating the deployment under {args.prefix} onto the {CONTAINER_ETC_DIR} identity")
+    stop_stack(args, remove=False)
+
+    say(f"==> Restaging the deployment under {args.prefix}, so the mounts move")
+    stage_payload(args)
+
+    original_config, changes = rewrite_persisted_config(args)
+    config_path = args.config_dir / "config.yaml"
+
+    def restore_config() -> None:
+        """Put the operator's file back exactly as it was."""
+        if changes and original_config:
+            replace_file_atomically(config_path, original_config,
+                                    mode=config_path.stat().st_mode & 0o777)
+            say(f"==> Restored {config_path} to what it was before this run.")
+
+    try:
+        # UNCONDITIONALLY, and not only when the rewriter reported
+        # changes. The mount has moved by the time this runs, so the
+        # question is not "did the rewrite do what it said" but "does the
+        # file on disk still name a path nothing is mounted at any more",
+        # and those are different questions with one honest answer.
+        # Gating this on the rewriter having reported work is how a
+        # migration that moved the mounts and skipped the rewrite -- a
+        # rewriter that silently did nothing, an exception swallowed
+        # somewhere below it -- would pass its own verification.
+        #
+        # Read from DISK rather than from the string that was written, for
+        # the same reason: "the new text was computed" and "the host's own
+        # file no longer names a pre-rename path" are different claims,
+        # and only the second is what the engine depends on.
+        if config_path.is_file():
+            complaints = config_path_complaints(config_path.read_text(encoding="utf-8"))
+            if complaints:
+                raise Refusal(
+                    EXIT_VERIFY,
+                    "the configuration mount has moved and the persisted config.yaml still names "
+                    "pre-rename container paths:\n  " + "\n  ".join(complaints),
+                    "This deployment would start, report healthy, and fail at the first backup "
+                    "cycle on a path nothing is mounted at, so the migration refuses instead. "
+                    f"config.yaml is as it was; correct those lines to name "
+                    f"{CONTAINER_ETC_DIR} and re-run `migrate-identity`.",
+                )
+        renamed = migrate_units(args)
+    except BaseException:
+        restore_config()
+        say("==> Bringing the stack back up on the pre-migration configuration.")
+        run([*compose_argv(args), "up", "-d", "--no-build"], check=False, timeout=1800,
+            cwd=str(args.prefix))
+        raise
+
+    say("==> docker compose up -d")
+    up = run([*compose_argv(args), "up", "-d", "--no-build"], check=False, timeout=1800,
+             cwd=str(args.prefix))
+    if up.returncode != 0:
+        raise Refusal(
+            EXIT_RUNTIME,
+            "the migration completed and docker compose up failed:\n"
+            f"--- stdout ---\n{up.stdout.rstrip()}\n--- stderr ---\n{up.stderr.rstrip()}",
+            "The mounts, config.yaml and the units have all moved, so this is a start failure "
+            "rather than a half-migrated host: read it with\n"
+            f"  {' '.join(compose_argv(args))} logs --tail=100",
+        )
+
+    say("")
+    say("==> Migrated.")
+    say(f"    Mounts:     {CONTAINER_ETC_DIR}/... (the host directories did not move)")
+    say(f"    config.yaml: {len(changes)} path(s) rewritten")
+    say(f"    Units:      {', '.join(renamed) if renamed else 'none installed on this host'}")
+    say(f"    Compose:    {' '.join(compose_argv(args))}")
+    say(f"    The previous container paths stay mounted for one release "
+        f"({ROLLBACK_OVERRIDE_NAME}), so rolling the image back still finds its configuration.")
+    return EXIT_OK
 
 # ---------------------------------------------------------------------
 # Arguments
@@ -6402,9 +7417,9 @@ def _add_shared_groups(sp: argparse.ArgumentParser) -> None:
     happens to need" the way this function used to define it.
     """
     layout = sp.add_argument_group("layout")
-    layout.add_argument("--prefix", type=Path, default=Path.home() / "backupd",
+    layout.add_argument("--prefix", type=Path, default=Path.home() / CLI_WRAPPER_NAME,
                         help="Directory the deployment files and the default data directories live under. "
-                             "Defaults to backupd under the invoking user's home. It used to default "
+                             "Defaults to retnd under the invoking user's home. It used to default "
                              "to /volume1/backupd, a guessed path for one NAS layout that was wrong "
                              "by a directory name on the actual UGREEN and wrong entirely on anything that "
                              "is not Synology-shaped.")
@@ -6493,10 +7508,10 @@ def _add_install_prereq_groups(sp: argparse.ArgumentParser) -> None:
                               "when there is no default route to read an address off.")
     runtime.add_argument("--cli-only", action="store_true", default=None, dest="cli_only",
                          help="Install the command line and nothing else. The engine container runs "
-                              "`backupd daemon` instead of `backupd-web serve`, the web-ui container is never "
+                              "`retnd daemon` instead of `retnd-web serve`, the web-ui container is never "
                               "started, and no port is published on this host at all, so nothing in the "
-                              "deployment serves HTTP and the backupd-web binary is not executed. What drives "
-                              "it is the backupd wrapper this writes to <prefix>/bin/backupd. There is no "
+                              "deployment serves HTTP and the retnd-web binary is not executed. What drives "
+                              "it is the retnd wrapper this writes to <prefix>/bin/retnd. There is no "
                               "enrollment link and no first-run wizard, so on a host with no config.yaml "
                               "yet this stages everything, starts nothing, and prints the one command "
                               "that writes the first configuration. Re-running without this flag on a "
@@ -6504,7 +7519,7 @@ def _add_install_prereq_groups(sp: argparse.ArgumentParser) -> None:
                               "converts it back to the full stack.")
     runtime.add_argument("--no-cli-only", action="store_false", default=None, dest="cli_only",
                          help="Convert a CLI-only deployment back to the full stack: the engine goes back "
-                              "to `backupd-web serve` and the Web UI is published on --listen-port again.")
+                              "to `retnd-web serve` and the Web UI is published on --listen-port again.")
     runtime.add_argument("--profile", default="generic",
                          help="Runtime profile, from container/compose.yaml's x-canonical-runtime.profiles.")
     runtime.add_argument("--timezone", default=None,
@@ -6633,9 +7648,9 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "example:\n"
             "  python3 install_docker_host.py install \\\n"
-            "      --prefix /volume1/backupd \\\n"
-            "      --ssh-key /volume1/backupd/secrets/id_ed25519 \\\n"
-            "      --known-hosts /volume1/backupd/secrets/known_hosts \\\n"
+            "      --prefix /volume1/retnd \\\n"
+            "      --ssh-key /volume1/retnd/secrets/id_ed25519 \\\n"
+            "      --known-hosts /volume1/retnd/secrets/known_hosts \\\n"
             "      --image ghcr.io/backupdproject/backupd:0.4.0\n"
         ),
     )
@@ -6674,7 +7689,7 @@ def build_parser() -> argparse.ArgumentParser:
     check = sp_status.add_argument_group("bridge networking (issue #271)")
     check.add_argument("--check-network", choices=["auto", "never"], default="auto",
                        help="auto asks, unprivileged and read-only, whether a bridged container can still "
-                            "originate traffic and reports backupd-bridge.timer's own state "
+                            "originate traffic and reports retnd-bridge.timer's own state "
                             "alongside it. never skips the check. A separate flag from install's own "
                             "--fix-network on purpose: this command only ever reads, it repairs nothing, "
                             "so it needed its own policy rather than borrowing a flag whose name promises "
@@ -6717,6 +7732,37 @@ def build_parser() -> argparse.ArgumentParser:
         "network-undo", formatter_class=_HelpFormatter,
         help="Remove exactly the firewall rules and persistence unit this installer added, and nothing else.")
     _add_shared_groups(sp_undo)
+
+    sp_migrate = subparsers.add_parser(
+        "migrate-identity", formatter_class=_HelpFormatter,
+        help="Move an already-installed deployment onto the current container paths and unit "
+             "names, as one transaction.",
+        epilog=(
+            "Issue #890. An install made before the rename mounts its configuration at\n"
+            "/etc/backupd/config, has absolute /etc/backupd paths persisted in its own\n"
+            "config.yaml, and has its units enabled as backupd-bridge.service,\n"
+            "backupd-bridge.timer and backupd-workflow-runner.service. This moves all three\n"
+            "together: the mounts, the persisted paths, and the units.\n"
+            "\n"
+            "Together, because each one alone is a deployment that does not work. It takes the\n"
+            "stack down, restages it, rewrites config.yaml, renames the units and brings it\n"
+            "back up, and on any failure it puts config.yaml back and starts the deployment\n"
+            "again on what it had before.\n"
+            "\n"
+            "The previous container paths stay mounted, at the same host directory, for one\n"
+            "release: rolling the image back to the previous build still finds its\n"
+            "configuration. It is safe to re-run; a deployment with nothing left to move says\n"
+            "so and changes nothing.\n"
+        ),
+    )
+    _add_shared_groups(sp_migrate)
+    # The same prerequisite flags preflight and install declare, because
+    # this command RESTAGES the payload: it writes compose.yaml, the two
+    # overrides and .env, and render_env needs every value those hold.
+    # Nothing has to be passed on a re-run -- the installed .env is
+    # adopted first, the same way install adopts it -- and that is the
+    # point of declaring them rather than of needing them.
+    _add_install_prereq_groups(sp_migrate)
 
     return parser
 
@@ -6822,10 +7868,10 @@ def resolve_release(args) -> None:
             f"--release {args.release} is older than {FIRST_RELEASE_WITH_RBM}, and this "
             f"installer can only write a deployment that {FIRST_RELEASE_WITH_RBM} and newer "
             "can start.",
-            "The runtime definition embedded here runs `/backupd-web`, which is the name the "
-            f"binaries got in {FIRST_RELEASE_WITH_RBM}. Images published before that carry "
-            "`/backupd-web` and nothing at `/backupd-web`, so both containers would die "
-            "with \"exec /backupd-web: no such file or directory\" and this installer would sit "
+            "The runtime definition embedded here runs a `-web` binary by absolute path, and "
+            f"{FIRST_RELEASE_WITH_RBM} is the release that first published one: images before it "
+            "carry neither `/retnd-web` nor `/backupd-web`, so both containers would die with "
+            "\"exec: no such file or directory\" and this installer would sit "
             "waiting for a deployment that was never going to come up. Refusing now is the "
             "same promise --release already makes, that you get the version you named or an "
             "error, rather than something that looks installed and is not. To install an "
@@ -6896,7 +7942,7 @@ def resolve(args):
     KEEP THESE TWO IN STEP: every hasattr()-guarded field below must also
     be reachable from
     TestSubcommandFlagScoping.test_resolve_never_raises_for_a_command_missing_install_prereq_flags,
-    which resolves all six real subparsers. argparse gives no static signal
+    which resolves every real subparser. argparse gives no static signal
     here, so a guard nothing exercises is a guard nobody has checked, and
     the failure it is meant to prevent (an AttributeError deep inside a
     privileged repair path, mid-run) only surfaces when that command is
@@ -6987,6 +8033,7 @@ def main(argv) -> int:
         "enroll-link": cmd_enroll_link,
         "network-doctor": cmd_network_doctor,
         "network-undo": cmd_network_undo,
+        "migrate-identity": cmd_migrate_identity,
     }
     try:
         # Parsing is inside the contract now. _IfInstalledRemoved refuses

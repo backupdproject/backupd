@@ -441,7 +441,7 @@ that check lives here.
 A workflow step whose target is `local` does not run in the engine container, and since
 issue #865 it does not run on a host shell either: it runs in an **ephemeral Docker
 container** launched by the **Host Workflow Runner**, a small version-pinned process
-systemd supervises as `backupd-workflow-runner.service`
+systemd supervises as `retnd-workflow-runner.service`
 (`docs/adr/0020-host-workflow-runner.md`, `docs/runtime-contract.md`).
 
 TrueNAS's host is vendor-managed: applications run under the middleware's own container
@@ -463,7 +463,7 @@ mechanism, because two plausible ones are not it:
   and a NAME.local.sh has nowhere to run"*
   (`core/internal/workflowrun/engine.go`). A hook is refused, never skipped, so a
   run cannot report success with the hook quietly missing;
-- and **this procedure installs no `backupd-workflow-runner.service`**, grants no
+- and **this procedure installs no `retnd-workflow-runner.service`**, grants no
   group and fetches no hook image.
 
 What does **not** happen, so that nobody goes looking for it:
@@ -479,7 +479,7 @@ administer, and needs no Docker and no host unit on this NAS. The engine's own s
 of this is unchanged either way: the shipped package asks for no Docker socket, no
 `group_add` and no `DOCKER_HOST`.
 
-- [ ] No `backupd-workflow-runner.service` exists on this host, and nothing in this
+- [ ] No `retnd-workflow-runner.service` exists on this host, and nothing in this
       procedure created one
 - [ ] No account was added to a Docker socket group for this product, and the shipped
       containers mount no socket and declare no `group_add`

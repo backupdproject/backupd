@@ -428,9 +428,13 @@ func CheckArgv(rel string, argv []string) []Violation {
 	if len(argv) == 0 {
 		return []Violation{{rel, RuleNonCanonicalCommand, "empty command"}}
 	}
-	if !contains(canonical.Binaries, argv[0]) {
+	// KnowsBinary, not a lookup in Binaries alone: the image also
+	// answers to the one pre-rename entrypoint canonical.json retains
+	// (renameoverlap.go, #890, removed by #895), and a pinned compose
+	// file naming it is running a command the image really does have.
+	if !canonical.KnowsBinary(argv[0]) {
 		return []Violation{{rel, RuleNonCanonicalCommand,
-			fmt.Sprintf("%q is not one of the canonical image's binaries %v", argv[0], canonical.Binaries)}}
+			fmt.Sprintf("%q is not one of the canonical image's binaries %v", argv[0], canonical.BinarySpellings())}}
 	}
 	for _, arg := range argv {
 		for _, meta := range shellMetacharacters {
@@ -569,7 +573,7 @@ func isPlaceholder(value string) bool {
 // The case that forced it is a bind mount whose host side is the workflow
 // runner's credential FILE (issue #921):
 //
-//   - /DATA/AppData/backupd/secrets/workflow-runner.token:/etc/backupd/workflow-runner.token:ro
+//   - /DATA/AppData/backupd/secrets/workflow-runner.token:/etc/retnd/workflow-runner.token:ro
 //
 // credentialRe sees `token:` followed by eight-plus characters and reports
 // a bundled secret. There is no secret there at all: both sides are
@@ -585,7 +589,7 @@ func isPlaceholder(value string) bool {
 //
 //	WEBHOOK=https://example.com/api/v1/notify?token=abcdef0123456789
 //	endpoint: https://hooks.example.com/services/token: abcdef0123456789
-//	/etc/backupd/admin_password: hunter2hunter2
+//	/etc/retnd/admin_password: hunter2hunter2
 //
 // every one of which has a `/` in front of the key and a real credential
 // after it. So the value has to look like a path too: absolute or
@@ -612,7 +616,7 @@ func keyIsAPathTail(text string, keyStart int) bool {
 
 // valueIsAPath reports whether value is a filesystem path rather than a
 // credential: it starts at a root or says it is relative, and it has a
-// separator inside it. `/etc/backupd/workflow-runner.token:ro` passes;
+// separator inside it. `/etc/retnd/workflow-runner.token:ro` passes;
 // `abcdef0123456789` and a base64 blob that happens to begin with `/`
 // do not.
 func valueIsAPath(value string) bool {

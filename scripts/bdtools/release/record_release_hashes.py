@@ -4,7 +4,7 @@
 Ported off `scripts/release/record-release-hashes.sh`.
 
 Builds `container/Dockerfile` for each of linux/amd64 and linux/arm64,
-extracts both shipped binaries (`/backupd` and `/backupd-web`) from each built
+extracts both shipped binaries (`/retnd` and `/retnd-web`) from each built
 image, hashes them with SHA-256, and writes the result to
 `container/release-manifest.json` -- a record a reviewer (or a future
 provider package) can diff against a claim of core parity, rather than
@@ -289,19 +289,23 @@ def build_and_hash(root: Path, arch: str, version: str, commit: str) -> dict[str
         capture=False,
     )
 
-    cid = harness.sh_out(["docker", "create", "--platform", f"linux/{arch}", tag, "/backupd", "version"])
+    cid = harness.sh_out(["docker", "create", "--platform", f"linux/{arch}", tag, "/retnd", "version"])
     tmp = Path(tempfile.mkdtemp())
     try:
-        # /backupd and /backupd-web, never the compatibility symlinks beside them
-        # (the 0.3.3 CLI rename): `docker cp` without `-L` copies a link
-        # as a link, and the local names below are the keys
-        # `binary_sha256` records under, not the renamed CLI.
-        harness.sh(["docker", "cp", f"{cid}:/backupd", str(tmp / "backupd")])
-        harness.sh(["docker", "cp", f"{cid}:/backupd-web", str(tmp / "backupd-web")])
+        # The two REAL files, never the compatibility name beside them.
+        # 0.3.3 renamed the CLI and #890 renamed the container paths, and
+        # the image now carries /retnd, /retnd-web and /backupd-web, where
+        # the third is a HARDLINK to the second rather than a third
+        # binary. Hashing it would record the same bytes twice under two
+        # keys and invite a later check that compares a name with itself.
+        # `docker cp` without `-L` copies a link as a link anyway, and the
+        # local names below are the keys `binary_sha256` records under.
+        harness.sh(["docker", "cp", f"{cid}:/retnd", str(tmp / "retnd")])
+        harness.sh(["docker", "cp", f"{cid}:/retnd-web", str(tmp / "retnd-web")])
         harness.sh(["docker", "rm", cid])
 
-        backupd_sha = sha256_of(tmp / "backupd")
-        backupd_web_sha = sha256_of(tmp / "backupd-web")
+        retnd_sha = sha256_of(tmp / "retnd")
+        retnd_web_sha = sha256_of(tmp / "retnd-web")
         local_image_id = (
             harness.sh_out(["docker", "images", "--no-trunc", "--format", "{{.ID}}", tag])
             .splitlines()[0]
@@ -312,7 +316,7 @@ def build_and_hash(root: Path, arch: str, version: str, commit: str) -> dict[str
 
     return {
         "architecture": arch,
-        "binary_sha256": {"backupd": backupd_sha, "backupd-web": backupd_web_sha},
+        "binary_sha256": {"retnd": retnd_sha, "retnd-web": retnd_web_sha},
         "local_image_id_sha256": local_image_id,
         "registry_digest": None,
     }
@@ -333,7 +337,16 @@ NOTE = (
     "binary_sha256 is hashed from the two binaries extracted out of the built image, so it is real "
     "evidence of what was compiled. registry_digest is the digest ghcr.io assigns "
     "ghcr.io/backupdproject/backupd on push (docker buildx build --push prints it, docker buildx "
-    "imagetools inspect reads it back)."
+    "imagetools inspect reads it back). "
+    "binary_sha256 KEYS: an entry that records an ALREADY-PUBLISHED release keeps the keys it was published "
+    "under, so 0.4.0 stays keyed backupd/backupd-web -- those names identify a recorded build, and re-keying "
+    "evidence to tidy a label is how evidence stops being evidence. New entries are keyed retnd/retnd-web "
+    "after EPIC R's rename (#890), matching the files the image now carries at /retnd and /retnd-web; "
+    "/backupd-web is a hardlink to /retnd-web rather than a third binary, so it gets no key of its own. Every "
+    "consumer accepts BOTH spellings and prefers the new one for the overlap release -- "
+    "distribution/packaging's manifestBinaryKeys, apps/synology/spk's LoadReleaseManifest and "
+    "scripts/bdtools/release/verify_manifest_parity.py -- and the backupd spelling goes away with the shim "
+    "window (#895)."
 )
 
 

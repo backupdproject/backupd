@@ -11,6 +11,7 @@ import (
 
 	"github.com/retnd/retnd/apps/common/platform/capabilities"
 	"github.com/retnd/retnd/core/envcompat"
+	"github.com/retnd/retnd/core/legacypath"
 )
 
 // The route table, which is where this package's security tiering
@@ -67,6 +68,23 @@ type RouterConfig struct {
 	// completed, so GET /api/v1/system/first-run keeps answering and a
 	// POST to it keeps refusing with 409 rather than 404.
 	FirstRun FirstRunClient
+
+	// AdoptedPaths is FR-38's list of this deployment's locations that
+	// are being served from a pre-rename path (core/legacypath), as the
+	// runtime decided them at startup. GET /api/v1/system/version
+	// reports it, which is the third of the three surfaces FR-38
+	// requires the adopted path on.
+	//
+	// It is a value passed in rather than something this package can
+	// work out, and that is the correct direction: the decision is taken
+	// once, before anything is opened or announced, by the process that
+	// owns the paths. A router that re-derived it would be a second
+	// opinion formed after the fact, and could disagree with the journal
+	// that is actually open.
+	//
+	// Nil on every normal deployment, which is what an empty response
+	// array means.
+	AdoptedPaths []legacypath.Adoption
 
 	// OnConfigured, when non-nil, is called by POST
 	// /api/v1/system/first-run once the first configuration is durably
@@ -233,6 +251,9 @@ type handlers struct {
 	firstRun     FirstRunClient
 	onConfigured func(context.Context) error
 
+	// adoptedPaths is RouterConfig.AdoptedPaths, carried unchanged.
+	adoptedPaths []legacypath.Adoption
+
 	// logger is RouterConfig.Logger, resolved: never nil after NewRouter,
 	// so internalError (refusal.go) has nothing to branch on.
 	logger Logger
@@ -284,6 +305,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		gate:          gate,
 		firstRun:      cfg.FirstRun,
 		onConfigured:  cfg.OnConfigured,
+		adoptedPaths:  cfg.AdoptedPaths,
 		logger:        logger,
 		debug:         envLogLevel() == slog.LevelDebug,
 	}

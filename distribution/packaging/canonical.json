@@ -34,7 +34,18 @@
       "metadata formats. Every acceptance procedure in docs/acceptance/ keeps its step 0 for a",
       "deployment that cannot reach ghcr.io (push to your own registry, or docker save/load),",
       "and every profile keeps the reference substitutable."
-    ]
+    ],
+    "mirror": {
+      "reference": "ghcr.io/backupdproject/backupd:0.4.0",
+      "retiredBy": 895,
+      "note": [
+        "FR-39: a GHCR package path is not covered by GitHub's transfer redirects, so the",
+        "old package path is pushed alongside the new one for exactly one release. Removing",
+        "this object is issue #895's job, together with guard 7 in",
+        "scripts/bdtools/release/publish_image.py, which refuses a run whose push set does",
+        "not contain this reference."
+      ]
+    }
   },
   "architectures": [
     "amd64",
@@ -88,14 +99,14 @@
   "healthchecks": {
     "engine": [
       "CMD",
-      "/backupd-web",
+      "/retnd-web",
       "healthcheck",
       "--url",
       "http://127.0.0.1:8080/health/live"
     ],
     "webUI": [
       "CMD",
-      "/backupd-web",
+      "/retnd-web",
       "healthcheck"
     ]
   },
@@ -110,7 +121,7 @@
     "derive.go has to hold four metadata formats to them, one of which is an",
     "Unraid XML template no Compose parser can read.",
     "",
-    "The engine's is a LIVENESS question and deliberately not `backupd",
+    "The engine's is a LIVENESS question and deliberately not `retnd",
     "status` (issue #206). Every adapter's Web UI declares",
     "`depends_on: <engine>: condition: service_healthy`, so whatever this asks",
     "stands between an operator and the only LAN-facing container in the",
@@ -133,7 +144,7 @@
     "dependency either, so the badge it produces is the freshness report it is",
     "meant to be.",
     "",
-    "The Web UI's is unchanged: `/backupd status` needs a config file and a",
+    "The Web UI's is unchanged: `/retnd status` needs a config file and a",
     "state database that container does not have, so every adapter has to either",
     "override it with the Web UI test or disable it outright (Unraid, whose only",
     "seam is `docker run --health-cmd`, which is shell form the distroless image",
@@ -141,39 +152,63 @@
   ],
   "commands": {
     "engine": [
-      "/backupd-web",
+      "/retnd-web",
       "serve"
     ],
     "webUI": [
-      "/backupd-web",
+      "/retnd-web",
       "serve-ui"
     ],
     "headless": [
-      "/backupd",
+      "/retnd",
       "daemon"
     ],
     "healthcheck": [
-      "/backupd-web",
+      "/retnd-web",
       "healthcheck"
     ],
     "imageHealthcheck": [
-      "/backupd",
+      "/retnd",
       "status"
     ]
   },
   "binaries": [
-    "/backupd",
-    "/backupd-web"
+    "/retnd",
+    "/retnd-web"
   ],
+  "_retainedBinaries_comment": [
+    "The ONE pre-rename entrypoint the image still answers to, and the whole of",
+    "issue #890's binary-name overlap (R1.5, EPIC R #885).",
+    "",
+    "#890 renamed the two entrypoints to /retnd and /retnd-web. An operator who",
+    "pinned a previously published compose file still has",
+    "`command: [\"/backupd-web\", ...]` in their copy, and \"your stack no longer",
+    "starts\" is not an acceptable upgrade, so container/Dockerfile links",
+    "/backupd-web to /retnd-web: one inode, two names, no second copy of the",
+    "binary and no shell wrapper (the runtime image is distroless). There is",
+    "deliberately no /backupd beside it, because no compose file this project",
+    "has ever shipped named /backupd in a `command:` or a `healthcheck:`.",
+    "",
+    "Keyed alias -> real binary, and NOT a second entry in `binaries`, because",
+    "the two lists answer different questions. `binaries` is what the image",
+    "CONTAINS, so it is what container/release-manifest.json has to record a",
+    "SHA-256 for; a hardlink has no hash of its own to record. This map is what",
+    "an argv[0] or a healthcheck command may SAY, which is a wider set for",
+    "exactly one release. renameoverlap.go is the only reader, and issue #895",
+    "deletes this block, that file and the Dockerfile link together."
+  ],
+  "retainedBinaries": {
+    "/backupd-web": "/retnd-web"
+  },
   "containerPaths": {
     "state": "/data/state",
     "backups": "/data/backups",
-    "config": "/etc/backupd/config",
-    "sshKey": "/etc/backupd/id_ed25519",
-    "knownHosts": "/etc/backupd/known_hosts",
+    "config": "/etc/retnd/config",
+    "sshKey": "/etc/retnd/id_ed25519",
+    "knownHosts": "/etc/retnd/known_hosts",
     "runtime": "/data/run",
     "workflows": "/workflows",
-    "runnerToken": "/etc/backupd/workflow-runner.token"
+    "runnerToken": "/etc/retnd/workflow-runner.token"
   },
   "configFileName": "config.yaml",
   "_config_role_comment": [
@@ -198,15 +233,15 @@
     "engine only ever reads it, and the shapes are different claims."
   ],
   "readOnlyContainerPaths": [
-    "/etc/backupd/id_ed25519",
-    "/etc/backupd/known_hosts",
-    "/etc/backupd/workflow-runner.token",
+    "/etc/retnd/id_ed25519",
+    "/etc/retnd/known_hosts",
+    "/etc/retnd/workflow-runner.token",
     "/workflows"
   ],
   "writableContainerPaths": [
     "/data/state",
     "/data/backups",
-    "/etc/backupd/config",
+    "/etc/retnd/config",
     "/data/run"
   ],
   "_workflowRunner_comment": [
@@ -234,7 +269,7 @@
     "or a DOCKER_HOST)."
   ],
   "workflowRunner": {
-    "unit": "backupd-workflow-runner.service",
+    "unit": "retnd-workflow-runner.service",
     "installer": "scripts/install/install_docker_host.py",
     "hookImage": "bash:5.2.37-alpine3.21",
     "hookImageEnvKey": "WORKFLOW_RUNNER_HOOK_IMAGE",
@@ -376,11 +411,11 @@
       "tier": "C",
       "storageMount": "/volume1/backups",
       "hostPaths": {
-        "state": "/volume1/backupd/state",
+        "state": "/volume1/retnd/state",
         "backups": "/volume1/backups",
-        "config": "/volume1/backupd/config",
-        "sshKey": "/volume1/backupd/secrets/id_ed25519",
-        "knownHosts": "/volume1/backupd/secrets/known_hosts"
+        "config": "/volume1/retnd/config",
+        "sshKey": "/volume1/retnd/secrets/id_ed25519",
+        "knownHosts": "/volume1/retnd/secrets/known_hosts"
       },
       "hostPathNote": "These are container/.env.example's own defaults, not a Dockge layout, and that is the point: Dockge deploys the canonical stack unmodified, so its host paths ARE the canonical stack's. TestTheDockgeStackIsTheCanonicalStack pins these five to that file, so the import workflow in apps/dockge/README.md cannot drift from the runtime it imports.",
       "trustForwardedHeaders": true,

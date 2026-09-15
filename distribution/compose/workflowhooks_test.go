@@ -254,7 +254,7 @@ func TestTheWorkflowMountRulesFireOnTheMistakesTheyExistFor(t *testing.T) {
 	}{
 		{
 			name:   "the script tree becomes writable",
-			volume: "/srv/backupd/workflows:" + hookScriptsPath,
+			volume: "/srv/retnd/workflows:" + hookScriptsPath,
 			caught: func(doc compose.Document, svc map[string]any) bool {
 				// The last entry wins in this parser's view, so the
 				// writable duplicate is what a check would read.
@@ -287,14 +287,14 @@ func TestTheWorkflowMountRulesFireOnTheMistakesTheyExistFor(t *testing.T) {
 		},
 		{
 			name:   "the runner's own workspace is mounted into the engine",
-			volume: "/srv/backupd/run/workspace:/data/run/workspace",
+			volume: "/srv/retnd/run/workspace:/data/run/workspace",
 			caught: func(doc compose.Document, svc map[string]any) bool {
 				return len(workflowMountFindings(doc, svc)) != 0
 			},
 		},
 		{
 			name:   "a workflow directory beside the script tree is writable",
-			volume: "/srv/backupd/workflow-extra:/etc/backupd/workflow-extra",
+			volume: "/srv/retnd/workflow-extra:/etc/retnd/workflow-extra",
 			caught: func(doc compose.Document, svc map[string]any) bool {
 				return len(workflowMountFindings(doc, svc)) != 0
 			},
@@ -335,7 +335,7 @@ func TestTheWorkflowMountRulesFireOnTheMistakesTheyExistFor(t *testing.T) {
 func TestAReadOnlyCredentialFileMountIsNotRefused(t *testing.T) {
 	t.Parallel()
 
-	doc, describe := canonical(t).WithVolume("/srv/backupd/secrets/workflow-runner.token:/etc/backupd/workflow-runner.token:ro")
+	doc, describe := canonical(t).WithVolume("/srv/retnd/secrets/workflow-runner.token:/etc/retnd/workflow-runner.token:ro")
 	if describe == "" {
 		t.Fatal("the mutation helper injected nothing, so this control is watching an unmutated document")
 	}
@@ -344,7 +344,7 @@ func TestAReadOnlyCredentialFileMountIsNotRefused(t *testing.T) {
 
 	// It really is there, or this control is about a document with no
 	// credential mount in it.
-	if _, found := mountAt(doc.Mounts(svc), "/etc/backupd/workflow-runner.token"); !found {
+	if _, found := mountAt(doc.Mounts(svc), "/etc/retnd/workflow-runner.token"); !found {
 		t.Fatalf("the injected credential mount is not in the document: %s", describe)
 	}
 	if findings := workflowMountFindings(doc, svc); len(findings) != 0 {

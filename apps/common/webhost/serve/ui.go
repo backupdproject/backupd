@@ -48,7 +48,7 @@ import (
 type UIConfig struct {
 	// Upstream is the engine's own base URL as reachable from the UI
 	// host - e.g. over an internal Docker network
-	// (http://backupd:8080, the compose service name resolved
+	// (http://retnd:8080, the compose service name resolved
 	// through Docker's embedded DNS), never a published host port.
 	Upstream *url.URL
 

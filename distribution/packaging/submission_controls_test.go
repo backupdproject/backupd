@@ -348,9 +348,9 @@ services:
     volumes:
       - "/host/state:/data/state"
       - "/host/backups:/data/backups"
-      - "/host/config:/etc/backupd/config"
-      - "/host/id_ed25519:/etc/backupd/id_ed25519:ro"
-      - "/host/known_hosts:/etc/backupd/known_hosts:ro"
+      - "/host/config:/etc/retnd/config"
+      - "/host/id_ed25519:/etc/retnd/id_ed25519:ro"
+      - "/host/known_hosts:/etc/retnd/known_hosts:ro"
   backupd-ui:
     image: ghcr.io/backupdproject/backupd:0.4.0
     command: ["/backupd-web", "serve-ui"]
@@ -1123,7 +1123,7 @@ func TestTelemetryRuleReadsAddressLiteralsAsHosts(t *testing.T) {
 		"[2001:db8::1]":                    true,
 		"::ffff:203.0.113.9":               true,
 		"localhost":                        false,
-		"backupd":                   false,
+		"backupd":                          false,
 		"tower.local":                      false,
 		"127.0.0.1":                        false,
 		"::1":                              false,

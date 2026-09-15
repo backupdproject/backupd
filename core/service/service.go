@@ -41,6 +41,7 @@ import (
 	"github.com/retnd/retnd/core/internal/state"
 	"github.com/retnd/retnd/core/internal/transport"
 	"github.com/retnd/retnd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/legacypath"
 )
 
 // closeDrainTimeout bounds how long Close (below) waits for an in-flight
@@ -371,6 +372,24 @@ func New(cfg *config.Config, journal *state.Journal, tr transport.Transport, log
 func OpenConfigAndJournal(ctx context.Context, configPath string) (*config.Config, *state.Journal, func() error, error) {
 	configPath = config.ResolvePath(configPath)
 
+	// FR-38's preflight, and it sits HERE because this is the one door
+	// every caller opens a deployment through: both commands, every
+	// provider app, and `retnd check`. EPIC R renamed the container-
+	// internal configuration directory, so a deployment whose compose
+	// file still mounts the pre-rename path resolves a path that holds
+	// nothing — and the stat below would report that as "not set up yet"
+	// and hand a live deployment the first-run flow. legacypath.go has
+	// the whole argument and the table.
+	//
+	// Applying it before the stat rather than after is the point: the
+	// adoption has to change WHICH path the stat asks about, or it is a
+	// diagnosis printed underneath the damage.
+	cfgAdoption := legacypath.ForConfig(configPath)
+	if cfgAdoption.Outcome == legacypath.Ambiguous {
+		return nil, nil, nil, &legacypath.AmbiguousError{Adoption: cfgAdoption}
+	}
+	configPath = cfgAdoption.Path
+
 	// An absent configuration file is reported as its own error, before
 	// anything else is attempted (issue #176, firstrun.go). It is the one
 	// startup failure that means "this deployment has not been set up
@@ -411,6 +430,35 @@ func OpenConfigAndJournal(ctx context.Context, configPath string) (*config.Confi
 	if err := checkValidatorCatalogMembership(cfg); err != nil {
 		return nil, nil, nil, err
 	}
+
+	// The state half of FR-38's table, asserted on the path the
+	// configuration persists rather than on a default. A configuration
+	// that names its own journal cannot lose it to the rename; a
+	// half-completed migration that rewrote the configuration and did
+	// not move the mount produces exactly the second row, at the one
+	// path where taking the wrong branch means starting a fresh journal
+	// beside a real one.
+	stateAdoption := legacypath.ForStateDatabase(cfg.State.Database)
+	if stateAdoption.Outcome == legacypath.Ambiguous {
+		return nil, nil, nil, &legacypath.AmbiguousError{Adoption: stateAdoption}
+	}
+
+	// The adopted path replaces the persisted one IN THIS PROCESS'S
+	// LOADED CONFIGURATION, and that is the point rather than a
+	// convenience. Six things downstream derive a location from
+	// cfg.State.Database — the serving announcement liveengine.go makes,
+	// the deployment identity a routed write compares, the startup and
+	// journal locks, the validator script directory and the workflow
+	// spool — and every one of them has to name the directory the
+	// journal is really in. Opening the journal at one path while the
+	// locks, the announcement and the spool land at another is #571's
+	// split brain rebuilt out of two individually correct halves.
+	//
+	// It changes nothing on disk: this is the decoded configuration, and
+	// the operator's file still says what it says. The warning printed at
+	// startup is what asks them to move it, and the installer's
+	// `migrate-identity` is what does.
+	cfg.State.Database = stateAdoption.Path
 
 	journal, releaseJournal, err := runStartupSequence(ctx, cfg.State.Database)
 	if err != nil {

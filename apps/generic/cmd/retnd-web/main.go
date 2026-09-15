@@ -71,6 +71,7 @@ import (
 	"github.com/retnd/retnd/apps/common/webhost/serve"
 	"github.com/retnd/retnd/apps/generic/webui"
 	"github.com/retnd/retnd/core/cliecho"
+	"github.com/retnd/retnd/core/legacypath"
 	"github.com/retnd/retnd/core/service"
 )
 
@@ -83,9 +84,14 @@ var (
 
 // defaultConfigPath matches core/cmd/retnd's own default and
 // container/compose.yaml's mount point. The mount is the DIRECTORY
-// /etc/backupd/config (issue #196) and config.yaml lives inside
+// /etc/retnd/config (issue #196) and config.yaml lives inside
 // it; --config also accepts that directory.
-const defaultConfigPath = "/etc/backupd/config/config.yaml"
+//
+// EPIC R (#890) moved this from /etc/backupd/config. See
+// core/cmd/retnd/setup.go's own copy of this constant for why that move
+// needs core/legacypath's preflight in front of it, and cmdServe below
+// for where this process runs it.
+const defaultConfigPath = "/etc/retnd/config/config.yaml"
 
 // Where a FIRST-RUN configuration points its SQLite journal (issue #176)
 // is deliberately NOT a constant here. It is
@@ -117,10 +123,15 @@ const defaultListenAddr = ":8080"
 const defaultProfile = string(profile.Generic)
 
 // defaultUpstream matches container/compose.yaml's engine service name
-// (`backupd`) on its own internal default port - resolved through
+// (`retnd`) on its own internal default port - resolved through
 // Docker's embedded DNS on the shared internal network, never a
 // published host port (the engine has none).
-const defaultUpstream = "http://backupd:8080"
+//
+// EPIC R (#890) renamed that service from `backupd`. An operator running
+// an unedited pre-rename compose file is unaffected: that file sets
+// UPSTREAM_ADDR explicitly, and $UPSTREAM_ADDR wins over this default, so
+// the UI host keeps resolving the service name their own file declares.
+const defaultUpstream = "http://retnd:8080"
 
 // shutdownGrace bounds how long `serve`/`serve-ui` wait for the HTTP
 // server's graceful Shutdown (and, for `serve`, the scheduler loop's own
@@ -238,7 +249,7 @@ commands:
 
 serve flags:
   --config PATH               path to the manager's YAML config file
-                               (default /etc/backupd/config/config.yaml).
+                               (default /etc/retnd/config/config.yaml).
                                If this file does not exist, serve starts
                                anyway and offers the first-run setup flow
                                instead of refusing to start (issue #176);
@@ -328,7 +339,7 @@ serve-ui flags:
                    correct for one hop is wrong for the other
   --upstream URL   the engine's base URL, reachable over the internal
                     Docker network (default $UPSTREAM_ADDR, or
-                    http://backupd:8080)
+                    http://retnd:8080)
   --profile NAME   runtime profile (default $RUNTIME_PROFILE, or
                     generic). Selects which bundle under --ui-root is
                     served
@@ -453,6 +464,46 @@ func cmdServe(args []string) int {
 		}
 	}
 
+	// FR-38's preflight, and it runs HERE: before the signal handler,
+	// before local authentication is opened, before anything is
+	// announced and before service.Open is reached.
+	//
+	// The ordering is the requirement, not a preference. EPIC R (#890)
+	// moved this process's default configuration directory, so a
+	// deployment whose compose file still mounts the pre-rename path
+	// resolves a directory that holds nothing — and every branch that
+	// follows reads that correctly as "this deployment has not been set
+	// up yet". local.New below mints and prints a single-use enrollment
+	// token for an unclaimed administrator record, and service.Open
+	// reports ErrConfigAbsent, which this command answers by serving the
+	// first-run setup flow. Both are right for a fresh install and both
+	// are the damage on a live one, so the decision about WHICH
+	// directory this deployment lives in has to be finished before
+	// either of them runs. core/legacypath holds the table and the
+	// argument.
+	//
+	// service.OpenConfigAndJournal applies the same decision itself, so
+	// a provider app that never calls this is still safe; what running
+	// it here buys is the warning, the refusal, and the two paths being
+	// settled before the announcement names one.
+	preflight, err := legacypath.Run(*configPath, *stateDatabase)
+	if err != nil {
+		// The refusal is FR-38's fourth row: two populated directories
+		// that are not the same directory. It names both, it does not
+		// choose, and there is no flag that makes it choose.
+		fmt.Fprintln(os.Stderr, cliecho.WebBinary+":", err)
+		return exitFailure
+	}
+	*configPath = preflight.Config.Path
+	*stateDatabase = preflight.State.Path
+	for _, adoption := range preflight.Adoptions() {
+		// Every start, not just the first. An operator meets this line
+		// once, in an incident, months after the upgrade that caused it,
+		// so it carries the compose line to change and the installer
+		// command that changes it rather than only a deprecation notice.
+		fmt.Fprintln(os.Stderr, cliecho.WebBinary+":", adoption.Warning())
+	}
+
 	// Take the signal away from the embedded rclone before anything can
 	// reach a remote, so its own handler is never installed at all, and
 	// take on the matching obligation to run its exit handlers on the way
@@ -559,6 +610,7 @@ func cmdServe(args []string) int {
 		Platform:              platformAdapter,
 		AuthRoutes:            authRoutes,
 		TrustForwardedHeaders: trustFwd,
+		AdoptedPaths:          preflight.Adoptions(),
 		BinaryVersion:         version,
 		Commit:                commit,
 	}
@@ -871,7 +923,7 @@ func cmdServeUI(args []string) int {
 		return exitUsage
 	}
 	if upstreamURL.Scheme == "" || upstreamURL.Host == "" {
-		fmt.Fprintf(os.Stderr, cliecho.WebBinary+": --upstream %q must be an absolute URL (e.g. http://backupd:8080)\n", *upstream)
+		fmt.Fprintf(os.Stderr, cliecho.WebBinary+": --upstream %q must be an absolute URL (e.g. http://retnd:8080)\n", *upstream)
 		return exitUsage
 	}
 

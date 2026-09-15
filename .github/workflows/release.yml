@@ -611,6 +611,18 @@ jobs:
       # DRY_RUN=1 runs every guard and stops before the push, so a
       # dispatch with publish left false still exercises the refusals
       # against the real tree rather than only against fixtures.
+      #
+      # This step is also where FR-39's mirror window is enforced, and it
+      # is worth knowing here because nothing in this file names a
+      # package: the GHCR path comes from
+      # distribution/packaging/canonical.json's image block, and guard 7
+      # inside publish_image.py refuses a run that would push only the
+      # current package path while that block still declares a retained
+      # one (image.mirror). A release that reached ghcr.io under the new
+      # name and silently stopped pushing the old one would 404 every
+      # existing `docker pull`, because a PACKAGE path gets none of the
+      # redirects a transferred repository does. The window closes with
+      # #895, which deletes image.mirror and guard 7 together.
       - name: Publish
         env:
           DRY_RUN: ${{ needs.decide.outputs.publish == 'true' && '0' || '1' }}

@@ -9,7 +9,7 @@ python3 scripts/install/install_docker_host.py install
 ```
 
 That is the whole command on a bare host (issue #347). It installs under
-`~/backupd`, generates an SSH keypair and an empty `known_hosts` under
+`~/retnd`, generates an SSH keypair and an empty `known_hosts` under
 `<prefix>/secrets` if they are not there, and prints the public half with a note that
 it belongs in the `authorized_keys` of whichever host you are backing up.
 
@@ -17,9 +17,9 @@ Every flag is still there when you want it, and naming one changes only that one
 
 ```
 python3 scripts/install/install_docker_host.py install \
-    --prefix /volume1/backupd \
-    --ssh-key /volume1/backupd/secrets/id_ed25519 \
-    --known-hosts /volume1/backupd/secrets/known_hosts \
+    --prefix /volume1/retnd \
+    --ssh-key /volume1/retnd/secrets/id_ed25519 \
+    --known-hosts /volume1/retnd/secrets/known_hosts \
     --image ghcr.io/backupdproject/backupd:0.4.0
 ```
 
@@ -78,17 +78,17 @@ python3 scripts/install/install_docker_host.py install --cli-only
 
 Everything above still happens (the directories, the keypair, the pinned image, every
 refusal), and then the deployment comes up a different shape. The engine container runs
-`/backupd daemon` instead of `/backupd-web serve`, the `web-ui` container is never started, and
+`/retnd daemon` instead of `/retnd-web serve`, the `web-ui` container is never started, and
 nothing publishes a port on the host, so no process in the deployment serves HTTP and
-the `backupd-web` binary is not executed anywhere. The installer writes a wrapper to
-`<prefix>/bin/backupd` and that is the interface:
+the `retnd-web` binary is not executed anywhere. The installer writes a wrapper to
+`<prefix>/bin/retnd` and that is the interface:
 
 ```
-~/backupd/bin/backupd status
-~/backupd/bin/backupd sources
+~/retnd/bin/retnd status
+~/retnd/bin/retnd sources
 ```
 
-It is `docker compose run --rm --no-deps --entrypoint /backupd backupd`, not
+It is `docker compose run --rm --no-deps --entrypoint /retnd retnd`, not
 `exec`, deliberately. `exec` needs a running container, and the first command anybody
 needs on a fresh CLI-only host runs before anything has been started. A one-off
 container gets the same image, mounts, uid and network as the engine, so a command that
@@ -97,7 +97,7 @@ starting the engine as a side effect of being run.
 
 **A fresh `--cli-only` install starts nothing, and that is the design.** A full install
 has a first-run wizard, so it can come up with no configuration at all and hand you a
-link. `backupd daemon` has no such thing: it is refused rather than started when there is no
+link. `retnd daemon` has no such thing: it is refused rather than started when there is no
 `config.yaml`, so starting it on a fresh host would produce a container that exits, gets
 restarted, exits again, and an installer that either claims success over a crash loop or
 waits out its timeout for a state that can never arrive. So it stages everything, starts
@@ -107,7 +107,7 @@ there is no file to hand-author first.
 
 Since there is nothing serving, there is no health endpoint to ask either. What the
 installer checks instead is that the container stays running for a settle window rather
-than for one sample: `backupd daemon` is running for part of every restart cycle, so a
+than for one sample: `retnd daemon` is running for part of every restart cycle, so a
 single `docker compose ps` would report a crash loop as an install about half the time.
 
 The shape is recorded as `CLI_ONLY` in the staged `.env` and adopted on a later run the
@@ -119,7 +119,7 @@ publishing a Web UI on the LAN of a host somebody deliberately installed without
 
 ### Compatibility: `--prefix` no longer defaults to `/volume1/backupd`
 
-It defaults to `~/backupd`. If you have a script that relied on the old default
+It defaults to `~/retnd`. If you have a script that relied on the old default
 being applied for you, pass `--prefix /volume1/backupd` explicitly. The old
 default was a guess at one NAS vendor's share layout that was wrong by a directory name
 on the actual UGREEN this was proven on, and wrong entirely on anything not
@@ -142,12 +142,14 @@ group- or world-writable, since anyone holding that bit can replace the key what
 key file's own mode says. Ancestors *above* `--prefix` belong to whoever set the machine
 up, so those are named in a warning with the exact `chmod go-w` rather than changed.
 
-Seven subcommands: `preflight` checks and creates nothing, `install` checks then
+Eight subcommands: `preflight` checks and creates nothing, `install` checks then
 installs, `status` reports, `enroll-link` mints a fresh enrollment link,
 `uninstall` removes what the installer made, `network-doctor` diagnoses (and,
-asked to, repairs) Docker bridge networking, and `network-undo` removes exactly
-what a repair added. See [Known-good, and known-bad](#known-good-and-known-bad)
-below for what the last two are for.
+asked to, repairs) Docker bridge networking, `network-undo` removes exactly
+what a repair added, and `migrate-identity` moves an already-installed
+deployment onto the current container paths and unit names in one transaction.
+See [Known-good, and known-bad](#known-good-and-known-bad) below for what the
+two network commands are for.
 
 Flags are scoped to the subcommand that reads them, so `<subcommand> --help` lists only
 what that subcommand actually uses. A flag valid on one is not necessarily valid on
@@ -532,7 +534,7 @@ up and the first backup has run.
 A workflow step whose target is `local` does not run in the engine container, and since
 issue #865 it does not run on a host shell either: it runs in an **ephemeral Docker
 container** launched by the **Host Workflow Runner**, a small version-pinned process
-systemd supervises as `backupd-workflow-runner.service`
+systemd supervises as `retnd-workflow-runner.service`
 (`docs/adr/0020-host-workflow-runner.md`, `docs/runtime-contract.md`).
 
 A generic Docker host is this runner's own target, so local hooks are **available**
@@ -566,7 +568,7 @@ runner's account cannot reach the daemon. A deployment with an empty workflows
 directory is held to none of it, and `WORKFLOW_RUNNER=off` in the `.env` says so
 explicitly.
 
-- [ ] `systemctl is-active backupd-workflow-runner.service` reports `active`
+- [ ] `systemctl is-active retnd-workflow-runner.service` reports `active`
 - [ ] The `--puid` account is in the Docker socket's group, and the engine container is
       not: it mounts no socket and declares no `group_add`
 - [ ] The hook image named in the unit and in the `.env` is present on the host
@@ -622,10 +624,10 @@ rather than tried out of ritual.
 Otherwise, four scoped rules:
 
 ```
-iptables -I DOCKER-USER 1 -i docker0 -m comment --comment backupd-bridge -j RETURN
-iptables -I DOCKER-USER 1 -i br-+    -m comment --comment backupd-bridge -j RETURN
-iptables -I INPUT       1 -i docker0 -m comment --comment backupd-bridge -j ACCEPT
-iptables -I INPUT       1 -i br-+    -m comment --comment backupd-bridge -j ACCEPT
+iptables -I DOCKER-USER 1 -i docker0 -m comment --comment retnd-bridge -j RETURN
+iptables -I DOCKER-USER 1 -i br-+    -m comment --comment retnd-bridge -j RETURN
+iptables -I INPUT       1 -i docker0 -m comment --comment retnd-bridge -j ACCEPT
+iptables -I INPUT       1 -i br-+    -m comment --comment retnd-bridge -j ACCEPT
 ```
 
 `RETURN` in `DOCKER-USER`, not `ACCEPT`, and the difference matters. An `ACCEPT` there
@@ -646,8 +648,11 @@ This edits a firewall on a machine reachable only over SSH.
   test asserting each of those strings is absent from every generated script.
 - Every rule is scoped to a Docker bridge interface. Never a blanket ACCEPT.
 - Idempotent by construction: each line is `iptables -C … || iptables -I …`.
-- Reversible: every rule carries the `backupd-bridge` comment, and
-  `network-undo` removes exactly those and nothing else.
+- Reversible: every rule carries the `retnd-bridge` comment, and
+  `network-undo` removes exactly those and nothing else. It also deletes rules
+  carrying the previous `backupd-bridge` comment, because a host repaired before
+  the rename (issue #890) is still carrying those and nothing else will ever look
+  for them again; new rules only ever get the current comment.
 - The host's own rules are never touched, replaced or reordered.
 - A healthy host is a no-op and is never asked for a password.
 
@@ -705,8 +710,8 @@ A test asserts no generated script ever invokes it, or `iptables-save`.
 #### What is installed instead
 
 ```
-/etc/systemd/system/backupd-bridge.service
-/etc/systemd/system/backupd-bridge.timer
+/etc/systemd/system/retnd-bridge.service
+/etc/systemd/system/retnd-bridge.timer
 ```
 
 The service owns exactly the four tagged rules and nothing else. Each is one `ExecStart`
@@ -749,7 +754,7 @@ the safety net for a host where that ordering turns out not to be enough.
 
 `iptables -C` prints nothing when the rule is already there, and `LogLevelMax=warning`
 keeps systemd's own start and finish lines out of the journal too. Measured on the target
-host: `journalctl -u backupd-bridge.service --since -12min` is empty across
+host: `journalctl -u retnd-bridge.service --since -12min` is empty across
 several fires.
 
 #### What it still does not guarantee
@@ -782,7 +787,7 @@ machine too.
 
 ```
 bridge networking: ok (gateway yes, egress yes)
-  persistence: backupd-bridge.timer enabled, next fire Mon 2026-08-31 22:26:26
+  persistence: retnd-bridge.timer enabled, next fire Mon 2026-08-31 22:26:26
 ```
 
 ### Verified, not assumed

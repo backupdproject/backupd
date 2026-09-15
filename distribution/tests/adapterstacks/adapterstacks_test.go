@@ -189,7 +189,7 @@ func TestMain(m *testing.M) {
 // the configuration mount is a directory at all (issue #196), and an
 // empty one is the only honest shape for an install nobody has
 // configured. The engine serves the first-run setup flow from it, and
-// `backupd status` exits non-zero in it, which every test below
+// `retnd status` exits non-zero in it, which every test below
 // reads back rather than assumes.
 func freshInstall(t *testing.T) string {
 	t.Helper()
@@ -199,7 +199,7 @@ func freshInstall(t *testing.T) string {
 	// hard permission failure at the first write; a macOS Docker Desktop
 	// daemon is lenient about it, which is exactly how a fixture like this
 	// passes locally and fails on a real runner.
-	for _, sub := range []string{"state", "backups", "config"} {
+	for _, sub := range []string{"state", "backups", "config", "workflows", "run"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o777); err != nil {
 			t.Fatalf("MkdirAll %s: %v", sub, err)
 		}
@@ -211,27 +211,45 @@ func freshInstall(t *testing.T) string {
 }
 
 // freshInstallHostPaths lays a fixture directory out as the host side of
-// the five canonical storage roles, keyed by the CONTAINER path an
-// adapter mounts them at.
+// every canonical container path an adapter may mount, keyed by the
+// CONTAINER path it mounts them at.
 //
 // Keyed by the container side because that is the half the binaries fix
 // and every adapter therefore agrees on. The host side is exactly what
 // this rewrite replaces.
+//
+// The three host-plane paths are here for the same reason the five
+// storage roles are, and their absence took four adapters out of this
+// suite without taking them out of its list: EPIC L (#877, #921) gave
+// apps/casaos, apps/openmediavault, apps/portainer and apps/proxmox a
+// /workflows mount, a /data/run mount and the runner's credential file,
+// and rewriteAdapterCompose refuses a container path this map does not
+// carry. So those four failed before the stack was ever started, on the
+// rewrite rather than on the runtime, and the acceptance criterion this
+// suite exists for was unproven on exactly the adapters carrying the
+// newest mounts. They are empty and unconfigured on purpose: no
+// config.yaml names a runner, so nothing connects to the socket
+// directory, and an empty read-only script tree is what a fresh install
+// really has.
 func freshInstallHostPaths(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	keyFile := filepath.Join(dir, "id_ed25519")
 	knownHosts := filepath.Join(dir, "known_hosts")
-	for _, f := range []string{keyFile, knownHosts} {
+	runnerToken := filepath.Join(dir, "workflow-runner.token")
+	for _, f := range []string{keyFile, knownHosts, runnerToken} {
 		if err := os.WriteFile(f, nil, 0o644); err != nil {
 			t.Fatalf("WriteFile %s: %v", f, err)
 		}
 	}
 	return map[string]string{
-		"/data/state":                     filepath.Join(dir, "state"),
-		"/data/backups":                   filepath.Join(dir, "backups"),
-		"/etc/backupd/config":      filepath.Join(dir, "config"),
-		"/etc/backupd/id_ed25519":  keyFile,
-		"/etc/backupd/known_hosts": knownHosts,
+		"/data/state":                      filepath.Join(dir, "state"),
+		"/data/backups":                    filepath.Join(dir, "backups"),
+		"/etc/retnd/config":                filepath.Join(dir, "config"),
+		"/etc/retnd/id_ed25519":            keyFile,
+		"/etc/retnd/known_hosts":           knownHosts,
+		"/workflows":                       filepath.Join(dir, "workflows"),
+		"/data/run":                        filepath.Join(dir, "run"),
+		"/etc/retnd/workflow-runner.token": runnerToken,
 	}
 }
 

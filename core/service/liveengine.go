@@ -9,6 +9,7 @@ import (
 
 	"github.com/retnd/retnd/core/internal/config"
 	"github.com/retnd/retnd/core/internal/obs"
+	"github.com/retnd/retnd/core/legacypath"
 )
 
 // Issue #537, Phase 1 of #536: telling whether an engine is already
@@ -656,12 +657,29 @@ func (g *ConfigWriteGuard) Release() error {
 // that follows is about to open, or it would answer about a deployment
 // nobody asked about.
 func journalNamedBy(configPath string) (string, bool) {
-	cfg, err := config.Load(config.ResolvePath(configPath))
+	// FR-38's preflight, on BOTH halves, for the same reason the
+	// resolution above happens at all: this has to reach the journal the
+	// call that follows is about to open. OpenConfigAndJournal adopts a
+	// pre-rename configuration directory and then a pre-rename journal
+	// path, so an announcement or a routed-write check that skipped
+	// either one would ask about a deployment nobody is serving — which
+	// is #571 reached through the rename instead of through a first run.
+	// legacypath.ForConfig/ForStateDatabase are pure, so both sides
+	// reach the same answer without either telling the other.
+	cfgAdoption := legacypath.ForConfig(configPath)
+	if cfgAdoption.Outcome == legacypath.Ambiguous {
+		return "", false
+	}
+	cfg, err := config.Load(cfgAdoption.Path)
 	if err != nil {
 		return "", false
 	}
 	if cfg.State.Database == "" {
 		return "", false
 	}
-	return cfg.State.Database, true
+	stateAdoption := legacypath.ForStateDatabase(cfg.State.Database)
+	if stateAdoption.Outcome == legacypath.Ambiguous {
+		return "", false
+	}
+	return stateAdoption.Path, true
 }

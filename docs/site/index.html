@@ -122,7 +122,7 @@
     <div class="io">
       <pre class="io-out"><code><!-- BEGIN INSTALL-OUTPUT -->==&gt; Installed.
     Web UI:  http://10.0.0.10:8080
-    Compose: docker compose -p backupd --env-file /home/you/backupd/.env -f /home/you/backupd/compose.yaml -f /home/you/backupd/compose.image.yaml
+    Compose: docker compose -p retnd --env-file /home/you/retnd/.env -f /home/you/retnd/compose.yaml -f /home/you/retnd/compose.image.yaml
 
     No config.yaml was written, on purpose. Issue #176 shipped a first-run setup flow
     precisely so that a fresh install does not need one hand-written before it starts.
@@ -140,7 +140,7 @@
       </aside>
     </div>
 
-    <p>That is the whole of it. The installer picks every path for you (<code>~/backupd</code>, with <code>backups</code>, <code>state</code>, <code>config</code> and <code>secrets</code> under it), generates the SSH key the engine will use, pins the exact image it was built against, and refuses before it changes anything if the machine cannot run it. Nothing needs deciding up front, and everything it chose can be changed afterwards.</p>
+    <p>That is the whole of it. The installer picks every path for you (<code>~/retnd</code>, with <code>backups</code>, <code>state</code>, <code>config</code> and <code>secrets</code> under it), generates the SSH key the engine will use, pins the exact image it was built against, and refuses before it changes anything if the machine cannot run it. Nothing needs deciding up front, and everything it chose can be changed afterwards.</p>
     <p>The last lines are the ones that matter, and they are output rather than something to run. The engine mints the enrolment token during startup and writes the notice to its own log, so the installer waits for that line and hands it over itself (<a href="https://github.com/backupdproject/backupd/issues/803">#803</a>): a fresh install ends with the link, and opening it is the next step. Nothing has to be fetched by hand, and if the notice had not been written by the time the installer stopped waiting &mdash; on a deployment already behaving oddly &mdash; the install prints the one command that reads it back out of the engine's log instead, with every path in it the one it just chose.</p>
     <p>The address in the link is this machine's own rather than <code>localhost</code>, because the link is read from another machine on the same network: <code>localhost</code> over SSH on a laptop is the laptop, which is <a href="https://github.com/backupdproject/backupd/issues/688">what the installer used to print</a>. Open it, create the administrator &mdash; a username, a password, a recovery email address and the mail server to reach it through, which enrolment proves by sending a confirmation message before it creates anything &mdash; and <a href="first-run.html">the first-run tutorial</a> picks up from there. Have the SMTP details to hand before you open the link: <a href="first-run.html#enrol">the form will not finish without a working one</a>.</p>
 
@@ -149,7 +149,7 @@
       <p>The token lasts 30 minutes and works once, and nothing re-issues it while the engine keeps running. One command mints a fresh one:</p>
       <pre><code>python3 install_docker_host.py enroll-link</code></pre>
       <p class="io-label">Output</p>
-      <pre class="io-out"><code><!-- BEGIN ENROLL-LINK-OUTPUT -->==&gt; Restarting backupd, which is what mints a token
+      <pre class="io-out"><code><!-- BEGIN ENROLL-LINK-OUTPUT -->==&gt; Restarting retnd, which is what mints a token
 ==&gt; Waiting up to 90s for the new notice
 
 retnd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enroll?token=jdurSlionp6jyoHTzP_5fHYfLy3Kk6tq to create one (valid 30 minutes, single use).
@@ -166,21 +166,21 @@ retnd-web: no administrator account exists yet. Open http://10.0.0.10:8080/enrol
 
     <p class="io-label">Output</p>
     <pre class="io-out"><code><!-- BEGIN INSTALL-OUTPUT-CLI-ONLY -->==&gt; Installed. Nothing is running yet, and that is what --cli-only means here:
-    `backupd daemon` is refused rather than started without a config.yaml, and a CLI-only
+    `retnd daemon` is refused rather than started without a config.yaml, and a CLI-only
     install has no first-run wizard to write one. Creating the first backup set writes
     the first config.yaml with it:
-      /home/you/backupd/bin/backupd backup-set create &lt;source&gt;/&lt;backup-set&gt; \
+      /home/you/retnd/bin/retnd backup-set create &lt;source&gt;/&lt;backup-set&gt; \
           --host HOST --user USER --remote-path /remote/path --local-path /backups/path \
-          --ssh-key-file /etc/backupd/id_ed25519 --trust-host-key \
+          --ssh-key-file /etc/retnd/id_ed25519 --trust-host-key \
           --completion-strategy stable
 
     Then start the scheduler:
-      docker compose -p backupd --env-file /home/you/backupd/.env -f /home/you/backupd/compose.yaml -f /home/you/backupd/compose.image.yaml up -d --no-build backupd
+      docker compose -p retnd --env-file /home/you/retnd/.env -f /home/you/retnd/compose.yaml -f /home/you/retnd/compose.image.yaml up -d --no-build retnd
 
-    CLI:     /home/you/backupd/bin/backupd
-    Compose: docker compose -p backupd --env-file /home/you/backupd/.env -f /home/you/backupd/compose.yaml -f /home/you/backupd/compose.image.yaml<!-- END INSTALL-OUTPUT-CLI-ONLY --></code></pre>
+    CLI:     /home/you/retnd/bin/retnd
+    Compose: docker compose -p retnd --env-file /home/you/retnd/.env -f /home/you/retnd/compose.yaml -f /home/you/retnd/compose.image.yaml<!-- END INSTALL-OUTPUT-CLI-ONLY --></code></pre>
     <p>No enrolment link there, and nothing to click: a CLI-only deployment has no Web UI to enrol into.</p>
-    <p>That runs the engine as <code>backupd daemon</code> rather than <code>backupd-web serve</code>, never starts the <code>web-ui</code> container, and publishes no port on this host at all, so nothing in the deployment serves HTTP and the <code>backupd-web</code> binary is never executed. What you drive it with is the <code>backupd</code> wrapper the installer writes to <code>~/backupd/bin/backupd</code>, which takes every command in <a href="#cli">the table below</a>.</p>
+    <p>That runs the engine as <code>retnd daemon</code> rather than <code>retnd-web serve</code>, never starts the <code>web-ui</code> container, and publishes no port on this host at all, so nothing in the deployment serves HTTP and the <code>retnd-web</code> binary is never executed. What you drive it with is the <code>retnd</code> wrapper the installer writes to <code>~/retnd/bin/retnd</code>, which takes every command in <a href="#cli">the table below</a>.</p>
     <p>There is no first-run wizard either, which is why a fresh CLI-only host stages everything, starts nothing, and prints the one command that writes the first configuration: creating the first backup set writes the first <code>config.yaml</code> along with it. Re-running the installer later with no flags keeps the deployment this shape, and <code>--no-cli-only</code> converts it to the full stack.</p>
 
     <p>If you would rather see what either of those would do before it does it, <code>python3 install_docker_host.py preflight</code> runs every check and installs nothing.</p>

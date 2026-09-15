@@ -137,7 +137,7 @@ func TestEveryNewAdapterIsSemanticallyEquivalentToTheCanonicalStack(t *testing.T
 			if len(drift) > 0 {
 				t.Fatalf("could not reduce this adapter to roles:\n%s", FormatDrift(drift))
 			}
-			if d := CheckStackEquivalence(got, want); len(d) > 0 {
+			if d := c.CheckStackEquivalence(got, want); len(d) > 0 {
 				t.Errorf("this adapter's runtime is not the canonical runtime:\n%s", FormatDivergence(d))
 			}
 		})
@@ -181,7 +181,7 @@ func TestAHostPlaneMountIsOptionalToCarryAndNotOptionalToCarryCorrectly(t *testi
 	if mountModes(base.Engine)[workflows] != "" {
 		t.Fatalf("this fixture already mounts %s, so the carries-nothing half below proves nothing", workflows)
 	}
-	if d := CheckStackEquivalence(base, want); len(d) > 0 {
+	if d := c.CheckStackEquivalence(base, want); len(d) > 0 {
 		t.Errorf("an adapter that carries no workflow-runner mount is still the canonical runtime, and this reported:\n%s", FormatDivergence(d))
 	}
 
@@ -196,7 +196,7 @@ func TestAHostPlaneMountIsOptionalToCarryAndNotOptionalToCarryCorrectly(t *testi
 	})
 	writable.Engine, writable.WebUI = &engine, &webUI
 
-	found := CheckStackEquivalence(writable, want)
+	found := c.CheckStackEquivalence(writable, want)
 	named := false
 	for _, d := range found {
 		if d.Property == PropContainerMounts && strings.Contains(d.Detail, workflows) {
@@ -295,7 +295,7 @@ func TestTheEquivalenceCheckFailsOnADeliberateMismatch(t *testing.T) {
 		if len(drift) > 0 {
 			t.Fatalf("%s: could not reduce to roles: %s", a.id, FormatDrift(drift))
 		}
-		if d := CheckStackEquivalence(base, want); len(d) > 0 {
+		if d := c.CheckStackEquivalence(base, want); len(d) > 0 {
 			t.Fatalf("%s already diverges before any mutation, so no control below proves anything:\n%s", a.id, FormatDivergence(d))
 		}
 
@@ -305,7 +305,7 @@ func TestTheEquivalenceCheckFailsOnADeliberateMismatch(t *testing.T) {
 				if !ok {
 					t.Fatalf("no mutation is defined for %q, so nobody has watched that comparison fail", property.ID)
 				}
-				found := CheckStackEquivalence(mutated, want)
+				found := c.CheckStackEquivalence(mutated, want)
 				if len(found) == 0 {
 					t.Fatalf("%s and the equivalence check still passed", what)
 				}
@@ -321,7 +321,7 @@ func TestTheEquivalenceCheckFailsOnADeliberateMismatch(t *testing.T) {
 
 				// And the mutation stayed inside the copy: the real
 				// adapter still passes afterwards.
-				if d := CheckStackEquivalence(base, want); len(d) > 0 {
+				if d := c.CheckStackEquivalence(base, want); len(d) > 0 {
 					t.Errorf("the mutation reached the shared runtime, so every later comparison is against a broken adapter:\n%s", FormatDivergence(d))
 				}
 			})
@@ -346,7 +346,7 @@ func TestEveryEquivalencePropertyIsCompared(t *testing.T) {
 			t.Errorf("EquivalenceProperties declares %q and no mutation breaks it", property.ID)
 			continue
 		}
-		for _, d := range CheckStackEquivalence(mutated, want) {
+		for _, d := range c.CheckStackEquivalence(mutated, want) {
 			seen[d.Property] = true
 		}
 		if strings.TrimSpace(property.Why) == "" {

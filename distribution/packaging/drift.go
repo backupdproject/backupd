@@ -86,7 +86,7 @@ func CheckHealthCheck(svc Service, c Canonical) []Violation {
 	if len(svc.HealthcheckTest) == 0 {
 		// Inheriting the image's own HEALTHCHECK. Legitimate, and only
 		// for a service that actually has what that command needs: the
-		// baked-in check is `/backupd status`, which reads the
+		// baked-in check is `/retnd status`, which reads the
 		// config file and the state database.
 		if !mountsRole(svc, "state") && !mountsRole(svc, "config") {
 			add(fmt.Sprintf("service %s declares no healthcheck, so it inherits the image's own `%s`, which reads the config file and the state database; this service mounts neither, so the check can only ever report unhealthy",
@@ -95,9 +95,23 @@ func CheckHealthCheck(svc Service, c Canonical) []Violation {
 		return out
 	}
 
-	want := append([]string{"CMD"}, c.Commands.Healthcheck...)
+	// Every spelling of the canonical command the image answers to, not
+	// just the canonical one: #890 moved the entrypoint names and #891
+	// moves the eight adapters' healthcheck tests, so for one release an
+	// adapter's `/backupd-web healthcheck` and the contract's
+	// `/retnd-web healthcheck` are the same inode (renameoverlap.go).
 	got := svc.HealthcheckTest
-	if !startsWithStrings(got, want) {
+	var want []string
+	matched := false
+	for _, spelling := range c.CommandSpellings(c.Commands.Healthcheck) {
+		want = append([]string{"CMD"}, spelling...)
+		if startsWithStrings(got, want) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		want = append([]string{"CMD"}, c.Commands.Healthcheck...)
 		add(fmt.Sprintf("service %s declares healthcheck %v, and the canonical contract's is %v (extra arguments to that command are allowed, a different command is not); a health command the canonical image does not ship reports unhealthy forever, and one weaker than the canonical command reports healthy through the failure it exists to catch",
 			backquote(svc.Name), got, want))
 	}
