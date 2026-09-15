@@ -305,6 +305,17 @@ make_full_tree() {
     printf '#!/usr/bin/env bash\nexit 0\n' >"$tree/scripts/rename/$rename.sh"
   done
 
+  # FR-44's two brand checks and their shared mutation self-test (#893),
+  # which share the brand-drift guard's gate step and therefore its reason
+  # for being stubbed: they run unconditionally, FAST included. The real
+  # ones read every SVG in a real repository and parse a real manifest
+  # against the real filesystem, and the real self-test builds seventeen
+  # throwaway git repositories.
+  mkdir -p "$tree/scripts/brand"
+  for brand in check-svg-text check-brand-assets selftest; do
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$tree/scripts/brand/$brand.sh"
+  done
+
   # The /api/v1 contract drift check, the client-path check (#211) and
   # their shared mutation self-test (#166). Same reason again, and the same
   # failure mode if any of them is missing: they run unconditionally, FAST

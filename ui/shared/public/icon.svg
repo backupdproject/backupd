@@ -1,5 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
-  <title>backupd</title>
-  <circle cx="24" cy="24" r="17" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="47 20" transform="rotate(-52 24 24)"></circle>
-  <circle cx="24" cy="24" r="5.5" fill="currentColor"></circle>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="retnd">
+  <!-- The in-app mark. It paints with currentColor so the provider accent
+       token drives it and no provider carries an asset of its own. The
+       name is carried by aria-label rather than by an SVG <title>: see
+       scripts/brand/check-svg-text.sh. -->
+  <circle cx="24" cy="24" r="17" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="47 20" transform="rotate(-52 24 24)"/>
+  <circle cx="24" cy="24" r="5.5" fill="currentColor"/>
 </svg>

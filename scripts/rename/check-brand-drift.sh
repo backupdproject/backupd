@@ -622,12 +622,17 @@ EOF
 #                                     the source rather than twice more in
 #                                     its DO-NOT-EDIT copies
 #
-# And the last two are this file and its self-test, which are the only
-# files in the tree whose JOB is to write these names down: the allowlist
-# above is a list of old-brand identifiers, and the self-test plants them on
-# purpose. Scanning either would report the guard's own contents as drift.
-# Named file by file rather than as scripts/rename/** so that a third file
-# added in this directory is scanned like anything else.
+# And the last three are this file, its self-test, and FR-44's brand-asset
+# self-test (#893), which are the only files in the tree whose JOB is to
+# write these names down: the allowlist above is a list of old-brand
+# identifiers, and both self-tests plant them on purpose --
+# scripts/brand/selftest.sh plants the `<title>` FR-44 names as its own
+# planted violation, in a throwaway repository, and requires
+# scripts/brand/check-svg-text.sh to go red on it. Scanning any of the three
+# would report a guard's own contents as drift. Named file by file rather
+# than as scripts/rename/** or scripts/brand/** so that a further file added
+# in either directory is scanned like anything else: the two brand CHECKS
+# are scanned, and neither of them spells an old name.
 excluded_paths=(
   ':!CHANGELOG.md'
   ':!**/go.sum'
@@ -637,6 +642,7 @@ excluded_paths=(
   ':!ui/shared/src/api/generated/**'
   ':!scripts/rename/check-brand-drift.sh'
   ':!scripts/rename/selftest.sh'
+  ':!scripts/brand/selftest.sh'
 )
 
 # The left anchor every pattern shares: start of line, or a character that

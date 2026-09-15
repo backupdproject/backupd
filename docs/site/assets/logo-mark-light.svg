@@ -1,8 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="backupd">
-  <title>backupd</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="retnd">
   <!-- The product's own mark, unchanged: a broken ring reading as a
        transfer cycle in progress. Drawn in white for the dark hero bar,
-       which is the only place this file is used. -->
+       which is the only place this file is used, and the source
+       docs/site/assets/apple-touch-icon.png is exported from. The name is
+       carried by aria-label rather than by an SVG <title>: see
+       scripts/brand/check-svg-text.sh. -->
   <circle cx="24" cy="24" r="17" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-dasharray="47 20" transform="rotate(-52 24 24)"/>
   <circle cx="24" cy="24" r="5.5" fill="#ffffff"/>
 </svg>

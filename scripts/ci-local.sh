@@ -271,9 +271,34 @@ bash scripts/format/check-gofmt.sh
 # whose only evidence is that it passes on the one tree anybody runs it
 # against has proven nothing (#160's shape again), and it is under five
 # seconds, so it runs here rather than nowhere.
-gate_step "no new RM_/BM_/bm_/rbm_/backupd/backupdproject/rclone-manager/backup-manager identifier, and that guard can still fail (#794, #887)"
+#
+# FR-44's two brand checks (#893) run in THIS step rather than one of their
+# own, because they are the same claim from the side `git grep` cannot
+# reach. The guard above greps tracked source and passes -I, so it never
+# opens a raster and it cannot read a letter that has become an SVG
+# `<path>`; a favicon saying the old name is invisible to it by
+# construction. So `check-svg-text.sh` refuses a text node in any source
+# SVG -- `<text>`, `<tspan>`, `<title>`, `<desc>`, the four places a name
+# can hide inside a picture -- with one path-pinned exception, the store
+# icon whose `<title>` distribution/packaging's CheckStoreIcon requires,
+# where the element is allowed and its TEXT is checked instead. And
+# `check-brand-assets.sh` holds
+# `docs/design/brand-assets.md` to the filesystem in both directions, so an
+# asset cannot be missed by being forgotten. Both are `git grep`-shaped and
+# take under a second between them.
+#
+# Neither is a claim that the art is right, and the manifest says so: the
+# rest of FR-44 is a human looking at the pictures, recorded as outstanding
+# in that file and as PARTIAL on row R2.14 of
+# docs/conformance/epic-r-matrix.md. scripts/brand/selftest.sh is the proof
+# these two can still fail, and it plants exactly the two violations FR-44
+# names.
+gate_step "no new RM_/BM_/bm_/rbm_/backupd/backupdproject/rclone-manager/backup-manager identifier, no brand asset unaccounted for or carrying a text node, and all three of those guards can still fail (#794, #887, #893)"
 bash scripts/rename/check-brand-drift.sh
 bash scripts/rename/selftest.sh
+bash scripts/brand/check-svg-text.sh
+bash scripts/brand/check-brand-assets.sh
+bash scripts/brand/selftest.sh
 
 # The other half of R1.3's sweep (#888), and a `git grep` of the same
 # shape, so it belongs beside the one above rather than behind the Go
