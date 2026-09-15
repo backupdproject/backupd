@@ -1,4 +1,4 @@
-# The TrueNAS install wizard for Backupd.
+# The TrueNAS install wizard for retnd.
 #
 # Every variable here is consumed by templates/docker-compose.yaml and
 # given a default in ix_values.yaml. distribution/packaging checks that

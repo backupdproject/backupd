@@ -1,7 +1,7 @@
-# Backupd on ZimaOS
+# retnd on ZimaOS
 
 ZimaOS is built on CasaOS and reads the same `x-casaos` block out of a
-`docker-compose.yml`, so [`compose/backupd.yml`](compose/backupd.yml)
+`docker-compose.yml`, so [`compose/retnd.yml`](compose/retnd.yml)
 is both the runtime definition and the store submission. There is nothing else
 in this directory but an icon and this page.
 
@@ -72,9 +72,9 @@ is ticked.
 | --- | --- | --- |
 | `/DATA/AppData/backupd/state` | `/data/state` | the catalogue and the local administrator record. Private. |
 | `/DATA/Backups/backupd` | `/data/backups` | retained artifacts, and nothing else. |
-| `/DATA/AppData/backupd/config` | `/etc/backupd/config` | `config.yaml`, writable, plus `ssh_keys/` and `known_hosts.d/`. |
-| `/DATA/AppData/backupd/secrets/id_ed25519` | `/etc/backupd/id_ed25519` | the SFTP private key, read-only. |
-| `/DATA/AppData/backupd/secrets/known_hosts` | `/etc/backupd/known_hosts` | the pinned host key, read-only. |
+| `/DATA/AppData/backupd/config` | `/etc/retnd/config` | `config.yaml`, writable, plus `ssh_keys/` and `known_hosts.d/`. |
+| `/DATA/AppData/backupd/secrets/id_ed25519` | `/etc/retnd/id_ed25519` | the SFTP private key, read-only. |
+| `/DATA/AppData/backupd/secrets/known_hosts` | `/etc/retnd/known_hosts` | the pinned host key, read-only. |
 
 Private state and the backup root are separate security domains and neither is
 inside the other, which is why the backup root is under `/DATA` and not under

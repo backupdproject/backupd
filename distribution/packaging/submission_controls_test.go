@@ -201,7 +201,7 @@ func TestSelfUpdateFetchRuleOnlyReadsExecutedFiles(t *testing.T) {
 	for _, path := range []string{
 		"catalog/app.yaml",
 		"README.md",
-		"template/backupd.xml",
+		"template/retnd.xml",
 	} {
 		if v := CheckNoSelfUpdate(path, body); len(v) > 0 {
 			t.Errorf("%s is read, not executed, so a mention must not be a finding: %s", path, oneLine(v))

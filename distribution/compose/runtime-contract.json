@@ -36,14 +36,14 @@
     "outside the prohibition check."
   ],
   "derived": [
-    "apps/truenas/compose/backupd.yaml",
+    "apps/truenas/compose/retnd.yaml",
     "apps/truenas/catalog/templates/docker-compose.yaml",
     "apps/openmediavault/compose/retnd.yml",
     "apps/proxmox/compose/retnd.yml",
     "apps/synology/compose/retnd.yml",
     "apps/portainer/compose/retnd.yml",
     "apps/casaos/compose/retnd.yml",
-    "apps/zimaos/compose/backupd.yml"
+    "apps/zimaos/compose/retnd.yml"
   ],
 
   "_dockge_comment": [

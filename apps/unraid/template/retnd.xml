@@ -1,12 +1,12 @@
 <?xml version="1.0"?>
 <!--
-  Unraid Docker template for the Backupd ENGINE container
+  Unraid Docker template for the retnd ENGINE container
   (WP4.3, deliverable D-7).
 
   Two templates, not one: the canonical image needs the engine
-  (/backupd-web serve) and the Web UI (/backupd-web serve-ui)
+  (/retnd-web serve) and the Web UI (/retnd-web serve-ui)
   as separate containers, and an Unraid template describes exactly one.
-  Install this one first, then backupd-ui.xml.
+  Install this one first, then retnd-ui.xml.
 
   This container publishes NO port. It holds the state database and the
   credentials and is reachable only from the Web UI container, over the
@@ -14,7 +14,7 @@
   names only on a user-defined network, never on the default bridge, so
   create it before installing either template:
 
-      docker network create backupd
+      docker network create retnd
 
   Everything Unraid's template schema has no element for (a read-only
   rootfs, dropped capabilities, no-new-privileges, the tmpfs a read-only
@@ -30,30 +30,30 @@
   load-bearing here rather than optional.
 -->
 <Container version="2">
-  <Name>backupd</Name>
+  <Name>retnd</Name>
   <Repository>ghcr.io/backupdproject/backupd:0.4.0</Repository>
   <Registry>https://github.com/backupdproject/backupd/pkgs/container/backupd</Registry>
-  <Network>backupd</Network>
+  <Network>retnd</Network>
   <MyIP/>
   <Privileged>false</Privileged>
   <Support>https://github.com/backupdproject/backupd/issues</Support>
   <Project>https://github.com/backupdproject/backupd</Project>
   <Overview>
-    Backupd pulls backup artifacts off a remote SFTP source on a schedule, verifies them, retains them under a configurable policy, and keeps a durable catalog of everything it holds.
+    retnd pulls backup artifacts off a remote SFTP source on a schedule, verifies them, retains them under a configurable policy, and keeps a durable catalog of everything it holds.
 
-    This is the engine container: the API, the scheduler and local authentication. It deliberately publishes no port. Install backupd-ui alongside it for the web interface.
+    This is the engine container: the API, the scheduler and local authentication. It deliberately publishes no port. Install retnd-ui alongside it for the web interface.
 
-    Before installing: run `docker network create backupd`, create the appdata path and the backupd directory inside your backups share, own them by the uid/gid below, and write config.yaml, the SSH key and the pinned known_hosts. The engine validates its config before it opens a listener, so a missing config file stops it starting.
+    Before installing: run `docker network create retnd`, create the appdata path and the backup-root directory the Backup root mapping below names, own them by the uid/gid below, and write config.yaml, the SSH key and the pinned known_hosts. The engine validates its config before it opens a listener, so a missing config file stops it starting.
 
     This container does not trust X-Forwarded-For or X-Forwarded-Proto, so its login, enrollment and password rate limiters count every request against the Web UI container's address: one shared bucket rather than one per client. That is deliberate. The network these two containers share is created by hand and lives on the host, so anything attached to it later becomes a direct peer of this container and could otherwise forge those headers to defeat the limiter. The compose profiles use a project-scoped network and can trust the headers; this profile is the one place that guarantee is weaker.
   </Overview>
   <Category>Backup: Tools: Utilities:</Category>
   <WebUI/>
-  <TemplateURL>https://raw.githubusercontent.com/backupdproject/backupd/main/apps/unraid/template/backupd.xml</TemplateURL>
+  <TemplateURL>https://raw.githubusercontent.com/backupdproject/backupd/main/apps/unraid/template/retnd.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/backupdproject/backupd/main/docs/submission/icon.svg</Icon>
-  <Requires>Run `docker network create backupd` before installing, and install the companion backupd-ui template for the web interface.</Requires>
+  <Requires>Run `docker network create retnd` before installing, and install the companion retnd-ui template for the web interface.</Requires>
   <ExtraParams>--read-only --cap-drop=ALL --security-opt=no-new-privileges:true --tmpfs /tmp:size=64m,mode=1777,uid=99,gid=100 --user 99:100</ExtraParams>
-  <PostArgs>/backupd-web serve --profile=unraid</PostArgs>
+  <PostArgs>/retnd-web serve --profile=unraid</PostArgs>
   <DonateText/>
   <DonateLink/>
   <Config Name="Application state" Target="/data/state" Default="/mnt/user/appdata/backupd/state" Mode="rw" Description="Holds the SQLite catalog and the local-authentication administrator record. Must exist and be owned by the uid/gid in ExtraParams before first start." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/backupd/state</Config>
@@ -63,5 +63,5 @@
   <Config Name="Pinned known_hosts" Target="/etc/retnd/known_hosts" Default="/mnt/user/appdata/backupd/secrets/known_hosts" Mode="ro" Description="Mounted read-only. Verify the remote's host-key fingerprint out of band before trusting this file." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/backupd/secrets/known_hosts</Config>
   <Config Name="TMPDIR" Target="TMPDIR" Default="/tmp" Mode="" Description="Go's temp directory. The rootfs is read-only, so this has to point at the tmpfs in ExtraParams." Type="Variable" Display="advanced" Required="true" Mask="false">/tmp</Config>
   <Config Name="Listen address" Target="LISTEN_ADDR" Default=":8080" Mode="" Description="The engine's own listen address inside the container. Never published to the LAN." Type="Variable" Display="advanced" Required="true" Mask="false">:8080</Config>
-  <Config Name="Public base URL" Target="PUBLIC_BASE_URL" Default="http://tower.local:8080" Mode="" Description="What the Web UI container's published port looks like from outside this server. The engine prints its one-time enrollment link against this, because its own listen address is never reachable. Set your server's real hostname and the port you gave backupd-ui." Type="Variable" Display="always" Required="true" Mask="false">http://tower.local:8080</Config>
+  <Config Name="Public base URL" Target="PUBLIC_BASE_URL" Default="http://tower.local:8080" Mode="" Description="What the Web UI container's published port looks like from outside this server. The engine prints its one-time enrollment link against this, because its own listen address is never reachable. Set your server's real hostname and the port you gave retnd-ui." Type="Variable" Display="always" Required="true" Mask="false">http://tower.local:8080</Config>
 </Container>
