@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { MemoryRouter } from "react-router-dom";
 import { SettingsPage } from "@shared/pages/SettingsPage";
 import { ApiProvider } from "@shared/api/ApiContext";
-import { BackupdError } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
 import type { AppSettings, CapacitySettings, UpdateSettingsRequest } from "@shared/api/contracts";
 import { createMockApi } from "@shared/api/mock";
 import { PlatformProvider } from "@shared/platform/PlatformContext";
@@ -324,7 +324,7 @@ describe("CapacityCard", () => {
   it("shows the server's refusal and leaves the running policy unchanged on a failed save", async () => {
     const updateSettings = vi.fn(() =>
       Promise.reject(
-        new BackupdError({
+        new RetndError({
           code: "INVALID_REQUEST",
           message: "capacity.cap_bytes must be above capacity.critical_free_bytes",
           correlationId: "cid_test_cap"

@@ -22,7 +22,7 @@ import { createMockApi } from "@shared/api/mock";
 import { graph, resetGraphForTests, useCausl } from "@shared/state/graph";
 import { countsNode, quarantineNode } from "@shared/state/appNodes";
 import { useResource } from "@shared/state/resource";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import type { BackupArtifact } from "@shared/types/backup";
 
 function artifact(id: string, filename: string): BackupArtifact {
@@ -71,7 +71,7 @@ const ARTIFACT_B = artifact("art_b", "pg-2026-08-27.dump.zst");
  *  `countsNode` — a pure derived() of that same node. There is
  *  structurally one fetch and one committed value feeding both; this
  *  harness is what proves that, rather than asserting it by inspection. */
-function Shell({ api }: { api: BackupdApi }) {
+function Shell({ api }: { api: RetndApi }) {
   const quarantine = useResource(quarantineNode, () => api.listQuarantine(), [api]);
   const counts = useCausl(countsNode);
   return (
@@ -88,7 +88,7 @@ function Shell({ api }: { api: BackupdApi }) {
   );
 }
 
-function renderShell(api: BackupdApi) {
+function renderShell(api: RetndApi) {
   return render(
     <MemoryRouter>
       <PlatformProvider bridge={genericBridge}>

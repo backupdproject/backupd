@@ -1,5 +1,5 @@
 /**
- * The `backupd` command each storage-destination action in the browser is
+ * The `retnd` command each storage-destination action in the browser is
  * equivalent to (G2.2, issue #594; EPIC G's standing rule).
  *
  * # Why the UI prints commands at all
@@ -57,7 +57,7 @@ import type { StorageMediumSpec } from "@shared/api/contracts";
  *  access key and no secret to interpolate, so this line is safe to print
  *  before the operator has typed either. */
 export function importCredentialsCommand(): string {
-  return "backupd medium import-credentials --stdin";
+  return "retnd medium import-credentials --stdin";
 }
 
 /**
@@ -65,7 +65,7 @@ export function importCredentialsCommand(): string {
  * for the one it expects to find.
  *
  * There was a `declareCommand` here that rendered
- * `backupd medium add <id> --backend <backend>`, and it was wrong twice over.
+ * `retnd medium add <id> --backend <backend>`, and it was wrong twice over.
  *
  * **`medium` has no `--backend` flag.** Its whole set is json, stdin,
  * candidate, no-verify, type, region, endpoint, bucket, prefix,
@@ -105,7 +105,7 @@ export function importCredentialsCommand(): string {
  *  command printed under a button that says something else teaches the
  *  wrong word. */
 export function testConnectionCandidateCommand(spec: StorageMediumSpec): string {
-  return ["backupd medium test-connection --candidate", spec.id, ...specFlags(spec)].join(" ");
+  return ["retnd medium test-connection --candidate", spec.id, ...specFlags(spec)].join(" ");
 }
 
 /** `medium add`: the wizard's step 4. It takes the same flags the
@@ -113,13 +113,13 @@ export function testConnectionCandidateCommand(spec: StorageMediumSpec): string 
  *  the two lines can see that what was proven is what is about to be
  *  written. */
 export function addCommand(spec: StorageMediumSpec): string {
-  return ["backupd medium add", spec.id, ...specFlags(spec)].join(" ");
+  return ["retnd medium add", spec.id, ...specFlags(spec)].join(" ");
 }
 
 /** `medium edit`: the same flags again, against a destination that
  *  already exists. */
 export function editCommand(spec: StorageMediumSpec): string {
-  return ["backupd medium edit", spec.id, ...specFlags(spec)].join(" ");
+  return ["retnd medium edit", spec.id, ...specFlags(spec)].join(" ");
 }
 
 /** `medium test-connection <id>`: the Test connection button, on the
@@ -129,7 +129,7 @@ export function editCommand(spec: StorageMediumSpec): string {
  *  of #622's local entry: the destination an operator is most likely to
  *  be on is the one that used to have nothing to check. */
 export function testConnectionCommand(id: string): string {
-  return `backupd medium test-connection ${id}`;
+  return `retnd medium test-connection ${id}`;
 }
 
 /** `medium default <id>`: the Make default button.
@@ -138,7 +138,7 @@ export function testConnectionCommand(id: string): string {
  *  already the default, because a command that would change nothing is a
  *  command an operator learns nothing from. */
 export function setDefaultCommand(id: string): string {
-  return `backupd medium default ${id}`;
+  return `retnd medium default ${id}`;
 }
 
 /** `settings patch --tier-medium NAME=MEDIUM_ID`: the picker under a
@@ -156,7 +156,7 @@ export function setDefaultCommand(id: string): string {
  *  tier and leave the rest", so the command and the click produce the
  *  same request rather than merely the same outcome. */
 export function tierMediumCommand(tier: string, mediumId: string): string {
-  const parts = ["backupd settings patch --tier-medium", `${tier}=${mediumId}`];
+  const parts = ["retnd settings patch --tier-medium", `${tier}=${mediumId}`];
   if (mediumId !== LOCAL_DESTINATION_ID) parts.push("--acknowledge-medium-disclosure");
   return parts.join(" ");
 }
@@ -168,12 +168,12 @@ export function tierMediumCommand(tier: string, mediumId: string): string {
  *  destination, and a command that is only printed when it succeeds
  *  teaches the CLI as something that always works. */
 export function removeCommand(id: string): string {
-  return `backupd medium remove ${id}`;
+  return `retnd medium remove ${id}`;
 }
 
 /** `medium show <id>`: what the list's own row is a summary of. */
 export function showCommand(id: string): string {
-  return `backupd medium show ${id}`;
+  return `retnd medium show ${id}`;
 }
 
 /**

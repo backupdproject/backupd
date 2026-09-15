@@ -154,7 +154,7 @@ export function transcriptText(input: TranscriptInput): string {
   const { step } = input;
   const runner = runnerIdentity(step);
   const out: string[] = [
-    "# backupd workflow step log",
+    "# retnd workflow step log",
     "# run           " + input.runId,
     "# step          " + step.stepId,
     "# script        " + step.scriptName,
@@ -179,7 +179,7 @@ export function transcriptText(input: TranscriptInput): string {
     out.push(
       "# " +
         input.droppedFromHead +
-        " earlier lines were dropped from this browser's scrollback and are not in this file. The engine still holds them: read them with `backupd workflow run log --cursor 0`."
+        " earlier lines were dropped from this browser's scrollback and are not in this file. The engine still holds them: read them with `retnd workflow run log --cursor 0`."
     );
   }
   if (!input.complete) out.push("# This step's output had not ended when this file was written.");
@@ -209,7 +209,7 @@ export function transcriptFilename(step: WorkflowStepSummary, at: Date): string 
   const slug = (step.scriptName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "script").slice(0, 60);
 
   return (
-    "backupd-step-" + slug + "-" + step.stepId.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 24) + "-" +
+    "retnd-step-" + slug + "-" + step.stepId.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 24) + "-" +
     at.toISOString().replace(/[:.]/g, "-") + ".txt"
   );
 }

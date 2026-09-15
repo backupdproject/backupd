@@ -225,7 +225,7 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
             tip="workflow.settings.runner"
             dismissible={false}
           >
-            {"The runner is the component that executes a .local.sh hook on the machine Backupd " +
+            {"The runner is the component that executes a .local.sh hook on the machine retnd " +
               "is installed on, and reaching it needs both a socket path and a credential file. " +
               "One or both is missing here, so a .local.sh hook has nothing to run on. Both are " +
               "written by the installer and are not editable here."}
@@ -327,7 +327,7 @@ export function WorkflowSettingsCard({ readOnly }: { readOnly: boolean }) {
             "\u2014 comes from a backup set's own Workflow panel, under "}
           <strong>Check this set&rsquo;s hooks</strong>
           {", which opens the socket, or from "}
-          <code className="mono">backupd workflow-runner status</code>
+          <code className="mono">retnd workflow-runner status</code>
           {" on the machine the runner is installed on. There is no control here that raises a " +
             "hook's privileges, and there is not one to add: this product has no elevation switch."}
         </p>

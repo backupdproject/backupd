@@ -3,8 +3,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { BackupSetDetailPage } from "@shared/pages/BackupSetDetailPage";
 import { ApiProvider } from "@shared/api/ApiContext";
-import type { BackupdApi } from "@shared/api/contracts";
-import { BackupdError } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import type { BackupSet } from "@shared/types/backup";
 import { graph, resetGraphForTests, useCausl } from "@shared/state/graph";
@@ -32,7 +32,7 @@ import { backupSetIdentity } from "@shared/utilities/backupSetIdentity";
 /** The detail page plus a real /sets route to land on, so "navigated away"
  *  is something the test can see rather than something it has to trust a
  *  spy about. */
-function renderDetailWithList(source: string, set: string, api: BackupdApi, readOnly = false) {
+function renderDetailWithList(source: string, set: string, api: RetndApi, readOnly = false) {
   return render(
     <MemoryRouter initialEntries={[backupSetPath(source, set)]}>
       <ApiProvider api={api}>
@@ -70,7 +70,7 @@ function SetsFromNode() {
   );
 }
 
-function renderDetailWithNodeBackedList(source: string, set: string, api: BackupdApi) {
+function renderDetailWithNodeBackedList(source: string, set: string, api: RetndApi) {
   return render(
     <MemoryRouter initialEntries={[backupSetPath(source, set)]}>
       <ApiProvider api={api}>
@@ -99,7 +99,7 @@ function type(target: BackupSet, text: string) {
 /** Opens the dialog and satisfies the typed confirmation, for the tests
  *  whose subject is what happens AFTER the confirmation. The tests whose
  *  subject IS the confirmation do not call this. */
-async function openRemoveDialog(api: BackupdApi, target: BackupSet, readOnly = false) {
+async function openRemoveDialog(api: RetndApi, target: BackupSet, readOnly = false) {
   await openRemoveDialogUnconfirmed(api, target, readOnly);
   await act(async () => {
     type(target, backupSetIdentity(target));
@@ -107,7 +107,7 @@ async function openRemoveDialog(api: BackupdApi, target: BackupSet, readOnly = f
 }
 
 async function openRemoveDialogUnconfirmed(
-  api: BackupdApi,
+  api: RetndApi,
   target: BackupSet,
   readOnly = false
 ) {
@@ -177,7 +177,7 @@ describe("removing a backup set from the detail page", () => {
     // implied the set was gone.
     const api = createMockApi();
     vi.spyOn(api, "removeSet").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "unknown",
         message: "The configuration file is not writable.",
         correlationId: "cid_test"
@@ -260,7 +260,7 @@ describe("removing a backup set from the detail page", () => {
     // swallow everything.
     const api = createMockApi();
     vi.spyOn(api, "removeSet").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "INTERNAL",
         message: "unused",
         correlationId: "cid_test"

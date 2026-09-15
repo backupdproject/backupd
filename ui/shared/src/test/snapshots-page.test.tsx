@@ -22,8 +22,8 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { ApiProvider } from "@shared/api/ApiContext";
-import { BackupdError } from "@shared/api/contracts";
-import type { BackupdApi } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import { SnapshotsPage } from "@shared/pages/SnapshotsPage";
 import { graph, resetGraphForTests } from "@shared/state/graph";
@@ -40,7 +40,7 @@ const VERSION: VersionInfo = {
  *  rendered on its own has to be given both: without the version there is
  *  no configuration revision and every mutating control is correctly
  *  refused, which would make the submission cases below vacuous. */
-async function seed(api: BackupdApi) {
+async function seed(api: RetndApi) {
   const sets = await api.listSets();
   act(() => {
     graph.commit("test/seed", (tx) => {
@@ -50,7 +50,7 @@ async function seed(api: BackupdApi) {
   });
 }
 
-function renderList(api: BackupdApi, source: string, set: string, readOnly = false) {
+function renderList(api: RetndApi, source: string, set: string, readOnly = false) {
   return render(
     <MemoryRouter initialEntries={[snapshotsPath(source, set)]}>
       <ApiProvider api={api}>
@@ -154,7 +154,7 @@ describe("the snapshot list", () => {
     const verify = vi
       .spyOn(api, "verifySnapshot")
       .mockRejectedValue(
-        new BackupdError({
+        new RetndError({
           code: "unknown",
           message: "The engine is not accepting work.",
           correlationId: "cid_test"

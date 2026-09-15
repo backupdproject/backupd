@@ -1,5 +1,5 @@
 /**
- * The one BackupdApi implementation that talks to a running
+ * The one RetndApi implementation that talks to a running
  * service, and the wire-to-domain translation that lets everything above
  * it forget a wire exists.
  *
@@ -132,7 +132,7 @@ import type {
 import type {
   AppSettings,
   BackendManifest,
-  BackupdApi,
+  RetndApi,
   BackupSetRetention,
   BackupSetPatch,
   CapacitySettings,
@@ -255,9 +255,9 @@ const CSRF_HEADER_NAME = "X-CSRF-Token";
  * apps/common/auth/local/handler.go's BootstrapTokenHeader), printed to
  * the container's own log as a link (".../enroll?token=..."). There is
  * no form field for it in EnrollmentPage.tsx — the design canvas
- * (docs/design/Backupd.dc.html) doesn't show one either — so it
+ * (docs/design/Backup Manager.dc.html) doesn't show one either — so it
  * travels as a URL query parameter instead, read here rather than
- * plumbed through BackupdApi.enrollAdministrator's own signature.
+ * plumbed through RetndApi.enrollAdministrator's own signature.
  */
 const BOOTSTRAP_TOKEN_HEADER = "X-Bootstrap-Token";
 
@@ -1833,7 +1833,7 @@ type ActivityCaption = { type: ActivityEventType; severity: Severity; text: stri
  *
  * The captions and severities are agreed verbatim with
  * core/cmd/retnd/activity.go's own table, which derives the
- * same severity for `backupd activity --severity`; "ok" and "info" are the
+ * same severity for `retnd activity --severity`; "ok" and "info" are the
  * one rank there, as they are to anyone filtering here. Issue #625 was
  * the last time those two drifted apart.
  *
@@ -2778,7 +2778,7 @@ const setWorkflowPath = (source: string, set: string) => backupSetPath(source, s
  * that has a reason carries it at the method rather than in a shared
  * helper that would hide the differences.
  */
-export const httpApi: BackupdApi = {
+export const httpApi: RetndApi = {
   getVersion: () => request<WireVersionResponse>("/system/version").then(fromWireVersion),
   // GET /system/health, NOT /health/ready. The two answer different
   // questions and only one of them is this one: /health/live and
@@ -2836,7 +2836,7 @@ export const httpApi: BackupdApi = {
   // revision-checked long work is started, and the durable row has always
   // had a backup set id column that run_cycle correctly leaves empty.
   //
-  // The engine half is not new either. `backupd fetch
+  // The engine half is not new either. `retnd fetch
   // --backup-set` has called internal/app.Service.Fetch since FR-1; what
   // was missing was a way to reach it in the SERVING process, so the work
   // takes the engine's single-flight lock and shows up in its feeds
@@ -3122,7 +3122,7 @@ export const httpApi: BackupdApi = {
   // NOT retentionPath() + something. This is a route of its own
   // (.../snapshot-retention) precisely so it cannot be confused with
   // FR-18's artifact retention plan, which lives under .../retention and
-  // can be applied; see BackupdApi.getSnapshotRetention.
+  // can be applied; see RetndApi.getSnapshotRetention.
   getSnapshotRetention: (source, set) =>
     request<WireSnapshotRetentionResponse>(backupSetPath(source, set) + "/snapshot-retention").then(
       (r): SnapshotRetentionPreview => ({

@@ -15,7 +15,7 @@
  */
 import { useEffect, useState } from "react";
 import { useApi } from "@shared/api/ApiContext";
-import { BackupdError } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
 import type { ApiError } from "@shared/api/contracts";
 import {
   commitRetentionRevisions,
@@ -35,11 +35,11 @@ import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import type { TooltipId } from "@shared/tooltips/tooltips";
 
 function describeApplyError(e: unknown): ApiError {
-  return e instanceof BackupdError
+  return e instanceof RetndError
     ? e.api
     : {
         code: "unknown",
-        message: "Backupd could not complete that request.",
+        message: "retnd could not complete that request.",
         correlationId: "unavailable"
       };
 }

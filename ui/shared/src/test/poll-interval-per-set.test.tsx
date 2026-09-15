@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { BackupSetDetailPage } from "@shared/pages/BackupSetDetailPage";
 import { ApiProvider } from "@shared/api/ApiContext";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import type { BackupSet } from "@shared/types/backup";
 import { resetGraphForTests } from "@shared/state/graph";
@@ -20,7 +20,7 @@ import { backupSetPath } from "@shared/utilities/routes";
  * where it was, which is a save that looks like it worked.
  */
 
-async function openEditMode(api: BackupdApi, target: BackupSet) {
+async function openEditMode(api: RetndApi, target: BackupSet) {
   render(
     <MemoryRouter initialEntries={[backupSetPath(target.source, target.set)]}>
       <ApiProvider api={api}>

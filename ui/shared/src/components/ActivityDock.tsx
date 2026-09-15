@@ -451,24 +451,24 @@ export function environmentPreamble(origin: string, viewer: string | null): stri
  * # The window an operator reported
  *
  *   [you] [browser] This deployment will not start a backup run.
- *     ... Run backupd fetch --backup-set cicd-pipeline/var-backups from a
+ *     ... Run retnd fetch --backup-set cicd-pipeline/var-backups from a
  *     shell on this host instead.
- *   $ backupd fetch --backup-set cicd-pipeline/var-backups
+ *   $ retnd fetch --backup-set cicd-pipeline/var-backups
  *   [you] post /operations refused: DESTRUCTIVE_OPERATIONS_DISABLED
- *   # no backupd equivalent yet · POST /api/v1/operations
+ *   # no retnd equivalent yet · POST /api/v1/operations
  *
  * Two statements about one command, four lines apart. The advice is
  * sound — the operator ran that command and it repaired the set — and the
  * gap line then tells them the operation they were just given a command
- * for has no `backupd` equivalent. A remedy a message offers has to be
+ * for has no `retnd` equivalent. A remedy a message offers has to be
  * runnable where it is offered, or the surface must not contradict it.
  *
  * # Why the short form is the half that goes
  *
  * Both halves come from the engine and only one of them is wrong here.
- * "no backupd equivalent yet" is a claim about the ROUTE, and on a screen
+ * "no retnd equivalent yet" is a claim about the ROUTE, and on a screen
  * that has just named a command it reads as a claim about the command.
- * The detail beside it is already the precise truth ("`backupd fetch` starts
+ * The detail beside it is already the precise truth ("`retnd fetch` starts
  * a cycle in your own shell, not in this engine"), so the detail is
  * promoted to the line and the short claim is dropped. Nothing is
  * invented here and nothing is hidden: the route is still named, and a
@@ -639,7 +639,7 @@ export function ActivityDock() {
     const anchor = document.createElement("a");
     anchor.href = url;
     // The deployment and the time, not a set id: this file is every set.
-    anchor.download = "backupd-terminal-" + new Date().toISOString().replace(/[:.]/g, "-") + ".txt";
+    anchor.download = "retnd-terminal-" + new Date().toISOString().replace(/[:.]/g, "-") + ".txt";
     anchor.click();
     URL.revokeObjectURL(url);
   }, [shown, viewer, preamble]);

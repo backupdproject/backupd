@@ -50,7 +50,7 @@ import type { TooltipId } from "@shared/tooltips/tooltips";
  * operator reads next to a contract: the repository health panel, the
  * snapshot inspector and the wizard's review step, where "which field is
  * this" is a question somebody genuinely asks while comparing a screen
- * with `backupd`'s own output.
+ * with `retnd`'s own output.
  */
 export function Cell({
   label,
@@ -181,7 +181,7 @@ export function Rows({ children, columns = 2 }: { children: ReactNode; columns?:
  * It came out of the mock-up, where it existed for reviewers checking the
  * copy and the contract in one pass, and it earns a place in the product
  * for a different reason: EPIC K's screens are the ones an operator
- * compares with `backupd snapshot list` output and with a support
+ * compares with `retnd snapshot list` output and with a support
  * engineer's questions, and "source_bytes_read" is the word both of those
  * conversations use.
  *

@@ -4,7 +4,7 @@
  *
  * Two surfaces are the same shape and this is it: the connection test's
  * per-step report, and the repository health panel's probes. Both answer
- * "here is a thing Backupd TRIED, and here is what happened", which is
+ * "here is a thing retnd TRIED, and here is what happened", which is
  * the distinction the whole panel exists for — a repository handle
  * survives a network partition and every call on it would fail, so
  * reachability has to be proved by a read and a write rather than

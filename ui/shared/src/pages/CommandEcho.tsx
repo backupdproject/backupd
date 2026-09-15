@@ -1,5 +1,5 @@
 /**
- * The `backupd` command a UI action is equivalent to, shown beside the
+ * The `retnd` command a UI action is equivalent to, shown beside the
  * control that produces it (EPIC G's standing rule; G2.2, #594).
  *
  * The global terminal landed with #599 and prints these lines too, from

@@ -281,7 +281,7 @@ const DAY_MS = 86_400_000;
  * Which identity a step's row prints, and it is the wording rule for the
  * whole feature.
  *
- * A local step runs on the machine backupd is installed on, executed by
+ * A local step runs on the machine retnd is installed on, executed by
  * the HOST WORKFLOW RUNNER. It does not run "in the engine container",
  * and no surface may imply the container grew a shell: the runner is a
  * separate component precisely because the container has no shell for a

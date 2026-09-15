@@ -1,4 +1,4 @@
-import { BackupdError, RequestFailure, describeException } from "./contracts";
+import { RetndError, RequestFailure, describeException } from "./contracts";
 import type { ApiError, FailureOrigin, WorkflowBlockingScript } from "./contracts";
 import { API_BASE_PATH, API_VERSION } from "./generated/contract";
 
@@ -34,7 +34,7 @@ export function isNotConfigured(error: ApiError | null | undefined): boolean {
  *  never reached the service at all (a stopped container, a dropped
  *  connection) and so carries no code and no correlation id. */
 export function apiErrorOf(e: unknown): ApiError | null {
-  return e instanceof BackupdError ? e.api : null;
+  return e instanceof RetndError ? e.api : null;
 }
 
 /**
@@ -43,7 +43,7 @@ export function apiErrorOf(e: unknown): ApiError | null {
  *
  * Both workflow PATCH routes answer 409 WORKFLOW_SCRIPT_REJECTED when a
  * hook script the write points at does not parse, or carries an
- * `error`-severity finding from backupd's own shell rules. A
+ * `error`-severity finding from retnd's own shell rules. A
  * `warning`, an `info` and a `style` finding are reported and DO NOT
  * block, which is why the list is the blocking half only and why a
  * caller may say so in the banner without qualifying it.
@@ -98,7 +98,7 @@ export interface OperatorFailure {
    *  failures a page writes by hand for a code it handles itself, where
    *  the page already knows. The one consumer is App.tsx's unreachable
    *  gate, through `asApiError` and `isServiceUnreachable`: a surface that
-   *  says "Backupd is not answering" has to be sure that it did not. */
+   *  says "retnd is not answering" has to be sure that it did not. */
   origin?: FailureOrigin;
 }
 
@@ -151,7 +151,7 @@ export function describeFailure(e: unknown, fallbackMessage: string): OperatorFa
     // exists to stop.
     if (e instanceof SyntaxError) {
       return {
-        message: "Backupd answered, and this page could not read the answer.",
+        message: "retnd answered, and this page could not read the answer.",
         remediation:
           "The service replied, so it is running, but what came back was not what this page expected. That is usually something between the browser and the service rewriting the response, or a version of the app older than the service it is talking to.",
         origin: "unreadable-body",
@@ -167,7 +167,7 @@ export function describeFailure(e: unknown, fallbackMessage: string): OperatorFa
     // is not a function" names the defect exactly, and the sentence that
     // used to be printed in its place named nothing.
     return {
-      message: "Backupd did not answer, or answered with something this page could not read.",
+      message: "retnd did not answer, or answered with something this page could not read.",
       // Deliberately does NOT say nothing was changed. A request that got
       // no reply may still have been carried out, with only the response
       // lost, and claiming otherwise would be this module's own version of
@@ -179,7 +179,7 @@ export function describeFailure(e: unknown, fallbackMessage: string): OperatorFa
       // of: an operator scanning a banner for an id finds the words either
       // way.
       remediation:
-        "This failure did not come out of the service, so it has no id in any log. Check that the Backupd service is still running, then try again.",
+        "This failure did not come out of the service, so it has no id in any log. Check that the retnd service is still running, then try again.",
       // Provenance genuinely not established: this exception came from
       // neither the service nor the transport, so nothing here may name a
       // hop, and App.tsx's unreachable gate must not fire on it.
@@ -214,7 +214,7 @@ export function describeFailure(e: unknown, fallbackMessage: string): OperatorFa
     case "RATE_LIMITED":
       return {
         message: "Too many attempts from this address.",
-        remediation: "Backupd is refusing further attempts for the moment. Wait a minute, then try again.",
+        remediation: "retnd is refusing further attempts for the moment. Wait a minute, then try again.",
         correlationId,
         origin
       };
@@ -231,7 +231,7 @@ export function describeFailure(e: unknown, fallbackMessage: string): OperatorFa
       return {
         message: fallbackMessage,
         remediation:
-          "Backupd reported an internal error rather than a reason it could name. Its own log holds the detail, under this correlation id.",
+          "retnd reported an internal error rather than a reason it could name. Its own log holds the detail, under this correlation id.",
         correlationId,
         origin
       };
@@ -287,10 +287,10 @@ function isGatewayRefusal(api: ApiError): boolean {
  * Whether NOTHING from the service reached this browser.
  *
  * Exported for App.tsx, which has one gate to decide with it (#795's
- * review): the "Backupd is not answering" surface replaces the sign-in
+ * review): the "retnd is not answering" surface replaces the sign-in
  * form, and it may only do that for a failure where that sentence is
  * true. A 200 with an unreadable body, a typed refusal, a 403 from
- * something between the browser and the service — those are all Backupd
+ * something between the browser and the service — those are all retnd
  * answering, and a heading saying otherwise above an ErrorState saying so
  * is a page contradicting itself.
  */
@@ -300,13 +300,13 @@ export function isServiceUnreachable(api: ApiError | null | undefined): boolean 
 
 function describeGatewayRefusal(api: ApiError): OperatorFailure {
   return {
-    message: "Backupd's web interface could not reach the Backupd service.",
+    message: "retnd's web interface could not reach the retnd service.",
     // Says which half is known to be working, because that is what makes
     // this actionable: the operator is reading a page, so the web
     // interface is up, and the thing to go and look at is the service
     // container behind it.
     remediation:
-      "The page you are reading was served, so Backupd's web interface is running. It could not reach the service behind it, which is where this answer had to come from. Check that the Backupd service is running and that the web interface can still resolve it, then try again.",
+      "The page you are reading was served, so retnd's web interface is running. It could not reach the service behind it, which is where this answer had to come from. Check that the retnd service is running and that the web interface can still resolve it, then try again.",
     // A real id, unlike the no-response case: the web interface answered,
     // and it wrote this same id into its own log line for the failure
     // (webhost's proxy_error event).
@@ -332,9 +332,9 @@ function describeGatewayRefusal(api: ApiError): OperatorFailure {
 function describeRequestFailure(e: RequestFailure): OperatorFailure {
   if (e.kind === "no-response") {
     return {
-      message: "Backupd did not answer.",
+      message: "retnd did not answer.",
       remediation:
-        "The request got no reply at all, so whether it was carried out is unknown. Check that the Backupd service is still running, then try again.",
+        "The request got no reply at all, so whether it was carried out is unknown. Check that the retnd service is still running, then try again.",
       // No response, so no id. apiErrorOf's own rule, one failure over: an
       // id that matches nothing in any log is a false lead.
       origin: "no-response",
@@ -342,7 +342,7 @@ function describeRequestFailure(e: RequestFailure): OperatorFailure {
     };
   }
   return {
-    message: "Backupd answered, and this page could not read the answer.",
+    message: "retnd answered, and this page could not read the answer.",
     remediation:
       "The service replied, so it is running, but what came back was not what this page expected. That is usually something between the browser and the service rewriting the response, or a version of the app older than the service it is talking to.",
     correlationId: e.correlationId,
@@ -373,7 +373,7 @@ function describeRequestFailure(e: RequestFailure): OperatorFailure {
  */
 export function asApiError(e: unknown): ApiError {
   const api = apiErrorOf(e);
-  const failure = describeFailure(e, api?.message || "Backupd could not complete that request.");
+  const failure = describeFailure(e, api?.message || "retnd could not complete that request.");
   return {
     code: api?.code ?? "unknown",
     message: failure.message,

@@ -6,7 +6,7 @@ import { App } from "@shared/App";
 import { ApiProvider } from "@shared/api/ApiContext";
 import { PlatformProvider } from "@shared/platform/PlatformContext";
 import { createMockApi } from "@shared/api/mock";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import type { AuthContext, PlatformBridge } from "@shared/types/platform";
 import { genericBridge } from "../../../../apps/generic/frontend/platform";
 import { resetGraphForTests } from "@shared/state/graph";
@@ -69,7 +69,7 @@ async function apiWithRealId(
   source = SOURCE,
   set = SET,
   name = NAME
-): Promise<{ api: BackupdApi; asked: string[]; id: string }> {
+): Promise<{ api: RetndApi; asked: string[]; id: string }> {
   const base = createMockApi();
   const template = (await createMockApi().listArtifacts())[0];
   const id = `${source}/${set}/${name}`;
@@ -90,7 +90,7 @@ async function apiWithRealId(
         ? Promise.resolve(only)
         : Promise.reject(new Error(`no artifact ${askedFor}`));
     },
-  } as BackupdApi;
+  } as RetndApi;
   return { api, asked, id };
 }
 
@@ -104,7 +104,7 @@ function LocationProbe() {
   return <span data-testid="pathname">{useLocation().pathname}</span>;
 }
 
-function renderApp(api: BackupdApi, route: string) {
+function renderApp(api: RetndApi, route: string) {
   return render(
     <MemoryRouter initialEntries={[route]}>
       <LocationProbe />
@@ -227,7 +227,7 @@ describe("an artifact id with separators in it reaches its own page", () => {
         asked.push(id);
         return id === only.id ? Promise.resolve(only) : Promise.reject(new Error(`no set ${id}`));
       },
-    } as BackupdApi;
+    } as RetndApi;
 
     renderApp(served, "/sets");
     await user.click(await screen.findByRole("button", { name: "Open" }));

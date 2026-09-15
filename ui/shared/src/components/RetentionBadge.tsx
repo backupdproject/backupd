@@ -63,7 +63,7 @@ function tierLabel(tier: string): string {
  *  it means (issue #218).
  *
  *  The word is the same one the CLI's per-artifact line prints, so an
- *  operator moving between `backupd retention --dry-run` and this
+ *  operator moving between `retnd retention --dry-run` and this
  *  dialog reads one vocabulary rather than two. PROTECTION is absent on
  *  purpose: FR-19's term is not a placement, and a parenthesised word
  *  after "Protected" would read as one. An unrecognised value still
@@ -72,11 +72,11 @@ function tierLabel(tier: string): string {
 const PLACEMENT: Record<string, { word: string; title: string }> = {
   DISCOVERY: {
     word: "discovery",
-    title: "Selected by the time Backupd discovered this artifact. Nothing outside this manager can move that timestamp."
+    title: "Selected by the time retnd discovered this artifact. Nothing outside this manager can move that timestamp."
   },
   PRODUCER: {
     word: "producer",
-    title: "Selected by the producer's own timestamp on the remote object, which Backupd treats as untrusted input. Only this pass keeps it in this tier."
+    title: "Selected by the producer's own timestamp on the remote object, which retnd treats as untrusted input. Only this pass keeps it in this tier."
   },
   BOTH: {
     word: "both",

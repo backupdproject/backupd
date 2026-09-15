@@ -4037,7 +4037,7 @@ export interface WireWorkflowFinding {
   target?: string;
 }
 
-/** One thing backupd's own shell rules reported about one hook
+/** One thing retnd's own shell rules reported about one hook
  *  script. These are this product's own checks, carrying its own BSH
  *  codes, and they are NOT ShellCheck: ShellCheck is GPL-3.0 and this
  *  product is Apache-2.0, so the analysis is implemented here against
@@ -4115,7 +4115,7 @@ export interface WireWorkflowRun {
 }
 
 /** How THIS PROCESS reaches the Host Workflow Runner, the component
- *  that executes a `.local.sh` hook on the machine backupd is
+ *  that executes a `.local.sh` hook on the machine retnd is
  *  installed on. Reported and not writable here: the two paths differ
  *  between a container and a bare-metal install of the same
  *  deployment, so they are a deployment-shape fact the installer
@@ -4127,7 +4127,7 @@ export interface WireWorkflowRunnerSettings {
   token_file?: string;
 }
 
-/** What backupd's own shell verification established about one hook
+/** What retnd's own shell verification established about one hook
  *  script's exact bytes, without running any of them. Three states,
  *  kept distinguishable on purpose: examined and parsed, examined and
  *  refused (a parse error with its position), and NOT EXAMINED, which
@@ -4280,7 +4280,7 @@ export interface WireWorkflowStepLogRecord {
 }
 
 /** One hook this backup set would run, as validation found it on
- *  disk, with what backupd's own shell verification established about
+ *  disk, with what retnd's own shell verification established about
  *  its bytes. Nothing here was executed: the syntax verdict and the
  *  findings come from parsing and walking the bytes in this process,
  *  and the only things validation ever hands an interpreter are `bash

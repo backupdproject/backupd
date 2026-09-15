@@ -19,7 +19,7 @@ import { PageHeader } from "@shared/components/PageHeader";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 import { TOOLTIPS, TOOLTIP_IDS, lookupTooltip } from "@shared/tooltips/tooltips";
 import type { TooltipId } from "@shared/tooltips/tooltips";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 
 /**
  * Issue #834: the central tooltip registry, and the four things that have
@@ -53,7 +53,7 @@ const quietApi = {
       sets: [],
       deployment: null
     })
-} as unknown as BackupdApi;
+} as unknown as RetndApi;
 
 /** The signed-in shell, which is where most of #834's wiring lives. */
 function Shell({ suppressed = false }: { suppressed?: boolean }) {

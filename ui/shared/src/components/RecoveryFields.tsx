@@ -116,7 +116,7 @@ export function RecoveryAttention() {
     <Banner tone="warn" dismissible={false} style={{ fontSize: "var(--text-sm)", display: "block" }}>
       <strong style={{ display: "block", marginBottom: 4 }}>ATTENTION</strong>
       <span>
-        This mail connection is the only way back into this account. Backupd
+        This mail connection is the only way back into this account. retnd
         keeps no copy of the administrator password and has no other channel
         to reach you on, so if the password is ever lost, a reset link sent
         over this SMTP server is the one thing that can restore access. An

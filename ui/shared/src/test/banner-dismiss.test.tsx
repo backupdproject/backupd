@@ -17,7 +17,7 @@ import { PlatformProvider } from "@shared/platform/PlatformContext";
 import { genericBridge } from "../../../../apps/generic/frontend/platform";
 import type { AuthContext, PlatformBridge } from "@shared/types/platform";
 import { backupSetPath } from "@shared/utilities/routes";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { createMockApi } from "@shared/api/mock";
 import { resetGraphForTests } from "@shared/state/graph";
 import type { BackupSet } from "@shared/types/backup";
@@ -227,7 +227,7 @@ describe("dismissing is opt-out, not unconditional (issue #620)", () => {
   it("the failure surface opts out, because dismissing it would leave nothing", () => {
     render(
       <>
-        <ErrorState message="Could not reach the backupd" onRetry={() => {}} />
+        <ErrorState message="Could not reach the retnd" onRetry={() => {}} />
         <WarningBanner tone="danger" title="Something else went wrong" />
       </>
     );
@@ -239,7 +239,7 @@ describe("dismissing is opt-out, not unconditional (issue #620)", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     const controls = screen.getAllByRole("button", { name: DISMISS });
     expect(controls).toHaveLength(1);
-    expect(bannerAround("Could not reach the backupd").contains(controls[0])).toBe(false);
+    expect(bannerAround("Could not reach the retnd").contains(controls[0])).toBe(false);
   });
 });
 
@@ -294,7 +294,7 @@ describe("dismissing is viewer-side and nothing else (issue #620)", () => {
   it("brings it back without a remount when the banner starts reporting something else", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
-      <WarningBanner tone="danger" title="Backupd could not log in to nas-01" />
+      <WarningBanner tone="danger" title="retnd could not log in to nas-01" />
     );
 
     await user.click(close());
@@ -651,7 +651,7 @@ describe("the banner box has one owner (issue #620)", () => {
  *  must add nothing at all, so the assertion is about the total rather
  *  than about any one method: naming methods would only catch the calls
  *  somebody thought to name. */
-function countEveryCall(api: BackupdApi): () => number {
+function countEveryCall(api: RetndApi): () => number {
   let count = 0;
   const record = api as unknown as Record<string, unknown>;
   for (const key of Object.keys(record)) {
@@ -706,7 +706,7 @@ function haltedSet(): BackupSet {
 
 /** The dashboard as an element rather than a rendered tree, so a case can
  *  re-render the same position with a moved fixture. */
-function dashboardTree(api: BackupdApi, sets: BackupSet[]) {
+function dashboardTree(api: RetndApi, sets: BackupSet[]) {
   return (
     <MemoryRouter>
       <ApiProvider api={api}>
@@ -720,7 +720,7 @@ function dashboardTree(api: BackupdApi, sets: BackupSet[]) {
   );
 }
 
-function renderDashboard(api: BackupdApi, sets: BackupSet[]) {
+function renderDashboard(api: RetndApi, sets: BackupSet[]) {
   return render(dashboardTree(api, sets));
 }
 
@@ -729,7 +729,7 @@ function renderDashboard(api: BackupdApi, sets: BackupSet[]) {
 const AUTHENTICATED: AuthContext = { authenticated: true, username: "bm-admin", mode: "local-account" };
 const BRIDGE: PlatformBridge = { ...genericBridge, getAuthContext: () => Promise.resolve(AUTHENTICATED) };
 
-function renderApp(api: BackupdApi, route = "/") {
+function renderApp(api: RetndApi, route = "/") {
   return render(
     <MemoryRouter initialEntries={[route]}>
       <ApiProvider api={api}>

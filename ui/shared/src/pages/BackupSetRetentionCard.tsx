@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useApi } from "@shared/api/ApiContext";
-import { BackupdError } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
 import type {
   ApiError,
   AppSettings,
@@ -209,11 +209,11 @@ function RetentionPanel({
       })
       .catch((e: unknown) => {
         setError(
-          e instanceof BackupdError
+          e instanceof RetndError
             ? e.api
             : {
                 code: "unknown",
-                message: "Backupd could not change this backup set's retention policy.",
+                message: "retnd could not change this backup set's retention policy.",
                 correlationId: "unavailable"
               }
         );

@@ -198,7 +198,7 @@ export function App() {
   // answering" is only true for a request that got no reply and for a
   // refusal written by the proxy in front of the service; the other
   // rejections this gate sees — an unreadable body, a typed refusal that
-  // is not about the session — are Backupd answering, and putting that
+  // is not about the session — are retnd answering, and putting that
   // heading over them contradicted the ErrorState directly underneath
   // it.
   if (authError) {
@@ -264,10 +264,10 @@ export function App() {
         <WarningBanner
           tone="info"
           eyebrow="First run"
-          title="Backupd has no configuration yet"
+          title="retnd has no configuration yet"
           dismissible={false}
         >
-          {"Add your first backup set, under Backup sets, and Backupd writes its " +
+          {"Add your first backup set, under Backup sets, and retnd writes its " +
             "configuration for you. Until that is done nothing is backed up, and the " +
             "pages here have nothing behind them to show."}
         </WarningBanner>
@@ -281,7 +281,7 @@ export function App() {
         // refusal into an application that silently does nothing.
         <WarningBanner
           tone="warn"
-          title="Backupd update required"
+          title="retnd update required"
           eyebrow="Version mismatch"
           dismissible={false}
         >
@@ -386,7 +386,7 @@ export function App() {
       </Routes>
 
       <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-        {"Backupd running on " + bridge.name}
+        {"retnd running on " + bridge.name}
         {" \u00b7 "}
         <button
           onClick={() => navigate("/catalog-recovery")}

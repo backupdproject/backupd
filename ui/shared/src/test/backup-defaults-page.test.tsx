@@ -27,7 +27,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi } from "@shared/api/mock";
-import type { AppSettings, BackupdApi } from "@shared/api/contracts";
+import type { AppSettings, RetndApi } from "@shared/api/contracts";
 import { resetGraphForTests } from "@shared/state/graph";
 import { setsNode } from "@shared/state/appNodes";
 import { useResource } from "@shared/state/resource";
@@ -36,7 +36,7 @@ import { BackupDefaultsPage } from "@shared/pages/BackupDefaultsPage";
 /** The page wired to the shared sets node exactly as App.tsx wires it, so
  *  the deployment summary is reading the same list every other surface
  *  does rather than a fixture handed in here. */
-function DefaultsScreen({ api }: { api: BackupdApi }) {
+function DefaultsScreen({ api }: { api: RetndApi }) {
   useResource(setsNode, () => api.listSets(), [api]);
   return <BackupDefaultsPage readOnly={false} />;
 }
@@ -53,7 +53,7 @@ function settle(ms = 400): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function renderDefaults(api: BackupdApi = createMockApi()): Promise<void> {
+async function renderDefaults(api: RetndApi = createMockApi()): Promise<void> {
   render(
     <MemoryRouter>
       <ApiProvider api={api}>
@@ -99,7 +99,7 @@ describe("what a new backup set starts with", () => {
   it("reads the polling cadence off the service rather than stating a number of its own", async () => {
     const real = createMockApi();
     const loaded = await real.getSettings();
-    const api: BackupdApi = {
+    const api: RetndApi = {
       ...real,
       getSettings: (): Promise<AppSettings> =>
         Promise.resolve({
@@ -131,7 +131,7 @@ describe("the retention defaults", () => {
   it("says whether the newest known-good backup is protected, rather than assuming it is", async () => {
     const real = createMockApi();
     const loaded = await real.getSettings();
-    const unprotected: BackupdApi = {
+    const unprotected: RetndApi = {
       ...real,
       getSettings: (): Promise<AppSettings> =>
         Promise.resolve({

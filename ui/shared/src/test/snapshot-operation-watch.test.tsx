@@ -29,7 +29,7 @@ import type { RenderHookResult } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { ApiProvider } from "@shared/api/ApiContext";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { createMockApi } from "@shared/api/mock";
 import { useSnapshotOperation } from "@shared/hooks/useSnapshotOperation";
 import type { SnapshotAction } from "@shared/hooks/useSnapshotOperation";
@@ -64,8 +64,8 @@ function operation(status: Operation["status"]): Operation {
  *  the mock's own delay, which would need the fake clock advanced to
  *  resolve a promise and would make every assertion below about the
  *  fixture rather than about the hook. */
-function harness(getOperation: BackupdApi["getOperation"]): ActionHook {
-  const api: BackupdApi = { ...createMockApi(), getOperation };
+function harness(getOperation: RetndApi["getOperation"]): ActionHook {
+  const api: RetndApi = { ...createMockApi(), getOperation };
   act(() => {
     graph.commit("test/seed", (tx) => tx.set(versionNode, { data: VERSION, error: null, loading: false }));
   });

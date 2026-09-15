@@ -8,7 +8,7 @@
  * need to quote. Both come from the bridge, so a provider's own answers
  * are what appear and the shared tree never guesses.
  *
- * The product's identity stays Backupd throughout. The platform is
+ * The product's identity stays retnd throughout. The platform is
  * context around it, never branding on it, which is why the platform name
  * appears as a value in a row and not as a title anywhere.
  */
@@ -23,13 +23,13 @@ const INTEGRATION_LABEL: Record<string, string> = {
 };
 
 /** Makes the abstraction explicit to administrators (§21). Product identity is
- *  Backupd; the platform is context, never the brand. */
+ *  retnd; the platform is context, never the brand. */
 export function PlatformBadge({ compact = false }: { compact?: boolean }) {
   const { bridge, auth } = usePlatform();
   const authLabel =
     auth?.mode === "native-session"
       ? bridge.name + " session"
-      : "Backupd local account";
+      : "retnd local account";
 
   if (compact)
     return (

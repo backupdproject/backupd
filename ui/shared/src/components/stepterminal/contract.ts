@@ -62,7 +62,7 @@ export interface WorkflowStepLogPage {
  *  VIEWER processed, never a position it derived itself; `wait` asks the
  *  engine's own fan-out to hold the read briefly rather than turning a
  *  tail into a poll loop. Structurally identical to the host client's
- *  `Pick<BackupdApi, "workflowStepLogs">`. */
+ *  `Pick<RetndApi, "workflowStepLogs">`. */
 export interface StepLogSource {
   workflowStepLogs(
     runId: string,

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useApi } from "@shared/api/ApiContext";
-import { BackupdError } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
 import type { ApiError, AppSettings } from "@shared/api/contracts";
 import { useAsync } from "@shared/hooks/useAsync";
 import { Banner } from "@shared/components/Banner";
@@ -12,7 +12,7 @@ import { isNotConfigured } from "@shared/api/failure";
 import { InfoTooltip } from "@shared/tooltips/InfoTooltip";
 
 /**
- * Issue #845 — how often Backupd looks at a source, as a control rather
+ * Issue #845 — how often retnd looks at a source, as a control rather
  * than a config-file edit.
  *
  * # This is the card #299 deleted, built properly
@@ -151,11 +151,11 @@ function ServiceBehaviourEditor({
       })
       .catch((e: unknown) => {
         setSaveError(
-          e instanceof BackupdError
+          e instanceof RetndError
             ? e.api
             : {
                 code: "unknown",
-                message: "Backupd could not save the service settings.",
+                message: "retnd could not save the service settings.",
                 correlationId: "unavailable"
               }
         );
@@ -166,7 +166,7 @@ function ServiceBehaviourEditor({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", maxWidth: "78ch" }}>
-        How often Backupd checks each source for new backup files. This is the default every
+        How often retnd checks each source for new backup files. This is the default every
         backup set follows; a set can be given its own interval on its own page.
       </p>
 

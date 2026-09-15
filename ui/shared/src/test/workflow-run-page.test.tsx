@@ -28,8 +28,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi } from "@shared/api/mock";
-import { BackupdError } from "@shared/api/contracts";
-import type { BackupdApi, WorkflowRun } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
+import type { RetndApi, WorkflowRun } from "@shared/api/contracts";
 import { elapsedLabel } from "@shared/components/workflowPresentation";
 import { WorkflowRunPage } from "@shared/pages/WorkflowRunPage";
 import { resetGraphForTests } from "@shared/state/graph";
@@ -66,7 +66,7 @@ const RUNNING_STEP = {
   timeoutMs: 120_000
 };
 
-function renderRun(api: BackupdApi, runId: string) {
+function renderRun(api: RetndApi, runId: string) {
   return render(
     <MemoryRouter initialEntries={[workflowRunPath(runId)]}>
       <ApiProvider api={api}>
@@ -264,7 +264,7 @@ describe("the status combinations the engine can actually produce", () => {
     await screen.findByRole("group", { name: "Workflow run verdicts" });
 
     vi.spyOn(api, "workflowRun").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "WORKFLOW_ENGINE_UNAVAILABLE",
         message: "the workflow engine is not answering",
         correlationId: "cid_poll503"
@@ -543,7 +543,7 @@ describe("a run that cannot be read", () => {
   it("says what the service said, with its correlation id, and offers a retry", async () => {
     const api = createMockApi();
     vi.spyOn(api, "workflowRun").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "WORKFLOW_RUN_NOT_FOUND",
         message: "this deployment has no workflow run with that id",
         correlationId: "cid_run404"

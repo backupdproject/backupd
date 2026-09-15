@@ -262,7 +262,7 @@ export function SettingsPage({ readOnly }: { readOnly: boolean }) {
                 <div style={{ fontSize: 13.5, fontWeight: 600 }}>Existing backup data detected</div>
                 <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", maxWidth: "74ch" }}>
                   Backup files were found in the configured storage location, but they are
-                  not currently present in the Backupd catalog. Scanning is
+                  not currently present in the retnd catalog. Scanning is
                   read-only — no files will be deleted.
                 </p>
                 <div>
@@ -613,7 +613,7 @@ function describeRecoveryFailure(
     return {
       message: "That address was not accepted as an email address.",
       remediation:
-        "Backupd checks the recovery address and the From address against the mail standard rather than against a rough pattern. Check both for a missing domain, a stray space or a trailing comma.",
+        "retnd checks the recovery address and the From address against the mail standard rather than against a rough pattern. Check both for a missing domain, a stray space or a trailing comma.",
       correlationId: api.correlationId
     };
   }

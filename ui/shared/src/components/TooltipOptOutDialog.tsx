@@ -50,7 +50,7 @@ export function TooltipOptOutDialog() {
       onCancel={closeTooltipOptOutPrompt}
     >
       <p style={{ margin: 0 }}>
-        You closed a tooltip. Backupd can stop showing them on hover
+        You closed a tooltip. retnd can stop showing them on hover
         anywhere in this interface, on this browser.
       </p>
       <p style={{ margin: 0, color: "var(--text-2)" }}>

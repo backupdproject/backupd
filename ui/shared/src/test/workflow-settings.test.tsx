@@ -23,8 +23,8 @@ import { MemoryRouter } from "react-router-dom";
 
 import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi } from "@shared/api/mock";
-import { BackupdError } from "@shared/api/contracts";
-import type { BackupdApi } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { WorkflowSettingsCard } from "@shared/pages/WorkflowSettingsCard";
 import { resetGraphForTests } from "@shared/state/graph";
 
@@ -50,7 +50,7 @@ function onCard(text: string | RegExp): HTMLElement[] {
     .filter((node) => node.closest(".tooltip__pop") === null);
 }
 
-function renderCard(api: BackupdApi) {
+function renderCard(api: RetndApi) {
   return render(
     <MemoryRouter>
       <ApiProvider api={api}>
@@ -100,7 +100,7 @@ describe("the deployment-wide workflow card", () => {
     await loaded();
 
     expect(onCard("Not on this read").length).toBe(1);
-    expect(onCard("backupd workflow-runner status").length).toBe(1);
+    expect(onCard("retnd workflow-runner status").length).toBe(1);
     // And it points at the read that DOES open the socket, rather than
     // leaving the CLI as the only answer.
     expect(onCard(/Check this set/).length).toBeGreaterThan(0);
@@ -212,7 +212,7 @@ describe("the deployment-wide workflow card", () => {
   it("reports a failed read with the service's words rather than an empty form", async () => {
     const api = createMockApi();
     vi.spyOn(api, "getWorkflowSettings").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "WORKFLOW_ENGINE_UNAVAILABLE",
         message: "the workflow engine is not answering",
         correlationId: "cid_wfs503"

@@ -18,7 +18,7 @@
  * The props are one step, one pair of ids and ONE method. That is the
  * whole seam: the host page (L7's run detail) owns the API client, the
  * timeline, the selection and the layout, and hands this component the
- * step it selected plus `Pick<BackupdApi, "workflowStepLogs">`. Nothing
+ * step it selected plus `Pick<RetndApi, "workflowStepLogs">`. Nothing
  * here reaches for a context, a router, a store or a second call — which
  * is what lets the suite point it at a stub and a hostile corpus, and is
  * also what makes "no output-driven API calls" checkable rather than
@@ -123,7 +123,7 @@ export interface StepLogTerminalProps {
   stepId: string;
   step: WorkflowStepSummary;
   /** The one call this component makes. Structurally
-   *  `Pick<BackupdApi, "workflowStepLogs">`, declared as its own shape so
+   *  `Pick<RetndApi, "workflowStepLogs">`, declared as its own shape so
    *  the component compiles and tests against a stub. */
   api: StepLogSource;
 }
@@ -553,7 +553,7 @@ export function StepLogTerminal({ runId, stepId, step, api }: StepLogTerminalPro
         {droppedFromHead > 0 ? (
           <div style={{ color: "var(--term-time)" }}>
             {"──── " + droppedFromHead +
-              " earlier lines are not held in this browser any more · the engine still has them: backupd workflow run log --cursor 0 ────"}
+              " earlier lines are not held in this browser any more · the engine still has them: retnd workflow run log --cursor 0 ────"}
           </div>
         ) : null}
         {lines.length === 0 ? (

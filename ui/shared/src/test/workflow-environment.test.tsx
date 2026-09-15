@@ -29,7 +29,7 @@ import {
   isReservedEnvName,
   mergeWorkflowEnvironment
 } from "@shared/components/workflowPresentation";
-import { BackupdError } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
 import type { WorkflowEnvVariable, WorkflowEnvVariableInput } from "@shared/api/contracts";
 
 const GLOBAL: WorkflowEnvVariable[] = [
@@ -264,7 +264,7 @@ describe("writing a variable", () => {
     const user = userEvent.setup();
     const onSet = vi.fn<SetVariable>(() =>
       Promise.reject(
-        new BackupdError({
+        new RetndError({
           code: "INVALID_REQUEST",
           message: "this value contains a NUL byte",
           correlationId: "cid_env400"

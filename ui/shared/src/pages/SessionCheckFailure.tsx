@@ -16,15 +16,15 @@
  * asking again — and the failure's own facts, so the correlation id the
  * service or the proxy logged can be read off the screen.
  *
- * # Why the heading is not always "Backupd is not answering"
+ * # Why the heading is not always "retnd is not answering"
  *
  * Because sometimes it answered (#795's review). The session read rejects
  * for four different reasons, and only two of them mean nothing came back:
  * a `fetch` that got no response, and a refusal written by the proxy in
  * front of the service. The other two — a 200 whose body would not parse,
  * and a typed refusal that is not a verdict about the session (a 403 from
- * a gateway rule, a 500 the engine typed) — are Backupd ANSWERING, and the
- * first draft of this page put "Backupd is not answering" as an h1 above
+ * a gateway rule, a 500 the engine typed) — are retnd ANSWERING, and the
+ * first draft of this page put "retnd is not answering" as an h1 above
  * an ErrorState whose own first line said the opposite. A page that
  * contradicts itself is a page an operator cannot act on, so the one that
  * claims nothing came back is now shown only when nothing came back.
@@ -77,7 +77,7 @@ export function ServiceUnreachablePage({
   onRetry(): void;
 }) {
   return (
-    <SessionCheckFrame heading="Backupd is not answering" error={error} onRetry={onRetry}>
+    <SessionCheckFrame heading="retnd is not answering" error={error} onRetry={onRetry}>
       {/* Issue #795's container run found the first draft of this
           paragraph claiming "You have not been signed out", which is a
           promise this page cannot keep. The engine holds its sessions in
@@ -87,16 +87,16 @@ export function ServiceUnreachablePage({
           them otherwise a minute earlier was wrong in the most common
           case it exists for. What is actually known is only that nobody
           answered, so that is all this says. */}
-      {"This page could not reach Backupd to ask whether you are signed in, so it is " +
+      {"This page could not reach retnd to ask whether you are signed in, so it is " +
         "not going to guess. Signing in now would send your details down the same " +
-        "connection that is failing; when Backupd is answering again, Try again will " +
+        "connection that is failing; when retnd is answering again, Try again will " +
         "put you back where you were, or ask you to sign in if the service restarted."}
     </SessionCheckFrame>
   );
 }
 
 /**
- * Backupd answered, and what came back was not an answer about this
+ * retnd answered, and what came back was not an answer about this
  * session: a body that would not parse, or a refusal that is about
  * something other than being signed in (a policy denial, an internal
  * error).
@@ -118,11 +118,11 @@ export function SessionCheckFailedPage({
 }) {
   return (
     <SessionCheckFrame
-      heading="Backupd could not check your session"
+      heading="retnd could not check your session"
       error={error}
       onRetry={onRetry}
     >
-      {"Backupd answered, but not with an answer about whether you are signed in, so " +
+      {"retnd answered, but not with an answer about whether you are signed in, so " +
         "this page is not going to guess either way. What it did say is below. Try " +
         "again re-asks; if the answer keeps coming back like this, it is the " +
         "deployment that needs looking at rather than your password."}

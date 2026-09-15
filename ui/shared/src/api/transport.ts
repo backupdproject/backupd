@@ -30,7 +30,7 @@
  * `fetch(BASE + path`, so that it can prove statically which URLs this
  * bundle can request.
  */
-import { BackupdError, RequestFailure, toApiErrorCode } from "./contracts";
+import { RetndError, RequestFailure, toApiErrorCode } from "./contracts";
 import type {
   ApiError,
   FailureOrigin,
@@ -371,7 +371,7 @@ function num(value: unknown): number | undefined {
  *  that connects the two, and until that issue it only ever reached the
  *  screen — a refusal that renders as "Failed to fetch" in a bug report
  *  is one nobody can match up; a logged id is. */
-export function refusal(api: ApiError, info: { path: string; attemptId: string }): BackupdError {
+export function refusal(api: ApiError, info: { path: string; attemptId: string }): RetndError {
   debugLog(
     "request.error-status",
     () => ({
@@ -384,5 +384,5 @@ export function refusal(api: ApiError, info: { path: string; attemptId: string }
     }),
     "error"
   );
-  return new BackupdError(api);
+  return new RetndError(api);
 }

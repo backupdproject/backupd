@@ -114,7 +114,7 @@ export function AppShell({
             color: "var(--text-2)", fontFamily: "var(--font-mono)"
           }}
         >
-          {"Backupd \u2014 " + bridge.name}
+          {"retnd \u2014 " + bridge.name}
         </div>
       ) : null}
 
@@ -125,7 +125,7 @@ export function AppShell({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 206 }}>
-          <Logo size={24} title="Backupd" />
+          <Logo size={24} title="retnd" />
           <Wordmark size={14} />
         </div>
 

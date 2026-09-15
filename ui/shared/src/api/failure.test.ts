@@ -16,7 +16,7 @@
  * read as no answer at all, and neither is allowed to invent an id.
  */
 import { describe, expect, it } from "vitest";
-import { BackupdError, RequestFailure } from "./contracts";
+import { RetndError, RequestFailure } from "./contracts";
 import { asApiError, describeFailure, workflowScriptRefusalOf } from "./failure";
 
 describe("describeFailure keeps what the exception said", () => {
@@ -101,7 +101,7 @@ describe("describeFailure keeps what the exception said", () => {
 describe("asApiError is the one conversion the fetch hooks use", () => {
   it("hands a typed refusal through with its own code and id", () => {
     const api = asApiError(
-      new BackupdError({ code: "NOT_CONFIGURED", message: "this instance has no configuration", correlationId: "cid_x1" })
+      new RetndError({ code: "NOT_CONFIGURED", message: "this instance has no configuration", correlationId: "cid_x1" })
     );
 
     // isNotConfigured() reads .code off this, so the code has to survive
@@ -114,7 +114,7 @@ describe("asApiError is the one conversion the fetch hooks use", () => {
 
   it("keeps the service's own sentence for an INTERNAL refusal and adds where to look", () => {
     const api = asApiError(
-      new BackupdError({ code: "INTERNAL", message: "failed to list activity", correlationId: "cid_x2" })
+      new RetndError({ code: "INTERNAL", message: "failed to list activity", correlationId: "cid_x2" })
     );
 
     expect(api.message).toBe("failed to list activity");
@@ -145,23 +145,23 @@ describe("asApiError is the one conversion the fetch hooks use", () => {
 describe("provenance decides which hop a failure names", () => {
   it("never speaks over a service that typed its own refusal, whatever the status", () => {
     const failure = describeFailure(
-      new BackupdError({
+      new RetndError({
         code: "unknown",
-        message: "Backupd is in a maintenance window until 04:00.",
+        message: "retnd is in a maintenance window until 04:00.",
         status: 503,
         origin: "service"
       }),
       "Activity could not be loaded."
     );
 
-    expect(failure.message).toBe("Backupd is in a maintenance window until 04:00.");
+    expect(failure.message).toBe("retnd is in a maintenance window until 04:00.");
     expect(failure.remediation).toBeUndefined();
     expect(failure.origin).toBe("service");
   });
 
   it("names the hop when the proxy in front of the service said it wrote the refusal", () => {
     const failure = describeFailure(
-      new BackupdError({
+      new RetndError({
         code: "unknown",
         message: "The backup service returned an unexpected response.",
         status: 502,
@@ -171,7 +171,7 @@ describe("provenance decides which hop a failure names", () => {
       "Activity could not be loaded."
     );
 
-    expect(failure.message).toMatch(/could not reach the Backupd service/i);
+    expect(failure.message).toMatch(/could not reach the retnd service/i);
     expect(failure.correlationId).toBe("cid_marked");
     expect(failure.origin).toBe("gateway");
   });
@@ -182,7 +182,7 @@ describe("provenance decides which hop a failure names", () => {
     // An untyped 502 is still a response with nothing of the service's in
     // it, so the wording holds.
     const failure = describeFailure(
-      new BackupdError({
+      new RetndError({
         code: "unknown",
         message: "The backup service returned an unexpected response.",
         status: 502,
@@ -191,7 +191,7 @@ describe("provenance decides which hop a failure names", () => {
       "Activity could not be loaded."
     );
 
-    expect(failure.message).toMatch(/could not reach the Backupd service/i);
+    expect(failure.message).toMatch(/could not reach the retnd service/i);
   });
 
   it("names no hop at all for a refusal nothing established the origin of", () => {
@@ -199,12 +199,12 @@ describe("provenance decides which hop a failure names", () => {
     // provenance is "not established", and guessing one from the status
     // is the defect, not the fix.
     const failure = describeFailure(
-      new BackupdError({ code: "unknown", message: "something nobody typed", status: 502 }),
+      new RetndError({ code: "unknown", message: "something nobody typed", status: 502 }),
       "Activity could not be loaded."
     );
 
     expect(failure.message).toBe("something nobody typed");
-    expect(failure.message).not.toMatch(/could not reach the Backupd service/i);
+    expect(failure.message).not.toMatch(/could not reach the retnd service/i);
   });
 });
 
@@ -233,7 +233,7 @@ describe("workflowScriptRefusalOf", () => {
   ];
 
   it("answers the blocking scripts a script refusal carried", () => {
-    const refusal = new BackupdError({
+    const refusal = new RetndError({
       code: "WORKFLOW_SCRIPT_REJECTED",
       message: "this configuration was not saved",
       blockingScripts: BLOCKING
@@ -245,7 +245,7 @@ describe("workflowScriptRefusalOf", () => {
   it("answers an empty list for a script refusal that carried none, so the caller can fall back", () => {
     // An engine older than the structured field. The caller renders the
     // service's own sentence instead, which names the same scripts.
-    const refusal = new BackupdError({
+    const refusal = new RetndError({
       code: "WORKFLOW_SCRIPT_REJECTED",
       message: "10-quiesce.remote.sh does not parse at 18:24"
     });
@@ -259,7 +259,7 @@ describe("workflowScriptRefusalOf", () => {
     // rules refused, whatever else is on the envelope.
     expect(
       workflowScriptRefusalOf(
-        new BackupdError({ code: "CONFIG_REVISION_STALE", message: "stale", blockingScripts: BLOCKING })
+        new RetndError({ code: "CONFIG_REVISION_STALE", message: "stale", blockingScripts: BLOCKING })
       )
     ).toEqual([]);
     expect(

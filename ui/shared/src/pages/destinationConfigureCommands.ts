@@ -1,5 +1,5 @@
 /**
- * The `backupd` command each step of the configure-a-destination flow is
+ * The `retnd` command each step of the configure-a-destination flow is
  * equivalent to (issue #669; EPIC G's standing rule, argued in full in
  * storageDestinationCommands.ts).
  *
@@ -16,7 +16,7 @@
  *
  * # A gap is printed as a gap, never as a plausible flag
  *
- * This is the part worth reading. `backupd medium edit` takes the flags it
+ * This is the part worth reading. `retnd medium edit` takes the flags it
  * was written with - `--type`, `--region`, `--endpoint`, `--bucket`,
  * `--prefix`, `--storage-class`, `--upload-verification` and the four
  * credential spellings (core/cmd/retnd/medium.go:219) - and a
@@ -64,7 +64,7 @@ const EDIT_FLAG_FIELDS: Record<string, true> = {
  *  differ in which configuration they answer about, and a line printed
  *  as if they were the same command would teach that difference away. */
 export function testConnectionCommand(destinationId: string): string {
-  return `backupd medium test-connection ${destinationId}`;
+  return `retnd medium test-connection ${destinationId}`;
 }
 
 /**
@@ -87,7 +87,7 @@ export function editConfigurationCommand(
   // `medium edit` against an id nothing declares fails, and a line that
   // fails is worse than no line, because the whole reason these are
   // printed is that an operator can copy them.
-  const parts = [`backupd medium ${creating ? "add" : "edit"} ${destinationId}`];
+  const parts = [`retnd medium ${creating ? "add" : "edit"} ${destinationId}`];
   const fieldsWithNoFlag: string[] = [];
   // `--type` takes the BACKEND ID and not the rclone backend, which is a
   // distinction this line got wrong until #81 measured it:
@@ -118,5 +118,5 @@ export function editConfigurationCommand(
  *  handles material, and it takes no argument at all - which is the
  *  point, and why this line is printable before anything is typed. */
 export function importCredentialsCommand(): string {
-  return "backupd medium import-credentials --stdin";
+  return "retnd medium import-credentials --stdin";
 }

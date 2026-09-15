@@ -342,8 +342,8 @@ export function activityLine(e: SetActivityEvent): ActivityLine {
       // lines down. The wire carries a command bare and the "$ " belongs
       // to the terminal, and until the dock read this seam the two never
       // met on one screen: a notice only ever appeared in the per-set
-      // panel. They meet now, and one log printing `$ backupd run` for a
-      // request the engine served and `backupd run` for one it refused is two
+      // panel. They meet now, and one log printing `$ retnd run` for a
+      // request the engine served and `retnd run` for one it refused is two
       // renderings of the same thing three lines apart. RunControlNotice
       // draws the prompt too, so this is the third surface agreeing
       // rather than a new convention.
@@ -354,7 +354,7 @@ export function activityLine(e: SetActivityEvent): ActivityLine {
     case "api_action": {
       // Something somebody did through the API rather than something the
       // cycle did (issue #599). The engine composes the summary, the
-      // refusal's own words and the `backupd` command line; this
+      // refusal's own words and the `retnd` command line; this
       // lays them out. Rendering it here rather than only in the dock is
       // what gives a set's own strip, and every export, the same lines:
       // logText is built on this function.

@@ -371,10 +371,10 @@ def body() -> int:
     # -------------------------------------------------------------------
     # Every request()/post() call inside the exported client object.
     # -------------------------------------------------------------------
-    client_decl = re.search(r"export\s+const\s+httpApi\s*:\s*BackupdApi\s*=\s*\{", src)
+    client_decl = re.search(r"export\s+const\s+httpApi\s*:\s*RetndApi\s*=\s*\{", src)
     if not client_decl:
         fail(
-            f"{API_CLIENT} no longer exports `const httpApi: BackupdApi = {{`, so this gate cannot "
+            f"{API_CLIENT} no longer exports `const httpApi: RetndApi = {{`, so this gate cannot "
             "find the requests to check."
         )
         for f in failures:

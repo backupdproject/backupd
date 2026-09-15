@@ -29,15 +29,15 @@ import type { UserEvent } from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
-import { BackupdError } from "@shared/api/contracts";
-import type { BackupdApi } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { resetGraphForTests } from "@shared/state/graph";
 import { RepositoryDomainNewPage } from "@shared/pages/RepositoryDomainNewPage";
 import { RepositoryDomainsPage } from "@shared/pages/RepositoryDomainsPage";
 import { clockSkew, failingProbes } from "@shared/pages/repositoryFleet";
 import type { CreateRepositoryDomainRequest, RepositoryHealth } from "@shared/types/snapshot";
 
-async function renderDomains(api: BackupdApi = createMockApi()): Promise<void> {
+async function renderDomains(api: RetndApi = createMockApi()): Promise<void> {
   render(
     <MemoryRouter>
       <ApiProvider api={api}>
@@ -123,12 +123,12 @@ describe("the domains table", () => {
 
   it("reports a maintenance read that failed as a failure, not as an unowned domain", async () => {
     const real = createMockApi();
-    const api: BackupdApi = {
+    const api: RetndApi = {
       ...real,
       getRepositoryMaintenance: (domain) =>
         domain === "offsite-b2"
           ? Promise.reject(
-              new BackupdError({
+              new RetndError({
                 code: "unknown",
                 message: "the maintenance record could not be read",
                 correlationId: "cid_test"
@@ -177,7 +177,7 @@ describe("the topology", () => {
 describe("what the page says when there is nothing to say", () => {
   it("tells a deployment with no domain apart from one whose read failed", async () => {
     const real = createMockApi();
-    const empty: BackupdApi = {
+    const empty: RetndApi = {
       ...real,
       listRepositories: () => Promise.resolve({ generatedAt: "2026-09-13T04:00:00+02:00", repositories: [] })
     };
@@ -196,11 +196,11 @@ describe("what the page says when there is nothing to say", () => {
 
   it("reports a fleet read that failed as a failure", async () => {
     const real = createMockApi();
-    const broken: BackupdApi = {
+    const broken: RetndApi = {
       ...real,
       listRepositories: () =>
         Promise.reject(
-          new BackupdError({
+          new RetndError({
             code: "unknown",
             message: "the repository fleet could not be read",
             correlationId: "cid_test"
@@ -223,7 +223,7 @@ describe("what the page says when there is nothing to say", () => {
 
 describe("declaring a domain", () => {
   /** The screen, with whatever API a case needs behind it. */
-  function renderDefine(api: BackupdApi = createMockApi()) {
+  function renderDefine(api: RetndApi = createMockApi()) {
     render(
       <MemoryRouter initialEntries={["/repositories/new"]}>
         <ApiProvider api={api}>
@@ -248,7 +248,7 @@ describe("declaring a domain", () => {
    *  was called: the screen it lands on re-reads the fleet on mount, so
    *  a create whose domain never reached the list it navigates to passes
    *  every assertion made against a placeholder. */
-  function renderDefineOntoTheFleet(api: BackupdApi) {
+  function renderDefineOntoTheFleet(api: RetndApi) {
     render(
       <MemoryRouter initialEntries={["/repositories/new"]}>
         <ApiProvider api={api}>
@@ -344,7 +344,7 @@ describe("declaring a domain", () => {
     const api = createMockApi();
     api.createRepositoryDomain = () =>
       Promise.reject(
-        new BackupdError({
+        new RetndError({
           code: "INCREMENTAL_ENGINE_DISABLED",
           message:
             "the incremental (kopia) backup engine is disabled in this deployment: set incremental_engine.enabled: true in config.yaml",

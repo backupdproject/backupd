@@ -325,7 +325,7 @@ export interface BackupSet {
 export interface IncrementalSettings {
   /** The encrypted store this set's snapshots live in. Create-only. */
   repositoryDomain: string | null;
-  /** What the operator told Backupd they arranged on the source for the
+  /** What the operator told retnd they arranged on the source for the
    *  duration of a run. Recorded, never detected — a run that
    *  contradicts it is reported rather than silently accepted. */
   sourceConsistency: SourceConsistency | null;

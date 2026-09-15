@@ -272,9 +272,7 @@ backupd_internal
 backupd_repo_production
 backupd_sha
 backupd_web_sha
-BackupdApi
 backupdDebug
-BackupdError
 backupdproject
 rclone_manager
 RCLONE_MANAGER_ALLOW_ROOT
