@@ -420,7 +420,7 @@ func TestWorkflowRecoveryConditionsAreOnePerBackupSet(t *testing.T) {
 // carrying the generic fallback -- which is why an empty check would not
 // be enough and this asserts the fallback is NOT what came out.
 func TestWorkflowKindsAreDeliverable(t *testing.T) {
-	const genericFallback = "Backup manager alert"
+	const genericFallback = "retnd alert"
 
 	workflowKinds := []alert.Kind{alert.WorkflowFailed, alert.WorkflowCleanupFailed, alert.WorkflowRecoveryRequired}
 

@@ -7,7 +7,7 @@ stops matching what is below.
 
 ## The short version
 
-Backupd asks for less than almost anything else on a NAS. It drops every Linux
+retnd asks for less than almost anything else on a NAS. It drops every Linux
 capability, runs as a user the administrator chooses, runs on a read-only root filesystem,
 and gets exactly five paths, three of them read-only.
 

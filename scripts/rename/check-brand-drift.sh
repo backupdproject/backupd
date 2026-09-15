@@ -272,7 +272,6 @@ EOF
 pending="$(
   cat <<'EOF'
 Backup manager
-Backup Manager
 BACKUP_MANAGER_ANALYTICS
 BACKUP_MANAGER_API_
 BACKUP_MANAGER_API_PASSWORD
@@ -294,7 +293,6 @@ BACKUP_MANAGER_WEB_TEST_SERVE_CHILD
 BACKUP_MANAGER_WEB_TEST_SERVE_CONFIG
 BACKUP_MANAGER_WEB_TEST_SERVE_STATE_DB
 BACKUP_MANAGER_WEB_TEST_VAR
-backup-manager
 backupd
 Backupd
 backupd_
@@ -302,7 +300,6 @@ backupd_internal
 backupd_repo_production
 backupdDebug
 backupdproject
-rclone_manager
 RCLONE_MANAGER_ALLOW_ROOT
 RCLONE_MANAGER_ARTIFACT_PATH
 RCLONE_MANAGER_MACHINES_NETWORK
@@ -333,14 +330,13 @@ RCLONE_MANAGER_TEST_TESTCONNECTION_MIGRATION_DEK
 RCLONE_MANAGER_TEST_V1UPGRADE_DEK
 RCLONE_MANAGER_TEST_WRONGDEK
 RCLONE_MANAGER_UNIT
-rclone-manager
 RCLONE-MANAGER
 EOF
 )"
 
 # Out of scope, pinned to the files they already live in.
 #
-# Four groups, and none of them is a rename's to fix:
+# Eight groups, and none of them is a rename's to fix. The first four:
 #
 #   * The RM_* names are the ENVIRONMENT CONTRACT of another repository.
 #     scripts/bdtools/e2e/run_tests_repo_gate.py and
@@ -383,6 +379,36 @@ EOF
 # Pinned as the bare prefix rather than excluded by path, so a real
 # `RCLONE_MANAGER_SOMETHING` added to the gate script is still a creation.
 #
+# R2.2 (#892) pins a seventh group and an eighth, and both are the reason
+# FR-43's allowlist has a `preexisting` half at all: the prose sweep found
+# occurrences of the first two brands that are CORRECT and would be made
+# wrong by renaming them.
+#
+# The seventh is the deployment #795 was reported from, whose web-ui
+# container could not resolve the engine and said so in one line:
+# `dial tcp: lookup rclone-manager: no such host`. That line is quoted
+# verbatim as the evidence for four separate pieces of behaviour
+# (ui/shared/src/api/failure.ts, ui/shared/src/platform/localSession.ts,
+# the regression test in ui/shared/src/test/activity-engine-unreachable.
+# test.tsx and the rig's own README), and ui/shared/src/test/free-space-
+# shared-volume.test.tsx carries that reporter's host path
+# (/home/rom/rclone-manager/backups) as the fixture it measured. Rewriting
+# a captured log line or a captured reading makes the record say something
+# that was never observed, and §6's cut list keeps host directory names out
+# of this epic besides. The same applies to the two comments that ATTRIBUTE
+# a kept alias to the brand it came from -- apps/common/webhost/router.go
+# and core/internal/obs/envlevel.go say RM_DEBUG is rclone-manager's -- and
+# to .github/workflows/ci.yml, whose job name spells the guard's own
+# pattern list and whose comment records the three-rename history, exactly
+# as scripts/ci-local.sh's gate-step prose does.
+#
+# The eighth is `docs/design/Backup Manager.dc.html`, cited by name from
+# docs/epic-checklist.md §5 and from ui/shared/src/api/client.ts's comment
+# about the design canvas. The file is deliberately not renamed (group
+# three above), so a reference to it by its real filename is right, and
+# renaming the reference would point both readers at a path that does not
+# exist.
+#
 # Two more groups are handled by path exclusion below rather than by a pin,
 # because they are machine-written or wholly historical and pinning them
 # would mean editing this list on every release: CHANGELOG.md, which is the
@@ -397,9 +423,11 @@ EOF
 # treats it as one.
 preexisting="$(
   cat <<'EOF'
+Backup Manager docs/epic-checklist.md
 Backup Manager docs/EPIC-R-rename-backupd-to-retnd.md
 backup manager docs/EPIC-R-rename-inventory.md
 Backup Manager docs/EPIC-R-rename-inventory.md
+Backup Manager ui/shared/src/api/client.ts
 backup_manager docs/EPIC-R-rename-backupd-to-retnd.md
 backup_manager docs/EPIC-R-rename-inventory.md
 BACKUP_MANAGER_ scripts/ci-local.sh
@@ -407,8 +435,10 @@ BACKUP_MANAGER_API_PASSWORD docs/design/activity-terminal.html
 BACKUP_MANAGER_API_URL docs/design/activity-terminal.html
 BACKUP_MANAGER_API_USERNAME docs/design/activity-terminal.html
 backup_manager_state docs/conformance/epic-r-matrix.md
+backup-manager .github/workflows/ci.yml
 backup-manager docs/EPIC-R-rename-backupd-to-retnd.md
 backup-manager docs/EPIC-R-rename-inventory.md
+backup-manager scripts/ci-local.sh
 backupd .github/workflows/rclone-upgrade-gate.yml
 backupd docs/conformance/epic-r-matrix.md
 backupd docs/design/788-incremental-ui-mockup.md
@@ -482,9 +512,18 @@ RCLONE_MANAGER_SOURCE_PORT docs/EPIC-R-rename-backupd-to-retnd.md
 RCLONE_MANAGER_SOURCE_PORT docs/EPIC-R-rename-inventory.md
 RCLONE_MANAGER_UNIT docs/EPIC-R-rename-backupd-to-retnd.md
 RCLONE_MANAGER_UNIT docs/EPIC-R-rename-inventory.md
-rclone-manager docs/conformance/epic-r-matrix.md
+rclone-manager .github/workflows/ci.yml
+rclone-manager apps/common/webhost/router.go
+rclone-manager core/internal/obs/envlevel.go
 rclone-manager docs/EPIC-R-rename-backupd-to-retnd.md
 rclone-manager docs/EPIC-R-rename-inventory.md
+rclone-manager docs/conformance/epic-r-matrix.md
+rclone-manager scripts/ci-local.sh
+rclone-manager scripts/e2e/README.md
+rclone-manager ui/shared/src/api/failure.ts
+rclone-manager ui/shared/src/platform/localSession.ts
+rclone-manager ui/shared/src/test/activity-engine-unreachable.test.tsx
+rclone-manager ui/shared/src/test/free-space-shared-volume.test.tsx
 RM_ADMIN_PASSWORD scripts/e2e/three-machine-web-ui.sh
 RM_ADMIN_PASSWORD scripts/e2e/web-ui-smoke.mjs
 RM_ADMIN_PASSWORD scripts/tests/testdata/three-machine-web-ui.help.txt

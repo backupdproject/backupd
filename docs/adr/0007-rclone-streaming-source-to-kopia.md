@@ -96,7 +96,7 @@ having one type answer both is what let them disagree. `Source.Path` is
 required to be rooted (`/runs/2026/db.dump`) and is cleaned, never resolved
 against the filesystem -- `filepath.Abs` on a remote object path would mix
 the process working directory into a snapshot's identity, so the same object
-would list differently depending on where backupd was started from.
+would list differently depending on where retnd was started from.
 
 ### Why this is not an accidentally-seekable path
 

@@ -336,7 +336,7 @@ func (k Kind) title() string {
 	case WorkflowRecoveryRequired:
 		return "Backup set is blocked pending recovery"
 	default:
-		return "Backup manager alert"
+		return "retnd alert"
 	}
 }
 

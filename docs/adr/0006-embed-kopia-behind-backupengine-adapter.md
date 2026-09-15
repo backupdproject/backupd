@@ -135,9 +135,9 @@ Baseline is `origin/main` at f65a87ef.
 
 ### Binary size
 
-`core/cmd/backupd` does not import the adapter yet, so the dependency on its
+`core/cmd/retnd` does not import the adapter yet, so the dependency on its
 own costs nothing. The row that matters is the linked one, measured by
-temporarily blank-importing the adapter into `cmd/backupd`, which is what
+temporarily blank-importing the adapter into `cmd/retnd`, which is what
 Phase 1 will do for real.
 
 | Target | Baseline | Dep in go.mod, adapter not linked | Adapter linked | Delta when linked |
@@ -432,7 +432,7 @@ the Phase 1 work rather than as rediscoveries.
   the upgrade ceremony and twice the CVE monitoring, permanently.
 - **`repo.Connect` writes a config file we have to own.** Kopia's natural
   habitat is a per-user config in a well-known location; a process-wide
-  default would be shared mutable state between unrelated backupd
+  default would be shared mutable state between unrelated retnd
   invocations. `RepositoryLocation.ConfigPath` and `CachePath` exist so the
   placement is ours, and that is one more thing to get right in deployment
   rather than something upstream handles.

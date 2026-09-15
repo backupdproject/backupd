@@ -334,7 +334,7 @@ running this product.
 
 A hook does not inherit this daemon's environment. It gets a sanitized
 baseline (`PATH`, and nothing else), then `workflows.environment`, then the
-backup set's `environment`, then the `BACKUPD_*` built-ins.
+backup set's `environment`, then the `RETND_*` built-ins.
 
 Inheriting was rejected outright, and not on style grounds. This process's
 environment carries whatever the init system, the container runtime and the
@@ -343,7 +343,7 @@ secret resolver, the repository passphrase itself*. Handing that block to a
 script somebody dropped in a directory would make every hook a credential
 dump, silently.
 
-The `BACKUPD_*` namespace is **reserved at validation time**, not
+The `RETND_*` namespace is **reserved at validation time**, not
 overridden at merge time. A key an operator can write and this product
 silently discards is a key that looks like it works; and a hook reading
 `RETND_BACKUP_STATUS` has to be reading what this product observed, not
