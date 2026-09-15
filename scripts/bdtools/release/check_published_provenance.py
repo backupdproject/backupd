@@ -155,7 +155,8 @@ def bundle_at(root: Path, ref: str) -> dict[str, Any] | None:
     if done.returncode != 0:
         return None
     try:
-        return json.loads(done.stdout)
+        parsed: dict[str, Any] = json.loads(done.stdout)
+        return parsed
     except json.JSONDecodeError as err:
         raise SystemExit(f"check-published-provenance: {BUNDLE} at {ref} is not JSON: {err}") from err
 
@@ -163,7 +164,8 @@ def bundle_at(root: Path, ref: str) -> dict[str, Any] | None:
 def current_bundle(root: Path) -> dict[str, Any]:
     path = root / BUNDLE
     try:
-        return json.loads(path.read_text())
+        parsed: dict[str, Any] = json.loads(path.read_text())
+        return parsed
     except FileNotFoundError:
         raise SystemExit(f"check-published-provenance: {BUNDLE} does not exist in {root}") from None
     except json.JSONDecodeError as err:

@@ -124,7 +124,7 @@ def write(root: Path, bundle: dict[str, Any]) -> None:
 
 def mutated(**overrides: Any) -> dict[str, Any]:
     """A deep copy of the published bundle with dotted paths replaced."""
-    out = json.loads(json.dumps(PUBLISHED))
+    out: dict[str, Any] = json.loads(json.dumps(PUBLISHED))
     for dotted, value in overrides.items():
         node = out
         parts = dotted.replace("__", ".").split(".")

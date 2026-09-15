@@ -3970,7 +3970,7 @@ def ensure_hook_image(args) -> str:
     if platform:
         argv += ["--platform", platform]
     say(f"==> Fetching the image local hooks run in: {image}")
-    pulled = run(argv + [image], check=False, timeout=900)
+    pulled = run([*argv, image], check=False, timeout=900)
     if pulled.returncode != 0:
         raise Refusal(
             EXIT_PREREQ_IMAGE,

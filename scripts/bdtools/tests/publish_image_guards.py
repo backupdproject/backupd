@@ -567,7 +567,8 @@ def main() -> int:
         (repo / "container" / "release-manifest.json").write_text(
             '{ "unsafe_local_build": true, "version": "test", "commit": "'
             + git(repo, "rev-parse", "HEAD").strip()
-            + '", "architectures": [ { "architecture": "amd64", "binary_sha256": { "backupd": "x", "backupd-web": "y" } } ] }\n'
+            + '", "architectures": [ { "architecture": "amd64", '
+            '"binary_sha256": { "backupd": "x", "backupd-web": "y" } } ] }\n'
         )
         rc, out = run_parity(repo)
         expect(rc, out, 2, 'stamped "unsafe_local_build": true')
@@ -603,7 +604,8 @@ def main() -> int:
         repo = new_repo(tmpdirs)
         (repo / "container" / "release-manifest.json").write_text(
             '{ "version": "test", "commit": "' + git(repo, "rev-parse", "HEAD").strip() + '", '
-            '"architectures": [ { "architecture": "amd64", "binary_sha256": { "backupd": "x", "backupd-web": "y" } } ] }\n'
+            '"architectures": [ { "architecture": "amd64", '
+            '"binary_sha256": { "backupd": "x", "backupd-web": "y" } } ] }\n'
         )
         stub = stub_docker(tmpdirs)
         rc, out = run_parity(repo, f"PATH={stub}{os.pathsep}{os.environ.get('PATH', '')}")
