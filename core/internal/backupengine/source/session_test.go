@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine/source"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/backupengine/source"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // sessionSource is a fake source that can hold ONE conversation open, and

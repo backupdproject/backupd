@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/health"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/health"
 )
 
 // This file is FR-24's health report as anything outside core/ sees it:

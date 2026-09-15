@@ -18,10 +18,10 @@ import (
 	rclonefs "github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 
-	"github.com/backupdproject/backupd/core/internal/testenv"
-	"github.com/backupdproject/backupd/core/tests/bwlimit"
+	"github.com/retnd/retnd/core/internal/testenv"
+	"github.com/retnd/retnd/core/tests/bwlimit"
 )
 
 // ---------------------------------------------------------------------------
@@ -664,7 +664,7 @@ func alreadyCancelledContext() context.Context {
 // are what stop this passing on a technicality.
 func TestNoExportedContextFreeClassifier(t *testing.T) {
 	const (
-		transportPath = "github.com/backupdproject/backupd/core/internal/transport"
+		transportPath = "github.com/retnd/retnd/core/internal/transport"
 		contextPath   = "context"
 	)
 

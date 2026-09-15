@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/apps/common/csrf"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/apps/common/csrf"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The read and the partial write of the settings surface.

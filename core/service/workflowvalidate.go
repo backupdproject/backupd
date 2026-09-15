@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/hostrunner"
-	"github.com/backupdproject/backupd/core/internal/workflow"
-	"github.com/backupdproject/backupd/core/internal/workflowlint"
 	"github.com/google/uuid"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/hostrunner"
+	"github.com/retnd/retnd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflowlint"
 )
 
 // `backupd validate workflow <source/backup-set>`: everything this

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // TierLastKnownGood marks a GFSVerdict kept under FR-19: the artifact holds

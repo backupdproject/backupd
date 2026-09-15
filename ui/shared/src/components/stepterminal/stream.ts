@@ -45,7 +45,7 @@
  * and never derives one from the records, and it only ever moves
  * forward — an engine answering with a lower cursor cannot rewind a
  * follower into re-reading what it has already shown. This is the same
- * rule `core/cmd/backupd`'s `followStepLogs` states for the CLI.
+ * rule `core/cmd/retnd`'s `followStepLogs` states for the CLI.
  *
  * # What this is NOT
  *

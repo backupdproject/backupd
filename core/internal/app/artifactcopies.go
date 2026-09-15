@@ -3,9 +3,9 @@ package app
 import (
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/archive"
-	"github.com/backupdproject/backupd/core/internal/placement"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/archive"
+	"github.com/retnd/retnd/core/internal/placement"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // FR-34's answer to "where is my backup and can I have it", computed over no

@@ -24,7 +24,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/backupdproject/backupd/distribution/packaging"
+	"github.com/retnd/retnd/distribution/packaging"
 )
 
 // The default is CHECK and -write is the opt-in, which is the wrong way

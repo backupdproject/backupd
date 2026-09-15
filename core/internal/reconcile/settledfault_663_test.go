@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // Two follow-on defects in #662's own fix, both about a fault that is
@@ -174,7 +174,7 @@ func TestIssue663_ContentIsStillCheckedOnAContradictoryRow(t *testing.T) {
 // at the layer that decides it.
 //
 // The clause is computed correctly and then dropped: it rides a noAction
-// finding, and `cmd/backupd/reconcile.go` prints a finding only when
+// finding, and `cmd/retnd/reconcile.go` prints a finding only when
 // `f.Changed() || f.NeedsInvestigation`.
 func TestIssue663_TheSettledFaultReachesAFindingAnOperatorSees(t *testing.T) {
 	for _, tc := range []struct {
@@ -221,7 +221,7 @@ func TestIssue663_TheSettledFaultReachesAFindingAnOperatorSees(t *testing.T) {
 						"  finding: %s -> %s (Changed=%v, NeedsInvestigation=%v)\n"+
 						"  reason:  %s\n"+
 						"  on disk: %s is %d bytes, sha256 %s\n"+
-						"cmd/backupd/reconcile.go prints a finding only when f.Changed() || "+
+						"cmd/retnd/reconcile.go prints a finding only when f.Changed() || "+
 						"f.NeedsInvestigation, and no journal transition is written for a converged row, so this "+
 						"row's self-contradiction is computed, formatted, and then discarded. The product printed "+
 						"\"reconciliation complete; no unresolved findings\" over it.",

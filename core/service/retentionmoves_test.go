@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/retention"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/retention"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // EPIC E FR-27/FR-30 (issue #239) at the preview/apply boundary: a
@@ -384,7 +384,7 @@ func previewOfALegacyRow(t *testing.T, chain config.Retention) RetentionPlan {
 // backup it already had listed under a heading that reads like a fault.
 //
 // `backupd retention` already refuses to print exactly this
-// (printPlacementPlan's own doc, core/cmd/backupd/retention.go).
+// (printPlacementPlan's own doc, core/cmd/retnd/retention.go).
 // The plan the API is built on did not, so the two operator surfaces
 // disagreed about the same deployment.
 func TestPreviewRetention_AMediumFreeDeploymentSaysNothingAboutPlacement(t *testing.T) {

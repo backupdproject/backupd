@@ -3,7 +3,7 @@ package app
 import (
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // The thinnest use case in the package, kept anyway.
@@ -15,7 +15,7 @@ import (
 // means a `sources` that breaks is a configuration or construction problem
 // and never a dependency problem.
 //
-// The projection is the reason the file exists at all. cmd/backupd
+// The projection is the reason the file exists at all. cmd/retnd
 // could read config.Source directly and print it in ten fewer lines; it
 // would then be the second place that decides which fields of a backup set
 // an operator is shown, and the CLI and a future HTTP handler would drift
@@ -25,7 +25,7 @@ import (
 // SourceSummary is `backupd sources`' one line of business logic: a
 // read-only, presentation-ready view of one configured source and its
 // backup sets. It carries nothing config.Source/config.BackupSet don't
-// already have; it exists so cmd/backupd never reaches into
+// already have; it exists so cmd/retnd never reaches into
 // internal/config's types directly, keeping the CLI thin and this
 // package's shape the one both a future HTTP handler and the CLI render
 // from.

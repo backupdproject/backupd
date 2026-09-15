@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // This file is the one rule that keeps a local repository and the

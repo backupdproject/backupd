@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/alert"
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/repomaintenance"
+	"github.com/retnd/retnd/core/internal/alert"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/repomaintenance"
 )
 
 // What one maintenance window records, what it measures, and what a

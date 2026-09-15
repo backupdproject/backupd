@@ -12,7 +12,7 @@
 // in the same process (lock_unix_test.go's startup-lock tests are written
 // the same way, for the same reason). The genuinely-two-processes shape,
 // which is the one #535 actually reported, is proved from the CLI's side
-// in core/cmd/backupd/liveengine_test.go, against a real child.
+// in core/cmd/retnd/liveengine_test.go, against a real child.
 package service
 
 import (

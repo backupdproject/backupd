@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The capacity assessment, which is a read that must stay a read.

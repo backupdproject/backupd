@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/tests/dockerlease"
+	"github.com/retnd/retnd/core/tests/dockerlease"
 )
 
 // The account-recovery mail path against a REAL SMTP server, in an

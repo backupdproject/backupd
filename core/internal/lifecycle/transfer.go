@@ -88,11 +88,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/artifactstore"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/retry"
+	"github.com/retnd/retnd/core/internal/artifactstore"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/retry"
 )
 
 // partialSuffix is FR-12's non-restorable temporary-name marker. Appended

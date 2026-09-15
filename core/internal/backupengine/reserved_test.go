@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/backupengine"
 )
 
 // TestReservedLocalDirRefusesWhatWouldEscapeIt covers the inputs that

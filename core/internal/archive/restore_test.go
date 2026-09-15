@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // This file is the restore operation's suite, and most of what it tests is

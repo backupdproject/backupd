@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/alert"
-	"github.com/backupdproject/backupd/core/internal/capacity"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/alert"
+	"github.com/retnd/retnd/core/internal/capacity"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // Work Package 3.5, and the half of it that is about staying quiet.

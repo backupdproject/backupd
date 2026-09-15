@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/alert"
-	"github.com/backupdproject/backupd/core/internal/capacity"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/alert"
+	"github.com/retnd/retnd/core/internal/capacity"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // Work Package 3.5: turning verdicts this product already reached into

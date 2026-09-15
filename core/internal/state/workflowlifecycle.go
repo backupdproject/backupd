@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // The durable transitions the five-stage workflow lifecycle runs on

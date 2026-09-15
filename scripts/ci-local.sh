@@ -275,6 +275,17 @@ gate_step "no new RM_/BM_/bm_/rbm_/backupd/backupdproject/rclone-manager/backup-
 bash scripts/rename/check-brand-drift.sh
 bash scripts/rename/selftest.sh
 
+# The other half of R1.3's sweep (#888), and a `git grep` of the same
+# shape, so it belongs beside the one above rather than behind the Go
+# suites. From R1.3 until FR-41's cutover the module path
+# `github.com/retnd/retnd` does not match the location the module is
+# fetched from, which is harmless only for as long as nothing in the tree
+# tells anybody to fetch it. That is true today and this is what keeps it
+# true; #895 deletes the check, because after the cutover the instruction
+# it forbids is simply correct.
+gate_step "nothing instructs a reader to go install/go get this module while its path and its fetch location differ (#888, FR-41)"
+bash scripts/rename/check-no-module-fetch-instruction.sh
+
 # What `go doc` prints for every package, against a recorded baseline
 # (#526). A comment adjacent to `package` IS the package doc, and go/doc
 # concatenates every one of them across a package in sorted file order. Six

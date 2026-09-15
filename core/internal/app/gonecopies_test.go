@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // A completed move leaves the source placement GONE, and a GONE row is

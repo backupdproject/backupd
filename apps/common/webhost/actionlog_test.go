@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/backupdproject/backupd/core/cliecho"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/cliecho"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The parity guard, and the recording it rides on (issue #599).

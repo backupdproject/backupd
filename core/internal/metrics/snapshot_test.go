@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/health"
-	"github.com/backupdproject/backupd/core/internal/metrics"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/health"
+	"github.com/retnd/retnd/core/internal/metrics"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // EPIC K's metrics requirement, checked as the thing it actually is: four

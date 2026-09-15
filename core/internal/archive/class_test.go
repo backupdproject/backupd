@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // This file is the class table's suite, and every test in it is about a

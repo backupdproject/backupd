@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/cliecho"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/cliecho"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/service"
 )
 
 // FR-35 clause 4, the CLI: build backupd from this working tree,
@@ -26,7 +26,7 @@ import (
 // so the usage block, the column padding, the error sentences and the exit
 // statuses of the commands listed below are pinned byte for byte from
 // here. Anything reworded on the other side of that boundary, in
-// core/cmd/backupd, arrives as a red cell in this package, which is
+// core/cmd/retnd, arrives as a red cell in this package, which is
 // the intended and only route.
 //
 // Three things are normalized before anything is compared and no more: the
@@ -56,7 +56,7 @@ import (
 // every run, which is a bad trade.
 func buildCLI(coreRoot, outDir string) (string, error) {
 	bin := filepath.Join(outDir, cliecho.Binary)
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/backupd")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/retnd")
 	cmd.Dir = coreRoot
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -179,7 +179,7 @@ func captureCLI(ctx context.Context, bin, cfgPath, root string) (Cell, Cell, err
 	// about. `unconfigured` and `medium preflight` both shipped that way
 	// and this cell stayed green throughout. That hole is closed from the
 	// other end, by TestUsage_EveryRegisteredCommandIsPinned in
-	// core/cmd/backupd, which is where the list of registered
+	// core/cmd/retnd, which is where the list of registered
 	// commands can be read rather than guessed at (#549).
 	var usage []string
 	for _, c := range []cliCase{

@@ -42,8 +42,8 @@ import (
 
 	"github.com/rclone/rclone/lib/env"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // passphraseCommandTimeout mirrors keyCommandTimeout: a passphrase

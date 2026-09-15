@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // This file is issue #162's contract suite for GET /api/v1/validators,

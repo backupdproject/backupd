@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/alert"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/workflow"
-	"github.com/backupdproject/backupd/core/internal/workflowrun"
+	"github.com/retnd/retnd/core/internal/alert"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflowrun"
 )
 
 // The three things an operator can do about a workflow run this product

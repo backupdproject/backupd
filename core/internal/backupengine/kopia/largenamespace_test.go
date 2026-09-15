@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // This file is #792's question asked of the other half of the product.

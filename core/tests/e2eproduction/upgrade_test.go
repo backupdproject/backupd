@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/repomaintenance"
-	"github.com/backupdproject/backupd/core/internal/snapshotlifecycle"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/repomaintenance"
+	"github.com/retnd/retnd/core/internal/snapshotlifecycle"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // #789's two upgrade gates.
@@ -588,7 +588,7 @@ func measureUpgradeCosts(t *testing.T, peakRSS int64) kopiaUpgradeRecord {
 
 	started := time.Now()
 
-	build := exec.Command("go", "build", "-o", bin, "./cmd/backupd")
+	build := exec.Command("go", "build", "-o", bin, "./cmd/retnd")
 	build.Dir = coreDir(t)
 
 	if out, err := build.CombinedOutput(); err != nil {
@@ -643,7 +643,7 @@ func kopiaVersion(t *testing.T) string {
 func dependencyModules(t *testing.T) int {
 	t.Helper()
 
-	cmd := exec.Command("go", "list", "-deps", "-f", "{{with .Module}}{{.Path}}{{end}}", "./cmd/backupd")
+	cmd := exec.Command("go", "list", "-deps", "-f", "{{with .Module}}{{.Path}}{{end}}", "./cmd/retnd")
 	cmd.Dir = coreDir(t)
 
 	out, err := cmd.Output()
@@ -727,7 +727,7 @@ func cliBinary(t *testing.T) string {
 	cliOnce.Do(func() {
 		bin := filepath.Join(harnessDir, "backupd")
 
-		cmd := exec.Command("go", "build", "-o", bin, "./cmd/backupd")
+		cmd := exec.Command("go", "build", "-o", bin, "./cmd/retnd")
 		cmd.Dir = coreDir(t)
 
 		if out, err := cmd.CombinedOutput(); err != nil {

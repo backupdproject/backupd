@@ -34,7 +34,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // liveRun is a run under the mode that promises the least and the policy

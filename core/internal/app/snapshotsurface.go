@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/snapshotretention"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/snapshotretention"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // The READ side of EPIC K, plus the two writes that are not a backup:

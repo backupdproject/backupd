@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
 )
 
 // Whether the classifying decorator still does something, now that the

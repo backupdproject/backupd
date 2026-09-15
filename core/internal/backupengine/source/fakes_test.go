@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/backupengine/source"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/backupengine/source"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // The stand-ins in this file exist for the cases a real filesystem cannot

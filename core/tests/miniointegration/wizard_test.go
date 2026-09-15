@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
-	"github.com/backupdproject/backupd/core/service"
-	"github.com/backupdproject/backupd/core/tests/machines"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/service"
+	"github.com/retnd/retnd/core/tests/machines"
 )
 
 // G2.2 (#594): declaring a storage destination and proving it BEFORE it is

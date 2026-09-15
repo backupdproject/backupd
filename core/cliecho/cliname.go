@@ -15,9 +15,11 @@ package cliecho
 // That is survivable while the name never moves, and it stops being
 // survivable the moment it does. Renaming the command then means reading
 // fifty string literals and deciding, one at a time, whether each is the
-// CLI or something that merely looks like it. Three shapes in this tree
-// spell "backupd" and are NOT this constant, and every one of them
-// would be swept up by a careless search-and-replace:
+// CLI or something that merely looks like it. EPIC R (#885) is the rename
+// that proved the point: it moves the command from `backupd` to `retnd`,
+// and three shapes in this tree still spell "backupd" while being NOT this
+// constant, so every one of them would have been swept up by a careless
+// search-and-replace:
 //
 //   - filesystem paths (/etc/backupd/config, /var/lib/backupd)
 //     which packaging mounts and an operator's existing deployment already
@@ -27,6 +29,11 @@ package cliecho
 //     compose.yaml, "Backupd" as the product's name);
 //   - wire identity that a log or an audit trail may already be matched
 //     on, which is the User-Agent core/internal/apiclient sends.
+//
+// Those three move on their own issues and their own schedules -- the
+// runtime identifiers in R1.4 (#889), the deployment identity in R1.5
+// (#890), the product's own name in phase 2 -- precisely because they are
+// not the command and cannot be renamed on the command's timetable.
 //
 // So this is not a tidy-up. It is the line between "the command" and
 // "everything else called that", drawn once, in a place a reader can see
@@ -60,18 +67,19 @@ package cliecho
 // the first word of that, so the filename an operator happened to type
 // never enters a decision.
 //
-// That is a property worth keeping now that the old name is gone rather
-// than aliased. `backupd` is not in the image at all:
-// container/Dockerfile copies exactly /backupd and /backupd-web into the runtime
-// stage and creates no link beside either, so there is no second spelling
-// for this constant to have to agree with. Taking the printed name from
-// argv[0] instead would still be wrong, and for a reason the rename does
-// not remove: a wrapper script, a busybox-style multi-call link or a
+// That is a property worth keeping, and EPIC R is the release in which it
+// earns its keep twice over. The runtime stage's two files are still
+// /backupd and /backupd-web -- container-internal paths are R1.5's (#890),
+// not this issue's -- so for the length of that window the filename an
+// operator reaches this build through is the PREVIOUS name. Reading argv[0]
+// would make the binary print `backupd` at somebody who cannot type it any
+// more. It would still be wrong once R1.5 lands, and for a reason no rename
+// removes: a wrapper script, a busybox-style multi-call link or a
 // `docker run --entrypoint` under any other filename would make this
 // build print a command nobody can type.
 //
 // What can be tested is the half that lives in this module, and
-// TestNothingDispatchesOnArgv0 in core/cmd/backupd does: it reads
+// TestNothingDispatchesOnArgv0 in core/cmd/retnd does: it reads
 // every non-test file under core/ and requires os.Args to appear in
 // exactly one shape, os.Args[1:], with os.Executable unused. So the name
 // this package prints is the name this package declares, whatever the
@@ -82,19 +90,21 @@ const (
 	// "usage:" line, and every sentence that says which command to run
 	// next.
 	//
-	// It was `backupd` until 0.3.3, and 0.3.3 retired that name
-	// rather than aliasing it: the image ships no symlink under the old
-	// spelling, so anything already automated against it has to move
+	// It was `backupd` until EPIC R (#885), and R1.3 (#888) retired that
+	// name rather than aliasing it: the image ships no symlink under the
+	// old spelling, so anything already automated against it has to move
 	// across. Printing two names is how a reference stops being one,
 	// and shipping two is how a rename never finishes.
-	Binary = "backupd"
+	Binary = "retnd"
 
 	// WebBinary is the other command in the image, the one that serves the
 	// Web UI. It is derived rather than spelled so that the two names
 	// cannot drift apart, which is the whole reason this file exists.
 	//
-	// The package directory is core/cmd/backupd and the web one is
-	// apps/generic/cmd/backupd-web. A Go package path is not
-	// operator-visible, so neither follows this constant.
+	// The package directories are named for these two constants --
+	// core/cmd/retnd and apps/generic/cmd/retnd-web -- and R1.3 moved them
+	// in the same commit that moved the constant. They do not DERIVE from
+	// it: a Go package path is not operator-visible, and a directory cannot
+	// be a constant expression.
 	WebBinary = Binary + "-web"
 )

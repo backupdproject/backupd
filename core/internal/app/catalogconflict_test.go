@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/recovery"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/recovery"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // FR-32 at the recovery door: a sidecar is a proposal, and a disagreement is

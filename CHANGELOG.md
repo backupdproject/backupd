@@ -690,6 +690,36 @@
 
 ### Changed
 
+- **The command is `retnd`, and the web host is `retnd-web`** (EPIC R #885,
+  R1.3 #888). The two binaries this project ships have renamed themselves.
+  Every line either of them prints about itself follows: the `usage:` block,
+  the diagnostic prefix on every refusal, the sentences that tell an operator
+  which command to run next, and the commands `core/cliecho` echoes into the
+  Web UI's terminal panel. One constant spells it, `cliecho.Binary`, exactly
+  as `core/cliecho/cliname.go` was written to make possible.
+
+  **Nothing is aliased, and nothing else moved yet.** The two files inside
+  the image are still `/backupd` and `/backupd-web`, the compose services are
+  still `backupd`, the configuration directory is still `/etc/backupd` and
+  the environment, metrics and cookies are still `BACKUPD_*` / `backupd_*`.
+  Those are renames an upgraded deployment has to survive rather than renames
+  of a printed word, so they land with their own back-compat windows in #889
+  and #890. Until they do, a `docker exec` or a compose `command:` naming
+  `/backupd` keeps working unchanged; what changed is only what the program
+  calls itself when it speaks.
+
+  **The Go module path is `github.com/retnd/retnd`** (2,273 occurrences over
+  840 files), and the two command directories are `core/cmd/retnd` and
+  `apps/generic/cmd/retnd-web`. Until the repository moves to its new
+  coordinates (#895) that path deliberately does not match the location this
+  module is fetched from. It costs nothing, because every build here is local
+  -- a workspace build, or `GOWORK=off` over the `replace` directives in the
+  five `go.mod` files -- and nothing in the tree, the docs, the scripts or
+  the workflows tells anybody to `go install` or `go get` it.
+  `scripts/rename/check-no-module-fetch-instruction.sh` is what keeps that
+  true, and #895 deletes it because after the move the instruction is simply
+  correct.
+
 - **The debug shortcut is `BACKUPD_DEBUG`, and `RM_DEBUG` is deprecated**
   (#794). The one-variable diagnostics switch still carried the project's
   old `RM_` prefix, from before the rename to backupd, which is the wrong

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/apicontract"
+	"github.com/retnd/retnd/core/apicontract"
 )
 
 // What this client believes about the other process, and what happens when

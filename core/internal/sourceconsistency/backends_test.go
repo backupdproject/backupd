@@ -21,8 +21,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // bundledManifestDir is read rather than enumerated so that a fourth

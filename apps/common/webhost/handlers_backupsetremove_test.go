@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // Removing a backup set, which removes configuration and no data.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // This file covers the manager-wide half of GET /api/v1/system/storage,

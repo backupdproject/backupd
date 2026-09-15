@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
 )
 
 // The read half of a session: given a request, is somebody signed in, and

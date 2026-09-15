@@ -32,7 +32,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/distribution/compose"
+	"github.com/retnd/retnd/distribution/compose"
 )
 
 // env is what an operator's .env supplies. The canonical definition uses

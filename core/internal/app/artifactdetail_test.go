@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // Issue #284: the literal sentence the journal recorded, not a reconstruction

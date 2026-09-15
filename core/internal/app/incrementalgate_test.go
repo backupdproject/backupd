@@ -21,12 +21,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/alert"
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/health"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/alert"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/health"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // poisonEngine is a backupengine.Engine that fails the test if anything

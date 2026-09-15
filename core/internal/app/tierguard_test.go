@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/placement"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/placement"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // The production placement.TierGuard (issue #239, inherited from #238's

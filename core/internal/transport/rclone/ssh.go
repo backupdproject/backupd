@@ -31,7 +31,7 @@ import (
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/lib/env"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // sftpConfig turns a transport.Source into the exact rclone sftp backend

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // This file is issue #439, and the thing it is careful about is not the

@@ -34,7 +34,7 @@ import (
 	sqlitedriver "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // driverName is modernc.org/sqlite's registered database/sql driver name.

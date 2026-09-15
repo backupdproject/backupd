@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/workflow"
-	"github.com/backupdproject/backupd/core/internal/workflowexec"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflowexec"
 )
 
 // The fixtures every suite in this package shares: a real journal, a real

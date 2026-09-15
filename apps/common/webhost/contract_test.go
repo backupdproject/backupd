@@ -20,9 +20,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
-	"github.com/backupdproject/backupd/core/apicontract"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/core/apicontract"
+	"github.com/retnd/retnd/core/service"
 )
 
 // This file is the Go half of issue #166's drift gate: it holds the

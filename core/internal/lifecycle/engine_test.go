@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // fakeJournal records what it was asked to write and answers nothing

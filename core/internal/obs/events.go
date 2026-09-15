@@ -2,7 +2,7 @@ package obs
 
 import (
 	"context"
-	"github.com/backupdproject/backupd/core/cliecho"
+	"github.com/retnd/retnd/core/cliecho"
 	"log/slog"
 	"time"
 )
@@ -299,7 +299,7 @@ const (
 )
 
 // Startup logs EventStartup: binaryVersion and commit are normally the
-// values cmd/backupd's main.go already sets via -ldflags (default
+// values cmd/retnd's main.go already sets via -ldflags (default
 // "dev" / "none" in a non-release build), and goVersion is typically
 // runtime.Version(). None of these are secret; they exist to make "which
 // build is this" answerable from a log line alone, without shelling into

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/workflowexec"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/workflowexec"
 )
 
 type countingSink struct {

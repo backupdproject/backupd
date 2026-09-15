@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/backupengine/kopia"
 )
 
 // This file is the acceptance suite for the set-scoped tree snapshot that

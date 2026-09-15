@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // This file is the FR-17 table turned into a dispatch: one function per row
@@ -145,7 +145,7 @@ func noAction(artifact model.ArtifactID, st lifecycle.State, reason string) Find
 // Every one of that verdict's callers below builds a noAction finding
 // (From == To): the row converged, nothing to advance through
 // lifecycle.Advance, so no journal transition marks it and
-// cmd/backupd/reconcile.go's own gate, `f.Changed() ||
+// cmd/retnd/reconcile.go's own gate, `f.Changed() ||
 // f.NeedsInvestigation`, would otherwise never print it. A row the
 // product resolved but whose own bookkeeping still disagrees with itself
 // is something a human must look at: the resolution read the file, it did

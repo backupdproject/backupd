@@ -33,7 +33,7 @@ import (
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fs/walk"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // Adapter implements transport.Transport over embedded rclone packages,
@@ -57,7 +57,7 @@ func New() *Adapter { return &Adapter{} }
 // Transport half of the boundary; medium.go carries the matching one for
 // MediumStore. It is worth having because nothing here forces it:
 // production wiring hands rclone.New() straight to a constructor
-// (core/service's New, core/cmd/backupd's setup), so a method whose
+// (core/service's New, core/cmd/retnd's setup), so a method whose
 // signature drifted would fail over there, with an error about the caller
 // rather than one about the adapter.
 var _ transport.Transport = (*Adapter)(nil)

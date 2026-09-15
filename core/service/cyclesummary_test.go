@@ -15,7 +15,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/app"
 )
 
 // TestExecuteRunCycle_SummaryTellsABarrenCycleFromAGoodOne is issue #361

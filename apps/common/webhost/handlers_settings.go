@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // One route for every administrable setting, and one line about where

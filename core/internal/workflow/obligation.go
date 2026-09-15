@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // The cleanup obligation: the durable promise that once this product has

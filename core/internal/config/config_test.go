@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 func TestLoadParsesFullExample(t *testing.T) {

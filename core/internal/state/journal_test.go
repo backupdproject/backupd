@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // openJournal opens a real journal on a real file under t.TempDir, and

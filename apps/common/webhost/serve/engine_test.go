@@ -32,12 +32,12 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/auth/local"
-	"github.com/backupdproject/backupd/apps/common/email/emailtest"
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
-	"github.com/backupdproject/backupd/apps/common/platform/profile"
-	"github.com/backupdproject/backupd/apps/common/webhost/serve"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/apps/common/auth/local"
+	"github.com/retnd/retnd/apps/common/email/emailtest"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/apps/common/platform/profile"
+	"github.com/retnd/retnd/apps/common/webhost/serve"
+	"github.com/retnd/retnd/core/service"
 )
 
 // testPlatformAdapter is a minimal capabilities.PlatformAdapter built only
@@ -65,7 +65,7 @@ func (a testPlatformAdapter) PlatformInfo(_ context.Context) (capabilities.Platf
 	return capabilities.PlatformInfo{ID: capabilities.PlatformGeneric, Name: "test"}, nil
 }
 
-// writeTestConfig mirrors core/cmd/backupd/main_test.go's own
+// writeTestConfig mirrors core/cmd/retnd/main_test.go's own
 // writeTestConfig: a minimal, valid config against real temp directories,
 // needing no network and no Docker.
 func writeTestConfig(t *testing.T) string {

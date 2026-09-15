@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The edit hold, and mostly the null.

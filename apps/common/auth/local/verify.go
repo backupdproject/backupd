@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/email"
+	"github.com/retnd/retnd/apps/common/email"
 )
 
 // The provisional administrator: an account that exists but is not

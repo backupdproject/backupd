@@ -76,14 +76,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/discovery"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
-	"github.com/backupdproject/backupd/core/tests/classifytransport"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/discovery"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/tests/classifytransport"
 )
 
 func main() {
@@ -377,7 +377,7 @@ func run() error {
 			// TRANSFERRING) and Commit (which records its own VERIFIED ->
 			// COMMITTING), Verify does not make the TRANSFERRED ->
 			// VERIFYING move itself; nothing in this repository currently
-			// orchestrates the full pipeline end to end (cmd/backupd
+			// orchestrates the full pipeline end to end (cmd/retnd
 			// is a version-only stub), so this harness is that
 			// orchestrator, and this is the one entry transition it has to
 			// make explicitly rather than delegate. Going through the real

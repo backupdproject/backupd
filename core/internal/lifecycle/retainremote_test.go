@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // --- RetainRemote ---

@@ -1829,7 +1829,7 @@ type ActivityCaption = { type: ActivityEventType; severity: Severity; text: stri
  * is a true statement about a record that really is broken.
  *
  * The captions and severities are agreed verbatim with
- * core/cmd/backupd/activity.go's own table, which derives the
+ * core/cmd/retnd/activity.go's own table, which derives the
  * same severity for `backupd activity --severity`; "ok" and "info" are the
  * one rank there, as they are to anyone filtering here. Issue #625 was
  * the last time those two drifted apart.

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The wizard's SSH steps: import a key, probe a host key, test a

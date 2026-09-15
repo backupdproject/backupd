@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // The fence's FIFO promise -- "a waiter that arrives after a queued

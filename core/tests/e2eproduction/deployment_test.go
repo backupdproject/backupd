@@ -54,16 +54,16 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
-	"github.com/backupdproject/backupd/core/internal/backupengine/source"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/secretref"
-	"github.com/backupdproject/backupd/core/internal/snapshotlifecycle"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/backupengine/kopia"
+	"github.com/retnd/retnd/core/internal/backupengine/source"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/snapshotlifecycle"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
 )
 
 // repositoryPassphrase is this suite's own. It reaches the engine through

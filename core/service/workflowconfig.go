@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // Every mutating workflow configuration this product has, reachable from

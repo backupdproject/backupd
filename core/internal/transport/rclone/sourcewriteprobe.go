@@ -11,7 +11,7 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/object"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // The compile-time assertion that this adapter really is the capability

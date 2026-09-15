@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/capacity"
-	"github.com/backupdproject/backupd/core/internal/health"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/capacity"
+	"github.com/retnd/retnd/core/internal/health"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // This file is the whole of this package's translation layer: four pure

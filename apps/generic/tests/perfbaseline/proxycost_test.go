@@ -38,7 +38,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/email/emailtest"
+	"github.com/retnd/retnd/apps/common/email/emailtest"
 )
 
 // proxyCostRecord is what this harness prints.

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/snapshotlifecycle"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/snapshotlifecycle"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 func TestValidate_TheNominalPathIsLegalInOrderAndIllegalOutOfIt(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 
 	"github.com/rclone/rclone/fs/accounting"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // This file is issue #221's live transfer progress, and it is the

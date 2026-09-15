@@ -25,9 +25,9 @@
 package app
 
 import (
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/retention"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/retention"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // ActiveMediumFromRecords builds the one placement lookup this product

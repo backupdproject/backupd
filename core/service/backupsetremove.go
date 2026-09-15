@@ -141,11 +141,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/obs"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // RemoveBackupSet removes one backup set's configuration and hot-reloads,

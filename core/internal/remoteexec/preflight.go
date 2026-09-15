@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/workflowexec"
+	"github.com/retnd/retnd/core/internal/workflowexec"
 )
 
 // preflightTimeout bounds each probe session. The probe runs one shell and

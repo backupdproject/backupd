@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/apps/common/csrf"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/apps/common/csrf"
+	"github.com/retnd/retnd/core/service"
 )
 
 // POST /api/v1/operations and the reads beside it.

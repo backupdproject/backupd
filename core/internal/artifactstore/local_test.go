@@ -38,9 +38,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/artifactstore"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/artifactstore"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // lifecycleDir is where TestLifecycleUsesOnlyTheSharedFormulaFromThisPackage
@@ -453,7 +453,7 @@ func TestSeamOffersNoMoveMethod(t *testing.T) {
 // variable rather than on the package, and there is no way to reach it
 // without first calling something that IS in this list.
 func TestLifecycleUsesOnlyTheSharedFormulaFromThisPackage(t *testing.T) {
-	const storePath = "github.com/backupdproject/backupd/core/internal/artifactstore"
+	const storePath = "github.com/retnd/retnd/core/internal/artifactstore"
 	allowed := map[string]bool{"NewLocal": true}
 
 	entries, err := os.ReadDir(lifecycleDir)

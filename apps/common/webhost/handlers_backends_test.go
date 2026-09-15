@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // This file is EPIC I's (#664) contract suite for GET /api/v1/backends,

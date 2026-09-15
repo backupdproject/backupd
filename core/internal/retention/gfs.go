@@ -62,10 +62,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // GFSTier names one tier of FR-18's retention chain, as it appears on the
@@ -292,7 +292,7 @@ type GFSVerdict struct {
 
 // SiblingCollisionLines renders v.SiblingCollisions into one human
 // sentence per distinct sibling, for `retention --dry-run`
-// (cmd/backupd/retention.go) and FR-20's own PruneVerdict.Reason
+// (cmd/retnd/retention.go) and FR-20's own PruneVerdict.Reason
 // (prune.go) to print verbatim. Returns nil when SiblingCollisions is
 // empty, so a caller can range over the result without a length check.
 //

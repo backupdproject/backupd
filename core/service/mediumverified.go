@@ -83,8 +83,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // ErrStorageMediumNotProven is a write that declares where this

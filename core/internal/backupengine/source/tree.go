@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/sourceconsistency"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/sourceconsistency"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // Tree is one pull-shaped pass over a backup source, for one snapshot of

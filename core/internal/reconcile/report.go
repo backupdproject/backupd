@@ -3,8 +3,8 @@ package reconcile
 import (
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // A pass produces two kinds of outcome, and this file's whole job is

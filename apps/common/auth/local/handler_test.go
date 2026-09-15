@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/backupdproject/backupd/apps/common/email"
+	"github.com/retnd/retnd/apps/common/email"
 )
 
 // End-to-end tests over a real httptest server with a real cookie jar,

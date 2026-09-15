@@ -26,7 +26,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/distribution/compose"
+	"github.com/retnd/retnd/distribution/compose"
 )
 
 // The two container paths EPIC L added to the canonical definition, and

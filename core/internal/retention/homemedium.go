@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // This file is FR-27's home-medium rule, and it is the ONE derivation of

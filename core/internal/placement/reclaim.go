@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // This file is FR-20's prune, once the copy being pruned is an object

@@ -37,9 +37,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // writeRemovalFixtureConfigWithPosture is writeTestConfigFile (open_test.go)

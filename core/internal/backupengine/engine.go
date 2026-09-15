@@ -45,8 +45,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/secretref"
 )
 
 // ErrRepositoryExists is returned by CreateRepository when the location

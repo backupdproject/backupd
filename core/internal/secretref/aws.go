@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/obs"
 )
 
 // AWSCredentials is one resolved object-store credential set on its way

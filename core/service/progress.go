@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/app"
 )
 
 // This file is the volatile half of the operation model, and everything

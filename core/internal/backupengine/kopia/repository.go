@@ -20,8 +20,8 @@ import (
 	"github.com/kopia/kopia/repo/format"
 	"github.com/kopia/kopia/snapshot"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/secretref"
 )
 
 // This file owns a repository's LIFECYCLE: which storage it lives in, how

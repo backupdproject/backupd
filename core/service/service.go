@@ -34,13 +34,13 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/obs"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
 )
 
 // closeDrainTimeout bounds how long Close (below) waits for an in-flight
@@ -275,7 +275,7 @@ type configState struct {
 // New does NOT resolve a backup set's Validation.ValidatorID into a
 // runnable Validation.Command: that is load-time work, and
 // OpenConfigAndJournal (below) is where it happens, so it covers both
-// production entry points (Open here, and cmd/backupd's own
+// production entry points (Open here, and cmd/retnd's own
 // openService) in one place rather than each caller of this constructor
 // remembering it. A cfg handed to New with an unresolved ValidatorID is
 // not silently un-validated either: internal/lifecycle/verify.go refuses
@@ -350,7 +350,7 @@ func New(cfg *config.Config, journal *state.Journal, tr transport.Transport, log
 
 // OpenConfigAndJournal loads and validates configPath and opens (migrating)
 // its configured SQLite journal at cfg.State.Database. This is the
-// bootstrap sequence Open (below) and cmd/backupd's own openService
+// bootstrap sequence Open (below) and cmd/retnd's own openService
 // helper both need — the exact same "read this config file, open/migrate
 // this journal" side effects, previously implemented twice — factored out
 // so it exists in exactly one place; see this package's introducing PR
@@ -364,7 +364,7 @@ func New(cfg *config.Config, journal *state.Journal, tr transport.Transport, log
 // lock is taken, and exactly what each failure between them does to the
 // data already on disk. What matters at THIS level is the contract it
 // gives every caller: a failure returns a non-nil error and a nil
-// *state.Journal, which Open (below) and cmd/backupd's openService
+// *state.Journal, which Open (below) and cmd/retnd's openService
 // both already treat as fatal, so a failed migration means no
 // BackupService is ever constructed and no daemon, API, scheduler tick or
 // transfer ever starts.

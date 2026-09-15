@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // This file is EPIC E's second boundary: everything about a storage MEDIUM

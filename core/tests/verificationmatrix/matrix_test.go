@@ -36,12 +36,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/secretref"
-	"github.com/backupdproject/backupd/core/internal/snapshotlifecycle"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/backupengine/kopia"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/snapshotlifecycle"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 const testPassphrase = "verification-matrix-passphrase-not-a-secret"

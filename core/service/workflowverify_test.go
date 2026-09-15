@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // The save gate (#906): a workflow configuration write is refused when a

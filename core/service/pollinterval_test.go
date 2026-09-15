@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/app"
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 func newTestServiceWithPollInterval(t *testing.T, d time.Duration, sources ...config.Source) *BackupService {

@@ -860,7 +860,7 @@ def body(root: Path, dry_run: bool) -> int:
         # this text.
         d = mutant("dry-run-does-not-name-the-medium")
         tracker.swap(
-            d / "core/cmd/backupd/retention.go",
+            d / "core/cmd/retnd/retention.go",
             "\tcase loc.Status == retention.LocationConfirmed && loc.Medium != config.MediumLocal:\n"
             '\t\treturn " medium=" + loc.Medium',
             "\tcase loc.Status == retention.LocationConfirmed && loc.Medium != config.MediumLocal:\n"
@@ -873,7 +873,7 @@ def body(root: Path, dry_run: bool) -> int:
             "a dry-run that does not say where a deletion would happen",
             d,
             "does not say where its deletion would happen",
-            "./cmd/backupd/",
+            "./cmd/retnd/",
             "TestRun_RetentionNamesWhereADeletionWouldHappen",
         )
 

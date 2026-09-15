@@ -43,7 +43,7 @@ import (
 	"github.com/kopia/kopia/snapshot/snapshotmaintenance"
 	"github.com/kopia/kopia/snapshot/upload"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/backupengine"
 )
 
 // Adapter implements backupengine.Engine over embedded Kopia packages.

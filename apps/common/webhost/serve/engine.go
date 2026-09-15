@@ -4,9 +4,9 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
-	"github.com/backupdproject/backupd/apps/common/platform/profile"
-	"github.com/backupdproject/backupd/apps/common/webhost"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/apps/common/platform/profile"
+	"github.com/retnd/retnd/apps/common/webhost"
 )
 
 // The engine half of the two-container split: the process that holds the
@@ -65,7 +65,7 @@ type EngineConfig struct {
 	// with whatever Authenticator/AuthRoutes it actually wired up (a
 	// caller using apps/common/auth/local should always pass its
 	// Service's own TrustForwardedHeaders() here, exactly as
-	// apps/generic/cmd/backupd-web does).
+	// apps/generic/cmd/retnd-web does).
 	TrustForwardedHeaders bool
 
 	// Backend is the core/service.BackupService adapter (or a test

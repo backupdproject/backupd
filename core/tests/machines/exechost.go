@@ -33,7 +33,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/tests/dockerlease"
+	"github.com/retnd/retnd/core/tests/dockerlease"
 )
 
 // The three accounts, by name. A test names the capability it wants rather

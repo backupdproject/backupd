@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/lifecycle"
 )
 
 // FR-1's cycle, and the shared configuration fixtures the whole package

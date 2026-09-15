@@ -18,7 +18,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // startupLockSuffix names the advisory lock file next to the journal
@@ -94,7 +94,7 @@ const servingLockSuffix = ".serving-lock"
 // this function's to perform, and that is precisely how §46.1's
 // migration-failure requirement is met: on ANY failure below this
 // returns a nil *state.Journal, and every caller (OpenConfigAndJournal ->
-// Open, and cmd/backupd's openService) already treats that as
+// Open, and cmd/retnd's openService) already treats that as
 // fatal and constructs no BackupService at all, so nothing downstream of
 // it — no scheduler tick, no cycle, no transfer, no delete — ever begins.
 //

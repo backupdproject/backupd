@@ -15,8 +15,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/archive"
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/archive"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // TestTheArchiveClassSetMatchesInternalArchive is #442's third

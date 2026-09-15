@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
-	"github.com/backupdproject/backupd/core/internal/transport/retry"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/internal/transport/retry"
 )
 
 // This file pins the one number issue #415 is about: how long a backup set

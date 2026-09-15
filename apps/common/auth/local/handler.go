@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/backupdproject/backupd/apps/common/email"
+	"github.com/retnd/retnd/apps/common/email"
 )
 
 // The five HTTP routes this package serves, and the two conventions that

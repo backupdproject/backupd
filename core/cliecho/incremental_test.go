@@ -19,7 +19,7 @@ import (
 //
 // Both halves are asserted the same way: the flags have to be there AND
 // the command has to be one the binary takes, which is what
-// core/cmd/backupd's dispatcher test settles for the examples.
+// core/cmd/retnd's dispatcher test settles for the examples.
 
 // anIncrementalCreate is the body a Web create of a kopia set sends.
 const anIncrementalCreate = `{"source_name":"api-server","name":"var-backups","host":"10.0.0.14","user":"backups",` +

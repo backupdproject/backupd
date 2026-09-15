@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/workflow"
-	"github.com/backupdproject/backupd/core/internal/workflowexec"
+	"github.com/retnd/retnd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflowexec"
 )
 
 // The failure matrix (#811's Failure semantics section), one row per way

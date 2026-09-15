@@ -17,8 +17,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/backupdproject/backupd/apps/common/auth/local"
-	"github.com/backupdproject/backupd/apps/common/webhost"
+	"github.com/retnd/retnd/apps/common/auth/local"
+	"github.com/retnd/retnd/apps/common/webhost"
 )
 
 // ErrNoActivator is returned by NewFirstRunEngine when cfg carries a

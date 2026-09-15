@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // FR-30's last question before a source delete, and issue #239's second

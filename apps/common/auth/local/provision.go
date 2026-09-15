@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/email"
+	"github.com/retnd/retnd/apps/common/email"
 )
 
 // Creating the administrator from the command line, without the browser

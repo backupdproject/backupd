@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The three SSH steps, and the one rule they share: key material goes in

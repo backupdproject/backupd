@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/health"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/health"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // Issue #245: a backup set the transport layer refuses to connect to backs

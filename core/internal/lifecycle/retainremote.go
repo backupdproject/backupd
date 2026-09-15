@@ -31,8 +31,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // RetainRemoteRequest is everything one attempt at issue #282's retain

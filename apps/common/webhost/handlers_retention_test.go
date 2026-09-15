@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The preview and the apply, tested as the pair they are.
@@ -435,7 +435,7 @@ func TestPreviewRetention_CarriesThePlacementsItCouldNotConfirm(t *testing.T) {
 // that absence is the answer rather than a gap: it is what keeps a
 // deployment that declares no storage medium reading exactly as it did
 // before this field existed, and `backupd retention` spells the
-// same asymmetry the same way (mediumSuffix, core/cmd/backupd/
+// same asymmetry the same way (mediumSuffix, core/cmd/retnd/
 // retention.go).
 func TestPreviewRetention_EveryDeletionNamesTheMediumItHappensOn(t *testing.T) {
 	tr := newOperationsTestRouter(t, alwaysPassGate{})

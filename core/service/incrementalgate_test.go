@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // countOperations is how many durable operation rows this deployment

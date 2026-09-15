@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/backupdproject/backupd/apps/common/auth/local"
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/apps/common/auth/local"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
 )
 
 // These tests are about the wiring, not about generic's answers. What ID()

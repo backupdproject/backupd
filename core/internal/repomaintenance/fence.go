@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // This file is the exclusive-operation fencing issue #786 requires, and

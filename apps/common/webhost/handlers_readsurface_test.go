@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/core/service"
 )
 
 // The artifact reads, where the interesting cases are about telling

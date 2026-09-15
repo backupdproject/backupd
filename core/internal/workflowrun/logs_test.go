@@ -9,10 +9,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/obs"
-	"github.com/backupdproject/backupd/core/internal/secretref"
-	"github.com/backupdproject/backupd/core/internal/workflow"
-	"github.com/backupdproject/backupd/core/internal/workflowexec"
+	"github.com/retnd/retnd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflowexec"
 )
 
 // The durable log: what is written down, what is deliberately not, and

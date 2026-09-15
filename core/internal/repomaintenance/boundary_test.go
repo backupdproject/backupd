@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/repomaintenance"
-	"github.com/backupdproject/backupd/core/internal/snapshotretention"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/repomaintenance"
+	"github.com/retnd/retnd/core/internal/snapshotretention"
 )
 
 // The structural claims. Each of them is a sentence from issue #786 that

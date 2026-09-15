@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // Naming a configured medium for a caller that only wants to reach it.

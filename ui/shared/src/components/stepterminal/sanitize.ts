@@ -12,7 +12,7 @@
  * quietly shown less than the hook wrote.
  *
  * Swallowing whole sequences rather than neutralising their introducer
- * is the difference between this and `core/cmd/backupd`'s
+ * is the difference between this and `core/cmd/retnd`'s
  * `neutralizeTerminalControls`, and the reason is the surface. A CLI
  * printing `?]8;;http://evil?click here?]8;;?` has already won: the
  * sequence is inert because the terminal never sees an introducer. A
@@ -152,7 +152,7 @@ export function removalNotice(counts: RemovedCounts): string | null {
 }
 
 /** The placeholder a swallowed sequence or a neutralised control leaves
- *  behind. The same character `core/cmd/backupd` writes, so an operator
+ *  behind. The same character `core/cmd/retnd` writes, so an operator
  *  comparing `workflow run log` with this screen sees one convention. */
 export const PLACEHOLDER = "?";
 

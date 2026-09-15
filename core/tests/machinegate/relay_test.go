@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
-	"github.com/backupdproject/backupd/core/tests/machines"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/tests/machines"
 )
 
 // A plain TCP relay in front of a machine, and the one property that has to

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/apicontract"
+	"github.com/retnd/retnd/core/apicontract"
 )
 
 // The corpus two tests in this package are driven with: one request body

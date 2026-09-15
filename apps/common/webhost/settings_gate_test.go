@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/apps/common/csrf"
-	"github.com/backupdproject/backupd/core/service"
+	"github.com/retnd/retnd/apps/common/csrf"
+	"github.com/retnd/retnd/core/service"
 )
 
 // settings_gate_test.go is issue #87 (B5.1)'s adversarial reading of

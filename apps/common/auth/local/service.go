@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/email"
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/apps/common/email"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
 
-	"github.com/backupdproject/backupd/core/cliecho"
+	"github.com/retnd/retnd/core/cliecho"
 )
 
 // The composition root: everything this package's doc comment lays out,
@@ -96,7 +96,7 @@ type Config struct {
 	// deleting a provisional administrator whose recovery address was
 	// never verified (verify.go, #830 §9). nil means os.Stdout, which
 	// is the stream a host's own startup PrintBootstrapNotice call
-	// already writes to (apps/generic/cmd/backupd-web), and the two have
+	// already writes to (apps/generic/cmd/retnd-web), and the two have
 	// to be the same stream for the notice to be findable at all.
 	//
 	// It is separate from Log because the two are different kinds of
@@ -134,7 +134,7 @@ type Config struct {
 	// no published port and joins no network but `internal`, which only
 	// `web-ui` (`serve-ui`, apps/common/webhost/serve.NewUI's reverse proxy)
 	// also joins - nothing else on the host, and nothing on the LAN, can
-	// ever be this Service's direct peer. apps/generic/cmd/backupd-web's
+	// ever be this Service's direct peer. apps/generic/cmd/retnd-web's
 	// `--trust-forwarded-headers` flag is what actually turns this on for
 	// that deployment; container/compose.yaml sets it for the
 	// `backupd` (engine) service only, never for `web-ui` itself
@@ -350,7 +350,7 @@ func (s *Service) Authenticator() capabilities.Authenticator {
 // TrustForwardedHeaders reports whether this Service was configured to
 // trust X-Forwarded-For/X-Forwarded-Proto from its immediate caller (see
 // Config.TrustForwardedHeaders's own doc for exactly when that is safe).
-// apps/generic/cmd/backupd-web calls this to fill
+// apps/generic/cmd/retnd-web calls this to fill
 // apps/common/webhost/serve.EngineConfig.TrustForwardedHeaders, which
 // decides the same thing for the CSRF cookie NewEngine issues
 // (EnsureCSRFCookie) that this Service's own session cookie already

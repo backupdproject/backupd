@@ -274,7 +274,7 @@ from bdtools import harness
 
 PROGRAM = "check-core-dependency-rule"
 
-MODULE_PREFIX = "github.com/backupdproject/backupd/"
+MODULE_PREFIX = "github.com/retnd/retnd/"
 
 # The set of third-party NAS, container-manager and app-store SDK names no
 # core- or platform-layer module may pull in. The full Phase 6 platform

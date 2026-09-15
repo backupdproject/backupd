@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // This file guards waitForTerminalStatus itself (service_test.go), which

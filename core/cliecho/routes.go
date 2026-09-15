@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/apicontract"
+	"github.com/retnd/retnd/core/apicontract"
 )
 
 // The table: every route the /api/v1 router registers, and what an
@@ -26,7 +26,7 @@ import (
 // A `why` is also a claim about this binary, and claims go stale: five of
 // these said a verb did not exist while the same tree shipped it, and one
 // of the five quoted a usage() line that had been replaced by the flag it
-// was denying. core/cmd/backupd's TestNoGapClaimsAVerbThisBinaryShips
+// was denying. core/cmd/retnd's TestNoGapClaimsAVerbThisBinaryShips
 // reads every sentence here against the verb tables now. A sentence that
 // names a shipped verb on purpose, as a counterexample ("`backupd
 // run` is not this"), says so with namesShippedVerbs, and a sentence that
@@ -40,7 +40,7 @@ import (
 // because each of them is written in two places: the builder that refuses
 // with it, and the entry that declares it so Gaps can report it. A
 // sentence that could differ between those two would be a sentence the
-// guard in core/cmd/backupd checks a copy of.
+// guard in core/cmd/retnd checks a copy of.
 const (
 	gapRunCycle = "`" + Binary + " run` starts a cycle in your own shell, not in this engine, so it is a different act against a different process"
 
@@ -396,7 +396,7 @@ var routes = map[string]entry{
 				Body: []byte(`{"stale_after_seconds":172800}`)},
 			// The duration shapes, and they are examples rather than a
 			// unit test's table because this is the corpus the dispatcher
-			// is driven with in core/cmd/backupd: a shape no
+			// is driven with in core/cmd/retnd: a shape no
 			// example carries is a shape nothing parses end to end. These
 			// three are the ones the old renderer got wrong (a bare
 			// seconds value, a value whose last unit ends in a zero, and
@@ -411,7 +411,7 @@ var routes = map[string]entry{
 				Body: []byte(`{"host":"10.0.0.15","port":2222,"user":"backups","remote_path":"/var/backups","local_path":"/data/backups","include":["*.gz","*.sql"],"completion_strategy":"stable","stable_for_seconds":300,"validator_id":"gzip","ssh_key_id":"key_2","known_hosts_line":"10.0.0.15 ssh-ed25519 AAAAC3Nz","acknowledge_repoint":true,"acknowledge_host_key_change":true}`)},
 			// EPIC K's verification budget (#788), in the corpus rather
 			// than only in a unit test for the reason the duration
-			// shapes above are: this is what core/cmd/backupd's
+			// shapes above are: this is what core/cmd/retnd's
 			// dispatcher parses end to end, so a flag no example carries
 			// is a flag nothing proves the binary takes back.
 			{Params: map[string]string{"source": "api-server", "set": "var-backups"},
@@ -1025,7 +1025,7 @@ var routes = map[string]entry{
 	// They stay gaps until those verbs exist. Printing a command this
 	// binary does not declare would be printing something an operator
 	// pastes and gets exit 2 from, which the dispatcher-driven parity
-	// test in core/cmd/backupd catches on purpose.
+	// test in core/cmd/retnd catches on purpose.
 	key("GET", "/ssh-keys"): {
 		why:               "there is no verb that lists the key store, which is why `backup-set patch --ssh-key-id ID` currently takes an id nothing will print for you. `" + Binary + " ssh-key list` would be it",
 		namesShippedVerbs: []string{"backup-set"},
@@ -1175,7 +1175,7 @@ var routes = map[string]entry{
 			// omissions: an empty directory disables that stage and a
 			// zero timeout gives the bound back to the deployment
 			// default. They are examples rather than a unit test's table
-			// because this corpus is what core/cmd/backupd parses end to
+			// because this corpus is what core/cmd/retnd parses end to
 			// end, and a shape no example carries is a shape nothing
 			// proves the binary takes.
 			{Body: []byte(`{"before_dir":"","after_dir":"","script_timeout_seconds":0}`)},
@@ -1521,7 +1521,7 @@ func backupSetCreateCommand(spec apicontract.BackupSetSpec, runNow, acknowledgeR
 // command line, shared by add, edit and the candidate preflight.
 //
 // One helper for the three because both surfaces already treat them as
-// one: core/cmd/backupd declares a single flag set that all seven
+// one: core/cmd/retnd declares a single flag set that all seven
 // verbs read, and this API sends a single body shape to all three of
 // these routes, on the reasoning that what is proven and what is saved
 // must not be able to be different destinations.

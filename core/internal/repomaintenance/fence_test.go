@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/repomaintenance"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/repomaintenance"
 )
 
 // The fence is the whole of issue #786's "unsafe concurrent destructive

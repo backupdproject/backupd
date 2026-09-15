@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/secretref"
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // The workflow plan's durable side (EPIC L, #808): one run row per backup

@@ -48,8 +48,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/backend"
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/backend"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // StorageMediumConfiguration is one declared instance's manifest field

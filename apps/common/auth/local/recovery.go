@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/backupdproject/backupd/apps/common/email"
+	"github.com/retnd/retnd/apps/common/email"
 )
 
 // Account recovery: the four routes and the three messages issue #830

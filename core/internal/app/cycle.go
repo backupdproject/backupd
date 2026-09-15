@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/discovery"
-	"github.com/backupdproject/backupd/core/internal/model"
-	"github.com/backupdproject/backupd/core/internal/obs"
-	"github.com/backupdproject/backupd/core/internal/placement"
-	"github.com/backupdproject/backupd/core/internal/reconcile"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/discovery"
+	"github.com/retnd/retnd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/obs"
+	"github.com/retnd/retnd/core/internal/placement"
+	"github.com/retnd/retnd/core/internal/reconcile"
 )
 
 // FR-1's processing cycle: the one piece of work `run` performs once and
@@ -230,7 +230,7 @@ type CycleReport struct {
 // RunCycle is FR-1's "one processing cycle": the single piece of business
 // logic `run` performs once and `daemon` repeats at poll_interval. Both
 // commands call exactly this method; neither has, or is allowed to have,
-// any cycle logic of its own (see this package's doc and cmd/backupd,
+// any cycle logic of its own (see this package's doc and cmd/retnd,
 // which only wires flags, signals and output formatting around this call).
 //
 // The cycle order matters and follows the EPIC directly: for each
@@ -375,7 +375,7 @@ sourcesLoop:
 
 	// Issue #361's verdict, in the event stream, before anything that
 	// reads the cycle's state. `run` turns this into an exit status too
-	// (cmd/backupd/setup.go), but `daemon` has no exit status to
+	// (cmd/retnd/setup.go), but `daemon` has no exit status to
 	// turn it into, and a cycle that backed nothing up has to be visible
 	// to whatever is shipping these logs either way.
 	s.reportBarrenSets(ctx, report)

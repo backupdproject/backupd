@@ -462,7 +462,7 @@ describe("confirming (#668 step 3)", () => {
     const shown = group().textContent ?? "";
     // This step used to print `backupd medium add usb_dock --backend
     // local_volume`, and `medium` has no --backend flag at all
-    // (core/cmd/backupd/medium.go:183) — the line failed on
+    // (core/cmd/retnd/medium.go:183) — the line failed on
     // execution with "flag provided but not defined". `--type` would not
     // have fixed it either: there is no `medium add` equivalent to a step
     // that writes nothing, since an instance carrying no values is

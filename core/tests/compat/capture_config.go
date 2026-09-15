@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // FR-35 clause 1: every config fixture under testdata/configs put through

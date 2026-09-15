@@ -14,9 +14,9 @@ package platform
 import (
 	"context"
 
-	"github.com/backupdproject/backupd/apps/common/auth/local"
-	"github.com/backupdproject/backupd/apps/common/platform/capabilities"
-	"github.com/backupdproject/backupd/apps/common/platform/profile"
+	"github.com/retnd/retnd/apps/common/auth/local"
+	"github.com/retnd/retnd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/apps/common/platform/profile"
 )
 
 // Adapter is the generic provider's capabilities.PlatformAdapter,
@@ -34,7 +34,7 @@ type Adapter struct {
 // a runtime condition an operator can produce. A caller that needs the
 // error (a binary selecting a profile from a flag) should use
 // profile.Lookup and profile.Profile.Adapter directly, as
-// cmd/backupd-web does.
+// cmd/retnd-web does.
 func New(auth *local.Service) Adapter {
 	inner, err := profile.Generic.
 		Profile().

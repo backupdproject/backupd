@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/app"
+	"github.com/retnd/retnd/core/internal/app"
 )
 
 // submitFixtureRun is the submission this file makes over and over, with

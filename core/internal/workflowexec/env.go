@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/workflow"
+	"github.com/retnd/retnd/core/internal/workflow"
 )
 
 // ErrEnvEncoding is every refusal about an environment entry this envelope

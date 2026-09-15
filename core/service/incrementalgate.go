@@ -1,7 +1,7 @@
 package service
 
 import (
-	"github.com/backupdproject/backupd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/config"
 )
 
 // EPIC K's production feature gate at this boundary (#789). The flag is

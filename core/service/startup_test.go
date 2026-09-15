@@ -17,9 +17,9 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/state"
 
-	"github.com/backupdproject/backupd/core/internal/testenv"
+	"github.com/retnd/retnd/core/internal/testenv"
 )
 
 // TestOpenConfigAndJournal_UnreadableDatabaseFile_NeverReturnsAJournal is
@@ -28,7 +28,7 @@ import (
 // write to makes internal/state.Open fail during its own PRAGMA/migrate
 // setup, and OpenConfigAndJournal must propagate that as a fatal error
 // with a nil *state.Journal — the one thing Open (and every
-// cmd/backupd subcommand via openService) already treats as "do
+// cmd/retnd subcommand via openService) already treats as "do
 // not construct a BackupService", which is exactly "BackupService...
 // never start" from the issue's own Given/When/Then.
 func TestOpenConfigAndJournal_UnreadableDatabaseFile_NeverReturnsAJournal(t *testing.T) {

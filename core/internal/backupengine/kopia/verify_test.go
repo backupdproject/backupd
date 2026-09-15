@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/backupengine"
-	"github.com/backupdproject/backupd/core/internal/backupengine/kopia"
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/backupengine"
+	"github.com/retnd/retnd/core/internal/backupengine/kopia"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // This file is EPIC K's verification ladder, proved rung by rung against a

@@ -43,7 +43,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // CurrentFormatVersion is the "backupd format version" section

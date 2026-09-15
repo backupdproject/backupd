@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/alert"
+	"github.com/retnd/retnd/core/internal/alert"
 )
 
 // workflow.go answers two questions about EPIC L's hooks (#813), and this

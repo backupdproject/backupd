@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport"
 )
 
 // This file covers the carrier and not the numbers: whether a reporter put

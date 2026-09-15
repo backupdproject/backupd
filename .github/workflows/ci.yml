@@ -337,7 +337,7 @@ jobs:
       # resulting binary, since the runner's architecture usually does not
       # match the target's.
       #
-      # It builds ./... rather than just ./cmd/backupd on purpose. The
+      # It builds ./... rather than just ./cmd/retnd on purpose. The
       # narrower form only compiles what the binary transitively imports, so a
       # package nobody has wired up yet is never cross-compiled at all, and an
       # architecture-specific mistake in it sits undetected until the day it
@@ -506,6 +506,15 @@ jobs:
 
       - name: the guard can actually fail (mutation self-test)
         run: bash scripts/rename/selftest.sh
+
+      # R1.3 (#888) swept the module path to github.com/retnd/retnd while
+      # the module is still fetched from backupdproject/backupd. Nothing
+      # resolves the path here -- every build is local, over the five
+      # go.mod files' `replace` directives -- so the mismatch costs
+      # nothing until one line of documentation tells a reader to fetch
+      # it. #895 deletes this step along with the check.
+      - name: nothing instructs a reader to go install/go get this module (FR-41)
+        run: bash scripts/rename/check-no-module-fetch-instruction.sh
 
   api-contract:
     name: /api/v1 contract drift (#166)

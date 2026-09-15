@@ -31,8 +31,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/hostrunner"
-	"github.com/backupdproject/backupd/core/tests/machines"
+	"github.com/retnd/retnd/core/internal/hostrunner"
+	"github.com/retnd/retnd/core/tests/machines"
 )
 
 // hookLabel selects every container this product's host runner created.

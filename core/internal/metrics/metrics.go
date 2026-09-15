@@ -21,7 +21,7 @@
 // Render takes a health.Report as a plain value and returns a string.
 // Nothing in this package calls internal/health itself, holds a journal,
 // or knows how a Report gets built. Nothing outside this package calls
-// Render yet either: cmd/backupd has no subcommand to serve it from
+// Render yet either: cmd/retnd has no subcommand to serve it from
 // (issues #25, #26), the same position internal/health, internal/obs and
 // internal/capacity are already in. Wiring this in later, a
 // "backupd status --prometheus" flag, an HTTP handler, or both, is
@@ -48,8 +48,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/backupdproject/backupd/core/internal/health"
-	"github.com/backupdproject/backupd/core/internal/lifecycle"
+	"github.com/retnd/retnd/core/internal/health"
+	"github.com/retnd/retnd/core/internal/lifecycle"
 )
 
 // ContentType is the MIME type a caller should set on an HTTP response

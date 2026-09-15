@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/workflowexec"
+	"github.com/retnd/retnd/core/internal/workflowexec"
 )
 
 // Two of #812's gate classes, against the fixture server, because neither

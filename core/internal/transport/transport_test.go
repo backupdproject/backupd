@@ -20,11 +20,11 @@ import (
 
 	rclonefs "github.com/rclone/rclone/fs"
 
-	"github.com/backupdproject/backupd/core/internal/transport"
-	"github.com/backupdproject/backupd/core/internal/transport/contract"
-	"github.com/backupdproject/backupd/core/internal/transport/rclone"
+	"github.com/retnd/retnd/core/internal/transport"
+	"github.com/retnd/retnd/core/internal/transport/contract"
+	"github.com/retnd/retnd/core/internal/transport/rclone"
 
-	"github.com/backupdproject/backupd/core/internal/testenv"
+	"github.com/retnd/retnd/core/internal/testenv"
 )
 
 // TestRcloneAdapter_LocalBackend_ContractSuite is the deliverable this issue

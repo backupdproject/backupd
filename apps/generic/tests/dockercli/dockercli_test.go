@@ -56,7 +56,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/backupdproject/backupd/core/tests/dockerlease"
+	"github.com/retnd/retnd/core/tests/dockerlease"
 )
 
 // repoRoot is this file's own directory, four levels up
@@ -256,7 +256,7 @@ func TestAnImageBuildAbandonedPartWayThroughIsReportedAsAFailure(t *testing.T) {
 // degradedConfig writes a config whose one backup set has never had an
 // artifact discovered for it: internal/health's own decideState (see that
 // package's doc) reports this as DEGRADED, and `backupd status`
-// (cmd/backupd/status.go) exits 1 for anything short of HEALTHY.
+// (cmd/retnd/status.go) exits 1 for anything short of HEALTHY.
 // This is real backup-set evidence, not a synthetic health override, so
 // it exercises exactly what a container healthcheck would see in
 // production the day a backup set actually falls behind.

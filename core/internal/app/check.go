@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/backupdproject/backupd/core/internal/config"
-	"github.com/backupdproject/backupd/core/internal/state"
+	"github.com/retnd/retnd/core/internal/config"
+	"github.com/retnd/retnd/core/internal/state"
 )
 
 // The one thing in this package that runs before a Service can exist.
@@ -53,7 +53,7 @@ import (
 // `backupd fetch` are what exercise real connectivity.
 //
 // The returned *config.Config is the same up-to-date result LoadAndValidate
-// produced, so a caller (cmd/backupd's `check` command) can print a
+// produced, so a caller (cmd/retnd's `check` command) can print a
 // summary of what was validated without loading the file a second time.
 func Check(ctx context.Context, configPath string) (*config.Config, error) {
 	cfg, err := config.LoadAndValidate(configPath)

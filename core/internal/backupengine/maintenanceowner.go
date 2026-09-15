@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backupdproject/backupd/core/internal/model"
+	"github.com/retnd/retnd/core/internal/model"
 )
 
 // This file is the record maintenance scheduling will be decided from

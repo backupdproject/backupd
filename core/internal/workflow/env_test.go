@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/secretref"
+	"github.com/retnd/retnd/core/internal/secretref"
 )
 
 // The environment model's suite. Three properties, and each of them is one

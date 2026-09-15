@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/backupdproject/backupd/core/internal/remoteexec"
+	"github.com/retnd/retnd/core/internal/remoteexec"
 )
 
 // TestARemoteStepThatNeverStartedIsNotReportedAsAnOutcomeNobodySaw is the
