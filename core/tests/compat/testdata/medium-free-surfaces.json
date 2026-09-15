@@ -37,7 +37,8 @@
         "54-invalid-dangling-tier-medium.yaml validate: REFUSED invalid config: retention.tiers[1]: medium \"offsite_s3\" is not declared by any storage_mediums entry; a tier's medium must name one, and there is no fall-back to local for a name that does not resolve",
         "55-invalid-workflow-relative-root.yaml validate: REFUSED invalid config: workflows.root: \"workflows\" must be an absolute path",
         "56-invalid-workflow-stage-dir-escapes.yaml validate: REFUSED invalid config: workflows.global.before_dir: must not contain \"..\" (got \"../escape\"); every hook directory resolves inside workflows.root, and that declaration is the only thing that makes the tree trusted",
-        "57-invalid-workflow-exec-connection-without-root.yaml validate: REFUSED invalid config: workflows.root: must be set when workflows.exec_connections is configured; an execution connection with no hook directories to run scripts from is configuration that does nothing"
+        "57-invalid-workflow-exec-connection-without-root.yaml validate: REFUSED invalid config: workflows.root: must be set when workflows.exec_connections is configured; an execution connection with no hook directories to run scripts from is configuration that does nothing",
+        "58-invalid-legacy-paths.yaml load: REFUSED parsing config \"testdata/configs/58-invalid-legacy-paths.yaml\": yaml: unmarshal errors: | line 25: field legacy_paths not found in type config.Config"
       ]
     },
     "02-artifact-rows-after-migration": {

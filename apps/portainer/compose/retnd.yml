@@ -33,7 +33,7 @@ services:
   # scheduler, one process sharing one shutdown context. Holds the state
   # database and the credentials, and publishes no port at all.
   retnd:
-    image: ${IMAGE:-ghcr.io/backupdproject/backupd:0.4.0}
+    image: ${IMAGE:-ghcr.io/retnd/retnd:0.4.0}
     command: ["/retnd-web", "serve", "--profile=generic"]
 
     user: "${PUID:-1000}:${PGID:-1000}"
@@ -169,7 +169,7 @@ services:
   # operator ever opens. Portainer's "Published ports" link on the stack
   # view points at this one.
   web-ui:
-    image: ${IMAGE:-ghcr.io/backupdproject/backupd:0.4.0}
+    image: ${IMAGE:-ghcr.io/retnd/retnd:0.4.0}
     command: ["/retnd-web", "serve-ui", "--profile=generic"]
 
     depends_on:

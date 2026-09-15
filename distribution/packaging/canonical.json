@@ -10,9 +10,9 @@
   ],
   "image": {
     "registry": "ghcr.io",
-    "repository": "backupdproject/backupd",
+    "repository": "retnd/retnd",
     "tag": "0.4.0",
-    "reference": "ghcr.io/backupdproject/backupd:0.4.0",
+    "reference": "ghcr.io/retnd/retnd:0.4.0",
     "published": true,
     "note": [
       "published:false. 0.4.0 is cut but not pushed: container/release-manifest.json carries a",
@@ -27,7 +27,7 @@
       "twice: it said 0.3.0 through the whole of 0.3.1 and 0.3.2, and it went on saying 0.3.2",
       "after 0.3.3 was pushed. The durable answer is the git history of this file, where each",
       "`Record <version>'s registry digests` commit is one real push, and",
-      "`docker buildx imagetools inspect ghcr.io/backupdproject/backupd:<version>` asks the",
+      "`docker buildx imagetools inspect ghcr.io/retnd/retnd:<version>` asks the",
       "registry directly.",
       "This reference is the one string every provider package must carry, so pointing the",
       "project at a different registry stays a one-line change here rather than an edit in four",
@@ -37,13 +37,22 @@
     ],
     "mirror": {
       "reference": "ghcr.io/backupdproject/backupd:0.4.0",
-      "retiredBy": 895,
+      "retiredBy": 947,
       "note": [
         "FR-39: a GHCR package path is not covered by GitHub's transfer redirects, so the",
-        "old package path is pushed alongside the new one for exactly one release. Removing",
-        "this object is issue #895's job, together with guard 7 in",
-        "scripts/bdtools/release/publish_image.py, which refuses a run whose push set does",
-        "not contain this reference."
+        "old package path is pushed alongside the new one for exactly one release. FR-41's",
+        "cutover (#895) moved image.reference above to ghcr.io/retnd/retnd and left this",
+        "naming the retained path, which is the state guard 7 in",
+        "scripts/bdtools/release/publish_image.py calls 'the reference has moved': both are",
+        "pushed, same build, same digest. Removing this object is #947's job, together with",
+        "that guard, which refuses a run whose push set does not contain this reference.",
+        "MEASURED AT THE CUTOVER, and it is the reason this object is a formality rather",
+        "than a rescue: `gh api orgs/backupdproject/packages?package_type=container`",
+        "answered an EMPTY list on 2026-09-15, so no image has ever actually been",
+        "published under the old package path and there is no existing `docker pull` of it",
+        "to strand. The declaration stays until #947 anyway, because the cost of keeping",
+        "it is one extra push and the cost of being wrong about that reading is an",
+        "operator's pinned pull 404ing with nothing to tell them why."
       ]
     }
   },

@@ -110,7 +110,29 @@ The identity a verifier pins is settled before the first signature rather than
 discovered after it. It is recorded in
 `provenance/release-provenance.json` under `signing.identity`, and
 `TestSigningRecordMatchesWhetherAnythingIsPublished` refuses a bundle that
-records no identity:
+records no identity.
+
+**It is two commands, and which one you want depends on the version you hold.**
+FR-41 (#895) transferred this repository from `backupdproject/backupd` to
+`retnd/retnd` on 2026-09-15. GitHub builds the certificate SAN out of the
+repository the workflow run happened in, and a signature that has been issued
+cannot be reissued, so `0.3.3` and everything before it carries the old
+identity for as long as it exists, and everything published after the transfer
+carries the new one. `cosign verify` accepts exactly one identity to pin, so
+there is no single command that covers both, and pretending there is would be
+#510 again with the identity moved instead of the ref.
+
+For a release published **after** the transfer:
+
+```
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity 'https://github.com/retnd/retnd/.github/workflows/release.yml@refs/heads/release' \
+  ghcr.io/retnd/retnd:<version>
+```
+
+For `0.3.3` and every release **before** it — the last release published under
+the old coordinates:
 
 ```
 cosign verify \
@@ -119,8 +141,27 @@ cosign verify \
   ghcr.io/backupdproject/backupd:0.3.3
 ```
 
-That command passes against the published image, and it is the whole point of this
-section that it does. It is checked by running it, not by reading it.
+The second command is the one this project's records say passes, and it was the
+whole point of this section that it did. **Measured at the cutover, and it does
+not hold today.** On 2026-09-15, verifying the transfer,
+`gh api orgs/backupdproject/packages?package_type=container` and
+`gh api orgs/retnd/packages?package_type=container` both answered an empty list,
+an anonymous `ghcr.io` pull token for either package path is refused with
+`DENIED: invalid token`, and `gh release list` names no release at all. So there
+is no image in either registry path for either command to be run against right
+now, and neither of them has been run since. That is recorded here rather than
+left as the sentence it replaced, because a compliance record claiming a command
+"is checked by running it" when the artifact is absent is the #484 failure —
+a stale reading under a note asserting its freshness — and it is the reason the
+first release published after the cutover is this epic's checkpoint rather than
+the transfer (ADR 0023, Decision 7). It is not FR-41's doing: the transfer moved
+coordinates, and what is missing was missing before it.
+
+Both identities are constants in `distribution/packaging/signing.go`
+(`SigningIdentity` and `PreCutoverSigningIdentity`) with the boundary release
+beside them, and `TestComplianceDocsPrintTheCommandThatPasses` refuses this file
+if it prints a pin that is neither of them, drops either one, or stops naming the
+release that divides them.
 
 The ref half of that identity is `refs/heads/release` because a push to `release` is
 what publishes (see the header of `.github/workflows/release.yml`). GitHub builds the
@@ -176,7 +217,7 @@ release time through the environment and never written down:
 
 ```
 COSIGN_PRIVATE_KEY="$(pass show retnd/cosign)" \
-  cosign sign --key env://COSIGN_PRIVATE_KEY ghcr.io/backupdproject/backupd@<digest>
+  cosign sign --key env://COSIGN_PRIVATE_KEY ghcr.io/retnd/retnd@<digest>
 ```
 
 `scripts/release/publish-image.sh` enforces that. Guard 5 asks git for every path
@@ -210,7 +251,7 @@ not hold where the script runs.
 
 ## Publishing
 
-`ghcr.io/backupdproject/backupd:0.4.0` is cut and not pushed.
+`ghcr.io/retnd/retnd:0.4.0` is cut and not pushed.
 `distribution/packaging/canonical.json` records `image.published: false`, and the release
 manifest records the same fact from the other side as a `registry_digest` of `null` per
 architecture and a null `index_digest`. The two are held together by
@@ -298,7 +339,7 @@ met.
 That value went stale once and the note above it claimed it had been measured,
 which is how issue #484 found it: the repository was made public and nothing came
 back to re-read the field, so the record said private for a repository anyone
-could open. Re-run `gh repo view backupdproject/backupd --json visibility` rather
+could open. Re-run `gh repo view retnd/retnd --json visibility` rather
 than trusting the note, and regenerate the bundle with
 `go run ./cmd/provenance -write` from `distribution/`.
 

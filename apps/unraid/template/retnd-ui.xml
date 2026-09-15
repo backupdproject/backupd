@@ -25,13 +25,13 @@
 -->
 <Container version="2">
   <Name>retnd-ui</Name>
-  <Repository>ghcr.io/backupdproject/backupd:0.4.0</Repository>
-  <Registry>https://github.com/backupdproject/backupd/pkgs/container/backupd</Registry>
+  <Repository>ghcr.io/retnd/retnd:0.4.0</Repository>
+  <Registry>https://github.com/retnd/retnd/pkgs/container/backupd</Registry>
   <Network>retnd</Network>
   <MyIP/>
   <Privileged>false</Privileged>
-  <Support>https://github.com/backupdproject/backupd/issues</Support>
-  <Project>https://github.com/backupdproject/backupd</Project>
+  <Support>https://github.com/retnd/retnd/issues</Support>
+  <Project>https://github.com/retnd/retnd</Project>
   <Overview>
     The retnd web interface: the shared UI plus a reverse proxy to the engine container. Install the retnd engine template first.
 
@@ -39,8 +39,8 @@
   </Overview>
   <Category>Backup: Tools: Utilities:</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/backupdproject/backupd/main/apps/unraid/template/retnd-ui.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/backupdproject/backupd/main/docs/submission/icon.svg</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/retnd/retnd/main/apps/unraid/template/retnd-ui.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/retnd/retnd/main/docs/submission/icon.svg</Icon>
   <Requires>Run `docker network create retnd` and install the retnd engine template before this one.</Requires>
   <ExtraParams>--read-only --cap-drop=ALL --security-opt=no-new-privileges:true --tmpfs /tmp:size=16m,mode=1777,uid=99,gid=100 --user 99:100 --no-healthcheck</ExtraParams>
   <PostArgs>/retnd-web serve-ui --profile=unraid</PostArgs>

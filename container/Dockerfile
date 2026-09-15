@@ -60,7 +60,7 @@
 # pinned copy of the previous container/compose.yaml still says
 # `command: ["/backupd-web", ...]`, and an upgrade whose first symptom is
 # "exec /backupd-web: no such file or directory" is not an upgrade. The
-# `entrypoints` stage below creates it and #895 removes it.
+# `entrypoints` stage below creates it and #947 removes it.
 #
 # There is deliberately NO `/backupd`. Nothing this project ever shipped
 # named `/backupd` in a compose `command:` or `healthcheck:`, so there is
@@ -69,10 +69,12 @@
 # `/backupd` has to move to `/retnd`, and container/compose.yaml says the
 # same from the other side.
 #
-# What #890 did NOT move is the image reference: it is still
-# ghcr.io/backupdproject/backupd, because a registry path is not covered
-# by GitHub's repository-transfer redirects, so moving it needs an overlap
-# release that publishes under both names. That is #895.
+# What #890 did NOT move is the image reference, and #895's cutover did:
+# it is `ghcr.io/retnd/retnd` now, with `ghcr.io/backupdproject/backupd`
+# declared as a one-release mirror in
+# distribution/packaging/canonical.json. A registry path is not covered by
+# GitHub's repository-transfer redirects, so the two are published
+# together for one release and #947 closes that window.
 
 # ---- core builder ---------------------------------------------------------
 # Pinned by digest, not just tag, so this stage resolves to the exact same

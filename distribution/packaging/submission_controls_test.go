@@ -87,20 +87,20 @@ func TestEachHardRuleFiresOnTheShapeItIsAbout(t *testing.T) {
 			rule: CheckNoFloatingTag,
 			path: "fixture/compose.yaml",
 			trips: []string{
-				"    image: ghcr.io/backupdproject/backupd:latest\n",
-				"    image: ghcr.io/backupdproject/backupd\n",
-				"    image: ghcr.io/backupdproject/backupd:${TAG:-latest}\n",
-				"<Repository>ghcr.io/backupdproject/backupd</Repository>",
-				"  reference: ghcr.io/backupdproject/backupd:LATEST\n",
+				"    image: ghcr.io/retnd/retnd:latest\n",
+				"    image: ghcr.io/retnd/retnd\n",
+				"    image: ghcr.io/retnd/retnd:${TAG:-latest}\n",
+				"<Repository>ghcr.io/retnd/retnd</Repository>",
+				"  reference: ghcr.io/retnd/retnd:LATEST\n",
 			},
 			clean: []string{
-				"    image: ghcr.io/backupdproject/backupd:1.0.0\n",
+				"    image: ghcr.io/retnd/retnd:1.0.0\n",
 				"    image: backupd:${VERSION:-dev}\n",
-				"    image: ghcr.io/backupdproject/backupd@sha256:" + strings.Repeat("a", 64) + "\n",
-				"    image: registry.invalid:5000/backupdproject/backupd:1.0.0\n",
-				"<Repository>ghcr.io/backupdproject/backupd:1.0.0</Repository>",
+				"    image: ghcr.io/retnd/retnd@sha256:" + strings.Repeat("a", 64) + "\n",
+				"    image: registry.invalid:5000/retnd/retnd:1.0.0\n",
+				"<Repository>ghcr.io/retnd/retnd:1.0.0</Repository>",
 				"# never deploy the latest tag\n",
-				"image:\n  reference: ghcr.io/backupdproject/backupd:1.0.0\n",
+				"image:\n  reference: ghcr.io/retnd/retnd:1.0.0\n",
 			},
 		},
 		{
@@ -151,8 +151,8 @@ func TestEachHardRuleFiresOnTheShapeItIsAbout(t *testing.T) {
 				"      PUBLIC_BASE_URL: http://localhost:8080\n",
 				"      UPSTREAM_ADDR: http://backupd:8080\n",
 				"      PUBLIC_BASE_URL: http://tower.local:8080\n",
-				"  home: https://github.com/backupdproject/backupd\n",
-				"  icon: https://raw.githubusercontent.com/backupdproject/backupd/main/docs/submission/icon.svg\n",
+				"  home: https://github.com/retnd/retnd\n",
+				"  icon: https://raw.githubusercontent.com/retnd/retnd/main/docs/submission/icon.svg\n",
 				"      ENGINE: http://192.168.1.20:8080\n",
 				"      ENGINE: http://127.0.0.1:8080\n",
 				"      ENGINE: http://10.7.0.4:8080\n",
@@ -228,7 +228,7 @@ func TestMutatingARealPackagedFileTripsTheHardRules(t *testing.T) {
 		body string
 	}{
 		{CheckNoSelfUpdate, "no-self-update", "\npull_policy: always\n"},
-		{CheckNoFloatingTag, "no-floating-tag", "\n    image: ghcr.io/backupdproject/backupd:latest\n"},
+		{CheckNoFloatingTag, "no-floating-tag", "\n    image: ghcr.io/retnd/retnd:latest\n"},
 		{CheckNoPrivilegedMode, "no-privileged-mode", "\n    privileged: true\n"},
 		{CheckNoMandatoryTelemetry, "no-mandatory-telemetry", "\n      TELEMETRY_ENDPOINT: https://collector.example.invalid/ingest\n"},
 		// Three rows for one rule, because there are three real
@@ -306,14 +306,14 @@ func TestImageTagUnderstandsEveryFloatingForm(t *testing.T) {
 		ref  string
 		kind tagKind
 	}{
-		{"ghcr.io/backupdproject/backupd:1.0.0", tagPinned},
-		{"ghcr.io/backupdproject/backupd@sha256:" + strings.Repeat("b", 64), tagPinned},
-		{"registry.invalid:5000/backupdproject/backupd:1.0.0", tagPinned},
+		{"ghcr.io/retnd/retnd:1.0.0", tagPinned},
+		{"ghcr.io/retnd/retnd@sha256:" + strings.Repeat("b", 64), tagPinned},
+		{"registry.invalid:5000/retnd/retnd:1.0.0", tagPinned},
 		{"backupd:${VERSION:-dev}", tagVariable},
-		{"ghcr.io/backupdproject/backupd", tagAbsent},
-		{"registry.invalid:5000/backupdproject/backupd", tagAbsent},
-		{"ghcr.io/backupdproject/backupd:latest", tagLatest},
-		{"ghcr.io/backupdproject/backupd:LATEST", tagLatest},
+		{"ghcr.io/retnd/retnd", tagAbsent},
+		{"registry.invalid:5000/retnd/retnd", tagAbsent},
+		{"ghcr.io/retnd/retnd:latest", tagLatest},
+		{"ghcr.io/retnd/retnd:LATEST", tagLatest},
 		{"backupd:${VERSION:-latest}", tagFloatingDefault},
 	}
 	for _, tc := range cases {
@@ -335,7 +335,7 @@ func TestImageTagUnderstandsEveryFloatingForm(t *testing.T) {
 const canonicalCompose = `
 services:
   backupd:
-    image: ghcr.io/backupdproject/backupd:0.4.0
+    image: ghcr.io/retnd/retnd:0.4.0
     command: ["/backupd-web", "serve"]
     user: "568:568"
     read_only: true
@@ -352,7 +352,7 @@ services:
       - "/host/id_ed25519:/etc/retnd/id_ed25519:ro"
       - "/host/known_hosts:/etc/retnd/known_hosts:ro"
   backupd-ui:
-    image: ghcr.io/backupdproject/backupd:0.4.0
+    image: ghcr.io/retnd/retnd:0.4.0
     command: ["/backupd-web", "serve-ui"]
     user: "568:568"
     read_only: true
@@ -403,7 +403,7 @@ func TestEveryDriftElementFailsOnADeliberateMismatch(t *testing.T) {
 		{
 			capability: "drift-image-reference",
 			provider:   "truenas",
-			mutate:     func(s string) string { return strings.ReplaceAll(s, "backupd:0.4.0", "backupd:9.9.9") },
+			mutate:     func(s string) string { return strings.ReplaceAll(s, "retnd:0.4.0", "retnd:9.9.9") },
 			wants:      "9.9.9",
 		},
 		{

@@ -27,10 +27,10 @@ machine with Docker.
 incremental engine, [`docs/incremental-runbooks.md`](docs/incremental-runbooks.md).
 
 **The same material as pages, with pictures**, is the published site: [the first-run
-tutorial](https://backupdproject.github.io/backupd/first-run.html), [the web interface in
-motion](https://backupdproject.github.io/backupd/web-ui.html), [SSH and
-connections](https://backupdproject.github.io/backupd/ssh.html), and [the
-reference](https://backupdproject.github.io/backupd/reference.html), which carries every
+tutorial](https://retnd.github.io/retnd/first-run.html), [the web interface in
+motion](https://retnd.github.io/retnd/web-ui.html), [SSH and
+connections](https://retnd.github.io/retnd/ssh.html), and [the
+reference](https://retnd.github.io/retnd/reference.html), which carries every
 screen of the browser interface and every `retnd` command with its flags. It is generated
 from [`docs/site/`](docs/site/) in this repository. The site is the source of truth for how
 to install the product and how to drive it; this document is the engineering account behind
@@ -41,7 +41,7 @@ it, and where the two ever disagree about install or operator surfaces, the site
 Two commands, no arguments, on any machine with Docker:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/backupdproject/backupd/main/scripts/install/install_docker_host.py
+curl -fsSLO https://raw.githubusercontent.com/retnd/retnd/main/scripts/install/install_docker_host.py
 python3 install_docker_host.py install
 ```
 
@@ -110,7 +110,7 @@ dead, including any still in your scrollback. On a deployment that already has a
 administrator it refuses with its own exit code instead, because enrolment is a one-time
 door and it closed when that account was created.
 
-[The first-run tutorial](https://backupdproject.github.io/backupd/first-run.html) picks up
+[The first-run tutorial](https://retnd.github.io/retnd/first-run.html) picks up
 at that screen and walks every step of the wizard, with an example for every field.
 
 ### Command line only, no web interface
@@ -125,7 +125,7 @@ The engine container runs `retnd daemon` instead of `retnd-web serve`, the `web-
 never started, and no port is published on this host at all, so nothing in the deployment
 serves HTTP and the `retnd-web` binary is never executed. What drives it is the `retnd` wrapper
 the installer writes to `<prefix>/bin/retnd`, which takes every command in
-[the reference page's command table](https://backupdproject.github.io/backupd/reference.html#cli-commands)
+[the reference page's command table](https://retnd.github.io/retnd/reference.html#cli-commands)
 — this document stopped carrying a generated copy of it, because the site is where
 the operator surface is documented.
 
@@ -159,13 +159,13 @@ guessing between keeping the data and wiping it is not an installer's decision. 
 `fresh`, refuses to run over an existing install at all.
 
 Every flag with its default, and every exit code, is on [the reference
-page](https://backupdproject.github.io/backupd/reference.html#installer) and in
+page](https://retnd.github.io/retnd/reference.html#installer) and in
 [`docs/install.md`](docs/install.md). This is the path used on the UGREEN NAS.
 
 ### What the browser looks like while it works
 
 Three clips from [the web interface in
-motion](https://backupdproject.github.io/backupd/web-ui.html), which has seven more.
+motion](https://retnd.github.io/retnd/web-ui.html), which has seven more.
 **Every picture this project publishes is recorded against the development server's
 in-memory fixture API rather than against a running engine**: the layout, the copy, the flow
 and the interaction are the real ones, and the data is not.
@@ -283,7 +283,7 @@ names.
 - [`docs/incremental-runbooks.md`](docs/incremental-runbooks.md) — putting a
   source on it, a repository that will not open, credential recovery, and the
   gate refusing.
-- [the reference page](https://backupdproject.github.io/backupd/reference.html#cli-commands)
+- [the reference page](https://retnd.github.io/retnd/reference.html#cli-commands)
   — `retnd snapshot` and `retnd repository`, and the screens behind them.
 - [ADR 0018](docs/adr/0018-shipping-the-incremental-engine-behind-a-gate.md) —
   why it ships behind a gate, and what the twelve decisions before it settled.

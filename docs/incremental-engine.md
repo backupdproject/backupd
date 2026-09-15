@@ -43,7 +43,7 @@ engine's configuration, its gate, or its repositories.
 Runbooks — creating an incremental set, repository corruption, credential
 recovery — are in [`docs/incremental-runbooks.md`](incremental-runbooks.md).
 The commands are on [the reference
-page](https://backupdproject.github.io/backupd/reference.html#cli); the
+page](https://retnd.github.io/retnd/reference.html#cli); the
 wire contract is `api/v1/openapi.json` and
 [`docs/api/contract.md`](api/contract.md).
 
@@ -857,7 +857,7 @@ A configuration write goes where every configuration write in this
 product goes: written here when nothing is serving the deployment, handed
 to the serving process over its API when there is a route to it, and
 refused when something is serving and there is no route. See [the
-reference page](https://backupdproject.github.io/backupd/reference.html#cli-modes).
+reference page](https://retnd.github.io/retnd/reference.html#cli-modes).
 
 ## What this build does not do
 

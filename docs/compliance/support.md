@@ -6,7 +6,7 @@ retnd, `com.iasbuilt.retnd`. This is the support material
 
 ## Where to get help
 
-Open an issue at <https://github.com/backupdproject/backupd/issues>.
+Open an issue at <https://github.com/retnd/retnd/issues>.
 
 That address is the single support channel. There is no separate support inbox,
 no forum and no chat, on purpose: a channel nobody reads is worse than one

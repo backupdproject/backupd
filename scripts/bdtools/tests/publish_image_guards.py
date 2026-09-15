@@ -164,8 +164,8 @@ def new_repo(tmpdirs: list[str]) -> Path:
     # fixture without it would make every arm below fail for the
     # fixture's reason rather than the guard's.
     (d / "distribution" / "packaging" / "canonical.json").write_text(
-        '{ "image": { "reference": "ghcr.io/backupdproject/backupd:1.0.0", "published": false,'
-        ' "mirror": { "reference": "ghcr.io/backupdproject/backupd:1.0.0", "retiredBy": 895 } } }\n'
+        '{ "image": { "reference": "ghcr.io/retnd/retnd:1.0.0", "published": false,'
+        ' "mirror": { "reference": "ghcr.io/retnd/retnd:1.0.0", "retiredBy": 947 } } }\n'
     )
     (d / "container" / "release-manifest.json").write_text(
         '{ "version": "test", "commit": "0000000000000000000000000000000000000000" }\n'
@@ -323,7 +323,7 @@ def main() -> int:
         pin_manifest_to_head(repo)
         rc, out = run_guards(repo, "SKIP_PROVENANCE_CHECK=1")
         expect(rc, out, 0, "every guard passed")
-        expect(rc, out, 0, "Would publish ghcr.io/backupdproject/backupd:1.0.0")
+        expect(rc, out, 0, "Would publish ghcr.io/retnd/retnd:1.0.0")
 
         # --- guard 1: the files it reads are not there
         current = "canonical.json missing"
@@ -519,7 +519,7 @@ def main() -> int:
         expect(rc, out, 2, "no image.mirror")
         expect(rc, out, 2, "ghcr.io/retnd/retnd")
         expect(rc, out, 2, "ghcr.io/backupdproject/backupd")
-        expect(rc, out, 2, "#895")
+        expect(rc, out, 2, "#947")
         refute(out, "every guard passed")
 
         current = "the same move WITH the retained mirror publishes both package paths"
@@ -528,7 +528,7 @@ def main() -> int:
         set_canonical_image(
             repo,
             '{ "reference": "ghcr.io/retnd/retnd:1.0.0", "published": false,'
-            ' "mirror": { "reference": "ghcr.io/backupdproject/backupd:1.0.0", "retiredBy": 895 } }',
+            ' "mirror": { "reference": "ghcr.io/backupdproject/backupd:1.0.0", "retiredBy": 947 } }',
         )
         rc, out = run_guards(repo, "SKIP_PROVENANCE_CHECK=1")
         expect(rc, out, 0, "every guard passed")
@@ -544,11 +544,11 @@ def main() -> int:
         set_canonical_image(
             repo,
             '{ "reference": "ghcr.io/retnd/retnd:1.0.0", "published": false,'
-            ' "mirror": { "reference": "ghcr.io/backupdproject/backupd:0.9.0", "retiredBy": 895 } }',
+            ' "mirror": { "reference": "ghcr.io/backupdproject/backupd:0.9.0", "retiredBy": 947 } }',
         )
         rc, out = run_guards(repo, "SKIP_PROVENANCE_CHECK=1")
         expect(rc, out, 2, "never reaches ghcr.io/backupdproject/backupd")
-        expect(rc, out, 2, "#895")
+        expect(rc, out, 2, "#947")
 
         # --- the parity proof publish-image.sh runs before the push
         #

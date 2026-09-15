@@ -336,7 +336,7 @@ NOTE = (
     "distribution/packaging's release-manifest-integrity check re-asks the same question on every run. "
     "binary_sha256 is hashed from the two binaries extracted out of the built image, so it is real "
     "evidence of what was compiled. registry_digest is the digest ghcr.io assigns "
-    "ghcr.io/backupdproject/backupd on push (docker buildx build --push prints it, docker buildx "
+    "ghcr.io/retnd/retnd on push (docker buildx build --push prints it, docker buildx "
     "imagetools inspect reads it back). "
     "binary_sha256 KEYS: an entry that records an ALREADY-PUBLISHED release keeps the keys it was published "
     "under, so 0.4.0 stays keyed backupd/backupd-web -- those names identify a recorded build, and re-keying "

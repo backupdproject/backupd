@@ -64,23 +64,23 @@
         <span class="nav-label nav-label-short">Ref</span>
       </a>
 
-      <a href="https://github.com/backupdproject/backupd" target="_blank" rel="noopener" class="nav-item nav-item-github" aria-label="GitHub repository">
+      <a href="https://github.com/retnd/retnd" target="_blank" rel="noopener" class="nav-item nav-item-github" aria-label="GitHub repository">
         <svg class="nav-icon nav-icon-github" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
           <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
         </svg>
         <span class="nav-label nav-label-full">GitHub</span>
       </a>
 
-      <a href="https://github.com/backupdproject/backupd/blob/main/docs/deployment.md" target="_blank" rel="noopener" class="nav-item">
+      <a href="https://github.com/retnd/retnd/blob/main/docs/deployment.md" target="_blank" rel="noopener" class="nav-item">
         <span class="nav-label nav-label-full">Deployment</span>
         <span class="nav-label nav-label-short">Deploy</span>
       </a>
 
-      <a href="https://github.com/backupdproject/backupd/blob/main/docs/ssh-setup.md" target="_blank" rel="noopener" class="nav-item">
+      <a href="https://github.com/retnd/retnd/blob/main/docs/ssh-setup.md" target="_blank" rel="noopener" class="nav-item">
         <span class="nav-label nav-label-full">SSH setup</span>
       </a>
 
-      <a href="https://github.com/backupdproject/backupd/issues" target="_blank" rel="noopener" class="nav-item">
+      <a href="https://github.com/retnd/retnd/issues" target="_blank" rel="noopener" class="nav-item">
         <span class="nav-label nav-label-full">Issues</span>
       </a>
 
@@ -222,7 +222,7 @@
     </div>
 
     <h3 id="web-snapshots">Snapshots</h3>
-    <p>Only on a backup set running <a href="https://github.com/backupdproject/backupd/blob/main/docs/incremental-engine.md">the incremental engine</a>, reached from the set's own page. Every snapshot run this set has on record, newest first, with the phase it reached and the verification level a check actually <em>achieved</em>. Only a run at <code>SUCCESS</code> is a restore point.</p>
+    <p>Only on a backup set running <a href="https://github.com/retnd/retnd/blob/main/docs/incremental-engine.md">the incremental engine</a>, reached from the set's own page. Every snapshot run this set has on record, newest first, with the phase it reached and the verification level a check actually <em>achieved</em>. Only a run at <code>SUCCESS</code> is a restore point.</p>
     <p>Each row carries five separate measurements and no total: entries scanned, logical size, read from source, written to repository, and reused. A single &ldquo;backed up&rdquo; figure would report a 100&nbsp;GB tree deduplicated down to 200&nbsp;MB of new content as a 100&nbsp;GB upload every night. A counter nobody took prints <strong>not measured</strong> and never <code>0</code>, because &ldquo;reused 0 bytes&rdquo; sends somebody hunting a fault in a backup that is working. Row actions open <a href="#web-snapshot-detail">the inspector</a>, <a href="#web-snapshot-restore">Restore</a>, and the hold controls on <a href="#web-snapshot-retention">Snapshot retention</a>. The equivalent command is <code>retnd snapshot list &lt;source&gt;/&lt;set&gt;</code>.</p>
 
     <h3 id="web-snapshot-detail">Snapshot detail</h3>
@@ -309,7 +309,7 @@
     <h3 id="web-settings">Settings</h3>
     <figure>
       <img src="screens/ref-06-settings.png" alt="The Settings screen: storage capacity thresholds, a retention policy with three tiers each naming a destination and echoing the equivalent retnd command, a storage destinations list with local marked Default, notifications, an administrator password form, and a catalog recovery card, beside platform and system information panels" loading="lazy">
-      <figcaption>Six cards down the left in this capture, two information panels on the right. The account-recovery card <a href="https://github.com/backupdproject/backupd/issues/830">#830</a> adds is not in it, and is in the table below. This is the longest screen in the product and the only one that writes to <code>config.yaml</code> outside the wizard.</figcaption>
+      <figcaption>Six cards down the left in this capture, two information panels on the right. The account-recovery card <a href="https://github.com/retnd/retnd/issues/830">#830</a> adds is not in it, and is in the table below. This is the longest screen in the product and the only one that writes to <code>config.yaml</code> outside the wizard.</figcaption>
     </figure>
     <div class="scroll-x">
       <table class="fields">
@@ -338,12 +338,12 @@
     <p>It also lists who maintains each repository domain. Ownership is shown and not transferable from here: there is no API route that moves maintenance ownership in this build, and the card says so rather than offering a control that would fail.</p>
 
     <h3 id="web-repositories">Repository domains</h3>
-    <p>A <strong>repository domain</strong> is a security boundary, not a folder: one encrypted store, one passphrase, one deduplication span, one maintenance owner, one corruption fate. A backup set running <a href="https://github.com/backupdproject/backupd/blob/main/docs/incremental-engine.md">the incremental engine</a> names exactly one, and two sets sharing a domain share all six of those things &mdash; which is where the storage saving comes from, and why the choice is never defaulted.</p>
+    <p>A <strong>repository domain</strong> is a security boundary, not a folder: one encrypted store, one passphrase, one deduplication span, one maintenance owner, one corruption fate. A backup set running <a href="https://github.com/retnd/retnd/blob/main/docs/incremental-engine.md">the incremental engine</a> names exactly one, and two sets sharing a domain share all six of those things &mdash; which is where the storage saving comes from, and why the choice is never defaulted.</p>
     <p>This screen lists every domain the configuration declares, whether it is <code>shared</code> or <code>isolated</code>, which backup sets store snapshots in it, and its health. <code>retnd repository health</code> is the same answer at a terminal.</p>
 
     <h3 id="web-repository-new">Define a repository domain</h3>
     <p>The form that declares one. <code>POST /repositories</code> persists the domain &mdash; its id, its description, its sharing rule and a REFERENCE to the passphrase that opens it &mdash; into <code>config.yaml</code>, atomically, and the deployment hot-reloads, so the domain is nameable by a backup set immediately and without a restart. <code>retnd repository create &lt;domain&gt; --isolation shared|isolated --passphrase-file F</code> is the same write from a terminal, and it is the surface that also takes <code>--passphrase-command</code>, which is a program and its arguments rather than a single box.</p>
-    <p><strong>Declaring is not creating.</strong> What is written is the declaration; the encrypted store itself is created by the first backup run that stores a snapshot in the domain, which is the lifecycle a domain named on the <strong>Add backup set</strong> wizard's repository step already had. So the create opens no storage and resolves no passphrase &mdash; the passphrase box takes a path or a variable name, and the secret never travels over this API &mdash; and the new domain shows on the fleet list as answering but holding no repository yet, rather than as a green row nobody measured. A deployment that does not run <a href="https://github.com/backupdproject/backupd/blob/main/docs/incremental-engine.md">the incremental engine</a> refuses the write with <code>INCREMENTAL_ENGINE_DISABLED</code>, and the screen prints that refusal's own sentence, which names the configuration key that answers it.</p>
+    <p><strong>Declaring is not creating.</strong> What is written is the declaration; the encrypted store itself is created by the first backup run that stores a snapshot in the domain, which is the lifecycle a domain named on the <strong>Add backup set</strong> wizard's repository step already had. So the create opens no storage and resolves no passphrase &mdash; the passphrase box takes a path or a variable name, and the secret never travels over this API &mdash; and the new domain shows on the fleet list as answering but holding no repository yet, rather than as a green row nobody measured. A deployment that does not run <a href="https://github.com/retnd/retnd/blob/main/docs/incremental-engine.md">the incremental engine</a> refuses the write with <code>INCREMENTAL_ENGINE_DISABLED</code>, and the screen prints that refusal's own sentence, which names the configuration key that answers it.</p>
     <p>The sharing choice is the decision the screen exists for: picking <strong>Shared</strong> or <strong>Isolated</strong> states what each answer commits every set in the domain to, and the request always names one, because the API refuses a declaration that does not. Stating it here rather than in a help page is deliberate &mdash; co-tenancy is named where the decision is made. The maintenance-ownership answer is a gate on this one write and records nothing: <q>this instance</q> is refused if a maintenance record already names somebody else, and ownership itself still moves only by transfer (ADR 0017).</p>
 
     <h3 id="web-repository-health">Repository health</h3>
@@ -511,12 +511,12 @@
     <div class="note danger">
       <span class="note-label">Two different things are called restore</span>
       <p><code>restore</code> above asks a storage provider to thaw an <em>archived object</em> so it can be read: it is billed, it takes hours, and it writes nothing anywhere. <code>snapshot restore</code> is the other one, and it only exists for a backup set on the incremental engine: it reads a restore point out of a repository and writes a tree into a local directory you name.</p>
-      <p>Neither one restores an <em>artifact</em> backup into an application. A retained artifact is a file on storage; putting its contents back is a documented manual procedure and this product deliberately does not carry it out. See <a href="https://github.com/backupdproject/backupd/blob/main/docs/recovery.md">docs/recovery.md</a>.</p>
+      <p>Neither one restores an <em>artifact</em> backup into an application. A retained artifact is a file on storage; putting its contents back is a documented manual procedure and this product deliberately does not carry it out. See <a href="https://github.com/retnd/retnd/blob/main/docs/recovery.md">docs/recovery.md</a>.</p>
     </div>
     <div class="note warn">
       <span class="note-label">The incremental engine is off until you turn it on</span>
       <p><code>snapshot</code> and <code>repository</code>, and any backup set whose <code>engine</code> is <code>kopia</code>, are gated on one setting that defaults to <strong>off</strong>: <code>incremental_engine.enabled: true</code> in <code>config.yaml</code>, or <code>RETND_INCREMENTAL_ENGINE=1</code> in the environment, which overrides the file in both directions. With it off, those verbs refuse with one sentence naming both ways to enable it, and exit <code>1</code>; over the API it is <code>409 INCREMENTAL_ENGINE_DISABLED</code>.</p>
-      <p>Turning it off never stops a daemon: a configuration that declares incremental sets still loads and still backs up every <code>artifact</code> set on schedule. Artifact backup sets are unaffected by this setting in either position, and <strong>nothing ever converts one engine to the other</strong>. See <a href="https://github.com/backupdproject/backupd/blob/main/docs/incremental-engine.md">docs/incremental-engine.md</a>.</p>
+      <p>Turning it off never stops a daemon: a configuration that declares incremental sets still loads and still backs up every <code>artifact</code> set on schedule. Artifact backup sets are unaffected by this setting in either position, and <strong>nothing ever converts one engine to the other</strong>. See <a href="https://github.com/retnd/retnd/blob/main/docs/incremental-engine.md">docs/incremental-engine.md</a>.</p>
     </div>
 
     <h3 id="cli-modes">Where a change is written, and how you know</h3>
@@ -551,7 +551,7 @@
   <section>
     <h2 id="installer">install_docker_host.py</h2>
     <p>One file, no checkout, nothing outside the Python standard library. Copy it to the machine on its own and run it: it carries the canonical Compose definition inside itself, generated from <code>container/compose.yaml</code> and held to it byte for byte by a test, so there is nothing to clone on the host.</p>
-    <pre><code>curl -fsSLO https://raw.githubusercontent.com/backupdproject/backupd/main/scripts/install/install_docker_host.py
+    <pre><code>curl -fsSLO https://raw.githubusercontent.com/retnd/retnd/main/scripts/install/install_docker_host.py
 python3 install_docker_host.py install</code></pre>
     <p>Every flag below has a default that works, which is what makes that second line the whole command. <a href="index.html#install">The install section on the home page</a> is the short version of this.</p>
 
@@ -650,7 +650,7 @@ python3 install_docker_host.py install</code></pre>
 
 
 <footer>
-  <p>retnd is Apache-2.0 licensed. <a href="https://github.com/backupdproject/backupd">View on GitHub</a></p>
+  <p>retnd is Apache-2.0 licensed. <a href="https://github.com/retnd/retnd">View on GitHub</a></p>
   <p>Screenshots taken against the development fixture API. No screenshot on this page is evidence about a running engine.</p>
 </footer>
 

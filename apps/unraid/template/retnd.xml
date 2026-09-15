@@ -31,13 +31,13 @@
 -->
 <Container version="2">
   <Name>retnd</Name>
-  <Repository>ghcr.io/backupdproject/backupd:0.4.0</Repository>
-  <Registry>https://github.com/backupdproject/backupd/pkgs/container/backupd</Registry>
+  <Repository>ghcr.io/retnd/retnd:0.4.0</Repository>
+  <Registry>https://github.com/retnd/retnd/pkgs/container/backupd</Registry>
   <Network>retnd</Network>
   <MyIP/>
   <Privileged>false</Privileged>
-  <Support>https://github.com/backupdproject/backupd/issues</Support>
-  <Project>https://github.com/backupdproject/backupd</Project>
+  <Support>https://github.com/retnd/retnd/issues</Support>
+  <Project>https://github.com/retnd/retnd</Project>
   <Overview>
     retnd pulls backup artifacts off a remote SFTP source on a schedule, verifies them, retains them under a configurable policy, and keeps a durable catalog of everything it holds.
 
@@ -49,8 +49,8 @@
   </Overview>
   <Category>Backup: Tools: Utilities:</Category>
   <WebUI/>
-  <TemplateURL>https://raw.githubusercontent.com/backupdproject/backupd/main/apps/unraid/template/retnd.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/backupdproject/backupd/main/docs/submission/icon.svg</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/retnd/retnd/main/apps/unraid/template/retnd.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/retnd/retnd/main/docs/submission/icon.svg</Icon>
   <Requires>Run `docker network create retnd` before installing, and install the companion retnd-ui template for the web interface.</Requires>
   <ExtraParams>--read-only --cap-drop=ALL --security-opt=no-new-privileges:true --tmpfs /tmp:size=64m,mode=1777,uid=99,gid=100 --user 99:100</ExtraParams>
   <PostArgs>/retnd-web serve --profile=unraid</PostArgs>

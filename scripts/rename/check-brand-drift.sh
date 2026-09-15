@@ -238,6 +238,19 @@ cd "$repo_root"
 # When the deprecation window closes, the alias and its line here go
 # together, and this script reports the line as unused the moment the alias
 # is gone.
+#
+# R2.5 (#895)'s closing PR adds five more, and all five are the SAME shim
+# seen from five files: the one-release `ghcr.io/backupdproject/backupd`
+# mirror that FR-39 requires because a GHCR package path is not covered by
+# GitHub's transfer redirects. The cutover moved `image.reference` to
+# `ghcr.io/retnd/retnd` and left the old path declared as the mirror, so
+# the ORGANISATION token now survives in exactly the places that declare
+# it, guard it, test it, and explain it to a reader of the two container
+# files. Path-scoped for the reason above: `backupdproject` is otherwise
+# gone from the tree, and a bare alias would make a new absolute link to
+# the old organisation green again, which is the one thing #887's fourth
+# pattern exists to catch. All five are deleted by #947 together with
+# `image.mirror` and guard 7.
 aliases="$(
   cat <<'EOF'
 RM_DEBUG #947 the release after the one that ships this EPIC
@@ -280,66 +293,81 @@ RCLONE_MANAGER_ARTIFACT_PATH@core/internal/lifecycle/verify.go #947 the release 
 RCLONE_MANAGER_ARTIFACT_PATH@core/internal/lifecycle/verify_test.go #947 the release after the one that ships this EPIC
 RCLONE_MANAGER_ARTIFACT_PATH@core/internal/lifecycle/restorecheck.go #947 the release after the one that ships this EPIC
 RCLONE_MANAGER_ARTIFACT_PATH@core/internal/lifecycle/restorecheck_test.go #947 the release after the one that ships this EPIC
+backupdproject@distribution/packaging/canonical.json #947 the release after the one that ships this EPIC
+backupdproject@scripts/bdtools/release/publish_image.py #947 the release after the one that ships this EPIC
+backupdproject@scripts/bdtools/tests/publish_image_guards.py #947 the release after the one that ships this EPIC
+backupdproject@container/Dockerfile #947 the release after the one that ships this EPIC
+backupdproject@container/compose.yaml #947 the release after the one that ships this EPIC
 EOF
 )"
 
 # Identifiers still on `main` that a rename in flight is DELETING (not
 # aliasing), allowed anywhere and expected to disappear.
 #
-# This is EPIC R's surface, and it is why the guard lands red in #887 and
-# goes green only when this list is empty (FR-40, and the Phase 2 exit
-# gate). It began at sixty tokens. R2.5 (#895) drained it to three, and
-# the three that are left are the ones FR-41's ORGANISATION CUTOVER is
-# what deletes -- not a rename anybody can make in this tree:
+# This is EPIC R's surface, and it is why the guard lands red in #887.
+# It began at sixty tokens. R2.5 (#895) drained it to three, and FR-41's
+# ORGANISATION CUTOVER -- performed on 2026-09-15, in #895's closing PR --
+# deleted the third:
 #
-#   backupdproject   the organisation, 343 occurrences. Becomes `retnd`
-#                    when the org is created and both repositories are
-#                    transferred.
-#   backupd          666 of its occurrences are the second half of a
-#                    repository coordinate -- `backupdproject/backupd`,
-#                    `backupdproject/backupd-tests`,
-#                    `ghcr.io/backupdproject/backupd`,
-#                    `raw.githubusercontent.com/backupdproject/backupd/main/...`,
-#                    `backupdproject.github.io/backupd`, the cosign
-#                    identity, and every `backupd#N` issue reference.
-#   Backupd          the display spelling, in the same coordinates and in
-#                    the Synology package name `/var/packages/Backupd`,
-#                    which is a path on an operator's NAS.
+#   backupdproject   GONE. The organisation was created and both
+#                    repositories transferred (`backupdproject/backupd` ->
+#                    `retnd/retnd`, `backupdproject/backupd-tests` ->
+#                    `retnd/retnd-tests`), every absolute coordinate in
+#                    docs, the site, the providers, the scripts and the
+#                    workflows was swept with them, and the 36 occurrences
+#                    left are enumerated: five on `aliases` for the
+#                    one-release `ghcr.io` mirror, five pinned on
+#                    `preexisting` below for the immutable pre-cutover
+#                    signing identity and for the two gate steps that
+#                    spell this guard's own pattern list, and the rest in
+#                    the four files that RECORD the rename.
+#
+# TWO ARE LEFT, and they are not the cutover's and never were:
+#
+#   backupd          2,207 occurrences across 558 files
+#   Backupd          107 occurrences across 32 files
 #
 # THE HONEST PART, because this list is a claim and a claim has a size.
-# `backupd` and `Backupd` also still match about 2,360 occurrences that
-# are NOT repository coordinates, across 568 files, and no EPIC R issue
-# owns them. Measured rather than estimated, and grouped:
+# Not one of those 2,314 is a repository coordinate any more. They are
+# the retired PRODUCT name, measured rather than estimated, and no EPIC R
+# issue owns them:
 #
 #   * code COMMENTS naming the CLI by its retired name -- `backupd
 #     status`, `backupd fetch`, `Backupd could not log ...` -- which
 #     R1.3 (#888) renamed the binary without sweeping and which §2's
 #     inventory has no row for. This is the largest group and it is
 #     prose in Go and Python source rather than in docs.
-#   * host-side directory names in examples and captured transcripts:
-#     `/DATA/AppData/backupd` (CasaOS, ZimaOS), `/volume1/backupd`
-#     (Synology), `/user/appdata/backupd` (Unraid), `/mnt/tank/backupd`
-#     (TrueNAS), `/opt/backupd`. Section 6 of the spec CUT these
-#     deliberately: "Nothing renames a directory on somebody's NAS."
+#   * host-side directory names in examples and captured transcripts,
+#     1,073 of them path-shaped: `/DATA/AppData/backupd` (CasaOS,
+#     ZimaOS), `/volume1/backupd` (Synology), `/user/appdata/backupd`
+#     (Unraid), `/mnt/tank/backupd` (TrueNAS), `/opt/backupd`, and
+#     `/var/packages/Backupd`, which is the Synology package's own
+#     installed identity. Section 6 of the spec CUT these deliberately:
+#     "Nothing renames a directory on somebody's NAS." Sweeping them is
+#     not work left undone, it is work the spec refused.
 #   * the tests and compat cells that EXERCISE the shims on the alias
 #     list -- FR-38's legacy-path adoption, the `/backupd-web`
 #     entrypoint, the installer's LEGACY_* constants. The alias entries
-#     are scoped to the five files that MINT those shims, so the files
-#     that drive them stay here.
+#     are scoped to the files that MINT those shims, so the files that
+#     drive them stay here, and they die with #947.
 #   * `backupd.workflow-hook` and its three sibling container labels
 #     (core/internal/hostrunner), which are runtime identifiers R1.4's
 #     class would have renamed and did not, and which ten acceptance
-#     documents tell an operator to filter on by name.
+#     documents tell an operator to filter on by name; and the local
+#     build tag `backupd:${VERSION:-dev}` in container/compose.yaml,
+#     which #890 left deliberately because it is not a registry path.
 #
-# Keeping those on `pending` is the accurate answer and not a shortcut:
-# `pending` means "an occurrence a rename is deleting, with no alias",
-# and every one of them is either that or a §6 cut nobody has written a
-# `preexisting` pin for. What it is NOT is a claim that this list going
-# empty needs only the org cutover. It needs the org cutover AND a sweep
-# nobody has scoped. #895's PR says so in as many words rather than
-# leaving a reader of three tokens to infer a small job.
+# So this list is NOT empty at the close of EPIC R, and #895's PR says so
+# rather than deleting two entries whose occurrences are still there --
+# which is the violation scripts/rename/selftest.sh plants and catches.
+# They stay on `pending` rather than moving to `preexisting` for one
+# reason: `preexisting` pins token+path, and pinning 568 files would be a
+# list nobody maintains and a guard that cannot see a 569th. `pending`
+# says "an occurrence a rename is deleting, with no alias", and that is
+# what these are -- the rename that deletes them is the prose sweep §2's
+# inventory has no row for, not the coordinate move that is done.
 #
-# Each earlier sub-issue deleted its own entries as it swept them (FR-40):
+# Each sub-issue deleted its own entries as it swept them (FR-40):
 #
 #   the module path and the binaries        R1.3 (#888)
 #   BACKUPD_* variables, the metric series,
@@ -359,19 +387,14 @@ EOF
 #   sentinel                                R2.5 (#895): 57 tokens, in
 #                                           lockstep with the tests
 #                                           repository
-#   `backupdproject` and the repository
-#   coordinates                             FR-41's cutover, which is NOT
-#                                           in #895's in-tree half
-#
-# The repository coordinates are here rather than on the pre-existing list
-# below, deliberately and per FR-40: FR-41 moves them, so they are
-# occurrences in transit like everything else. `backupdproject` is one token
-# covering 904 files for the same reason.
+#   `backupdproject` and every repository
+#   coordinate                              R2.5 (#895) again, in its
+#                                           closing PR, once FR-41's
+#                                           cutover had actually happened
 pending="$(
   cat <<'EOF'
 backupd
 Backupd
-backupdproject
 EOF
 )"
 
@@ -487,6 +510,37 @@ EOF
 # made true by editing it, which is the same argument as EPIC R's other
 # three documents above.
 #
+# R2.5's CLOSING PR, the FR-41 cutover itself, pins five more, and every
+# one of them is a place where the retired ORGANISATION is the correct
+# word and renaming it would make the file say something untrue. This is
+# the `preexisting` half of FR-43's allowlist doing exactly what it is for,
+# one last time:
+#
+#   * distribution/packaging/signing.go and
+#     docs/compliance/release-provenance.md carry the PRE-CUTOVER SIGNING
+#     IDENTITY. A Sigstore certificate SAN is built from the repository the
+#     workflow run happened in, and a signature that has been issued cannot
+#     be reissued -- so `0.3.3` and everything before it verifies against
+#     `https://github.com/backupdproject/backupd/...` for as long as it
+#     exists, and `cosign verify` takes one `--certificate-identity`, so the
+#     documented command is two commands keyed by version (FR-41, ADR 0023
+#     Decision 5.1). Those two files also quote #510's captured `no matching
+#     signatures` output verbatim, which names the same subject. Neither is
+#     a shim and neither has a removal release, which is why they are here
+#     rather than on `aliases`: rewriting either would report a real
+#     artifact as unverifiable, which is #510 exactly.
+#   * .github/workflows/ci.yml's job NAME and scripts/ci-local.sh's
+#     gate-step wording spell this guard's own pattern list, the same way
+#     this file's header does and the same way their existing
+#     `RCLONE_MANAGER_` and `BACKUP_MANAGER_` pins already do. Pinned as
+#     the bare token rather than excluded by path, so a real new link to the
+#     old organisation in either file is still a creation.
+#   * docs/adr/0023-moving-the-repository-coordinates-once-and-last.md is
+#     the ADR whose SUBJECT is this move: its before/after table is the
+#     record of which coordinate became which, and a record of a rename
+#     cannot be made true by renaming it. It already carries `rclone-manager`
+#     and `backup-manager` pins for precisely that reason.
+#
 # Every line is <token> <path>, one occurrence-site per line. Adding one of
 # these names to a file that is not listed is a creation, and this guard
 # treats it as one.
@@ -564,10 +618,15 @@ BACKUPD_WORKFLOW_STATUS docs/EPIC-R-rename-backupd-to-retnd.md
 BackupdError docs/design/activity-error-diagnostic.html
 BackupdError docs/EPIC-R-rename-backupd-to-retnd.md
 BackupdError docs/EPIC-R-rename-inventory.md
+backupdproject .github/workflows/ci.yml
 backupdproject .github/workflows/rclone-upgrade-gate.yml
+backupdproject distribution/packaging/signing.go
+backupdproject docs/adr/0023-moving-the-repository-coordinates-once-and-last.md
+backupdproject docs/compliance/release-provenance.md
 backupdproject docs/conformance/epic-r-matrix.md
 backupdproject docs/EPIC-R-rename-backupd-to-retnd.md
 backupdproject docs/EPIC-R-rename-inventory.md
+backupdproject scripts/ci-local.sh
 BackupdWidget docs/conformance/epic-r-matrix.md
 BackupdWidget docs/EPIC-R-rename-backupd-to-retnd.md
 bm_routed scripts/bdtools/e2e/two_machine_backup.py

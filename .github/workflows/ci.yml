@@ -495,8 +495,10 @@ jobs:
     # #887 pointed the guard at the `backupd` family, the `backupdproject`
     # organisation and the two earlier brand words the org-wide grep found
     # still live; this is what stops a fourth rename from finding a fresh
-    # crop. The guard is green only because every surviving occurrence is on
-    # its `pending` list, which is what EPIC R empties.
+    # crop. FR-41's cutover (#895) took the organisation token off the
+    # `pending` list by moving the coordinates; what is left on it is the
+    # retired product name in prose and in host-side paths, which section 6
+    # of the spec cut deliberately.
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -524,15 +526,6 @@ jobs:
 
       - name: those two can actually fail (mutation self-test)
         run: bash scripts/brand/selftest.sh
-
-      # R1.3 (#888) swept the module path to github.com/retnd/retnd while
-      # the module is still fetched from backupdproject/backupd. Nothing
-      # resolves the path here -- every build is local, over the five
-      # go.mod files' `replace` directives -- so the mismatch costs
-      # nothing until one line of documentation tells a reader to fetch
-      # it. #895 deletes this step along with the check.
-      - name: nothing instructs a reader to go install/go get this module (FR-41)
-        run: bash scripts/rename/check-no-module-fetch-instruction.sh
 
   api-contract:
     name: /api/v1 contract drift (#166)

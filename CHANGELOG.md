@@ -690,6 +690,58 @@
 
 ### Changed
 
+- **The repository coordinates moved, and EPIC R is finished** (EPIC R #885,
+  R2.5 #895, FR-41, ADR 0023). The organisation `backupdproject` became
+  `retnd` on 2026-09-15: `backupdproject/backupd` is `retnd/retnd` and
+  `backupdproject/backupd-tests` is `retnd/retnd-tests`. This is the last act
+  of the rename and it happened after every in-tree gate was green, which is
+  the ordering ADR 0023's first decision exists for.
+
+  **What an operator has to change.** Three references are not covered by
+  GitHub's redirects and they are the whole of the user-visible cost. The
+  documentation site is `https://retnd.github.io/retnd/`; the old origin
+  answers `404` and is gone rather than redirected. The installer URL in
+  `README.md` is
+  `https://raw.githubusercontent.com/retnd/retnd/main/scripts/install/install_docker_host.py`
+  — the old raw path still answers today, but it is not a guarantee anybody
+  owes you, so a runbook pinning it should be updated. And the published image
+  is `ghcr.io/retnd/retnd`, with `ghcr.io/backupdproject/backupd` pushed
+  alongside it for exactly one release (FR-39) so an unedited compose file
+  keeps pulling; that mirror is retired by #947, together with every other
+  one-release window this epic opened.
+
+  **`cosign verify` is two commands now, keyed by version.** A Sigstore
+  certificate binds a signature to the repository the release workflow ran in,
+  and a signature that has been issued cannot be reissued. So `0.3.3` and
+  everything before it verifies against the `backupdproject/backupd` identity
+  for as long as it exists, and everything published after the transfer
+  verifies against the `retnd/retnd` one.
+  [`docs/compliance/release-provenance.md`](docs/compliance/release-provenance.md)
+  prints both, with the boundary release named, and a test refuses that file if
+  it drops either one or pins anything else. Any downstream policy pinning the
+  old identity keeps working for old releases and must add the new one for new
+  ones.
+
+  **What did not need doing, recorded rather than ticked.** Two items on the
+  org-carry-over checklist turned out to be moot, and saying which is the point
+  of having a checklist. There is no GHCR package to move:
+  `gh api orgs/backupdproject/packages?package_type=container` answers an empty
+  list, so nothing was ever published under the old package path. And there is
+  no branch protection to restore:
+  `gh api repos/retnd/retnd/branches/main/protection` answers
+  `404 Branch not protected`, and the same call answered the same against the
+  old coordinates *before* the transfer, so "restored" was the wrong word in
+  the spec and in the conformance matrix both.
+
+  **Everything a redirect does cover was checked rather than assumed**, with
+  three probes recorded in the closing PR: a clone of the old URL still
+  resolves, issue #895 resolves at both coordinates, and the module path now
+  equals `git remote get-url origin`. The `go install`/`go get` scan that held
+  that last mismatch shut is deleted, because the instruction it forbade is now
+  simply correct. `docs/conformance/epic-r-matrix.md` has no `BLOCKED` row
+  left: 21 `PASS`, 13 `PARTIAL`, and the four rows that are `PARTIAL` because
+  their evidence cannot be produced from here say so in as many words.
+
 - **The brand art is redrawn rather than re-lettered, and there is now an
   inventory that fails both ways** (EPIC R #885, R2.3 #893, FR-44). The
   wordmark was an SVG `<text>` element in a monospace face with the trailing

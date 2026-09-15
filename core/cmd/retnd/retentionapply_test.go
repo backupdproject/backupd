@@ -347,7 +347,7 @@ func TestRetentionApplyRefusalNamesAStalePlan(t *testing.T) {
 //
 // `retention` previews in both its modes and says so, and that sentence
 // is pinned by core/tests/compat and by the black-box suite in
-// backupdproject/backupd-tests. Adding a verb beside it must not turn the
+// retnd/retnd-tests. Adding a verb beside it must not turn the
 // bare form into something that deletes, which is the exact confusion
 // `retention --dry-run` being inert was designed to avoid.
 func TestRun_RetentionApplyIsNotTheBarePreview(t *testing.T) {

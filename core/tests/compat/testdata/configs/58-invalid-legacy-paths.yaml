@@ -1,0 +1,43 @@
+# FR-38's decision, asserted from the outside: the legacy-path adoption is
+# a pair of compiled-in constants (core/legacypath), NOT a configuration
+# key. This fixture is the key that was never added, and the refusal below
+# is what makes "no new config key exists" checkable rather than a claim
+# in a design note.
+#
+# Row V.6 of docs/conformance/epic-r-matrix.md is what this cell answers.
+# The claim is that a configuration written by this build parses under the
+# PREVIOUS build, and the only way a rename could have broken that is by
+# inventing a key: Load decodes with KnownFields(true), so a key this
+# build wrote and an older one never knew is a hard refusal on downgrade,
+# and an operator who rolled back would find their config rejected rather
+# than degraded. A build that took the `legacy_paths:` route would fail
+# that silently -- everything works until somebody goes back one version.
+#
+# So the falsification is direct: add `legacy_paths` to config.Config and
+# this fixture stops being refused, which rewrites the pinned line below
+# and turns the cell red. That is watched rather than described; #895's PR
+# records the red run.
+#
+# 52-invalid-unknown-field.yaml proves the same MECHANISM on an ordinary
+# typo. This one names the specific key EPIC R was tempted by, because a
+# mechanism that fires on `polling_interval` says nothing about whether
+# anybody used it here.
+legacy_paths:
+  state: /var/lib/backupd
+  config: /etc/backupd
+
+state:
+  database: /var/lib/retnd/state.db
+
+sources:
+  - id: production
+    backup_sets:
+      - id: postgres-primary
+        remote:
+          type: local
+        remote_path: /srv/exports/postgres
+        local_path: /backups/production/postgres
+        completion:
+          strategy: stable
+          stable_for: 10m
+        stale_after: 30h
