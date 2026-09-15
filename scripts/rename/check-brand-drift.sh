@@ -366,6 +366,12 @@ EOF
 # under the old coordinates. GitHub's transfer preserves `#N` and redirects
 # the URL, and rewriting a record of where work was tracked falsifies it.
 #
+# scripts/ci-local.sh is a sixth: its gate-step prose names the prefixes the
+# step looks for (`RCLONE_MANAGER_`, `BACKUP_MANAGER_`), exactly as this
+# file's own header does, and this file is excluded by path for that reason.
+# Pinned as the bare prefix rather than excluded by path, so a real
+# `RCLONE_MANAGER_SOMETHING` added to the gate script is still a creation.
+#
 # Two more groups are handled by path exclusion below rather than by a pin,
 # because they are machine-written or wholly historical and pinning them
 # would mean editing this list on every release: CHANGELOG.md, which is the
@@ -385,9 +391,11 @@ backup manager docs/EPIC-R-rename-inventory.md
 Backup Manager docs/EPIC-R-rename-inventory.md
 backup_manager docs/EPIC-R-rename-backupd-to-retnd.md
 backup_manager docs/EPIC-R-rename-inventory.md
+BACKUP_MANAGER_ scripts/ci-local.sh
 BACKUP_MANAGER_API_PASSWORD docs/design/activity-terminal.html
 BACKUP_MANAGER_API_URL docs/design/activity-terminal.html
 BACKUP_MANAGER_API_USERNAME docs/design/activity-terminal.html
+backup_manager_state docs/conformance/epic-r-matrix.md
 backup-manager docs/EPIC-R-rename-backupd-to-retnd.md
 backup-manager docs/EPIC-R-rename-inventory.md
 backupd .github/workflows/rclone-upgrade-gate.yml
@@ -453,8 +461,10 @@ rclone_manager docs/EPIC-R-rename-inventory.md
 RCLONE_MANAGER_ docs/conformance/epic-r-matrix.md
 RCLONE_MANAGER_ docs/EPIC-R-rename-backupd-to-retnd.md
 RCLONE_MANAGER_ docs/EPIC-R-rename-inventory.md
+RCLONE_MANAGER_ scripts/ci-local.sh
 RCLONE_MANAGER_MACHINES_NETWORK docs/EPIC-R-rename-backupd-to-retnd.md
 RCLONE_MANAGER_MACHINES_NETWORK docs/EPIC-R-rename-inventory.md
+RCLONE_MANAGER_NEW_THING docs/conformance/epic-r-matrix.md
 RCLONE_MANAGER_NEW_THING docs/EPIC-R-rename-backupd-to-retnd.md
 RCLONE_MANAGER_SOURCE_PORT docs/EPIC-R-rename-backupd-to-retnd.md
 RCLONE_MANAGER_SOURCE_PORT docs/EPIC-R-rename-inventory.md

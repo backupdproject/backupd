@@ -367,10 +367,10 @@ func TestTheMatrixHasARowPerGateLine(t *testing.T) {
 // This test used to require one ledger row per spec guard, full stop, and
 // that is EPIC E's matrix's own promise rather than a property of matrices.
 // EPIC R's opens by promising one row "per planted violation the spec names
-// that no gate line already carries": its spec names fifteen guards, ten of
-// which its gate rows already carry, and its ledger is the six that are left.
-// Held to EPIC E's rule it would have to restate nine guards it already
-// certifies, which is how a table gets padded with rows nobody reads.
+// that no gate line already carries": its spec's section 4 names eighteen
+// guards, twelve of which its gate rows already carry, and its ledger is the
+// six that are left. Held to EPIC E's rule it would have to restate those
+// twelve, which is how a table gets padded with rows nobody reads.
 //
 // Which gate row covers which guard is a judgement both documents make in
 // prose, so it cannot be computed here. What can, and what #887 checks
