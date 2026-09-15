@@ -19,9 +19,9 @@ cannot reach.
 ## The one structural thing to understand first
 
 Unraid's Docker template model describes exactly **one** container per template.
-The canonical image needs **two**: `/backupd-web serve` (the engine: API,
+The canonical image needs **two**: `/retnd-web serve` (the engine: API,
 scheduler, local authentication, no published port) and
-`/backupd-web serve-ui` (the static UI plus a reverse proxy, the only
+`/retnd-web serve-ui` (the static UI plus a reverse proxy, the only
 published port). There is no single command that does both, by design, so the
 package ships two templates.
 
@@ -70,11 +70,11 @@ ssh root@<unraid> 'gunzip -c /mnt/user/backupd.tar.gz | docker load'
 ### 0.2 Create the user-defined network
 
 ```bash
-docker network create backupd
-docker network inspect backupd --format '{{.Driver}} {{.Name}}'
+docker network create retnd
+docker network inspect retnd --format '{{.Driver}} {{.Name}}'
 ```
 
-- [ ] A user-defined bridge network named `backupd` exists
+- [ ] A user-defined bridge network named `retnd` exists
 - [ ] It appears in the **Network Type** dropdown in Unraid's Docker template editor
 
 ### 0.3 Create the appdata and backup shares
@@ -89,7 +89,7 @@ mkdir -p /mnt/user/backups/backupd
 chmod 700 /mnt/user/appdata/backupd/secrets
 ```
 
-`/mnt/user/backups` must be a real user share Backupd can write to, not a
+`/mnt/user/backups` must be a real user share retnd can write to, not a
 directory inside appdata. Appdata holds the catalog database; the share holds
 retained backup data. §19.2 makes those two separate security domains, and the
 whole removal criterion below depends on them being separate.
@@ -146,7 +146,7 @@ takes. On a reinstall the same command would rewrite the retained backup store.
 > confirmed on that same step, and no `config.yaml` is written by hand
 > at all.
 
-`/backupd-web serve` starts without a `config.yaml` and serves the
+`/retnd-web serve` starts without a `config.yaml` and serves the
 first-run setup flow instead (#176), but a config file that EXISTS and does not
 validate is still a hard startup failure. Given the read-only mount above, create
 all three before the first start.
@@ -156,7 +156,7 @@ now a writable directory the application owns, so the container can create and r
 `config.yaml` itself, and an empty directory is a legitimate state rather than a broken
 deployment. Two things nonetheless keep this step here. The directory itself must exist
 and be owned by the app's uid/gid before the first start, because a bind mount does not
-create or chown its source. And `/backupd-web serve` still refuses to start
+create or chown its source. And `/retnd-web serve` still refuses to start
 without a valid config: removing that refusal, and serving a first-run flow instead, is
 #176's work and is not merged. Once it is, everything below except creating and owning
 the directory becomes optional.
@@ -183,10 +183,10 @@ in `apps/unraid/README.md`.
 
 ## Step 1 — Install the engine template
 
-1. Copy `apps/unraid/template/backupd.xml` to
-   `/boot/config/plugins/dockerMan/templates-user/my-backupd.xml` on the
+1. Copy `apps/unraid/template/retnd.xml` to
+   `/boot/config/plugins/dockerMan/templates-user/my-retnd.xml` on the
    Unraid flash drive.
-2. **Docker → Add Container**, and pick `backupd` from the
+2. **Docker → Add Container**, and pick `retnd` from the
    **user templates** section of the template dropdown.
 3. Check every mapping against step 0's paths and the defaults the template
    supplied. Change nothing you did not have to.
@@ -197,28 +197,28 @@ in `apps/unraid/README.md`.
       and the right default
 - [ ] The container starts
 - [ ] It reaches Docker health **healthy** (it inherits the image's own
-      `HEALTHCHECK`, `/backupd status`, which is the right answer here:
+      `HEALTHCHECK`, `/retnd status`, which is the right answer here:
       an Unraid template declares no start-ordering dependency, so nothing waits
       on this verdict and it is the backup-freshness badge FR-24 means it to be.
       On a fresh install it will be red until the first backup lands)
 - [ ] It has **no published port** (`docker port <engine>` prints nothing)
-- [ ] It is attached to the `backupd` network
+- [ ] It is attached to the `retnd` network
 
 ---
 
 ## Step 2 — Install the Web UI template
 
-1. Copy `apps/unraid/template/backupd-ui.xml` to
-   `/boot/config/plugins/dockerMan/templates-user/my-backupd-ui.xml`.
-2. **Docker → Add Container**, pick `backupd-ui`.
+1. Copy `apps/unraid/template/retnd-ui.xml` to
+   `/boot/config/plugins/dockerMan/templates-user/my-retnd-ui.xml`.
+2. **Docker → Add Container**, pick `retnd-ui`.
 3. Apply.
 
 - [ ] The container starts and reaches Docker health **healthy** via its own
-      `/backupd-web healthcheck` override, not the image's
-      `/backupd status` (which would fail: this container has no config
+      `/retnd-web healthcheck` override, not the image's
+      `/retnd status` (which would fail: this container has no config
       file and no state database)
 - [ ] It publishes exactly one port
-- [ ] It is attached to the `backupd` network
+- [ ] It is attached to the `retnd` network
 - [ ] It has **no** volume mappings at all: it never reads the config, the key,
       `known_hosts`, or either data directory
 
@@ -274,7 +274,7 @@ generic Web host provides (§13A).
       hash, never a plaintext password, and holds the recovery address and SMTP
       settings with the SMTP password as a secret reference rather than a value:
       `grep` it for the password you typed and find nothing
-- [ ] Backupd's login is completely independent of Unraid's own root
+- [ ] retnd's login is completely independent of Unraid's own root
       password, and neither can log into the other
 
 ---
@@ -332,8 +332,8 @@ the case most likely to lose state.
    find /mnt/user/backups -type f -printf '%p %s\n' | sort > /tmp/before-update.txt
    ```
 2. Push or side-load a newer image tag.
-3. **Docker → backupd → Force Update** (or edit the tag and Apply). Do the
-   same for `backupd-ui`.
+3. **Docker → retnd → Force Update** (or edit the tag and Apply). Do the
+   same for `retnd-ui`.
 4. Compare afterwards:
    ```bash
    find /mnt/user/backups -type f -printf '%p %s\n' | sort > /tmp/after-update.txt
@@ -379,8 +379,8 @@ storage step, because after the removal there is nothing left to compare
 against, and any deletion the comparison turns up is a release blocker rather
 than a finding to triage.
 
-1. **Docker → backupd → Remove**, and remove the image too.
-2. Repeat for `backupd-ui`.
+1. **Docker → retnd → Remove**, and remove the image too.
+2. Repeat for `retnd-ui`.
 
 - [ ] Both containers are gone
 
@@ -415,7 +415,7 @@ part of it can run on a developer laptop, so it lives here.
 - [ ] `<TemplateURL>`, `<Project>`, `<Support>`, `<Icon>` and `<Overview>` all
       resolve to real, reachable URLs
 - [ ] `<Category>` is a category CA actually recognises
-- [ ] `<Requires>` states the `docker network create backupd`
+- [ ] `<Requires>` states the `docker network create retnd`
       prerequisite from step 0.2 clearly enough that a first-time installer sees
       it before installing
 - [ ] Installing from CA (not from a hand-copied file) produces the same result
