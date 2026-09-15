@@ -430,6 +430,7 @@ BACKUPD_SIGNAL_EXIT_CHILD_MODE docs/EPIC-R-rename-backupd-to-retnd.md
 BACKUPD_STEP_ docs/EPIC-R-rename-backupd-to-retnd.md
 BACKUPD_STEP_NAME docs/EPIC-R-rename-backupd-to-retnd.md
 BACKUPD_WORKFLOW_STATUS docs/EPIC-R-rename-backupd-to-retnd.md
+backupd_workflow_ docs/conformance/epic-r-matrix.md
 BackupdError docs/design/activity-error-diagnostic.html
 BackupdError docs/EPIC-R-rename-backupd-to-retnd.md
 BackupdError docs/EPIC-R-rename-inventory.md
