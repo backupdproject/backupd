@@ -347,12 +347,12 @@ CARRIED_RELEASE_DIGEST = "sha256:f490abb3c2148eb47849597baff0bee820f70c8d7f3e2b9
 # pins to canonical.json, and a second literal beside it is the copy
 # nobody looks at.
 RELEASE_REGISTRY = "ghcr.io"
-RELEASE_REPOSITORY = "backupdproject/backupd"
+RELEASE_REPOSITORY = "retnd/retnd"
 
 # Where a newer installer comes from, printed by the update check. An
 # installer can say a newer release exists; it cannot install one, and
 # offering to would be the floating default this design rules out.
-RELEASE_DOWNLOAD_PAGE = "https://github.com/backupdproject/backupd/releases"
+RELEASE_DOWNLOAD_PAGE = "https://github.com/retnd/retnd/releases"
 
 # How long a registry read may take. Short on purpose: every one of them
 # is optional, none of them changes what is installed, and an operator
@@ -1591,7 +1591,7 @@ def render_cli_wrapper(args) -> str:
         "  echo \"\" >&2\n"
         f"  echo \"This runs {name} inside the engine's own container and needs a\" >&2\n"
         f"  echo \"command to run. '{name} status' is a safe first one; every command\" >&2\n"
-        "  echo \"is listed at https://backupdproject.github.io/backupd/reference.html\" >&2\n"
+        "  echo \"is listed at https://retnd.github.io/retnd/reference.html\" >&2\n"
         "  exit 2\n"
         "fi\n"
         "\n"
@@ -2855,18 +2855,22 @@ EMBEDDED_COMPOSE_YAML = """\
 # image also carries `/backupd-web` as a REAL HARDLINK to `/retnd-web`: one
 # inode, two names, no second copy of a ~40 MB binary and no shell wrapper
 # (the runtime image is distroless and has no shell). It is kept for
-# exactly one release and removed by #895. There is deliberately no
+# exactly one release and removed by #947. There is deliberately no
 # `/backupd` beside it: no compose file this project has ever shipped named
 # `/backupd` in a `command:` or a `healthcheck:`, so there is no pinned
 # file that would need one.
 #
-# What this change does NOT move is the IMAGE REFERENCE. `image:` below
-# stays `backupd:${VERSION:-dev}`, and the published one stays
-# ghcr.io/backupdproject/backupd. A registry path is not covered by
-# GitHub's repository-transfer redirects, so moving it means publishing
-# under both names for an overlap release; that is #895's job, with its own
-# mirror window, and doing it here would strand every existing
-# `docker pull`.
+# What this change did NOT move is the IMAGE REFERENCE, and #895's cutover
+# moved half of it. `image:` below still reads `backupd:${VERSION:-dev}`,
+# which is a LOCAL build tag and not a registry path -- `docker compose
+# build` resolves it against nothing but this daemon. The PUBLISHED
+# reference is `ghcr.io/retnd/retnd` now, with
+# `ghcr.io/backupdproject/backupd` declared as a one-release mirror in
+# distribution/packaging/canonical.json: a registry path is not covered by
+# GitHub's repository-transfer redirects, so both are published for one
+# release rather than the old one being abandoned, and #947 closes that
+# window. The local tag is the retired name in a string an operator does
+# not pin, which is the residue EPIC R's `pending` list still carries.
 #
 # TWO SERVICES, ONE IMAGE (project-owner requirement, folded in before
 # this issue merged): `retnd` is the engine - core service,
@@ -3488,7 +3492,7 @@ services:
 """
 
 # Written by scripts/install/embed_compose.py alongside the blob above.
-EMBEDDED_COMPOSE_SHA256 = "c63835e859f06ca7858117572ff978d8c244d12ce6a7219d2978d21d07a9c014"
+EMBEDDED_COMPOSE_SHA256 = "5c704d85012573ea0e0c1d67f161f359103e58e51c9f04640191cc37d3d254a7"
 
 
 def embedded_compose_bytes() -> bytes:
@@ -4135,7 +4139,7 @@ def render_workflow_runner_unit(args) -> str:
         "# distroless and has no shell. It listens on a Unix socket only.",
         "[Unit]",
         "Description=retnd host workflow runner",
-        "Documentation=https://github.com/backupdproject/backupd/blob/main/docs/adr/0020-host-workflow-runner.md",
+        "Documentation=https://github.com/retnd/retnd/blob/main/docs/adr/0020-host-workflow-runner.md",
         "After=network.target",
         "",
         "[Service]",
@@ -6182,7 +6186,7 @@ class BridgeDoctor:
         lines = [
             "[Unit]",
             "Description=retnd: re-assert this deployment's own Docker bridge firewall rules",
-            "Documentation=https://github.com/backupdproject/backupd/blob/main/docs/install.md",
+            "Documentation=https://github.com/retnd/retnd/blob/main/docs/install.md",
             "# Ordered after everything that constructs the ruleset, so this runs on top of",
             "# whatever they built rather than underneath it. After= only, never Requires=:",
             "# a host without one of these should still get its rules, not a failed unit.",
@@ -6234,7 +6238,7 @@ class BridgeDoctor:
         return "\n".join([
             "[Unit]",
             "Description=retnd: periodically re-assert the Docker bridge firewall rules",
-            "Documentation=https://github.com/backupdproject/backupd/blob/main/docs/install.md",
+            "Documentation=https://github.com/retnd/retnd/blob/main/docs/install.md",
             "",
             "[Timer]",
             "# The boot safety net, in case the service's own After= ordering is not enough",
@@ -7489,7 +7493,7 @@ def _add_install_prereq_groups(sp: argparse.ArgumentParser) -> None:
                               "test, so this installer needs no checkout on the host. Supply it to install "
                               "a locally modified runtime from a checkout; naming a path that does not "
                               "exist is still a refusal.")
-    runtime.add_argument("--image", default="ghcr.io/backupdproject/backupd:0.4.0",
+    runtime.add_argument("--image", default="ghcr.io/retnd/retnd:0.4.0",
                          action=_RecordsThatItWasSupplied,
                          help="Image reference both services run.")
     runtime.add_argument("--release", default=CARRIED_RELEASE,
@@ -7663,7 +7667,7 @@ def build_parser() -> argparse.ArgumentParser:
             "      --prefix /volume1/retnd \\\n"
             "      --ssh-key /volume1/retnd/secrets/id_ed25519 \\\n"
             "      --known-hosts /volume1/retnd/secrets/known_hosts \\\n"
-            "      --image ghcr.io/backupdproject/backupd:0.4.0\n"
+            "      --image ghcr.io/retnd/retnd:0.4.0\n"
         ),
     )
     _add_shared_groups(sp_install)

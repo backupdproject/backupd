@@ -745,7 +745,7 @@ func ArtifactParityComplaints(targets map[string]DistributionTarget, recorded []
 // repository with no tags is an abbreviated commit) and the tag every
 // provider package advertises is a semantic version that resolves
 // nowhere. The moment a push happens, the two must be the same string,
-// or `docker run ghcr.io/backupdproject/backupd:1.0.0 /backupd
+// or `docker run ghcr.io/retnd/retnd:1.0.0 /backupd
 // version` answers with a commit SHA that the listing never mentions.
 func VersionParityComplaints(published bool, canonicalTag, manifestVersion, bundleVersion string, versionIsABuildStamp bool) []string {
 	var out []string

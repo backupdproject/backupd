@@ -97,7 +97,7 @@ import (
 // # The Web UI itself
 //
 // A browser is not driven from here. The Web UI's data is these responses:
-// it holds no configuration of its own, and backupdproject/backupd-tests
+// it holds no configuration of its own, and retnd/retnd-tests
 // Suite B is what drives the rendered thing. What is driven here is the
 // exact HTTP surface the browser talks to, through the published port,
 // which is the half of "visible in the Web UI" that can be wrong.

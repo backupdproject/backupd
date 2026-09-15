@@ -152,6 +152,21 @@ func TestRecordedSigningIdentityIsTheOneWeVerifyWith(t *testing.T) {
 // TestComplianceDocsPrintTheCommandThatPasses is the last hop. The docs
 // are where somebody outside the project reads the command, so a verified
 // bundle and a stale doc is still #510 from their side of it.
+//
+// FR-41 (#895) made this two commands rather than one. The repository was
+// transferred on 2026-09-15 and a certificate SAN is built out of the
+// repository the run happened in, so a release published before the
+// transfer verifies only against the old identity and one published after
+// it only against the new one. `cosign verify` takes a single
+// `--certificate-identity`, so there is no command that covers both and
+// the doc has to present them keyed by version.
+//
+// Which means the rule here is no longer "every pin is the current
+// identity". It is: every pin is one of exactly TWO known identities,
+// both appear, and the release that divides them is named. A pin that is
+// neither is still the #510 failure, and a doc that dropped one of the
+// two would hand somebody the wrong identity for their release, which is
+// the same failure with the same symptom.
 func TestComplianceDocsPrintTheCommandThatPasses(t *testing.T) {
 	const doc = "docs/compliance/release-provenance.md"
 	raw, err := os.ReadFile(Path(doc))
@@ -178,14 +193,33 @@ func TestComplianceDocsPrintTheCommandThatPasses(t *testing.T) {
 	if len(pins) == 0 {
 		t.Fatalf("%s prints no --certificate-identity at all, so it does not tell a reader what to pin", doc)
 	}
+
+	var current, pre int
 	for _, pin := range pins {
 		if strings.Contains(pin, "refs/tags/") {
 			t.Errorf("%s pins a tag ref:\n  %s\nNo release has been signed under one, so a reader following this gets a verification failure against a genuinely signed image, which is #510", doc, pin)
 			continue
 		}
-		if !strings.Contains(pin, SigningIdentity) {
-			t.Errorf("%s pins\n  %s\nwhich is not the identity this workflow produces:\n  %s", doc, pin, SigningIdentity)
+		switch {
+		case strings.Contains(pin, SigningIdentity):
+			current++
+		case strings.Contains(pin, PreCutoverSigningIdentity):
+			pre++
+		default:
+			t.Errorf("%s pins\n  %s\nwhich is neither the identity this workflow produces now:\n  %s\nnor the one releases up to %s were signed under:\n  %s",
+				doc, pin, SigningIdentity, LastPreCutoverRelease, PreCutoverSigningIdentity)
 		}
+	}
+
+	if current == 0 {
+		t.Errorf("%s pins no command carrying the identity this workflow produces (%s), so a reader verifying a release published after the transfer is told to pin an identity it cannot carry", doc, SigningIdentity)
+	}
+	if pre == 0 {
+		t.Errorf("%s pins no command carrying %s, so a reader verifying %s or earlier gets \"no matching signatures\" against a correctly signed image, which is #510 with the identity moved instead of the ref",
+			doc, PreCutoverSigningIdentity, LastPreCutoverRelease)
+	}
+	if !strings.Contains(text, LastPreCutoverRelease) {
+		t.Errorf("%s prints two identities and never names %s, the release that divides them, so a reader cannot tell which of the two applies to the image they hold", doc, LastPreCutoverRelease)
 	}
 }
 

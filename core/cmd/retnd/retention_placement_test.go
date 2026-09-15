@@ -116,7 +116,7 @@ func TestRun_RetentionNamesTheMoveItWouldMake(t *testing.T) {
 // this repository.
 //
 // This command's per-artifact output is pinned by the black-box contract
-// suite in backupdproject/backupd-tests (suites/cli/cases/retention/), and
+// suite in retnd/retnd-tests (suites/cli/cases/retention/), and
 // every case there is a medium-free deployment. A deployment with nowhere
 // else to put anything has nothing to say about placement, so the section
 // is not printed at all, and those cases stay byte-identical. Printing an

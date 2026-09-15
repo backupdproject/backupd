@@ -3,7 +3,7 @@
 ## Status
 
 **Type:** EPIC / Detailed implementation specification
-**Repository:** `backupdproject/backupd`
+**Repository:** `retnd/retnd`
 **Parent / predecessor EPICs:** EPIC A (#1, backup engine), EPIC B (#81, provider-neutral core and multi-NAS apps)
 **Primary implementation root:** `core/`
 **Tracker issue:** #232 (sub-issues #233 through #242)

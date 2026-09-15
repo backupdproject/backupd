@@ -32,7 +32,7 @@ services:
   # backup scheduler, one process sharing one shutdown context. It holds
   # the state database and the credentials, and publishes no port at all.
   retnd:
-    image: ${IMAGE:-ghcr.io/backupdproject/backupd:0.4.0}
+    image: ${IMAGE:-ghcr.io/retnd/retnd:0.4.0}
     command: ["/retnd-web", "serve", "--profile=synology"]
 
     user: "${PUID:-1026}:${PGID:-100}"
@@ -118,7 +118,7 @@ services:
   # operator ever opens. There is no DSM desktop launcher on this path,
   # which is one of the two things the .spk still does that this does not.
   web-ui:
-    image: ${IMAGE:-ghcr.io/backupdproject/backupd:0.4.0}
+    image: ${IMAGE:-ghcr.io/retnd/retnd:0.4.0}
     command: ["/retnd-web", "serve-ui", "--profile=synology"]
 
     depends_on:

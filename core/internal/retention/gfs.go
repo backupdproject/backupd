@@ -558,7 +558,7 @@ func GFSDecide(now time.Time, cfg config.Retention, set model.BackupSetID, recor
 		// TestGFSDecideDoesNotFlagTheBatchIngestDiscoveryTieAsASiblingCollision
 		// (bucketkey_test.go) pins exactly this against the six-artifact
 		// backlog fixture the pinned CLI contract suite in
-		// backupdproject/backupd-tests also exercises. A producer
+		// retnd/retnd-tests also exercises. A producer
 		// timestamp tie has no such innocent explanation: two artifacts
 		// in one backup set reporting an identical remote modification
 		// time, to the second, is what two files of one backup run

@@ -6,7 +6,7 @@ Implement a purpose-built backup lifecycle manager in its own
 repository:
 
 ``` text
-backupdproject/backupd
+retnd/retnd
 ```
 
 The manager will run on a UGREEN NAS and ingest backup artifacts that
@@ -1950,7 +1950,7 @@ Potential:
 
 # Acceptance Criteria
 
--   [ ] Tool lives in its own repository, `backupdproject/backupd`.
+-   [ ] Tool lives in its own repository, `retnd/retnd`.
 -   [ ] Implementation is Go.
 -   [ ] rclone is embedded as Go modules.
 -   [ ] rclone is not forked.

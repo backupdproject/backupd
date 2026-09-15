@@ -165,7 +165,7 @@ func cmdArtifacts(args []string) int {
 	// The marker only ever appears on those rows, so a deployment that
 	// has never removed a backup set prints exactly what it printed
 	// before. That keeps this command's pinned cases in
-	// backupdproject/backupd-tests (suites/cli/) unchanged.
+	// retnd/retnd-tests (suites/cli/) unchanged.
 	ungoverned, err := unconfiguredSetIDs(ctx, svc)
 	if err != nil {
 		return fail(err)

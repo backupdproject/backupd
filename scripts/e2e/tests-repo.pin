@@ -236,7 +236,7 @@
 # landing a four-byte dangling link and exec'ing it. They pass `-L` now, which
 # is a no-op against a pre-rename image. The same defect was in this
 # repository's own release scripts and is fixed on the image branch.
-TESTS_REPO_URL=https://github.com/backupdproject/backupd-tests.git
+TESTS_REPO_URL=https://github.com/retnd/retnd-tests.git
 #
 # Moved to 1b79f8d, backupd-tests#60, off their merged main and not
 # off the branch, for the reason the paragraph about a794c38 above already
@@ -267,7 +267,7 @@ TESTS_REPO_URL=https://github.com/backupdproject/backupd-tests.git
 # #624, so #60's three cases are red over there until it moves to whatever
 # commit this branch merges as. That is the same manual half every paragraph
 # above keeps flagging.
-TESTS_REPO_SHA=e5eeb5ab4a35e6bfd473886413222a0be86032cd
+TESTS_REPO_SHA=c75e4dd0026dbff43ccae77433989d8976f36ae7
 #
 # Moved to bccd71c, backupd-tests#65, off their merged main and not
 # off the branch, for the reason the paragraph about a794c38 above already
@@ -577,3 +577,29 @@ TESTS_REPO_SHA=e5eeb5ab4a35e6bfd473886413222a0be86032cd
 # changes on this side after 72c940e9 is provenance records, the
 # brand-drift guard's lists and the conformance matrix, none of which any
 # of those suites observes. Nothing over there is red for it.
+#
+# Moved to c75e4dd, which is retnd-tests#87, and it is the other half of
+# FR-41's cutover. That repository's `go.mod` still declared its module
+# under the retired organisation while it was being fetched from
+# `github.com/retnd/retnd-tests`, which is the same mismatch R1.3 (#888)
+# closed on this side and which #895's own matrix row R2.18 claims of
+# BOTH trees; #87 sweeps the module path, its thirteen import paths,
+# getbuild's live clone URL, the `ghcr.io` path in four files and every
+# absolute repository link, and leaves exactly one category standing --
+# the issue and pull-request links that record where work was TRACKED,
+# which a transfer preserves by number and redirects by URL, so rewriting
+# them would falsify that record.
+#
+# It cannot move the gate either way and that is checkable rather than
+# asserted: `git diff --stat` over #87 is 17 files, 28 insertions, 28
+# deletions, all of them a coordinate string, and `go build ./...` and
+# `go vet ./...` pass over there. No suite expectation, fixture, case
+# YAML or harness assertion changed, and their own allowlist grep still
+# returns 55 lines across 15 files.
+#
+# Their build-under-test.json still names 72c940e9 of this repository, for
+# the reason the paragraph above already gives and one more: what has
+# changed here since is provenance records, the brand-drift guard's lists,
+# the conformance matrix and the coordinate sweep, and no suite over there
+# observes any of them. The manual half is deliberate again rather than
+# owed.

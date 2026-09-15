@@ -116,7 +116,15 @@ SBOM_RELATIVE = "provenance/sbom.spdx.json"
 # refusal that fires because that block is gone, where there is nothing
 # left to read the retained path or the closing issue out of. They die
 # with the guard when the mirror window closes.
-MIRROR_RETIREMENT_ISSUE = 895
+#
+# The closing issue is #947, not #895. #895 is the cutover: it MOVED
+# image.reference to ghcr.io/retnd/retnd and left image.mirror naming the
+# retained path, which is the state this guard exists to require. #947 is
+# the one that deletes every aliased shim and then the retained
+# organisation, and it cannot run until this mirror stops being published
+# from there -- so it is the issue that removes this guard, canonical.json's
+# image.mirror and this constant together.
+MIRROR_RETIREMENT_ISSUE = 947
 LEGACY_PACKAGE_PATH = "ghcr.io/backupdproject/backupd"
 
 KEY_PATHSPECS = [
@@ -360,10 +368,13 @@ def guard_7_mirror(canonical: Path, reference: str) -> list[str]:
     Three states, and only the first two are legal:
 
       * mirror names the same package path as image.reference. Nothing has
-        moved yet, so the one push already reaches the retained path. This
-        is where #890 leaves the tree.
-      * mirror names a different package path. The reference has moved
-        (#895), and both are pushed, same build, same digest.
+        moved yet, so the one push already reaches the retained path. That
+        is where #890 left the tree.
+      * mirror names a different package path. The reference has moved,
+        and both are pushed, same build, same digest. **This is where the
+        tree is now**: #895's cutover moved image.reference to
+        ghcr.io/retnd/retnd on 2026-09-15 and left image.mirror naming
+        ghcr.io/backupdproject/backupd, and #947 closes it.
       * no mirror at all. The run would push whatever image.reference says
         and abandon the other package path silently, which is the failure
         FR-39 exists for. Refused.

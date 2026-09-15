@@ -300,7 +300,7 @@ green "substring lookalikes stay green (CONFIRM_, FORM_, ibm_signer, rm-debug)" 
 
 # The out-of-scope names are pinned to their files on purpose, and this is
 # the half of that decision that does work: RM_BASE_URL is the pinned
-# environment contract of backupdproject/backupd-tests, and it is still a
+# environment contract of retnd/retnd-tests, and it is still a
 # creation when it turns up somewhere new.
 tree="$(new_repo)"
 commit "$tree" core/service/copy.go 'package service
@@ -438,19 +438,20 @@ red_with "$mutant" "a path-scoped alias does not allow the token anywhere else" 
 rm -f "$mutant" "$base"
 
 # The organisation, which survived the last rename by not being in anybody's
-# pattern at all. This one and the brand-word case below are run against a
-# guard with that `pending` entry deleted, and they have to be: the whole
-# organisation is on `pending` today (FR-40 puts the repository coordinates
-# there, because FR-41 is what moves them), and an entry on `pending` is
-# allowed anywhere by design. So the case proves what it can prove -- that the
-# pattern exists and fires the moment the sweep that owns it lands -- rather
-# than pretending the guard refuses something it currently allows.
-mutant="$(guard_without_pending backupdproject)"
+# pattern at all. This case used to run against a guard with the
+# `backupdproject` pending entry deleted, because the whole organisation was
+# on `pending` while FR-41's cutover was still ahead of it, and an entry on
+# `pending` is allowed anywhere by design -- so it could only prove the
+# pattern would fire once the sweep landed.
+#
+# The sweep landed. R2.5 (#895)'s closing PR performed the transfer, swept
+# every absolute coordinate and took the token OFF `pending`, so this now
+# runs against the guard exactly as it ships: a new link to the old
+# organisation is refused, with nothing relaxed to make the case work.
 tree="$(new_repo)"
 commit "$tree" docs/newpage.md 'See https://github.com/backupdproject/backupd/issues/1 for the details.'
-red_with "$mutant" "a new link to the old organisation goes red once the coordinates are swept" "$tree" \
+red "a new link to the old organisation goes red" "$tree" \
   "backupdproject" "docs/newpage.md:1:"
-rm -f "$mutant"
 
 # The first brand's spelled-out environment prefix. `RM_[A-Z]` has been in
 # this guard since #794 and never saw `RCLONE_MANAGER_SOURCE_PORT`, which is
@@ -531,22 +532,25 @@ green "the replacement RETND_/retnd_ names are green" "$tree"
 # a rename in flight touches new files, and pinning in-transit names to a file
 # list would turn every one of those into a gate failure.
 #
-# The token is `backupdproject`, and that is a deliberate choice rather
-# than an arbitrary one: after R2.5 (#895) the `pending` list is the three
-# tokens FR-41's organisation cutover deletes and nothing else, so a case
-# that needs a genuinely-pending token has to use one of those three. It
-# used to be `backupd_internal`, which #895 both renamed and took off the
-# list -- so these three cases were asserting against a list entry that no
-# longer existed, and the self-test said so rather than passing.
+# The token is `backupd`, and it is chosen rather than arbitrary: a case
+# that needs a genuinely-pending token has to use one that IS on the list,
+# and after R2.5 (#895)'s closing PR the list is `backupd` and `Backupd`.
+# It was `backupd_internal` until #895 renamed it, and then `backupdproject`
+# until the FR-41 cutover swept that one off too -- both times these cases
+# were left asserting against a list entry that no longer existed, and both
+# times the self-test said so rather than passing. That is the failure mode
+# this comment exists to keep visible: whichever token is used here, it has
+# to be one `check-brand-drift.sh` still lists.
 #
-# `backupdproject` is also the only one of the three that tokenises on its
-# own: a planted `backupdproject/backupd` would be reported twice, once per
-# token, and a case that asserts on one finding is clearer than one that
-# has to tolerate a second.
+# It is planted as a bare `"backupd"` rather than inside a path or a
+# coordinate so that exactly one token is reported: `/var/lib/backupd`
+# tokenises once, but `backupd_session` or `backupdproject/backupd` would be
+# reported twice, and a case that asserts on one finding is clearer than one
+# that has to tolerate a second.
 tree="$(new_repo)"
 commit "$tree" core/brandnewfile.go 'package core
 
-const Org = "backupdproject"'
+const Name = "backupd"'
 green "a pending token is allowed in a file that did not exist" "$tree"
 
 # The same tree, with that entry deleted from the list. This is the
@@ -556,13 +560,13 @@ green "a pending token is allowed in a file that did not exist" "$tree"
 tree="$(new_repo)"
 commit "$tree" core/session.go 'package core
 
-const Org = "backupdproject"'
+const Name = "backupd"'
 commit "$tree" apps/common/csrf/csrf.go 'package csrf
 
-const Org = "backupdproject"'
-mutant="$(guard_without_pending backupdproject)"
+const Name = "backupd"'
+mutant="$(guard_without_pending backupd)"
 red_with "$mutant" "a pending entry deleted while its occurrences still exist goes red" "$tree" \
-  "backupdproject" "core/session.go:3:" "apps/common/csrf/csrf.go:3:"
+  "backupd" "core/session.go:3:" "apps/common/csrf/csrf.go:3:"
 
 # And the other end of the same mutation, which is the one the R1.2 row names
 # second: the occurrence was deleted, the entry went with it, and the name
@@ -572,9 +576,9 @@ tree="$(new_repo)"
 commit "$tree" core/service/newsurface.go 'package service
 
 // Copied from a pre-rename branch.
-const Org = "backupdproject"'
+const Name = "backupd"'
 red_with "$mutant" "a deleted occurrence re-added after its pending entry went goes red" "$tree" \
-  "backupdproject" "core/service/newsurface.go:4:"
+  "backupd" "core/service/newsurface.go:4:"
 rm -f "$mutant"
 
 echo "==> brand-drift guard self-test: $checks checks, $failures failure(s)"

@@ -58,18 +58,22 @@
 # image also carries `/backupd-web` as a REAL HARDLINK to `/retnd-web`: one
 # inode, two names, no second copy of a ~40 MB binary and no shell wrapper
 # (the runtime image is distroless and has no shell). It is kept for
-# exactly one release and removed by #895. There is deliberately no
+# exactly one release and removed by #947. There is deliberately no
 # `/backupd` beside it: no compose file this project has ever shipped named
 # `/backupd` in a `command:` or a `healthcheck:`, so there is no pinned
 # file that would need one.
 #
-# What this change does NOT move is the IMAGE REFERENCE. `image:` below
-# stays `backupd:${VERSION:-dev}`, and the published one stays
-# ghcr.io/backupdproject/backupd. A registry path is not covered by
-# GitHub's repository-transfer redirects, so moving it means publishing
-# under both names for an overlap release; that is #895's job, with its own
-# mirror window, and doing it here would strand every existing
-# `docker pull`.
+# What this change did NOT move is the IMAGE REFERENCE, and #895's cutover
+# moved half of it. `image:` below still reads `backupd:${VERSION:-dev}`,
+# which is a LOCAL build tag and not a registry path -- `docker compose
+# build` resolves it against nothing but this daemon. The PUBLISHED
+# reference is `ghcr.io/retnd/retnd` now, with
+# `ghcr.io/backupdproject/backupd` declared as a one-release mirror in
+# distribution/packaging/canonical.json: a registry path is not covered by
+# GitHub's repository-transfer redirects, so both are published for one
+# release rather than the old one being abandoned, and #947 closes that
+# window. The local tag is the retired name in a string an operator does
+# not pin, which is the residue EPIC R's `pending` list still carries.
 #
 # TWO SERVICES, ONE IMAGE (project-owner requirement, folded in before
 # this issue merged): `retnd` is the engine - core service,

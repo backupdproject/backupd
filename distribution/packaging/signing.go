@@ -55,7 +55,15 @@ const (
 	// repeats sourceRepository.url from compliance.json rather than
 	// reading it, because this is a security contract that should be
 	// readable in one place, and the test holds the two to each other.
-	SigningRepositoryURL = "https://github.com/backupdproject/backupd"
+	//
+	// FR-41's cutover moved it. The repository was transferred from
+	// `backupdproject/backupd` to `retnd/retnd` on 2026-09-15, and
+	// GitHub builds the certificate SAN out of the repository the run
+	// happened in, so every release published from here on carries the
+	// identity below and every release already published carries
+	// PreCutoverSigningIdentity. A transfer redirects a clone; it cannot
+	// reach back into a certificate that was already issued.
+	SigningRepositoryURL = "https://github.com/retnd/retnd"
 
 	// SigningCertificateIssuer is the OIDC issuer a verifier pins
 	// alongside the identity. Pinning the identity without the issuer
@@ -73,6 +81,38 @@ const (
 	SigningIdentity = SigningRepositoryURL + "/" + SigningWorkflowPath + "@refs/heads/" + SigningWorkflowBranch
 )
 
+// The pre-cutover identity, and the release boundary between the two.
+//
+// FR-41: `cosign verify` takes ONE `--certificate-identity`, and a
+// signature carries the identity of the repository the run happened in.
+// So after a transfer there is no single command that verifies both
+// sides of it, and the documented command has to be two commands with a
+// release number between them (ADR 0023, Decision 5.1). Pretending
+// otherwise is #510 again from the other end: a correctly signed
+// pre-cutover release reported as unverifiable because the reader was
+// handed the new identity for it.
+//
+// These constants are NOT a deprecation shim and they have no removal
+// release. A published signature is immutable, so this stays true for as
+// long as anybody can pull 0.3.3.
+const (
+	// PreCutoverSigningRepositoryURL is the repository path releases up
+	// to and including LastPreCutoverRelease were signed under.
+	PreCutoverSigningRepositoryURL = "https://github.com/backupdproject/backupd"
+
+	// PreCutoverSigningIdentity is the exact SAN those signatures carry.
+	// The workflow path and the ref did not move at the cutover, only the
+	// repository did, so this is built the same way.
+	PreCutoverSigningIdentity = PreCutoverSigningRepositoryURL + "/" + SigningWorkflowPath + "@refs/heads/" + SigningWorkflowBranch
+
+	// LastPreCutoverRelease is the boundary, and it is a version rather
+	// than a date because a version is what a verifier holds. 0.3.3 is
+	// the newest release published before the transfer; 0.4.0 was cut and
+	// not pushed at the time of it, so the first release to carry the new
+	// identity is the first one actually published afterwards.
+	LastPreCutoverRelease = "0.3.3"
+)
+
 // SigningVerifyCommand is the command that verifies a published
 // reference, as one line, so the provenance bundle and the compliance
 // docs cannot print two different commands.
@@ -81,6 +121,19 @@ func SigningVerifyCommand(reference string) string {
 		"cosign verify",
 		"--certificate-oidc-issuer", SigningCertificateIssuer,
 		"--certificate-identity", SigningIdentity,
+		reference,
+	}, " ")
+}
+
+// PreCutoverSigningVerifyCommand is the same command for a release
+// published before the transfer, built through the same function so the
+// two cannot drift into different shapes: the only difference between
+// them is the identity, which is the whole point.
+func PreCutoverSigningVerifyCommand(reference string) string {
+	return strings.Join([]string{
+		"cosign verify",
+		"--certificate-oidc-issuer", SigningCertificateIssuer,
+		"--certificate-identity", PreCutoverSigningIdentity,
 		reference,
 	}, " ")
 }

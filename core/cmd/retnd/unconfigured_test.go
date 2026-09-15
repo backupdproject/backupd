@@ -297,7 +297,7 @@ func TestRun_Retention_NamesTheSetsNoPolicyGovernsAtAll(t *testing.T) {
 
 // TestRun_Retention_SaysNothingExtraWhenEverySetIsConfigured is the
 // control that keeps the addition additive. This command's output is
-// pinned by the black-box suite in backupdproject/backupd-tests, and
+// pinned by the black-box suite in retnd/retnd-tests, and
 // every case there is a configured-sets-only deployment, so printing this
 // section unconditionally would mean a cross-repo pin move for a line
 // that says "none".

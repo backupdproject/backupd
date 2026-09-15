@@ -65,7 +65,7 @@ CHECK = Path(__file__).resolve().parent.parent.parent / "release" / "check-publi
 PUBLISHED = {
     "schema": "backupd/release-provenance/1",
     "semanticVersion": "0.4.0",
-    "imageReference": "ghcr.io/backupdproject/backupd:0.4.0",
+    "imageReference": "ghcr.io/retnd/retnd:0.4.0",
     "releaseManifest": {
         "path": "container/release-manifest.json",
         "sha256": "a" * 64,
@@ -86,7 +86,7 @@ PUBLISHED = {
     "signing": {
         "status": "signed",
         "method": "sigstore-keyless",
-        "identity": "https://github.com/backupdproject/backupd/.github/workflows/release.yml@refs/heads/release",
+        "identity": "https://github.com/retnd/retnd/.github/workflows/release.yml@refs/heads/release",
     },
 }
 

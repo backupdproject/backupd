@@ -73,7 +73,7 @@ procedure. In short, and in the three shapes an upgrade actually takes:
   starts normally.
 
 Two things are deliberately NOT renamed. The image reference is still
-`ghcr.io/backupdproject/backupd` until the repository coordinates move (#895), because
+`ghcr.io/retnd/retnd` until the repository coordinates move (#895), because
 moving it inside the old organisation first would have cost every operator two compose
 edits for one rename. And `container/release-manifest.json`'s already-published entries
 keep their `backupd` and `backupd-web` digest keys: they record artifacts that really
@@ -940,7 +940,7 @@ copy of it in prose is a copy that goes stale without anything noticing.
 
 **What this records about the registry**: nothing yet, for the version currently cut.
 `distribution/packaging/canonical.json` records `image.published: false` for
-`ghcr.io/backupdproject/backupd:0.4.0`, and the manifest carries a `registry_digest` of
+`ghcr.io/retnd/retnd:0.4.0`, and the manifest carries a `registry_digest` of
 `null` per architecture and a null `index_digest` to say the same thing from the other
 side. `TestReleaseManifestRegistryDigestTracksTheCanonicalPublishFlag` holds the two
 together in both directions: a published flag with no digest and a digest with no

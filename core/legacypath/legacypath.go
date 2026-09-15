@@ -85,7 +85,7 @@ import (
 //
 // This whole mechanism is a SHIM with a closing date. It is on
 // scripts/rename/check-brand-drift.sh's alias list with its closing issue
-// (#895) and its removal release, and the issue that closes the window
+// (#947) and its removal release, and the issue that closes the window
 // deletes it and replaces core/tests/compat's cell 20 — which pins the
 // warning below — with one pinning a refusal.
 
@@ -97,10 +97,11 @@ const (
 	// Exactly-one-component is the whole of the matching rule and it is
 	// load-bearing in both directions. /retnd-web is the entrypoint
 	// alias, not a directory this looks inside; a `retnd.db` is a file
-	// name, not a renamed directory; and `backupdproject` is an
-	// organisation, not a state directory. Substring matching would reach
-	// all three. It is also why the guard's own right-hand anchor exists,
-	// for the same reason: `backup` is this product's domain word.
+	// name, not a renamed directory; and the organisation half of a
+	// repository coordinate is an organisation, not a state directory.
+	// Substring matching would reach all three. It is also why the guard's
+	// own right-hand anchor exists, for the same reason: `backup` is this
+	// product's domain word.
 	renamedPathSegment = "retnd"
 	retiredPathSegment = "backupd"
 )

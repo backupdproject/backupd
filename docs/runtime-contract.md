@@ -619,7 +619,7 @@ artifacts and its enrolled administrator across the change.
 | compose project name | implicit, from the directory | explicit `name: retnd`, so the default containers are `retnd-retnd-1` and `retnd-web-ui-1` |
 | systemd units | `backupd-bridge.service`, `backupd-bridge.timer`, `backupd-workflow-runner.service` | `retnd-bridge.service`, `retnd-bridge.timer`, `retnd-workflow-runner.service` |
 | `/data/state`, `/data/backups` | unchanged | unchanged |
-| image reference | `ghcr.io/backupdproject/backupd` | unchanged by this issue; #895 moves it, and pushes the old package path alongside the new one for one release because a GHCR package path is not covered by GitHub's transfer redirects |
+| image reference | `ghcr.io/retnd/retnd` | unchanged by this issue; #895 moves it, and pushes the old package path alongside the new one for one release because a GHCR package path is not covered by GitHub's transfer redirects |
 
 | what carries the old answer | what stops it |
 |---|---|

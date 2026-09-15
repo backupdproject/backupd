@@ -10,7 +10,7 @@ longer the only interface. `retnd status`, `retnd sources`, `retnd artifacts`,
 `retnd activity`, `retnd validate`, `retnd retention`, `retnd quarantine`,
 `retnd retry` and `retnd catalog rebuild` all exist and answer most of the questions
 below without a SQL prompt; [the reference
-page](https://backupdproject.github.io/backupd/reference.html#cli-commands) has every one
+page](https://retnd.github.io/retnd/reference.html#cli-commands) has every one
 of them. Where a query below and a command disagree, the query is right about the journal
 and the command is right about what the serving process believes, and the difference itself
 is a finding.

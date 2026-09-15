@@ -53,7 +53,7 @@ import (
 // naming itself (cliname.go argues each one at length): the filesystem
 // paths packaging mounts and an operator already has on disk
 // (/etc/backupd/config), the project, image and compose service
-// (ghcr.io/backupdproject/backupd), and the User-Agent core sends. Those
+// (ghcr.io/retnd/retnd), and the User-Agent core sends. Those
 // three are exactly the occurrences EPIC R leaves standing for R1.4, R1.5
 // and phase 2, so with legacyName at `backupd` the distinction below is
 // not a hypothetical: it is what keeps this check green against a tree

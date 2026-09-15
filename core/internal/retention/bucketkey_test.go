@@ -192,7 +192,7 @@ func TestGFSDecideKeepsTheMultiTierShapeOfABacklogIngestedInOneCycle(t *testing.
 // populated from the discovery pass's own tie map, this test would start
 // reporting pg-2025-04-18.dump as having "collided" with
 // pg-2026-08-31.dump, which would also send the pinned CLI contract case
-// retention/gfs-tiers-from-one-ingest.yaml in backupdproject/backupd-tests
+// retention/gfs-tiers-from-one-ingest.yaml in retnd/retnd-tests
 // red (its `count: 8` pins exactly eight printed lines for this same
 // shape of fixture, with no room for an extra warning line under
 // pg-01-age-500d.dump). See GFSSiblingCollision's own doc for why only a

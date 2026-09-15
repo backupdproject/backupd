@@ -85,7 +85,7 @@ import (
 // Environment rather than flags, and rather than a block in config.yaml.
 // A flag would be operator-visible surface on six commands' usage text at
 // once, and that text is pinned both by core/tests/compat and by
-// backupdproject/backupd-tests. The address also belongs to the HOST a
+// retnd/retnd-tests. The address also belongs to the HOST a
 // command is typed on rather than to the deployment: the same config.yaml
 // is read from inside the container, where the engine is on loopback, and
 // from a NAS shell, where it is a published port, so one field could not

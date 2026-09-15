@@ -297,4 +297,4 @@ still true, and it is true for as long as the banner says *held since*.
   you are signed in again, Settings is where the recovery address and the SMTP details
   are corrected, and it offers a test send so the next time is not another guess.
 - **Anything else.** Open an issue with the set's detail page and the failing run's error
-  message. https://github.com/backupdproject/backupd/issues
+  message. https://github.com/retnd/retnd/issues
