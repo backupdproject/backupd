@@ -206,7 +206,7 @@ func TestValidate_AcceptsEveryStorageClassAndVerificationMode(t *testing.T) {
 	// The accepting half of the prefix rules. Without these a validator
 	// that refused every prefix, or every non-empty one, would still pass
 	// the refusal table above.
-	for _, prefix := range []string{"", "backupd", "team/backupd", "a/b/c", "rclone_manager.v2"} {
+	for _, prefix := range []string{"", "backupd", "team/backupd", "a/b/c", "retnd.v2"} {
 		t.Run("prefix "+prefix, func(t *testing.T) {
 			c := mediumsConfig()
 			c.StorageMediums[0].Prefix = prefix

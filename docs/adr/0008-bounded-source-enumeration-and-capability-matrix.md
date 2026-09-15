@@ -152,7 +152,7 @@ all of the cost, plus the claim that it had been solved.
 **Two mechanisms, and the honest thing about them is that the second one
 is a refusal.**
 
-### 1. A backend capability matrix, owned by backupd, where silence means unqualified
+### 1. A backend capability matrix, owned by retnd, where silence means unqualified
 
 `core/internal/backend/capability.go` declares twelve keys, closed in Go
 (`CapabilityKeys()`, which returns a copy - a vocabulary an importer
@@ -264,7 +264,7 @@ in production on the first directory that got big. A block that IS
 present must answer all twelve keys, because a missing key and a declared
 false are different statements that nothing downstream could tell apart.
 
-### 2. A backupd-owned bounded enumerator, plus an explicit refusal where one is impossible
+### 2. A retnd-owned bounded enumerator, plus an explicit refusal where one is impossible
 
 `core/internal/transport.LocalEnumerator` streams entries to a callback:
 `(*os.File).ReadDir(n)` in chunks of `ChunkEntries` (default 4096),
@@ -341,7 +341,7 @@ description of what upstream would have to change, and the day rclone
 grows the interface, flipping that value and adding a reader is a small,
 reviewed diff with tests already written against the behaviour.
 
-### Option B alone: a backupd streaming enumerator for everything
+### Option B alone: a retnd streaming enumerator for everything
 
 Chosen for local, and it is only half an answer, which is why it is not
 the whole decision. Writing a "streaming" enumerator for sftp means

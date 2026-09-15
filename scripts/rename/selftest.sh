@@ -461,16 +461,18 @@ red "a new RCLONE_MANAGER_ environment variable goes red" "$tree" \
   "RCLONE_MANAGER_NEW_THING" "scripts/install/install_docker_host.py:1:"
 
 # The two brand words themselves, case-insensitively, which is the half that
-# catches prose and wire sentinels rather than identifiers. `rclone-manager`
-# is on `pending` until R1.4 and R2.2 sweep it, so this is the mutated-list
-# case again; `backup_manager_state` below needs no mutation, because it is a
-# name that exists nowhere in this tree and is therefore a creation.
-mutant="$(guard_without_pending rclone-manager)"
+# catches prose and wire sentinels rather than identifiers. R2.2 (#892) swept
+# `rclone-manager` off `pending`: what survives is pinned to the file that
+# records it -- a quoted `dial tcp: lookup rclone-manager: no such host`, a
+# comment attributing RM_DEBUG to the brand it came from, the guard's own
+# pattern list in two gate scripts -- so a new one anywhere else is a
+# creation and this case needs no mutated list any more. `backup_manager_state`
+# below never needed one, because it is a name that exists nowhere in this
+# tree.
 tree="$(new_repo)"
 commit "$tree" docs/history.md 'This product used to be called rclone-manager.'
-red_with "$mutant" "the first brand name in new prose goes red once it is swept" "$tree" \
+red "the first brand name in new prose goes red" "$tree" \
   "rclone-manager" "docs/history.md:1:"
-rm -f "$mutant"
 
 tree="$(new_repo)"
 commit "$tree" core/env.go 'package core

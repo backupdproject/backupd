@@ -115,7 +115,7 @@ set advertises cannot be resolved in the repository, the whole pass is
 refused, not the one snapshot it is about. Half a pass carried out removes
 exactly the snapshots that were still restorable.
 
-### 4. The engine cannot expire a snapshot backupd wrote: every manifest is pinned
+### 4. The engine cannot expire a snapshot retnd wrote: every manifest is pinned
 
 The vendor's uploader checkpoints a long upload every 45 minutes, and
 every checkpoint ends by applying the repository's effective retention
@@ -133,7 +133,7 @@ vendor's expiry keeps any pinned manifest whatever the policy says
 (`snapshot/policy/expire.go`). The vendor's `DeleteManifest`, which is
 what this adapter's `DeleteSnapshot` calls, ignores pins entirely. That
 asymmetry is exactly the arrangement this product needs: the engine may
-never expire a snapshot backupd wrote, and backupd may still delete one
+never expire a snapshot retnd wrote, and retnd may still delete one
 when its own retention pass decides to.
 
 A neutral **global** policy is stored as well, at open, and it is defence
@@ -157,7 +157,7 @@ mount, a legal hold. Refusing there would turn "this product cannot
 correct a policy" into "this product cannot restore". The failure is
 carried on the open handle and reported by `Health` as an
 `engine_retention` warning, which is the honest statement of what is left
-at risk: nothing backupd wrote, and any snapshot in that repository
+at risk: nothing retnd wrote, and any snapshot in that repository
 written by something else.
 
 ### 5. The delete path: decide, record the intent, then remove one manifest
