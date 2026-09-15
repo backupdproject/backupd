@@ -1,20 +1,20 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
-    <img src="docs/assets/logo-light.svg" alt="backupd mark: a broken ring standing for a transfer cycle in progress, next to the backupd wordmark" width="240">
+    <img src="docs/assets/logo-light.svg" alt="retnd mark: a broken ring standing for a transfer cycle in progress, next to the retnd wordmark" width="240">
   </picture>
 </p>
 
 
 A backup producer somewhere writes a dump, an archive or a snapshot to disk. That machine
 has finite space, so something has to move the artifact off it and something has to delete
-the original. backupd is the half of that job that runs on the NAS: it discovers
+the original. retnd is the half of that job that runs on the NAS: it discovers
 finished artifacts on the remote server over SFTP, pulls them, verifies them, commits them
 durably, records that it did, and only then removes the remote copy.
 
 It is a standalone Go binary that **embeds pinned rclone Go packages**. It does not fork
 rclone, and it does not shell out to the `rclone` CLI for normal data movement. There are
-two surfaces over the same engine: `backupd` at a terminal, and a web UI on the LAN. Everything
+two surfaces over the same engine: `retnd` at a terminal, and a web UI on the LAN. Everything
 an operator can DO in the browser has an equivalent command, and that is a gate rather than
 an intention: a route with neither a command behind it nor a written reason there is none
 fails the build.
@@ -31,7 +31,7 @@ tutorial](https://backupdproject.github.io/backupd/first-run.html), [the web int
 motion](https://backupdproject.github.io/backupd/web-ui.html), [SSH and
 connections](https://backupdproject.github.io/backupd/ssh.html), and [the
 reference](https://backupdproject.github.io/backupd/reference.html), which carries every
-screen of the browser interface and every `backupd` command with its flags. It is generated
+screen of the browser interface and every `retnd` command with its flags. It is generated
 from [`docs/site/`](docs/site/) in this repository. The site is the source of truth for how
 to install the product and how to drive it; this document is the engineering account behind
 it, and where the two ever disagree about install or operator surfaces, the site is right.
@@ -55,15 +55,15 @@ to that file byte for byte by a test.
 ```text
 ==> Installed.
     Web UI:  http://10.0.0.10:8080
-    Compose: docker compose -p backupd --env-file /home/you/backupd/.env -f /home/you/backupd/compose.yaml -f /home/you/backupd/compose.image.yaml
+    Compose: docker compose -p retnd --env-file /home/you/retnd/.env -f /home/you/retnd/compose.yaml -f /home/you/retnd/compose.image.yaml
 
     No config.yaml was written, on purpose. Issue #176 shipped a first-run setup flow
     precisely so that a fresh install does not need one hand-written before it starts.
     Open the Web UI and follow it. The enrollment link is in the engine's log:
-      docker compose -p backupd --env-file /home/you/backupd/.env -f /home/you/backupd/compose.yaml -f /home/you/backupd/compose.image.yaml logs backupd | grep enroll
+      docker compose -p retnd --env-file /home/you/retnd/.env -f /home/you/retnd/compose.yaml -f /home/you/retnd/compose.image.yaml logs retnd | grep enroll
 ```
 
-It picks every path for you — `~/backupd`, with `backups`, `state`, `config` and
+It picks every path for you — `~/retnd`, with `backups`, `state`, `config` and
 `secrets` under it — generates the SSH keypair the engine will use, pins the exact image it
 was built against, and refuses before it changes anything if the machine cannot run it.
 Nothing needs deciding up front, and everything it chose can be changed afterwards. A
@@ -84,7 +84,7 @@ matters. The engine mints the enrolment token during startup and writes the noti
 own log, so the installer prints the line that reads it back out:
 
 ```text
-backupd-web: no administrator account exists yet. Open
+retnd-web: no administrator account exists yet. Open
 http://10.0.0.10:8080/enroll?token=4zj7VCpcYLIeVNN1oZJZPaCErYXOc6s6
 to create one (valid 30 minutes, single use).
 ```
@@ -121,10 +121,10 @@ Same two commands, one flag on the second one:
 python3 install_docker_host.py install --cli-only
 ```
 
-The engine container runs `backupd daemon` instead of `backupd-web serve`, the `web-ui` container is
+The engine container runs `retnd daemon` instead of `retnd-web serve`, the `web-ui` container is
 never started, and no port is published on this host at all, so nothing in the deployment
-serves HTTP and the `backupd-web` binary is never executed. What drives it is the `backupd` wrapper
-the installer writes to `<prefix>/bin/backupd`, which takes every command in
+serves HTTP and the `retnd-web` binary is never executed. What drives it is the `retnd` wrapper
+the installer writes to `<prefix>/bin/retnd`, which takes every command in
 [the reference page's command table](https://backupdproject.github.io/backupd/reference.html#cli-commands)
 — this document stopped carrying a generated copy of it, because the site is where
 the operator surface is documented.
@@ -135,7 +135,7 @@ nothing, and prints the one command that writes the first configuration: creatin
 backup set writes the first `config.yaml` along with it. Re-running the installer later with
 no flags keeps the deployment this shape; `--no-cli-only` converts it to the full stack.
 
-### The seven subcommands
+### The eight subcommands
 
 `preflight` checks and creates nothing. `install` checks and then installs. `status` reports
 what is here and whether bridge networking still works, and only ever reads. `enroll-link`
@@ -143,7 +143,11 @@ mints a fresh enrolment link. `uninstall` takes the stack down and removes `comp
 `compose.image.yaml` and `.env` — never the backups, never the state, never the
 configuration, and never the firewall rules a repair added. `network-doctor` diagnoses
 Docker bridge networking and repairs it when `--fix-network` says to, and `network-undo`
-removes exactly what a repair added and nothing else.
+removes exactly what a repair added and nothing else. `migrate-identity` moves a
+deployment installed before the rename onto the current mounts, the rewritten
+`config.yaml` paths and the current unit names, as one transaction — see
+[`docs/install.md`](docs/install.md#upgrading-a-deployment-installed-before-the-rename),
+which is also where the two refusals an upgrade can meet are written down.
 
 Installing over an install that is already there is a decision rather than a default.
 `--mode upgrade` keeps every user, backup set and catalogued artifact, archiving them first,
@@ -280,7 +284,7 @@ names.
   source on it, a repository that will not open, credential recovery, and the
   gate refusing.
 - [the reference page](https://backupdproject.github.io/backupd/reference.html#cli-commands)
-  — `backupd snapshot` and `backupd repository`, and the screens behind them.
+  — `retnd snapshot` and `retnd repository`, and the screens behind them.
 - [ADR 0018](docs/adr/0018-shipping-the-incremental-engine-behind-a-gate.md) —
   why it ships behind a gate, and what the twelve decisions before it settled.
 

@@ -1,11 +1,11 @@
-# EPIC: Multi-NAS Backupd Apps — Provider-Neutral Core, UGOS/Synology/TrueNAS/Unraid/OpenMediaVault/Proxmox Layers — Lean TDD Revision
+# EPIC: Multi-NAS retnd Apps — Provider-Neutral Core, UGOS/Synology/TrueNAS/Unraid/OpenMediaVault/Proxmox Layers — Lean TDD Revision
 
 ## Status
 
 **Type:** EPIC / Detailed implementation specification  
 **Repository:** `iasbuilt/iac`  
 **Parent / predecessor EPIC:** `Embedded-rclone NAS Backup Lifecycle Manager — UI-Ready Architecture`  
-**Primary implementation root:** `tools/backupd/`  
+**Primary implementation root:** `tools/retnd/`  
 **Target platform:** UGREEN NAS / UGOS Pro  
 **Primary UI distribution:** UGOS Pro Docker Application packaged as `.UPK`  
 **Secondary distribution:** headless Docker image/package for terminal operation  
@@ -108,7 +108,7 @@ Critical findings:
 1. A twelve-step wizard is unnecessarily long and increases setup failure.
 2. "Restore Points" suggests restore functionality, but restore execution is explicitly out of scope.
 3. The most consequential behavior—deleting the remote source after safe ingestion—was not prominent enough in onboarding and configuration.
-4. A backupd that only shows failures when someone opens the UI is operationally weak.
+4. A retnd that only shows failures when someone opens the UI is operationally weak.
 5. Stable-size completion detection was presented alongside producer atomic rename/manifest as if they provided equivalent assurance.
 6. The UI did not provide a clear reinstall/recovery path when application state is lost but backup files remain.
 
@@ -131,7 +131,7 @@ Required corrections:
 
 Critical findings:
 
-1. Separate `backupd-ugos` and `backupd-cli` images create needless artifact drift when the design already embeds the UI in the same Go binary.
+1. Separate `retnd-ugos` and `retnd-cli` images create needless artifact drift when the design already embeds the UI in the same Go binary.
 2. Four image builds (UGOS/CLI × amd64/arm64) double the release surface without adding lifecycle isolation.
 3. "Same core version" is weaker than using the exact same executable/image digest.
 4. Upgrade rollback could fail if an older binary sees a newer schema.
@@ -175,7 +175,7 @@ They further agree that this EPIC is not implementation-ready unless all of the 
 
 # 1. Purpose
 
-Build a **provider-neutral backupd core** and a family of thin NAS-platform application layers.
+Build a **provider-neutral retnd core** and a family of thin NAS-platform application layers.
 
 The core SHALL remain independent of UGOS, Synology DSM, TrueNAS, Unraid, OpenMediaVault, Proxmox VE, or any other NAS/hypervisor UI.
 
@@ -421,7 +421,7 @@ Provider-native authentication may replace local auth only after its trust bound
 The canonical release primitive SHALL be the provider-neutral Go binary per architecture:
 
 ```text
-backupd binary
+retnd binary
        │
        ├── canonical OCI image
        │      ├── Generic Docker
@@ -908,7 +908,7 @@ The core SHALL contain no provider SDK dependencies.
 
 Produce a provider-neutral React/TypeScript application under `ui/shared/`.
 
-It SHALL contain normal backupd product UI.
+It SHALL contain normal retnd product UI.
 
 Provider-specific bootstrap code SHALL not live here.
 
@@ -1057,12 +1057,12 @@ The implementation SHALL define these values centrally.
 Proposed values:
 
 ```text
-Display name: Backupd
-App ID:       com.iasbuilt.backupd
+Display name: retnd
+App ID:       com.iasbuilt.retnd
 Category:     backup
 ```
 
-`com.iasbuilt.backupd` is a proposed identifier and MUST be confirmed before the first externally distributed or App Center-submitted package because the UGOS application ID is intended to remain stable.
+`com.iasbuilt.retnd` is a proposed identifier and MUST be confirmed before the first externally distributed or App Center-submitted package because the UGOS application ID is intended to remain stable.
 
 Do not derive runtime filesystem paths from the human-readable display name.
 
@@ -1076,14 +1076,14 @@ Target structure:
 
 ```text
 tools/
-  backupd/
+  retnd/
     README.md
     go.work
 
     core/
       go.mod
       cmd/
-        backupd/
+        retnd/
       app/
         service.go
         operations.go
@@ -1281,15 +1281,15 @@ The release manifest SHALL prove core parity through binary hashes and image/pac
 The provider-neutral core executable SHALL support at minimum:
 
 ```bash
-backupd run
-backupd daemon
-backupd status
-backupd check
-backupd retention --dry-run
-backupd retention
-backupd reconcile
-backupd validate <artifact-id>
-backupd version
+retnd run
+retnd daemon
+retnd status
+retnd check
+retnd retention --dry-run
+retnd retention
+retnd reconcile
+retnd validate <artifact-id>
+retnd version
 ```
 
 ## 9.1 Headless Docker default
@@ -1297,13 +1297,13 @@ backupd version
 The headless Docker distribution SHOULD default to:
 
 ```bash
-backupd daemon
+retnd daemon
 ```
 
 Users SHALL be able to override the command, for example:
 
 ```bash
-docker run --rm ... backupd check
+docker run --rm ... retnd check
 ```
 
 ## 9.2 Generic Web App host
@@ -1324,7 +1324,7 @@ It SHALL be used by generic Docker and provider packages that do not yet impleme
 The UPK Compose profile SHALL run the canonical image in a combined supervised mode such as:
 
 ```bash
-backupd serve --with-daemon --auth-mode=ugos
+retnd serve --with-daemon --auth-mode=ugos
 ```
 
 Exact command naming may vary.
@@ -1354,7 +1354,7 @@ Reason:
 - native UGOS desktop-window experience;
 - JSSDK support;
 - UGOS login/session integration;
-- no separate backupd password database.
+- no separate retnd password database.
 
 The application SHOULD initially support the UGOS `pc` client target.
 
@@ -1814,7 +1814,7 @@ Private state includes:
 Preferred container path:
 
 ```text
-/var/lib/backupd/
+/var/lib/retnd/
 ```
 
 The UPK SHALL mount this path from a **UGOS-owned private writable application location** proven in Phase 0.
@@ -1849,7 +1849,7 @@ Recovery metadata SHOULD preserve enough information to reconstruct safely:
 - checksum(s);
 - validation result summary;
 - retention-relevant timestamp;
-- backupd format version.
+- retnd format version.
 
 Recovery metadata MUST NOT contain:
 
@@ -1861,8 +1861,8 @@ Recovery metadata MUST NOT contain:
 Provide a dry-run recovery command such as:
 
 ```bash
-backupd catalog rebuild --dry-run
-backupd catalog rebuild
+retnd catalog rebuild --dry-run
+retnd catalog rebuild
 ```
 
 Reconstruction MUST NOT delete remote or local backup files.
@@ -1929,7 +1929,7 @@ Illustrative skeleton:
 
 ```yaml
 spec_version: "2.1"
-app_id: com.iasbuilt.backupd
+app_id: com.iasbuilt.retnd
 version: 0.1.0
 
 support_arch:
@@ -1943,7 +1943,7 @@ is_docker_app: true
 only_admin: true
 
 port: 29090
-proxy_path: backupd-api
+proxy_path: retnd-api
 open_type: inner
 
 tag_types:
@@ -1968,20 +1968,20 @@ parameters:
         description: Application logging verbosity.
 
 privacy_policy_link:
-  - https://<publisher>/backupd/privacy
+  - https://<publisher>/retnd/privacy
 
 # Current UGREEN project.yaml rules require these when
 # open-source code/components are used.
 license_agreement_link:
-  - https://<publisher>/backupd/licenses
+  - https://<publisher>/retnd/licenses
 source_code_link:
-  - https://<publisher>/backupd/source
+  - https://<publisher>/retnd/source
 technical_support_link:
-  - https://<publisher>/backupd/support
+  - https://<publisher>/retnd/support
 
 i18n:
   en-US:
-    name: Backupd
+    name: retnd
     description: Pull, verify, retain, and monitor remote backup artifacts.
     author: <publisher>
     publisher: <publisher>
@@ -2003,7 +2003,7 @@ Illustrative:
 
 ```yaml
 services:
-  backupd:
+  retnd:
     image: <exact-versioned-canonical-image-tag>
     restart: always
 
@@ -2011,11 +2011,11 @@ services:
       TZ: ${TZ}
       BACKUP_MANAGER_LOG_LEVEL: ${LOG_LEVEL}
       BACKUP_MANAGER_AUTH_MODE: ugos
-      BACKUP_MANAGER_DATA_DIR: /var/lib/backupd
+      BACKUP_MANAGER_DATA_DIR: /var/lib/retnd
       BACKUP_MANAGER_BACKUP_ROOT: /data/backups
 
     volumes:
-      - <verified-private-state-source>:/var/lib/backupd
+      - <verified-private-state-source>:/var/lib/retnd
       - ${BACKUP_ROOT}:/data/backups
 
     ports:
@@ -2052,7 +2052,7 @@ The default application page SHALL be a concise operations dashboard.
 Show:
 
 ```text
-Backupd        HEALTHY
+retnd        HEALTHY
 Last successful cycle  8 minutes ago
 Storage                1.8 TB free
 ```
@@ -2225,7 +2225,7 @@ Stable-size mode SHALL require:
 
 The UI SHALL prominently disclose:
 
-> After a backup has been transferred, verified, durably committed to the NAS, and recorded safe by Backupd, the original remote backup artifact is deleted from the source server.
+> After a backup has been transferred, verified, durably committed to the NAS, and recorded safe by retnd, the original remote backup artifact is deleted from the source server.
 
 The administrator SHALL acknowledge this behavior before enabling a new backup set.
 
@@ -2560,7 +2560,7 @@ including:
 
 ```json
 {
-  "backupd": "...",
+  "retnd": "...",
   "api_version": "v1",
   "ui_build": "...",
   "rclone": "...",
@@ -2589,7 +2589,7 @@ The headless package supports operators who want:
 Publish:
 
 ```text
-<registry>/iasbuilt/backupd:<version>
+<registry>/iasbuilt/retnd:<version>
 ```
 
 The image is the same architecture-specific image digest bundled into the matching UPK release.
@@ -2602,24 +2602,24 @@ A convenience `latest` tag MAY exist in the registry, but it SHALL NOT be used b
 
 ```bash
 docker run --rm \
-  -v /path/to/config:/etc/backupd:ro \
-  -v /path/to/state:/var/lib/backupd \
+  -v /path/to/config:/etc/retnd:ro \
+  -v /path/to/state:/var/lib/retnd \
   -v /path/to/backups:/data/backups \
-  <registry>/iasbuilt/backupd:0.1.0 \
-  backupd check
+  <registry>/iasbuilt/retnd:0.1.0 \
+  retnd check
 ```
 
 Daemon:
 
 ```bash
 docker run -d \
-  --name backupd \
+  --name retnd \
   --restart unless-stopped \
-  -v /path/to/config:/etc/backupd:ro \
-  -v /path/to/state:/var/lib/backupd \
+  -v /path/to/config:/etc/retnd:ro \
+  -v /path/to/state:/var/lib/retnd \
   -v /path/to/backups:/data/backups \
-  <registry>/iasbuilt/backupd:0.1.0 \
-  backupd daemon
+  <registry>/iasbuilt/retnd:0.1.0 \
+  retnd daemon
 ```
 
 The HTTP/UI listener SHALL be disabled by default in headless mode unless explicitly enabled.
@@ -2632,17 +2632,17 @@ Provide a supported example:
 
 ```yaml
 services:
-  backupd:
-    image: <registry>/iasbuilt/backupd:0.1.0
+  retnd:
+    image: <registry>/iasbuilt/retnd:0.1.0
     restart: unless-stopped
 
     command:
-      - backupd
+      - retnd
       - daemon
 
     volumes:
-      - ./config:/etc/backupd:ro
-      - ./state:/var/lib/backupd
+      - ./config:/etc/retnd:ro
+      - ./state:/var/lib/retnd
       - /mnt/backups:/data/backups
 
     read_only: true
@@ -2693,8 +2693,8 @@ linux/arm64
 Build matrix SHALL produce one canonical image per architecture:
 
 ```text
-backupd:<version>  linux/amd64
-backupd:<version>  linux/arm64
+retnd:<version>  linux/amd64
+retnd:<version>  linux/arm64
 ```
 
 For registry publication this MAY be represented by a multi-architecture manifest.
@@ -2719,10 +2719,10 @@ packaging/ugos/
 │   └── docker-compose.yaml
 ├── rootfs_amd64/
 │   └── images/
-│       └── backupd-<version>-amd64.tar
+│       └── retnd-<version>-amd64.tar
 └── rootfs_arm64/
     └── images/
-        └── backupd-<version>-arm64.tar
+        └── retnd-<version>-arm64.tar
 ```
 
 Do not put additional arbitrary files into Docker App `rootfs_common`.
@@ -3016,7 +3016,7 @@ If the target App Center region/current UGREEN rules require first-launch privac
 
 Backup setup itself SHALL be skippable so experienced administrators can enter the main UI and configure manually.
 
-The welcome screen SHALL make clear that Backupd:
+The welcome screen SHALL make clear that retnd:
 
 - manages backup artifacts that another system creates;
 - does not create the database/application backup itself;
@@ -3578,7 +3578,7 @@ Container/CLI behavior SHALL be specified as integration tests before the packag
 
 Test:
 
-- `backupd check`;
+- `retnd check`;
 - one-cycle `run`;
 - daemon;
 - clean `SIGTERM`;
@@ -3756,7 +3756,7 @@ Implement/prove:
 
 Implement/prove:
 
-- private writable state source for `/var/lib/backupd`;
+- private writable state source for `/var/lib/retnd`;
 - user-authorized backup root mounted at `/data/backups`;
 - update persistence;
 - disable/enable persistence;
@@ -3800,7 +3800,7 @@ Proceed only if the core/shared UI are provider-neutral **and** an authorized UG
 
 ---
 
-# 70. Phase 2 — Functional Backupd UI MVP
+# 70. Phase 2 — Functional retnd UI MVP
 
 ## Objective
 
@@ -3948,7 +3948,7 @@ Keep filtering and diagnostics intentionally simple for v1.
 
 ### Phase 2 Exit Gate
 
-An administrator can install/open the app and perform normal backupd configuration and monitoring without using a terminal.
+An administrator can install/open the app and perform normal retnd configuration and monitoring without using a terminal.
 
 ---
 
@@ -4172,14 +4172,14 @@ Include:
 
 ## Work Package 4.3 — TrueNAS + Unraid + OpenMediaVault Container Provider Packages
 
-> If a packaging profile here runs `/backupd-web serve-ui` as its own
+> If a packaging profile here runs `/retnd-web serve-ui` as its own
 > container (the same two-container split B4.1 shipped for the generic Docker
 > app), remember to override the canonical image's own baked-in `HEALTHCHECK`
-> independently for that container: it runs `backupd status`, which
+> independently for that container: it runs `retnd status`, which
 > needs a config file and a state database `serve-ui` never has. See
 > `container/compose.yaml`'s `web-ui` service and docs/deployment.md's
 > "Healthchecks differ per container" for the working example
-> (`/backupd-web healthcheck` instead).
+> (`/retnd-web healthcheck` instead).
 
 ### TrueNAS
 
@@ -4432,7 +4432,7 @@ In addition to functional completion, every applicable child issue SHALL demonst
 
 This EPIC is complete when:
 
-- [ ] the predecessor backupd core remains the only lifecycle engine;
+- [ ] the predecessor retnd core remains the only lifecycle engine;
 - [ ] one canonical provider-neutral core binary exists per release/architecture;
 - [ ] container-based providers use the canonical OCI image built from that core binary;
 - [ ] Synology SPK proves the embedded core binary hash;
@@ -4560,19 +4560,19 @@ TDD itself is part of the safety system. Any change to authentication, deletion,
 Create/update:
 
 ```text
-tools/backupd/README.md
-tools/backupd/docs/architecture.md
-tools/backupd/docs/provider-apps.md
-tools/backupd/docs/testing-tdd.md
-tools/backupd/docs/security.md
-tools/backupd/docs/providers/ugos.md
-tools/backupd/docs/providers/synology.md
-tools/backupd/docs/providers/truenas.md
-tools/backupd/docs/providers/unraid.md
-tools/backupd/docs/providers/openmediavault.md
-tools/backupd/docs/providers/proxmox.md
-tools/backupd/docs/providers/docker.md
-tools/backupd/docs/release.md
+tools/retnd/README.md
+tools/retnd/docs/architecture.md
+tools/retnd/docs/provider-apps.md
+tools/retnd/docs/testing-tdd.md
+tools/retnd/docs/security.md
+tools/retnd/docs/providers/ugos.md
+tools/retnd/docs/providers/synology.md
+tools/retnd/docs/providers/truenas.md
+tools/retnd/docs/providers/unraid.md
+tools/retnd/docs/providers/openmediavault.md
+tools/retnd/docs/providers/proxmox.md
+tools/retnd/docs/providers/docker.md
+tools/retnd/docs/release.md
 ```
 
 `architecture.md` SHALL document the dependency rule:
@@ -4638,7 +4638,7 @@ ADR-UGOS-009
 Require test-driven development and safety-specification tests for all implementation work
 
 ADR-PLATFORM-001
-Keep backupd core provider-neutral; all NAS OS integrations live under apps/<provider>
+Keep retnd core provider-neutral; all NAS OS integrations live under apps/<provider>
 
 ADR-PLATFORM-002
 Use one shared provider-neutral React UI with thin provider bridges
@@ -4695,7 +4695,7 @@ Do not paper over an unresolved security-sensitive question with an assumption.
 # 81. Recommended Implementation Sequence
 
 ```text
-Parent backupd core behavior
+Parent retnd core behavior
         ↓
 Phase 1 — Extract provider-neutral core/shared UI + prove UGOS adapter
         ↓
@@ -4871,7 +4871,7 @@ download/install .UPK
         ↓
 App Center installs Docker dependency/app
         ↓
-Backupd icon appears
+retnd icon appears
         ↓
 open inside UGOS desktop
         ↓
@@ -4915,9 +4915,9 @@ docker pull canonical versioned image
         ↓
 mount config/state/backups
         ↓
-backupd check
+retnd check
         ↓
-backupd daemon
+retnd daemon
         ↓
 manage via CLI
 ```
@@ -5070,7 +5070,7 @@ The adversarial panel required these substantive changes from the prior draft:
 
 ```text
                          REPOSITORY
-                tools/backupd/
+                tools/retnd/
                         │
         ┌───────────────┼────────────────┐
         │               │                │

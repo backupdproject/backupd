@@ -139,8 +139,8 @@ type RepositoryLocation struct {
 	//
 	// It is ours to place, not the engine's to choose, because a
 	// process-wide default config location is shared mutable state
-	// between unrelated backupd invocations. It belongs under this
-	// manager's private state directory (/var/lib/backupd), never under
+	// between unrelated retnd invocations. It belongs under this
+	// manager's private state directory (/var/lib/retnd), never under
 	// Root: #298 was filed over exactly that exposure for the SSH key,
 	// and a cache directory under an exported backup root is the same
 	// mistake with more bytes in it.

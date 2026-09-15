@@ -1,6 +1,6 @@
 # Privacy policy
 
-Backupd, `com.iasbuilt.backupd`. This is the privacy disclosure
+retnd, `com.iasbuilt.retnd`. This is the privacy disclosure
 §73 Work Package 5.2 and §45.5 require, and it is the content the `privacy`
 link in `distribution/packaging/compliance.json` resolves to.
 
@@ -10,7 +10,7 @@ by a test or a grep, the check is named.
 
 ## What leaves the machine
 
-Nothing that Backupd itself originates.
+Nothing that retnd itself originates.
 
 The app sends no telemetry, no analytics, no crash reports, no usage counters
 and no licence or activation call. There is no cloud account, no vendor
@@ -21,12 +21,12 @@ for one.
 
 The one HTTP client the shipped binaries construct talks to `127.0.0.1`: it is
 the container health check asking the local process whether it is healthy
-(`apps/generic/cmd/backupd-web`). It never leaves the container.
+(`apps/generic/cmd/retnd-web`). It never leaves the container.
 
 The app does open outbound network connections, and it opens exactly the ones
 the operator configured. There are two kinds. SFTP sessions to the hosts named
 in the operator's own backup sets, made by the pinned rclone packages compiled
-into `/backupd`; and, if the operator configured account recovery,
+into `/retnd`; and, if the operator configured account recovery,
 SMTP submissions to the mail server they nominated, carrying account mail
 — enrollment confirmation, a password-reset link, a test message — to the
 recovery address they nominated. Those connections carry the operator's own data
@@ -43,7 +43,7 @@ through creating them.
 
 - **Backup set configuration**: source paths, destination hosts and paths,
   schedules and retention policy. Stored in the config file
-  (`/etc/backupd/config.yaml` inside the container).
+  (`/etc/retnd/config.yaml` inside the container).
 - **SSH private key and known-hosts file**: the credential material for the
   SFTP destinations. Mounted read-only, never copied elsewhere by the app, and
   never written to a log. The host-key policy is strict: an unknown or changed
@@ -66,7 +66,7 @@ through creating them.
 
 ## Personal data
 
-Backupd collects no personal data about the person using it. It has no user
+retnd collects no personal data about the person using it. It has no user
 profile, no identifier that follows anyone between installations, and no
 analytics identity. It has exactly one contact field, added in #830: the
 recovery email address the operator types into the enrollment form for their own
@@ -96,7 +96,7 @@ claim that decays silently.
 ## Deleting everything
 
 Removing the app and deleting the state, config and secrets directories the
-platform's acceptance procedure created removes everything Backupd
+platform's acceptance procedure created removes everything retnd
 stored. There is nothing held anywhere else, so there is no deletion request to
 make of anybody and nobody to make it to.
 

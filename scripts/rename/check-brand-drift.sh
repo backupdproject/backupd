@@ -230,6 +230,7 @@ BACKUPD #895 the release after the one that ships this EPIC
 BACKUPD_BACKUP_STATUS #895 the release after the one that ships this EPIC
 BACKUPD_DEBUG #895 the release after the one that ships this EPIC
 BACKUPD_INCREMENTAL_ENGINE #895 the release after the one that ships this EPIC
+backupd_backup_set_state #895 the release after the one that ships this EPIC
 backupd_session #895 the release after the one that ships this EPIC
 backupd_csrf #895 the release after the one that ships this EPIC
 backupd@core/legacypath/legacypath.go #895 the release after the one that ships this EPIC
@@ -271,7 +272,6 @@ EOF
 # covering 904 files for the same reason.
 pending="$(
   cat <<'EOF'
-Backup manager
 BACKUP_MANAGER_ANALYTICS
 BACKUP_MANAGER_API_
 BACKUP_MANAGER_API_PASSWORD
@@ -409,6 +409,14 @@ EOF
 # renaming the reference would point both readers at a path that does not
 # exist.
 #
+# The ninth is #892's own prose. docs/deployment.md records the binary-name
+# cut this project made in 0.3.3 ("`backup-manager` became `rbm`") and cites
+# the design canvas by its real filename, and
+# docs/adr/0023-moving-the-repository-coordinates-once-and-last.md records why
+# a third rename needs an ADR at all: the first two left `RM_` variables and
+# `bm_` cookies behind. A document whose subject IS the rename history names
+# the names, the same way this epic's own three documents do.
+#
 # Two more groups are handled by path exclusion below rather than by a pin,
 # because they are machine-written or wholly historical and pinning them
 # would mean editing this list on every release: CHANGELOG.md, which is the
@@ -423,6 +431,7 @@ EOF
 # treats it as one.
 preexisting="$(
   cat <<'EOF'
+Backup Manager docs/deployment.md
 Backup Manager docs/epic-checklist.md
 Backup Manager docs/EPIC-R-rename-backupd-to-retnd.md
 backup manager docs/EPIC-R-rename-inventory.md
@@ -436,6 +445,8 @@ BACKUP_MANAGER_API_URL docs/design/activity-terminal.html
 BACKUP_MANAGER_API_USERNAME docs/design/activity-terminal.html
 backup_manager_state docs/conformance/epic-r-matrix.md
 backup-manager .github/workflows/ci.yml
+backup-manager docs/adr/0023-moving-the-repository-coordinates-once-and-last.md
+backup-manager docs/deployment.md
 backup-manager docs/EPIC-R-rename-backupd-to-retnd.md
 backup-manager docs/EPIC-R-rename-inventory.md
 backup-manager scripts/ci-local.sh
@@ -517,6 +528,7 @@ rclone-manager apps/common/webhost/router.go
 rclone-manager core/internal/obs/envlevel.go
 rclone-manager docs/EPIC-R-rename-backupd-to-retnd.md
 rclone-manager docs/EPIC-R-rename-inventory.md
+rclone-manager docs/adr/0023-moving-the-repository-coordinates-once-and-last.md
 rclone-manager docs/conformance/epic-r-matrix.md
 rclone-manager scripts/ci-local.sh
 rclone-manager scripts/e2e/README.md

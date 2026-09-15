@@ -51,7 +51,7 @@ Remote Server
 embedded rclone SFTP backend
     │
     ▼
-backupd
+retnd
     │
     ├── lifecycle journal (SQLite)
     ├── verification/validation
@@ -93,7 +93,7 @@ version**.
 Conceptually:
 
 ``` text
-backupd
+retnd
 │
 ├── cmd/
 ├── config/
@@ -288,7 +288,7 @@ go.mod
 go.sum
 
 cmd/
-  backupd/
+  retnd/
 
 internal/
   app/
@@ -323,7 +323,7 @@ container/
   compose.yaml
 ```
 
-This was originally scoped as `tools/backupd/` inside `iasbuilt/iac`.
+This was originally scoped as a `tools/` subdirectory inside `iasbuilt/iac`.
 The project now lives in its own repository, so the module root is the
 repository root. Nothing else in this specification depends on the
 location.
@@ -342,8 +342,8 @@ This boundary is mandatory to contain upstream API churn.
 The application SHALL support:
 
 ``` bash
-backupd run
-backupd daemon
+retnd run
+retnd daemon
 ```
 
 `run` performs one processing cycle and exits.
@@ -466,7 +466,7 @@ Configuration SHALL support at minimum:
 poll_interval: 15m
 
 state:
-  database: /var/lib/backupd/state.db
+  database: /var/lib/retnd/state.db
 
 sources:
   - id: production
@@ -480,7 +480,7 @@ sources:
           port: 22
           user: backup
           key_file: /run/secrets/backup_ssh_key
-          known_hosts: /etc/backupd/known_hosts
+          known_hosts: /etc/retnd/known_hosts
 
         remote_path: /backups/postgres
         local_path: /backups/production/postgres
@@ -684,11 +684,11 @@ remote:
   type: sftp
   host: cicd-pipeline.example
   user: backup
-  known_hosts: /etc/backupd/known_hosts
+  known_hosts: /etc/retnd/known_hosts
   key:
-    file: /etc/backupd/id_ed25519
+    file: /etc/retnd/id_ed25519
     # env: BACKUP_SSH_KEY
-    # command: ["op", "read", "op://infra/backupd/private-key"]
+    # command: ["op", "read", "op://infra/retnd/private-key"]
 ```
 
 `key_file` (a bare path, no `key:` block) keeps working unchanged as a
@@ -1452,7 +1452,7 @@ Before deletion:
 A dry-run is mandatory:
 
 ``` bash
-backupd retention --dry-run
+retnd retention --dry-run
 ```
 
 It SHALL explain every KEEP/DELETE decision.
@@ -1565,7 +1565,7 @@ Expose at minimum:
 CLI:
 
 ``` bash
-backupd status
+retnd status
 ```
 
 Container health support is mandatory.
@@ -1664,7 +1664,7 @@ Preferred deployment:
 ``` text
 UGREEN NAS
 ┌─────────────────────────────────────────────────────┐
-│ backupd container                            │
+│ retnd container                            │
 │                                                     │
 │ Single Go executable                               │
 │  ├── manager logic                                 │
@@ -1707,30 +1707,30 @@ Builds SHOULD target the architecture used by the UGREEN NAS, with
 # CLI
 
 ``` bash
-backupd run
-backupd daemon
+retnd run
+retnd daemon
 
-backupd check
-backupd status
+retnd check
+retnd status
 
-backupd sources
-backupd artifacts
+retnd sources
+retnd artifacts
 
-backupd fetch --source production --backup-set postgres-primary --dry-run
+retnd fetch --source production --backup-set postgres-primary --dry-run
 
-backupd retention --dry-run
-backupd retention
+retnd retention --dry-run
+retnd retention
 
-backupd reconcile
-backupd validate <artifact-id>
+retnd reconcile
+retnd validate <artifact-id>
 
-backupd version
+retnd version
 ```
 
 `version` SHALL report both:
 
 ``` text
-backupd version
+retnd version
 embedded rclone version
 Go version
 build commit
@@ -2080,7 +2080,7 @@ direct imports could still create significant maintenance cost.
 
 Using rclone `move` would combine transfer and deletion inside a generic
 operation and undermine the explicit distributed transaction required by
-the backupd.
+retnd.
 
 There is also a TOCTOU risk if a producer replaces a file under the same
 remote pathname after discovery.
@@ -2174,7 +2174,7 @@ lifecycle management.
 rclone:
     move bytes reliably
 
-backupd:
+retnd:
     decide what those bytes mean,
     when they are safe,
     when the source may be destroyed,

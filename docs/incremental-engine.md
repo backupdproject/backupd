@@ -63,7 +63,7 @@ enables it even where the file says otherwise, and `0|false|no|off`
 disables it even where the file enables it:
 
 ```bash
-RETND_INCREMENTAL_ENGINE=1 backupd run
+RETND_INCREMENTAL_ENGINE=1 retnd run
 ```
 
 Unset or empty defers to the file. A value that is neither spelling is
@@ -76,7 +76,7 @@ One function resolves it, `config.Config.IncrementalEngineEnabled()`, and
 nothing else re-derives it.
 
 The variable is read by the **engine** process — the one that runs the
-cycle — and not by the web host, so it only has to be set where `backupd`
+cycle — and not by the web host, so it only has to be set where `retnd`
 itself runs. On the standard container deployment that means it is a tool
 for a command you launch (`docker compose exec -e …`), a CLI-only install,
 or a systemd unit; `container/compose.yaml` declares the environment it
@@ -134,7 +134,7 @@ failure mode a backup product may never have.
 | What is stored | the whole file, every time | only content the repository does not already hold |
 | Identity | set plus remote basename (`model.ArtifactID`) | the set's `uuid` lineage plus a manifest id |
 | Where it lands | the backup root, as files you can see | an encrypted repository under a reserved namespace |
-| Restore | copy the artifact back yourself | `backupd snapshot restore` |
+| Restore | copy the artifact back yourself | `retnd snapshot restore` |
 | Deletes the remote original | yes, after a verified backup, unless read-only | **no**, never |
 | Retention | FR-18 GFS over artifacts | the same GFS chain, over snapshots |
 | Deduplication across runs | none | the reason the engine exists |
@@ -159,7 +159,7 @@ incremental engine is therefore a *new backup set*, and it is a
 deliberate operator procedure — see [the migration
 runbook](incremental-runbooks.md#runbook-1-moving-a-source-onto-the-incremental-engine).
 
-**backupd never converts an `artifact` set into a `kopia` one.** Not on
+**retnd never converts an `artifact` set into a `kopia` one.** Not on
 upgrade, not on a configuration reload, not as a convenience. An existing
 artifact backup set that was running before the incremental engine
 existed keeps running exactly as it was, with the same artifacts, the
@@ -170,7 +170,7 @@ create that passes `--local-path` or `--completion-strategy` is refused
 by name:
 
 ```text
-backupd: service: invalid request: invalid config (3 problems):
+retnd: service: invalid request: invalid config (3 problems):
   - sources[0].backup_sets[1]: local_path is only read by the "artifact" engine, and this set runs the "kopia" engine; remove the key, or set engine: artifact
   - sources[0].backup_sets[1]: completion.strategy is only read by the "artifact" engine, and this set runs the "kopia" engine; remove the key, or set engine: artifact
   - sources[0].backup_sets[1]: repository_domain "nodomain" is not declared in repository_domains (declared: production)
@@ -270,7 +270,7 @@ Two consequences worth stating plainly, because both surprise people:
 1. **A snapshot is not a file you can see.** There is no artifact on the
    backup root to copy. The bytes live inside the repository's own
    namespace, encrypted, and the only supported way to get data back out
-   is `backupd snapshot restore` (or the Restore screen, which submits
+   is `retnd snapshot restore` (or the Restore screen, which submits
    the same operation).
 2. **Deleting a snapshot frees nothing on its own.** Retention removes a
    manifest. The content behind it stays in the repository's packs until
@@ -279,7 +279,7 @@ Two consequences worth stating plainly, because both surprise people:
 ## The five numbers a run reports
 
 A run reports five separate measurements and **deliberately no total**.
-`backupd snapshot list`, `snapshot show`, the API's `Snapshot` model and
+`retnd snapshot list`, `snapshot show`, the API's `Snapshot` model and
 every screen show all five:
 
 | Field | What it measures |
@@ -468,7 +468,7 @@ repository_domains:
     description: Snapshots of the production tree
     isolation: shared
     passphrase:
-      file: /etc/backupd/secrets/production.passphrase
+      file: /etc/retnd/secrets/production.passphrase
 ```
 
 | Field | Required | Notes |
@@ -491,7 +491,7 @@ how an operator builds one up. The passphrase requirement is enforced
 where the reference is.
 
 **A domain can be declared without editing this file**, and only
-declared. `backupd repository create <domain> --isolation shared|isolated
+declared. `retnd repository create <domain> --isolation shared|isolated
 --passphrase-file F` (also `--passphrase-env`, and `--passphrase-command`
 once per argv word), `POST /repositories`, and the *Define a repository
 domain* screen all write the same `repository_domains:` entry atomically
@@ -578,10 +578,10 @@ verification and managed only a structural one reads as exactly that.
 `verification_status` is `pending`, `passed` or `failed`, and absent when
 nothing has been attempted.
 
-`backupd snapshot verify` proves it now, at a depth you state:
+`retnd snapshot verify` proves it now, at a depth you state:
 
 ```bash
-backupd snapshot verify production/uploads-tree --level content_sample --sample-percent 10
+retnd snapshot verify production/uploads-tree --level content_sample --sample-percent 10
 ```
 
 Without `--run` it verifies the set's last known good snapshot; without
@@ -620,7 +620,7 @@ needs somebody to look at it. A `KEEP` names every tier that selected it;
 a `REFUSE` names what refused.
 
 ```bash
-backupd snapshot retention production/uploads-tree   # a preview; it deletes nothing
+retnd snapshot retention production/uploads-tree   # a preview; it deletes nothing
 ```
 
 **Last known good.** Exactly one snapshot per backup set may be offered
@@ -632,9 +632,9 @@ be deleted, whoever's retention policy says otherwise, until somebody
 releases it:
 
 ```bash
-backupd snapshot hold production/uploads-tree --reason "incident 4412, legal hold"
-backupd snapshot holds production/uploads-tree
-backupd snapshot unhold production/uploads-tree hold_01J...
+retnd snapshot hold production/uploads-tree --reason "incident 4412, legal hold"
+retnd snapshot holds production/uploads-tree
+retnd snapshot unhold production/uploads-tree hold_01J...
 ```
 
 `--reason` is **required**. A hold nobody explained is one nobody except
@@ -675,7 +675,7 @@ ran, when the next run is eligible, and whether it is overdue. It opens
 nothing, so it answers while the repository itself is unreachable:
 
 ```text
-$ backupd repository maintenance production
+$ retnd repository maintenance production
 production
   owner:         nobody has claimed maintenance for this repository
   last quick:    never
@@ -705,7 +705,7 @@ invalid credentials is a passphrase, and overdue maintenance is a
 schedule.
 
 ```text
-$ backupd repository health
+$ retnd repository health
 production  FAILING
   shared:          true
   reachable:       false
@@ -754,7 +754,7 @@ source is a posture, not a failure — so what the probe decides is
 `writable`, not the verdict.
 
 What that answer arms is deleting the remote original after a verified
-backup. backupd may only do that when the source's own credentials can
+backup. retnd may only do that when the source's own credentials can
 actually write there, and until #852 the only proof was the first cycle
 that tried: an account that can read every byte and unlink nothing — an
 ordinary, frequently recommended posture — looked identical to one that
@@ -779,8 +779,8 @@ Turning read-only **on** is never gated — making a set safer does not
 need the source's permission:
 
 ```bash
-backupd backup-set read-only production/uploads-tree on    # never refused
-backupd backup-set read-only production/uploads-tree off   # refused unless the probe proved writable
+retnd backup-set read-only production/uploads-tree on    # never refused
+retnd backup-set read-only production/uploads-tree off   # refused unless the probe proved writable
 ```
 
 The probe's errors are classified and then **dropped for their own
@@ -821,7 +821,7 @@ repository_domains:
     description: Snapshots of the production tree
     isolation: shared              # shared | isolated, required, no default
     passphrase:
-      file: /etc/backupd/secrets/production.passphrase
+      file: /etc/retnd/secrets/production.passphrase
 ```
 
 Backup-set level:
@@ -894,7 +894,7 @@ Stated as limitations rather than left to be discovered:
 - **Restore is local.** `snapshot restore` writes onto a directory the
   deployment can reach. There is no direct restore back to a remote
   source, deliberately.
-- **The `backupd snapshot retention` preview opens the repository** before
+- **The `retnd snapshot retention` preview opens the repository** before
   it decides anything, so against a domain whose repository has never
   been created it fails rather than reporting an empty plan. `repository
   health` names that condition precisely; use it first.

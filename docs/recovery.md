@@ -6,9 +6,9 @@ trying to figure out whether you can still get a file back.
 It was written when this product had no operator commands at all, and it works entirely
 against the SQLite journal and the NAS filesystem. That is still the ground truth, and it
 is still the right thing to read at 3am when you do not trust a summary — but it is no
-longer the only interface. `backupd status`, `backupd sources`, `backupd artifacts`,
-`backupd activity`, `backupd validate`, `backupd retention`, `backupd quarantine`,
-`backupd retry` and `backupd catalog rebuild` all exist and answer most of the questions
+longer the only interface. `retnd status`, `retnd sources`, `retnd artifacts`,
+`retnd activity`, `retnd validate`, `retnd retention`, `retnd quarantine`,
+`retnd retry` and `retnd catalog rebuild` all exist and answer most of the questions
 below without a SQL prompt; [the reference
 page](https://backupdproject.github.io/backupd/reference.html#cli-commands) has every one
 of them. Where a query below and a command disagree, the query is right about the journal
@@ -34,10 +34,10 @@ different story and does have a restore verb — see the note below.)
 > nothing on this page applies to it. Read
 > [incremental-runbooks.md](incremental-runbooks.md) instead: it covers a
 > repository that will not open, a snapshot that verified and one that did
-> not, credential recovery, and getting data back out with `backupd snapshot
+> not, credential recovery, and getting data back out with `retnd snapshot
 > restore`. The set's `engine:` key in `config.yaml` says which engine it
 > runs, as does `engine` on `GET /api/v1/backup-sets/{source}/{set}` and the
-> badge on its page in the web interface. (`backupd sources` does not report
+> badge on its page in the web interface. (`retnd sources` does not report
 > it.)
 
 ## The one fact everything else depends on
@@ -69,7 +69,7 @@ sqlite3 /path/to/state.db "
 "
 ```
 
-What `backupd status` reports, and what `core/internal/health` decides it from:
+What `retnd status` reports, and what `core/internal/health` decides it from:
 
 - If the newest row across the whole set is `COMMITTED`, `REMOTE_DELETE_PENDING`,
   `COMPLETE` or `REMOTE_RETAINED`, and it's recent enough for your `stale_after` window,
@@ -132,7 +132,7 @@ strength of that alone; you don't need to re-verify it before copying it out, th
 re-running whatever validator the backup set's config names is never wrong if the stakes
 are high enough to justify the time.
 
-Copy it wherever the restore actually needs to happen. There is no `backupd restore`
+Copy it wherever the restore actually needs to happen. There is no `retnd restore`
 command to do this for you; a plain `cp`, `scp`, or whatever your restore target needs is
 the entire remaining procedure once you have the right path.
 
@@ -183,7 +183,7 @@ gone). Its one exit is back to `DISCOVERED`, meaning a fresh attempt has a real 
 succeeding.
 
 This self-heals the next time discovery and reconciliation run against this backup set,
-which `backupd daemon` does on the poll interval and `backupd reconcile` does on demand.
+which `retnd daemon` does on the poll interval and `retnd reconcile` does on demand.
 On a deployment with nothing serving it, that pass does not happen on its own. Your options, in order of how much you should trust the result:
 
 1. If you or someone else has already wired a runner against these packages (calling
@@ -230,7 +230,7 @@ That's a real operational consequence, not a cosmetic one:
   producer side, manual cleanup, a shorter retention window configured at the source), it
   will fill up on a long enough timeline, in every deployment that follows this project's
   own hardening advice. Monitor remote disk usage independently of this project; don't
-  assume `backupd` is freeing space on the source just because backups keep landing
+  assume `retnd` is freeing space on the source just because backups keep landing
   successfully on the NAS.
 - If you need remote pruning to actually happen in this deployment shape, the honest options
   are: relax the SFTP account's hardening to allow a remote hash command (trading delete-
@@ -243,7 +243,7 @@ That's a real operational consequence, not a cosmetic one:
 ## Step 6: retention decided this backup should be deleted, but it's still there
 
 That's expected, not a bug. A verdict and a deletion are two different things here, and
-nothing crosses between them on its own. [`docs/storage-mediums.md`](storage-mediums.md) and `backupd retention` are the longer
+nothing crosses between them on its own. [`docs/storage-mediums.md`](storage-mediums.md) and `retnd retention` are the longer
 version:
 
 - `core/internal/retention.GFSDecide` only classifies artifacts into keep/not-kept-by-GFS. It
@@ -257,11 +257,11 @@ version:
   `ApplyRetentionPlan` deletes only against that `plan_id`, and only while the plan it
   re-derives still matches the one an administrator reviewed. No cycle, no daemon and no
   timer ever calls it, so local disk usage grows until somebody applies a plan.
-- `backupd retention` is a preview in both of its modes and deletes nothing, with or
+- `retnd retention` is a preview in both of its modes and deletes nothing, with or
   without `--dry-run`. That is not a gap waiting to be filled: a CLI that deleted backups
   without the `plan_id` confirmation the HTTP path insists on would be a second, weaker
   authorisation path to the same act (issue #431).
-- `backupd retention apply <source/backup-set> --acknowledge` is the terminal's own
+- `retnd retention apply <source/backup-set> --acknowledge` is the terminal's own
   way in (issue #602), and it is not that second path: it goes through the same
   `PreviewRetention`/`ApplyRetentionPlan` pair, prints the plan it is about to apply, and
   refuses with `RETENTION_PLAN_STALE` and zero deletions if the set moved in between.
@@ -273,7 +273,7 @@ be safe to remove"; applying them is somebody's deliberate act, through the API 
 that verb.
 
 One thing to know before reading a preview taken AFTER an apply: deleting a file does not
-change the journal, so `backupd retention` goes on listing a pruned artifact as
+change the journal, so `retnd retention` goes on listing a pruned artifact as
 `DELETE` (it reads FR-18/FR-19 classification and never looks at the disk), while the API's
 own preview reports `REFUSE` for it, because FR-20's checks stat the path and find nothing
 there. Both are describing the same backup set; only one of them has looked.
@@ -293,7 +293,7 @@ you.
 First, read why:
 
 ```
-backupd artifacts production/postgres/dump-2026-09-04.zst
+retnd artifacts production/postgres/dump-2026-09-04.zst
 ```
 
 The `reason` line is the literal sentence the manager recorded at the moment it gave up.
@@ -314,7 +314,7 @@ Three shapes come up most:
 Then put it back into the pipeline:
 
 ```
-backupd retry production/postgres/dump-2026-09-04.zst --note "the NAS came back"
+retnd retry production/postgres/dump-2026-09-04.zst --note "the NAS came back"
 ```
 
 That moves the row from `FAILED` to `DISCOVERED` and the next cycle picks it up like any
@@ -340,18 +340,18 @@ will report the set as healthy right up to the moment its next backup does not h
 
 What you see is a refusal: a manual run of the set is refused, the scheduler stops visiting
 it, and a `WorkflowRecoveryRequired` condition is raised naming the set and the run. Any
-command that opens the data plane — `backupd fetch`, `backupd daemon` — says so once on the
+command that opens the data plane — `retnd fetch`, `retnd daemon` — says so once on the
 way up, before it does anything:
 
 ```
-backupd: 2 workflow cleanup(s) from an interrupted run are outstanding; the affected backup sets refuse to run until each is resumed or acknowledged (`backupd workflow recovery show`)
+retnd: 2 workflow cleanup(s) from an interrupted run are outstanding; the affected backup sets refuse to run until each is resumed or acknowledged (`retnd workflow recovery show`)
 ```
 
-`backupd status` will not tell you. It has no workflow section at all; it reports the set's
+`retnd status` will not tell you. It has no workflow section at all; it reports the set's
 artifacts, and they are fine. The command that answers is:
 
 ```
-backupd workflow recovery show
+retnd workflow recovery show
 ```
 
 One block per outstanding scope: the run id, the backup set, whether it is the global or the
@@ -391,7 +391,7 @@ a blocked set exactly as an ordinary run is, and even where it does run it leave
 obligations exactly as it found them, which is what stops a flag from settling a recovery
 it knows nothing about (`core/internal/state/workflowlifecycle.go`).
 
-1. **Read the hold.** `backupd workflow recovery show`, above. If you want it out of the
+1. **Read the hold.** `retnd workflow recovery show`, above. If you want it out of the
    journal instead — because nothing is serving the deployment, or because you do not trust
    a summary:
 
@@ -423,14 +423,14 @@ it knows nothing about (`core/internal/state/workflowlifecycle.go`).
    The `interrupted` row is the script that was mid-flight. `exit_code` is NULL for it and
    that is not a gap in the record: no process status ever reached this product, and NULL and
    0 are emphatically different answers here. `pending` rows after it are hooks that never
-   started. `backupd workflow run log <run-id> --step <step-id>` prints whatever that script
+   started. `retnd workflow run log <run-id> --step <step-id>` prints whatever that script
    managed to say before the process went away, which is usually the fastest way to find out
    how far it got.
 
 3. **Resume the cleanup**, if the right answer is for this product to finish what it owes:
 
    ```
-   backupd workflow recovery resume-cleanup wfr_01HX...
+   retnd workflow recovery resume-cleanup wfr_01HX...
    ```
 
    It runs only the eligible "after" stages, out of that run's own captured bytes, each one
@@ -446,7 +446,7 @@ it knows nothing about (`core/internal/state/workflowlifecycle.go`).
 4. **Or acknowledge it**, if you have already put the machine back by hand:
 
    ```
-   backupd workflow recovery acknowledge wfr_01HX... --reason "thawed the database and unmounted /snap by hand"
+   retnd workflow recovery acknowledge wfr_01HX... --reason "thawed the database and unmounted /snap by hand"
    ```
 
    This executes nothing. It records that a person took responsibility, unblocks the set, and
@@ -508,7 +508,7 @@ The hard case this whole mechanism was built for is a power cut, or anything els
 kills the host outright. It is worth spelling out end to end, because the sequence is not
 obvious from the outside:
 
-1. The machine comes back and `backupd` starts. Its first act on the data plane is the
+1. The machine comes back and `retnd` starts. Its first act on the data plane is the
    workflow reconciliation, and a failure there ends the invocation rather than proceeding —
    a process that cannot work out which sets are blocked must not take a backup over a
    machine that may still be quiesced.
@@ -516,7 +516,7 @@ obvious from the outside:
    its unsettled scopes moved to `recovery_required`, its spool retained. Sets with an
    outstanding scope are blocked; every other set runs normally. The startup line quoted at
    the top of this step is printed once.
-3. Go and look at the source machines named by `backupd workflow recovery show` **before**
+3. Go and look at the source machines named by `retnd workflow recovery show` **before**
    you clear anything. The journal can tell you which hooks never ran; it cannot tell you
    what state the other end is actually in. A `df`, a `mount`, and whatever the "before" hook
    does in reverse is the check.
@@ -539,11 +539,11 @@ safe, not here.
 |---|---|---|
 | Newest row is `COMMITTED`/`REMOTE_DELETE_PENDING`/`COMPLETE`/`REMOTE_RETAINED`, recent | Healthy | Nothing |
 | No good row inside `stale_after` | Stale | Investigate why new backups aren't landing |
-| `FAILED`, no `next_retry_at` | The attempt did not finish and nothing will try again on its own | Read the reason, fix it, then `backupd retry <id>` (Step 7) |
+| `FAILED`, no `next_retry_at` | The attempt did not finish and nothing will try again on its own | Read the reason, fix it, then `retnd retry <id>` (Step 7) |
 | `QUARANTINED_LOST` anywhere | Irrecoverable loss | Restore from the next-newest good row; report the gap honestly |
 | Newest good row is `QUARANTINED` | Content suspect, source may still exist | Manual re-fetch or re-run reconciliation yourself |
 | `REMOTE_DELETE_PENDING` stuck, `remote_delete_error` set | Expected refusal under a hardened SFTP account | Monitor remote disk directly; this is not corrupting anything |
 | `Keep: false` from GFS but the file is still there | Expected; a verdict is not a deletion, and nothing applies one on a timer | Apply a retention plan through the API if the space is needed |
-| A `workflow_cleanup_obligations` row is `recovery_required` | An interrupted run's cleanup is unaccounted for, and that set is blocked | `backupd workflow recovery show`, then resume or acknowledge (Step 8) |
+| A `workflow_cleanup_obligations` row is `recovery_required` | An interrupted run's cleanup is unaccounted for, and that set is blocked | `retnd workflow recovery show`, then resume or acknowledge (Step 8) |
 | A `workflow_steps` row is `interrupted`, `exit_code` NULL | Nobody saw that script exit; its side effects may be half-applied | Look at the source machine before clearing anything (Step 8) |
 | Run is `cleanup_failed`, `recovery_state` is `none` | The cleanup ran and did not succeed; nothing is blocked and the machine may not be back | Read the step's log and put the machine back yourself; there is no hold to lift |

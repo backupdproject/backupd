@@ -439,7 +439,7 @@ alternative was to serve `"medium": "local"` everywhere, the way
 written before EPIC E holds every copy locally, so that spelling would have put
 a new key on every verdict of every response those deployments serve, to say
 the only thing that was ever true of them. Absence says the same thing and
-leaves them byte for byte as they were. `backupd retention` made the
+leaves them byte for byte as they were. `retnd retention` made the
 same call for the same reason (`mediumSuffix`), so the two operator surfaces
 now read alike instead of each having its own convention.
 
@@ -627,7 +627,7 @@ landed must be able to ask the same question again with the same idempotency
 key and get the same answer, and "place a hold twice" is otherwise two holds.
 
 **CLI and Web parity becomes a property of the contract.** There is one
-mutating surface, so `backupd snapshot restore` and the Restore screen submit
+mutating surface, so `retnd snapshot restore` and the Restore screen submit
 the same operation with the same parameters. A second route for the browser
 is how two surfaces stop agreeing.
 

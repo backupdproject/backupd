@@ -37,7 +37,7 @@ import (
 // emitted. #813 names that prohibition twice. Everything here is drawn
 // from a CLOSED vocabulary -- a scope, a phase, a target, a state, a
 // disposition, a status -- except the backup set id, which is bounded by
-// the configuration and is already a label on every other backupd_ metric
+// the configuration and is already a label on every other retnd_ metric
 // family.
 //
 // The one thing an observation could carry and does not is a hook's own

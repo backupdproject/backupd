@@ -2183,7 +2183,7 @@ type MediumCredentials struct {
 	// holds is a secret it cannot log.
 	//
 	// The file belongs under this manager's private state directory
-	// (/var/lib/backupd), never under the backup root: the backup
+	// (/var/lib/retnd), never under the backup root: the backup
 	// root is what a NAS deployment exports over SMB or AFP, and #298 was
 	// filed over precisely that exposure for the SSH key. This package
 	// does not enforce that placement, the same way it does not enforce it
@@ -2219,7 +2219,7 @@ const DefaultFileName = "config.yaml"
 // DefaultFileName inside it; anything else is returned unchanged.
 //
 // It exists because #196 made the packaged mount a directory, so
-// `--config /etc/backupd/config` is now the natural thing for an
+// `--config /etc/retnd/config` is now the natural thing for an
 // operator to type. Without this, that spelling fails with "is a
 // directory" from deep inside the YAML reader, which says nothing about
 // what to do instead.

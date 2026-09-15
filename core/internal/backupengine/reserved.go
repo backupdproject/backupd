@@ -73,7 +73,7 @@ const stateDirName = "state"
 // a pack file is.
 //
 // A backup root is not the right place for this in production -- it
-// belongs under /var/lib/backupd, which is why RepositoryLocation.StateDir
+// belongs under /var/lib/retnd, which is why RepositoryLocation.StateDir
 // exists and is honoured when set. This is the fallback for the case
 // where a caller has a backup root and nothing else, and it is reserved so
 // that the fallback is safe rather than merely convenient.

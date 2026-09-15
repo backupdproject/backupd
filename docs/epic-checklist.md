@@ -81,14 +81,14 @@ enough that nobody has to set it.
   `TestEveryAPIRouteNamesItsCLIEquivalentOrTheGap` in
   `apps/common/webhost/actionlog_test.go` fails on a route with neither.*)*
 - [ ] **A gap sentence must not name a verb this binary ships.** *(Gated:*
-  `TestNoGapClaimsAVerbThisBinaryShips` in `core/cmd/backupd/cliechogaps_test.go`.*)* Five of these once claimed a verb did
+  `TestNoGapClaimsAVerbThisBinaryShips` in `core/cmd/retnd/cliechogaps_test.go`.*)* Five of these once claimed a verb did
   not exist while the same tree shipped it.
 - [ ] **Every new CLI verb reaches the dispatch table** in
-  `core/cmd/backupd/main.go` **and gets a row in `docs/site/reference.html`.**
+  `core/cmd/retnd/main.go` **and gets a row in `docs/site/reference.html`.**
   *(Gated:* `distribution/packaging/site_reference_test.go` reads the dispatch
   table and the page and compares them.*)*
 - [ ] **The refusals match on both routes**, same reason and same exit code.
-  *(Gated:* `core/cmd/backupd/routeparity_test.go`.*)*
+  *(Gated:* `core/cmd/retnd/routeparity_test.go`.*)*
 - [ ] **Check the gap in both directions.** *(Ungated.)* The tests above catch an
   API route with no command. Nothing catches a command with no way to do it in
   the browser, so that one is mine to check by hand.

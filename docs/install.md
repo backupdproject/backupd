@@ -1,4 +1,4 @@
-# Installing backupd on a Docker host
+# Installing retnd on a Docker host
 
 Issue #262. `scripts/install/install_docker_host.py` brings the engine and the Web UI
 up on a machine you have SSH on, or refuses and tells you exactly which prerequisite
@@ -414,6 +414,75 @@ names neither `--mode` nor the mapping, so whoever hit it in a cron job had to c
 read the source. It still exits 2, and now it says which flag replaced theirs. A re-run
 with no mode flag at all is the other case, and that one exits 20 and names `--mode`.
 
+## Upgrading a deployment installed before the rename
+
+EPIC R (#885) renamed the product to `retnd`. The image entrypoints, the compose
+service, the container-internal paths and the systemd units moved with it (#890), and
+this is what each of the three upgrade paths does about it.
+
+**Through this installer, which moves everything in one transaction.**
+
+```bash
+python3 install_docker_host.py migrate-identity --prefix ~/retnd
+```
+
+It takes the stack down first — the engine opens the state database with
+`journal_mode=WAL`, so nothing here edits a file the engine still holds open — then
+restages the deployment so the mounts become `/etc/retnd/...`, rewrites every absolute
+container path the installed `config.yaml` names, renames `backupd-bridge.service`,
+`backupd-bridge.timer` and `backupd-workflow-runner.service` to their `retnd-`
+spellings, and brings the stack back up. The mounts move **before** `config.yaml` is
+rewritten, which is the opposite of the intuitive order and is the whole reason the
+intermediate state starts: the staged payload mounts your one host configuration
+directory at both `/etc/retnd/config` and `/etc/backupd/config` for the rollback
+window, so the un-rewritten `config.yaml` still resolves every path it names. Anything
+that fails after the rewrite puts `config.yaml` back byte for byte and brings the stack
+up on the pre-migration configuration. Re-running it on a deployment that has already
+moved finds nothing to move and says so.
+
+Two refusals it can produce, and each names its own fix:
+
+- **Exit 31**, when the configuration mount has moved and the persisted `config.yaml`
+  still names a pre-rename path in a shape the rewriter will not touch blind: a list
+  entry, a flow mapping or a multi-line scalar. It prints the line number and the line,
+  and leaves `config.yaml` exactly as it was. Change that one line to name `/etc/retnd`
+  and re-run. It refuses rather than skipping the line because the mount has already
+  moved by then, and a surviving `/etc/backupd` value is a deployment that starts,
+  reports healthy, and fails at the first backup cycle on a path nothing is mounted at.
+- **Exit 22**, when both spellings of a renamed unit are enabled on this host, which
+  happens if somebody copied a unit file across by hand or re-enabled an old one from a
+  saved command line. Both would start at boot, two oneshots would re-assert the same
+  four firewall rules against each other, and which one you are debugging would depend
+  on which systemd started last. Either let `migrate-identity` finish the rename, or
+  disable the pre-rename unit yourself with the `sudo systemctl disable --now
+  backupd-bridge.service` line the refusal prints for each pair it found.
+
+**With an unedited compose file you pinned yourself.** It still starts and still works,
+for one release. The old image reference resolves through the mirror published from the
+retained organisation, the image carries `/backupd-web` as a hardlink beside
+`/retnd-web`, and your `volumes:` lines still land on `/etc/backupd` and
+`/var/lib/backupd` — which the engine **adopts**: when the current path holds no state
+and the pre-rename path holds it, the deployment is served from the pre-rename path and
+warns on every start, naming the compose line to change and this installer's
+`migrate-identity` command. Nothing first-runs over an existing journal (FR-38), so the
+setup wizard is not a thing an upgrade can show you. The warning is the whole signal,
+and the window is one release: #895 deletes the adoption, the entrypoint hardlink and
+the image mirror together.
+
+**The one refusal an upgrade can meet instead of a warning** is two *different*
+populated directories, one at each container path. The engine refuses to start and
+names both, because choosing one journal silently is the worst option available. Keep
+the directory this deployment should serve, move the other aside, and start again. One
+host directory bind-mounted at both container paths — which is exactly what
+`migrate-identity` writes for the rollback window — is not that case: it is one device
+and one inode, and it starts normally.
+
+**On a `--cli-only` host**, the command is `retnd` and the wrapper is
+`<prefix>/bin/retnd`. An existing `<prefix>/bin/backupd` is rewritten with the same
+body rather than left alone or deleted, so the command already in your shell history
+keeps working for the same one release; left alone it would exec a `/backupd` the image
+no longer has.
+
 ## It derives from the canonical definition, it does not restate it
 
 `container/compose.yaml` is the canonical runtime contract (issue #167), and
@@ -472,7 +541,7 @@ Not "the container started". Three conditions, and the third exists because a re
 install taught me it was a separate claim:
 
 1. Docker reports the engine healthy **by its own liveness probe**. Not
-   `backupd status`, which is a backup freshness verdict a fresh install
+   `retnd status`, which is a backup freshness verdict a fresh install
    legitimately fails; gating on that means the Web UI never starts, which is issue
    #206.
 2. The Web UI serves its bundle. A fresh install with no config serves a first-run

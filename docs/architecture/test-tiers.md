@@ -2,7 +2,7 @@
 
 Issue #447. Rom asked for every test to run the way
 `scripts/e2e/two-machine-backup.sh` does: two containers on a dedicated
-network, one playing the backupd machine and one playing the VPS being
+network, one playing the retnd machine and one playing the VPS being
 backed up. I put that to four adversarial perspectives before writing
 anything, and the record is on the issue. This page is the rule that came
 out of it, the part that has to outlive the discussion.
