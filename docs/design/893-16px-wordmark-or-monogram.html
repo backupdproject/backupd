@@ -1,0 +1,244 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>The 16-pixel favicon: wordmark, `d` monogram, or the mark (issue #893)</title>
+<style>
+:root{
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;
+  --radius-sm:4px;--radius-md:6px;--radius-lg:8px;--radius-xl:10px;--radius-pill:999px;
+  --bg:#f2f2f0;--surface:#fff;--surface-2:#fafaf9;--surface-3:#f0f0ed;
+  --border:#e0dfdc;--border-strong:#c8c7c3;
+  --text:#191a19;--text-2:#5b5d5b;--text-3:#8b8d8a;
+  --accent:oklch(0.52 0.09 255);--accent-quiet:oklch(0.95 0.02 255);
+  --ok:oklch(0.52 0.10 155);--ok-quiet:oklch(0.955 0.025 155);
+  --warn:oklch(0.56 0.11 70);--warn-quiet:oklch(0.96 0.035 75);
+  --danger:oklch(0.52 0.15 25);--danger-quiet:oklch(0.955 0.03 25);
+  --shadow:0 1px 2px rgba(20,20,18,.05),0 1px 1px rgba(20,20,18,.04);
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:var(--space-6)}
+.wrap{max-width:1060px;margin:0 auto;display:flex;flex-direction:column;gap:var(--space-5)}
+h1{font-size:16px;font-weight:640;margin:0 0 var(--space-1);letter-spacing:-.01em}
+.sub{color:var(--text-2);font-size:13px;margin:0}
+.caption{color:var(--text-3);font-size:12px;margin:var(--space-4) 0 var(--space-2);
+  text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);
+  box-shadow:var(--shadow);overflow:hidden}
+.card__header{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);
+  padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--border);background:var(--surface-2)}
+.card__body{padding:var(--space-4) var(--space-5)}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--text-3);margin:0}
+.note{margin:0;padding:var(--space-3) var(--space-5);border-top:1px solid var(--border);
+  background:var(--surface-2);font-size:12.5px;color:var(--text-2)}
+.note strong{color:var(--text)}
+code{font-family:var(--font-mono);font-size:12px;background:var(--surface-3);
+  padding:1px 4px;border-radius:var(--radius-sm)}
+.pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 10px;
+  border-radius:var(--radius-pill);font-size:11.5px;font-weight:600;letter-spacing:.02em}
+.pill--ok{background:var(--ok-quiet);color:var(--ok)}
+.pill--err{background:var(--danger-quiet);color:var(--danger)}
+.pill--warn{background:var(--warn-quiet);color:var(--warn)}
+.cands{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-4)}
+.cand{border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;
+  display:flex;flex-direction:column}
+.cand h2{font-size:13px;font-weight:640;margin:0;padding:var(--space-2) var(--space-3);
+  border-bottom:1px solid var(--border);background:var(--surface-2)}
+.shot{padding:var(--space-4) var(--space-3);display:flex;align-items:center;
+  justify-content:center;gap:var(--space-5);background:
+  repeating-conic-gradient(#f7f7f5 0% 25%,#fff 0% 50%) 50%/16px 16px}
+.shot img{image-rendering:pixelated;display:block}
+.one{width:16px}
+.eight{width:128px}
+.verdict{padding:var(--space-3);font-size:12.5px;color:var(--text-2);
+  border-top:1px solid var(--border);min-height:106px}
+.verdict b{color:var(--text)}
+.ladder{display:flex;flex-direction:column;gap:var(--space-3)}
+.rung{display:flex;align-items:center;gap:var(--space-4)}
+.rl{font-size:12px;color:var(--text-3);font-family:var(--font-mono)}
+.rl b{color:var(--text-2)}
+.mono{display:block}
+table{border-collapse:collapse;font-size:12.5px;width:100%}
+th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--text-3);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+ul{margin:var(--space-2) 0 0;padding-left:18px}
+li{margin-bottom:var(--space-2)}
+</style>
+<div class="wrap">
+
+  <div>
+    <h1>The 16-pixel favicon: wordmark, <code>d</code> monogram, or the mark</h1>
+    <p class="sub">Issue #893 (EPIC R, FR-44) &middot; 2026-09-14 &middot; the decision, and the pixels it was taken on.</p>
+  </div>
+
+  <div class="card">
+    <div class="card__header"><p class="eyebrow">The question FR-44 asks</p></div>
+    <div class="card__body">
+      <p style="margin:0">The lockup is a mark plus a four-glyph wordmark with the daemon accent on the
+      trailing <code>d</code>. Every size above 32&nbsp;px can carry both. <b>16&nbsp;px cannot carry
+      the wordmark</b>, so 16&nbsp;px is the size that forces a choice, and FR-44 requires the choice
+      to be recorded here rather than left as whatever the export script happened to produce.
+      Three candidates were rendered at exactly 16&nbsp;px by <code>rsvg-convert</code> and are shown
+      below at 1:1 and at 8&times; with nearest-neighbour scaling, so what is on the page is the pixel
+      grid a browser tab actually gets and not a smooth re-drawing of it.</p>
+    </div>
+  </div>
+
+  <div class="cands">
+    <div class="cand">
+      <h2>A &mdash; the mark</h2>
+      <div class="shot">
+        <img class="one" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABmJLR0QA/wD/AP+gvaeTAAAB7UlEQVQ4jaWST0iUURTFf/d9o6KSo21jkIrKTW6CZNRNQYsI2oQbS4qiJAgd3bb5aCtpagRpglTUwkUrW7QIN/4psEVUBLYxoTYFOdU0TvO900JnzGkoobN6vHfPuefc++A/YeUum7sGausqg6OSa/ImmdeSvvFkfqr/x98FwtAlV+L9Jq4C9SW1X0y6NtuYHiYM/Z8CYejaluvvydQJvEM2akH0HEBRcBinHsReTPfnEumzBZFYgd/6Pp6SqdOwR/6rPz0/1fe73YVkx+C41dlDZGfalutezMJQ0cGhS7drqvKZDxiflNbBclmLdVHmJaJhLVaTWBzrzjiAqp/fjwFxvI0UyO0Xr+9Pnh963HphcLrl3PA+gMWx7ozETWBnVZQ5shnBuSYk5PxCoVsUuRsGx5ERBBHAiQ3LzwCQmoBpB2De59Yfg0w568hUPMpt2VwMIJ+LTcSqo+XZOz2voRcA711vEERCJplSBYIjahEGZm+3rnEbSHYMVtsOewXUV/rVXTOTYTb2T9YGmrsGaq3CHgB7ZErNTIbZYoRStF++1aBc9qT3wZIL8l7etQpdAXYb3J1LpEe3zKAUyq6dktm4mUfeAWDYZ5lScxN9I7A51LICFY2rk7mV+EfEAcMCmd4orafrf6R/u6m3h1/ya9FEfNCVswAAAABJRU5ErkJggg==" alt="the mark at 16 pixels">
+        <img class="eight" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABmJLR0QA/wD/AP+gvaeTAAAB7UlEQVQ4jaWST0iUURTFf/d9o6KSo21jkIrKTW6CZNRNQYsI2oQbS4qiJAgd3bb5aCtpagRpglTUwkUrW7QIN/4psEVUBLYxoTYFOdU0TvO900JnzGkoobN6vHfPuefc++A/YeUum7sGausqg6OSa/ImmdeSvvFkfqr/x98FwtAlV+L9Jq4C9SW1X0y6NtuYHiYM/Z8CYejaluvvydQJvEM2akH0HEBRcBinHsReTPfnEumzBZFYgd/6Pp6SqdOwR/6rPz0/1fe73YVkx+C41dlDZGfalutezMJQ0cGhS7drqvKZDxiflNbBclmLdVHmJaJhLVaTWBzrzjiAqp/fjwFxvI0UyO0Xr+9Pnh963HphcLrl3PA+gMWx7ozETWBnVZQ5shnBuSYk5PxCoVsUuRsGx5ERBBHAiQ3LzwCQmoBpB2De59Yfg0w568hUPMpt2VwMIJ+LTcSqo+XZOz2voRcA711vEERCJplSBYIjahEGZm+3rnEbSHYMVtsOewXUV/rVXTOTYTb2T9YGmrsGaq3CHgB7ZErNTIbZYoRStF++1aBc9qT3wZIL8l7etQpdAXYb3J1LpEe3zKAUyq6dktm4mUfeAWDYZ5lScxN9I7A51LICFY2rk7mV+EfEAcMCmd4orafrf6R/u6m3h1/ya9FEfNCVswAAAABJRU5ErkJggg==" alt="the mark at 16 pixels, magnified 8 times">
+      </div>
+      <div class="verdict"><b>Reads.</b> The broken ring and the centre dot stay separable: the
+      counter survives as a ring of background pixels and the gap in the stroke is still visible at
+      the lower left. It is also the <b>only</b> candidate that is the same drawing as the 32&nbsp;px,
+      48&nbsp;px, 180&nbsp;px and 256&nbsp;px exports.</div>
+    </div>
+    <div class="cand">
+      <h2>B &mdash; the wordmark</h2>
+      <div class="shot">
+        <img class="one" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAALCAYAAAB24g05AAAABmJLR0QA/wD/AP+gvaeTAAABJElEQVQokc2RPSjEcRyHn+/vfydJGS4vC8vFYjIQh8iidAOrIq7Edl1sUpeRQliQl1k2w610+mewSQbLlXKlG7ykK87vYzJbJM/6TE8P/Gt6ptcGfvJGNusS97XNvKscxt9K/Q91jfndTLFrcjsWiXzkHSQvWp4Lg4/1NVTK1We7CyWAzqmVpmgQzVlvav1YRpWkSzOLIzpktmdSFbAM5D6934w4tyP4MFhCDAnrw9TtZLSG+5nRl9eXNcQYcG1oLjzIbGEUwoPMuHNBG9KRN9LCkjKGw8N0Aii4756bdipACTg3aQbAxFtiYrXB5APv8IH5T4EDyonURjcQcyZOAchmPca8wYg3ngC8tKhoZNZZcGfiVlLRwZU5n8ZIg538+rm/5wu4jHVK1y3r4AAAAABJRU5ErkJggg==" alt="the wordmark fitted to 16 pixels wide">
+        <img class="eight" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAALCAYAAAB24g05AAAABmJLR0QA/wD/AP+gvaeTAAABJElEQVQokc2RPSjEcRyHn+/vfydJGS4vC8vFYjIQh8iidAOrIq7Edl1sUpeRQliQl1k2w610+mewSQbLlXKlG7ykK87vYzJbJM/6TE8P/Gt6ptcGfvJGNusS97XNvKscxt9K/Q91jfndTLFrcjsWiXzkHSQvWp4Lg4/1NVTK1We7CyWAzqmVpmgQzVlvav1YRpWkSzOLIzpktmdSFbAM5D6934w4tyP4MFhCDAnrw9TtZLSG+5nRl9eXNcQYcG1oLjzIbGEUwoPMuHNBG9KRN9LCkjKGw8N0Aii4756bdipACTg3aQbAxFtiYrXB5APv8IH5T4EDyonURjcQcyZOAchmPca8wYg3ngC8tKhoZNZZcGfiVlLRwZU5n8ZIg538+rm/5wu4jHVK1y3r4AAAAABJRU5ErkJggg==" alt="the wordmark fitted to 16 pixels wide, magnified 8 times">
+      </div>
+      <div class="verdict"><b>Does not read, and it is not close.</b> Fitting the wordmark to
+      16&nbsp;px of width puts each glyph on about 2.7&nbsp;px and the stroke on 0.39&nbsp;px, so every
+      stem is a partial-coverage grey and every counter is gone. Four glyphs become one smudge.
+      This candidate is here to be ruled out on the pixels rather than on assertion.</div>
+    </div>
+    <div class="cand">
+      <h2>C &mdash; a <code>d</code> monogram</h2>
+      <div class="shot">
+        <img class="one" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABmJLR0QA/wD/AP+gvaeTAAAA7UlEQVQ4jdWRMUuCURSGn+N1U3EVpK1ZR6GE1NFdGsRBCUEjoakf0Byl4uLu4g/IrcVZf0PLl0ObIHk/1NPQYND9oq9FfOEu97z34X3PhaNQvvGQPa8/Xbpmkb8AdkTuVHT0b4CC4ev8UPS3h4X2IA5g136gxwmoVMbmLeF1/bXfBBD4CAXwEl4buAZeQAS0GAogcKWwSMZMGWC52r0qmnJ5nUtUOAXmk37HTvodq+gsKEHQL7wjpL8lOglVAeEZpXXWeLxRMAqZUABjuN9uKAE92V9vXV5nhenwdmGjNodKDZUaIheiUg1KcVh9AtKYQE/oSnBKAAAAAElFTkSuQmCC" alt="a d monogram at 16 pixels">
+        <img class="eight" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABmJLR0QA/wD/AP+gvaeTAAAA7UlEQVQ4jdWRMUuCURSGn+N1U3EVpK1ZR6GE1NFdGsRBCUEjoakf0Byl4uLu4g/IrcVZf0PLl0ObIHk/1NPQYND9oq9FfOEu97z34X3PhaNQvvGQPa8/Xbpmkb8AdkTuVHT0b4CC4ev8UPS3h4X2IA5g136gxwmoVMbmLeF1/bXfBBD4CAXwEl4buAZeQAS0GAogcKWwSMZMGWC52r0qmnJ5nUtUOAXmk37HTvodq+gsKEHQL7wjpL8lOglVAeEZpXXWeLxRMAqZUABjuN9uKAE92V9vXV5nhenwdmGjNodKDZUaIheiUg1KcVh9AtKYQE/oSnBKAAAAAElFTkSuQmCC" alt="a d monogram at 16 pixels, magnified 8 times">
+      </div>
+      <div class="verdict"><b>Reads &mdash; and that is the problem.</b> Drawn purpose-wide (bowl 13
+      units against the lockup <code>d</code>&rsquo;s 8) the counter survives and it is legibly a
+      <code>d</code>. But see the decision below: legible is not the bar a favicon is held to.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__header">
+      <p class="eyebrow">Decision</p>
+      <span class="pill pill--ok">A &mdash; the mark, unchanged</span>
+    </div>
+    <div class="card__body">
+      <p style="margin:0 0 var(--space-3)"><b>At 16&nbsp;px the favicon is the mark. It is neither the
+      wordmark nor a <code>d</code> monogram, and no monogram is drawn.</b> Three reasons, in the
+      order they decided it:</p>
+      <ul>
+        <li><b>A monogram is legible and not identifying.</b> A favicon is judged in a tab strip
+        against twenty other favicons, where the question is not &ldquo;can this be read&rdquo; but
+        &ldquo;can this be told apart&rdquo;. A lowercase <code>d</code> in a round monoline is the
+        least distinctive glyph this name could offer; the broken ring is a shape, and a shape is
+        what survives being 16&nbsp;px wide in peripheral vision.</li>
+        <li><b>The accent cannot survive a monogram at this size.</b> The one thing FR-44 insists the
+        art keeps is the daemon accent on the trailing <code>d</code>, and the accent is a
+        <em>tonal split between the d and the letters before it</em>. A monogram has no letters
+        before it, so the split has nothing to be a split from; painting the lone <code>d</code> in
+        the muted tone would render a washed-out favicon and painting it in the full tone would
+        drop the accent silently. Candidate C therefore cannot carry the one property the redraw
+        is required to preserve.</li>
+        <li><b>It keeps one drawing across every declared size.</b> Choosing a monogram at 16&nbsp;px
+        makes 16&nbsp;px the only size whose favicon is a different object from its own 32&nbsp;px
+        sibling, which is the kind of divergence that outlives the person who introduced it &mdash;
+        and this repository already selected the mark once, as Option&nbsp;1a
+        &ldquo;Cycle&rdquo; (<code>Logo Options.dc.html</code>), on the explicit ground that it holds
+        up at 16&nbsp;px in a NAS tab bar.</li>
+      </ul>
+    </div>
+    <p class="note"><strong>What this makes true elsewhere:</strong> <code>favicon-16.png</code>,
+    <code>favicon-32.png</code>, the three <code>favicon.ico</code> members,
+    <code>apple-touch-icon.png</code> and both <code>logo-mark-*.png</code> exports are all the mark
+    and only the mark. The wordmark appears only in the two lockup files,
+    <code>docs/assets/logo-light.svg</code> and <code>logo-dark.svg</code>.</p>
+  </div>
+
+  <div class="card">
+    <div class="card__header"><p class="eyebrow">Where the wordmark stops working, measured</p></div>
+    <div class="card__body">
+      <div class="ladder"><div class="rung"><svg width="160" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 122.2 48" role="img" aria-label="retnd">
+  
+  <circle cx="24" cy="24" r="17" fill="none" stroke="#446b9c" stroke-width="5" stroke-linecap="round" stroke-dasharray="47 20" transform="rotate(-52 24 24)"/>
+  <circle cx="24" cy="24" r="5.5" fill="#446b9c"/>
+  
+  <path d="M60 32V24.6A4 4 0 0 1 64 20.6H67.4" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M70.8 26.3H78.8M78.8 26.3A4 5.7 0 1 0 76.8 31.24" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M83.2 20.6H91.2M86.56 16V29A3 3 0 0 0 89.56 32" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M95.6 32V24.6A4 4 0 0 1 103.6 24.6V32" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M116.2 16V32M116.2 26.3A4 5.7 0 1 0 108.2 26.3A4 5.7 0 1 0 116.2 26.3" fill="none" stroke="#8b8d8a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg><span class="rl"><b>160px</b> lockup width · x-height 14.9px · stroke 3.93px</span></div><div class="rung"><svg width="122" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 122.2 48" role="img" aria-label="retnd">
+  
+  <circle cx="24" cy="24" r="17" fill="none" stroke="#446b9c" stroke-width="5" stroke-linecap="round" stroke-dasharray="47 20" transform="rotate(-52 24 24)"/>
+  <circle cx="24" cy="24" r="5.5" fill="#446b9c"/>
+  
+  <path d="M60 32V24.6A4 4 0 0 1 64 20.6H67.4" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M70.8 26.3H78.8M78.8 26.3A4 5.7 0 1 0 76.8 31.24" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M83.2 20.6H91.2M86.56 16V29A3 3 0 0 0 89.56 32" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M95.6 32V24.6A4 4 0 0 1 103.6 24.6V32" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M116.2 16V32M116.2 26.3A4 5.7 0 1 0 108.2 26.3A4 5.7 0 1 0 116.2 26.3" fill="none" stroke="#8b8d8a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg><span class="rl"><b>122px</b> lockup width · x-height 11.4px · stroke 3.00px</span></div><div class="rung"><svg width="96" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 122.2 48" role="img" aria-label="retnd">
+  
+  <circle cx="24" cy="24" r="17" fill="none" stroke="#446b9c" stroke-width="5" stroke-linecap="round" stroke-dasharray="47 20" transform="rotate(-52 24 24)"/>
+  <circle cx="24" cy="24" r="5.5" fill="#446b9c"/>
+  
+  <path d="M60 32V24.6A4 4 0 0 1 64 20.6H67.4" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M70.8 26.3H78.8M78.8 26.3A4 5.7 0 1 0 76.8 31.24" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M83.2 20.6H91.2M86.56 16V29A3 3 0 0 0 89.56 32" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M95.6 32V24.6A4 4 0 0 1 103.6 24.6V32" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M116.2 16V32M116.2 26.3A4 5.7 0 1 0 108.2 26.3A4 5.7 0 1 0 116.2 26.3" fill="none" stroke="#8b8d8a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg><span class="rl"><b>96px</b> lockup width · x-height 9.0px · stroke 2.36px</span></div><div class="rung"><svg width="72" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 122.2 48" role="img" aria-label="retnd">
+  
+  <circle cx="24" cy="24" r="17" fill="none" stroke="#446b9c" stroke-width="5" stroke-linecap="round" stroke-dasharray="47 20" transform="rotate(-52 24 24)"/>
+  <circle cx="24" cy="24" r="5.5" fill="#446b9c"/>
+  
+  <path d="M60 32V24.6A4 4 0 0 1 64 20.6H67.4" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M70.8 26.3H78.8M78.8 26.3A4 5.7 0 1 0 76.8 31.24" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M83.2 20.6H91.2M86.56 16V29A3 3 0 0 0 89.56 32" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M95.6 32V24.6A4 4 0 0 1 103.6 24.6V32" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M116.2 16V32M116.2 26.3A4 5.7 0 1 0 108.2 26.3A4 5.7 0 1 0 116.2 26.3" fill="none" stroke="#8b8d8a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg><span class="rl"><b>72px</b> lockup width · x-height 6.7px · stroke 1.77px</span></div><div class="rung"><svg width="56" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 122.2 48" role="img" aria-label="retnd">
+  
+  <circle cx="24" cy="24" r="17" fill="none" stroke="#446b9c" stroke-width="5" stroke-linecap="round" stroke-dasharray="47 20" transform="rotate(-52 24 24)"/>
+  <circle cx="24" cy="24" r="5.5" fill="#446b9c"/>
+  
+  <path d="M60 32V24.6A4 4 0 0 1 64 20.6H67.4" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M70.8 26.3H78.8M78.8 26.3A4 5.7 0 1 0 76.8 31.24" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M83.2 20.6H91.2M86.56 16V29A3 3 0 0 0 89.56 32" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M95.6 32V24.6A4 4 0 0 1 103.6 24.6V32" fill="none" stroke="#191a19" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M116.2 16V32M116.2 26.3A4 5.7 0 1 0 108.2 26.3A4 5.7 0 1 0 116.2 26.3" fill="none" stroke="#8b8d8a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg><span class="rl"><b>56px</b> lockup width · x-height 5.2px · stroke 1.37px</span></div></div>
+    </div>
+    <p class="note"><strong>The floor is about 72&nbsp;px of lockup width</strong> &mdash; an x-height
+    of 6.7&nbsp;px and a stroke of 1.77&nbsp;px, where every counter is still an open pixel. At
+    56&nbsp;px (stroke 1.37&nbsp;px) it is soft but still reads; below that the <code>e</code> closes
+    up first. <code>README.md</code> embeds the lockup at 175&nbsp;px, which is the width that keeps
+    the mark rendering at exactly the size it did before the re-fit.</p>
+  </div>
+
+  <div class="card">
+    <div class="card__header"><p class="eyebrow">What this note does not decide</p>
+      <span class="pill pill--warn">not a design review</span></div>
+    <div class="card__body">
+      <table>
+        <tr><th>Question</th><th>Status</th></tr>
+        <tr><td>Wordmark, monogram or mark at 16&nbsp;px</td><td>Decided here, on the renders above.</td></tr>
+        <tr><td>Whether the letterforms themselves are <em>good</em></td>
+            <td>Not decided. The glyphs are a geometric construction &mdash; monoline stroke 3 on the
+            mark&rsquo;s own 48-unit grid, one glyph width, one x-height, one ascender, arcs that are
+            exact semicircles and half-ellipses &mdash; fitted so the four glyphs read. That is a
+            <em>constructed</em> wordmark, not a drawn one: no optical stem correction, no overshoot
+            on the round glyphs, no ink traps, and no designer has looked at it. FR-44&rsquo;s human
+            acceptance step is where that judgement belongs, and
+            <code>docs/design/brand-assets.md</code> records it as outstanding.</td></tr>
+        <tr><td>Whether the accent tone is the right tone</td>
+            <td>Not decided. <code>#8b8d8a</code> on light and <code>#767976</code> on dark are carried
+            over unchanged from the previous lockup, deliberately, so the re-fit changes one variable.</td></tr>
+      </table>
+    </div>
+  </div>
+
+</div>

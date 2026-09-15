@@ -1,6 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 48" width="168" height="48" role="img" aria-label="backupd">
-  <title>backupd</title>
-  <circle cx="24" cy="24" r="17" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-dasharray="47 20" transform="rotate(-52 24 24)"></circle>
-  <circle cx="24" cy="24" r="5.5" fill="#ffffff"></circle>
-  <text x="60" y="31" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="600" letter-spacing="-0.2" fill="#eceeeb">backup<tspan fill="#767976">d</tspan></text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 122.2 48" width="122.2" height="48" role="img" aria-label="retnd">
+  <!-- The mark, unchanged: a broken ring reading as a transfer cycle in
+       progress (Option 1a "Cycle", docs/design/Logo Options.dc.html). -->
+  <circle cx="24" cy="24" r="17" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-dasharray="47 20" transform="rotate(-52 24 24)"/>
+  <circle cx="24" cy="24" r="5.5" fill="#ffffff"/>
+  <!-- The 'retnd' wordmark, drawn (FR-44, #893). Four glyphs where the
+       previous lockup had six, so the geometry is re-fitted rather than
+       re-lettered: see docs/design/brand-assets.md for the construction and
+       docs/design/893-16px-wordmark-or-monogram.html for the 16px decision.
+       Monoline, stroke 3 with round caps and joins, which is the mark's own
+       drawing language at the mark's own 48-unit scale. Baseline y=32,
+       x-height 11.4 (y=20.6), ascender 16 (y=16), glyph centreline
+       width 8. The trailing 'd' keeps the daemon accent: it is the one
+       glyph painted in the muted tone, exactly as the previous lockup
+       painted its own trailing 'd'. -->
+  <path d="M60 32V24.6A4 4 0 0 1 64 20.6H67.4" fill="none" stroke="#eceeeb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M70.8 26.3H78.8M78.8 26.3A4 5.7 0 1 0 76.8 31.24" fill="none" stroke="#eceeeb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M83.2 20.6H91.2M86.56 16V29A3 3 0 0 0 89.56 32" fill="none" stroke="#eceeeb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M95.6 32V24.6A4 4 0 0 1 103.6 24.6V32" fill="none" stroke="#eceeeb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M116.2 16V32M116.2 26.3A4 5.7 0 1 0 108.2 26.3A4 5.7 0 1 0 116.2 26.3" fill="none" stroke="#767976" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
-    <img src="docs/assets/logo-light.svg" alt="retnd mark: a broken ring standing for a transfer cycle in progress, next to the retnd wordmark" width="240">
+    <img src="docs/assets/logo-light.svg" alt="retnd mark: a broken ring standing for a transfer cycle in progress, next to the retnd wordmark" width="175">
   </picture>
 </p>
 

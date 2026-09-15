@@ -507,6 +507,24 @@ jobs:
       - name: the guard can actually fail (mutation self-test)
         run: bash scripts/rename/selftest.sh
 
+      # FR-44 (#893): the half of the same claim `git grep` structurally
+      # cannot reach. The guard above passes -I, so it never opens a
+      # raster, and it cannot read a letter that has become an SVG
+      # `<path>` -- a favicon carrying the old name is invisible to it.
+      # These two cover what can be covered: no text node in any source
+      # SVG, and docs/design/brand-assets.md held to the filesystem in
+      # both directions. The rest of FR-44 is a human looking at the
+      # pictures, recorded as outstanding in that manifest and as PARTIAL
+      # on row R2.14 of docs/conformance/epic-r-matrix.md.
+      - name: no source SVG carries a text node, and the one pinned <title> reads the product name
+        run: bash scripts/brand/check-svg-text.sh
+
+      - name: every brand asset has a manifest row and every row a file
+        run: bash scripts/brand/check-brand-assets.sh
+
+      - name: those two can actually fail (mutation self-test)
+        run: bash scripts/brand/selftest.sh
+
       # R1.3 (#888) swept the module path to github.com/retnd/retnd while
       # the module is still fetched from backupdproject/backupd. Nothing
       # resolves the path here -- every build is local, over the five

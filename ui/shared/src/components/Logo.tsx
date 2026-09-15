@@ -30,6 +30,18 @@ export function Logo({ size = 24, title }: { size?: number; title?: string }) {
   );
 }
 
+/** The wordmark beside the mark, and it is TYPE rather than art: it inherits
+ *  `--font-mono` and the text tokens, so it themes with the surface it sits
+ *  on and needs no asset per provider. The drawn lockup in
+ *  `docs/assets/logo-*.svg` is the same name as geometry, for the places a
+ *  font cannot be relied on; `docs/design/brand-assets.md` records that the
+ *  two are deliberately different objects.
+ *
+ *  The trailing `d` carries the daemon accent, in the muted text tone. That
+ *  is the split the previous name had and it survives the rename intact,
+ *  because this name also ends in `d` (FR-44, #893). `docs/site/*.html`'s
+ *  `.brand-name`/`.brand-dash` header is the same split in the same order,
+ *  deliberately. */
 export function Wordmark({ size = 14 }: { size?: number }) {
   return (
     <span
@@ -38,7 +50,7 @@ export function Wordmark({ size = 14 }: { size?: number }) {
         fontSize: size, letterSpacing: "-0.01em", whiteSpace: "nowrap"
       }}
     >
-      backup<span style={{ color: "var(--text-3)" }}>d</span>
+      retn<span style={{ color: "var(--text-3)" }}>d</span>
     </span>
   );
 }

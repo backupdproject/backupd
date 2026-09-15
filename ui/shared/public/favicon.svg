@@ -1,5 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="backupd">
-  <title>backupd</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="retnd">
+  <!-- The mark: a broken ring reading as a transfer cycle in progress
+       (Option 1a "Cycle", docs/design/Logo Options.dc.html). The name is
+       carried by aria-label rather than by an SVG <title>, so nothing in
+       this file is a text node — FR-44's scan
+       (scripts/brand/check-svg-text.sh) refuses <text>, <title> and <desc>
+       in a brand source, because those are the strings a rename can miss. -->
   <style>
     .ring{stroke:#3a628f}.dot{fill:#3a628f}
     @media (prefers-color-scheme:dark){.ring{stroke:#cfe0f5}.dot{fill:#cfe0f5}}

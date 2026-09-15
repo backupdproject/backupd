@@ -1,6 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img">
-  <title>Backupd</title>
-  <desc>A pull arc closing onto a solid centre: artifacts drawn in from a remote source and held.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="retnd">
+  <!-- The store-listing icon every one of the eleven provider bundles
+       points at, served over raw.githubusercontent.com as well as read
+       from the tree. A pull arc closing onto a solid centre: artifacts
+       drawn in from a remote source and held. That sentence used to be an
+       SVG desc element; it is a comment now, because a desc is a brand
+       string a rename can miss and a raster export cannot show.
+
+       The title element below is the ONE that survives FR-44's scan, and
+       it survives by being pinned rather than by being missed:
+       distribution/packaging's CheckStoreIcon requires a listing icon to
+       carry one, because several catalogue front ends read it as the
+       image's alt text and do not read aria-label. So
+       scripts/brand/check-svg-text.sh exempts this path by name and then
+       checks the title's TEXT instead, which is a stronger rule than the
+       ban it replaces: the retired name here turns the scan red. -->
+  <title>retnd</title>
   <rect width="256" height="256" rx="52" fill="#1f3a5f"/>
   <g transform="rotate(-52 128 128)">
     <circle cx="128" cy="128" r="82" fill="none" stroke="#f2f5f8" stroke-width="24" stroke-linecap="round" stroke-dasharray="227 97"/>

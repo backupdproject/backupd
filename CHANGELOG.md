@@ -690,6 +690,54 @@
 
 ### Changed
 
+- **The brand art is redrawn rather than re-lettered, and there is now an
+  inventory that fails both ways** (EPIC R #885, R2.3 #893, FR-44). The
+  wordmark was an SVG `<text>` element in a monospace face with the trailing
+  `d` in a muted tone. It is `<path>` geometry now, re-fitted rather than
+  re-lettered: six glyphs became four, so the spacing was rebuilt on optical
+  ink gaps instead of the typeface's monospace pitch, the lockup `viewBox`
+  went from `0 0 168 48` to `0 0 122.2 48`, and `README.md`'s embed width went
+  from 240 to 175 so the mark still renders at the size it always did. The
+  daemon accent **stays on the `d`**, in the same two tones as before: the
+  previous name ended in `d` and so does this one, so the split needed no
+  letter reassignment. The mark itself — Option 1a "Cycle" — is unchanged,
+  because it depicts no name.
+
+  **Every raster now derives from one source.** `scripts/brand/export-rasters.sh`
+  re-exports all eight PNGs and both three-member `.ico` files from the four
+  SVG sources, at framings measured off the committed files so the re-export
+  reproduced them rather than quietly re-cropping them. It is idempotent.
+
+  **Three checks ship with it.** `docs/design/brand-assets.md` is the manifest
+  of every brand asset, its declared sizes and its embed sites, held to the
+  filesystem in **both** directions by `scripts/brand/check-brand-assets.sh`: a
+  row with no file fails, and a file with no row fails, which is the direction
+  that catches the asset nobody wrote down. `scripts/brand/check-svg-text.sh`
+  refuses `<text>`, `<tspan>`, `<title>` and `<desc>` in any source SVG, which
+  are the four places a name can hide inside a picture; it strips XML comments
+  first, so a file can name the elements it is forbidden to contain. One path
+  is pinned rather than banned: `distribution/packaging`'s `CheckStoreIcon`
+  requires a store-listing icon to carry a `<title>`, because catalogue front
+  ends read it as alt text and none reads `aria-label`, so for that path the
+  element is allowed and **its text is checked** against the product name —
+  which is the stricter of the two rules, since the ban was satisfiable by
+  deleting the element. Both run
+  in the brand-drift guard's own gate step, and `scripts/brand/selftest.sh`
+  plants the violations FR-44 names and requires each to go red.
+
+  **The third check is a human and it has not happened.** No text guard can
+  read a letter that is now `<path>` data, and `check-brand-drift.sh` passes
+  `-I` so it never opens a raster at all. FR-44's acceptance step — a person
+  looking at the assets with the manifest in front of them — is recorded as
+  outstanding in the manifest, and row R2.14 of
+  `docs/conformance/epic-r-matrix.md` is `PARTIAL`, not `PASS`, permanently.
+  The letterforms are a geometric construction with no design review, and
+  nothing was seen on real hardware; the manifest says both.
+  `docs/design/893-16px-wordmark-or-monogram.html` records the one decision
+  FR-44 names: at 16 pixels the favicon is the mark, not the wordmark and not
+  a `d` monogram, with the three candidates rendered at 16 pixels beside the
+  reasoning.
+
 - **The product is `retnd` everywhere a person reads it, and this is the entry
   that says what an upgrade does** (EPIC R #885, R2.2 #892). The rename reached
   the prose: `README.md`, the 56 documents under `docs/`, `docs/api/contract.md`,

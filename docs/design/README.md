@@ -23,6 +23,15 @@ build does.
 
 `tier-destinations.md` is the same thing in prose for the storage-tier work.
 
+`brand-assets.md` is the exception to everything above: it is the inventory of
+every brand asset in the tree, and it **is** kept in step, because
+`scripts/brand/check-brand-assets.sh` fails the gate both when a row names a
+file that is gone and when a file has no row. It also carries the construction
+of the drawn wordmark and FR-44's outstanding human acceptance step.
+`893-16px-wordmark-or-monogram.html` is the dated note beside it, for the one
+decision that issue had to take: at 16 pixels the favicon is the mark, not the
+wordmark and not a `d` monogram.
+
 `788-incremental-ui-mockup.md` is the design gate for incremental backup in
 the web UI (issue #788): thirteen screens plus the eight-step add-backup-set
 wizard, the decisions each of them was asking for a verdict on, and what the
