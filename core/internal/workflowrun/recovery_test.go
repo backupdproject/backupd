@@ -180,18 +180,18 @@ func TestAnInterruptedRunBlocksTheSetAndResumesFromItsCapturedBytes(t *testing.T
 	}
 
 	env := h.rec.envOf(t, "30-resume.remote.sh")
-	if env["BACKUPD_RECOVERY"] != "1" {
-		t.Errorf("a resumed cleanup hook saw BACKUPD_RECOVERY=%q, want 1", env["BACKUPD_RECOVERY"])
+	if env["RETND_RECOVERY"] != "1" {
+		t.Errorf("a resumed cleanup hook saw RETND_RECOVERY=%q, want 1", env["RETND_RECOVERY"])
 	}
-	if env["BACKUPD_CLEANUP_REASON"] != workflow.CleanupReasonInterruptedRun {
-		t.Errorf("a resumed cleanup hook saw BACKUPD_CLEANUP_REASON=%q, want %q",
-			env["BACKUPD_CLEANUP_REASON"], workflow.CleanupReasonInterruptedRun)
+	if env["RETND_CLEANUP_REASON"] != workflow.CleanupReasonInterruptedRun {
+		t.Errorf("a resumed cleanup hook saw RETND_CLEANUP_REASON=%q, want %q",
+			env["RETND_CLEANUP_REASON"], workflow.CleanupReasonInterruptedRun)
 	}
 
 	// The ordinary environment is the one the run was PLANNED with, read
 	// back out of the journal rather than out of today's configuration.
-	if env["BACKUPD_RUN_ID"] != "run-1" {
-		t.Errorf("the resumed hook was told run id %q", env["BACKUPD_RUN_ID"])
+	if env["RETND_RUN_ID"] != "run-1" {
+		t.Errorf("the resumed hook was told run id %q", env["RETND_RUN_ID"])
 	}
 
 	// 5. The run is recovered, its recovery is settled, and the set runs

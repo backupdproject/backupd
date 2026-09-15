@@ -40,7 +40,7 @@ const (
 // service account in a shared group (`users` on a Synology, `docker` on a
 // hobby host), so a group-readable working directory is a
 // world-readable-in-practice directory holding whatever a hook wrote into
-// BACKUPD_WORK_DIR -- which, for a database quiesce hook, is a dump.
+// RETND_WORK_DIR -- which, for a database quiesce hook, is a dump.
 const RuntimeDirMode os.FileMode = 0o700
 
 // ScriptFileMode is the mode of the runner-private copy of a step's
@@ -180,7 +180,7 @@ func (l Layout) RunDir(runID string) (string, error) {
 }
 
 // StepWorkDir is the private per-step working directory, exposed to the
-// hook as BACKUPD_WORK_DIR.
+// hook as RETND_WORK_DIR.
 func (l Layout) StepWorkDir(runID, stepID string) (string, error) {
 	run, err := l.RunDir(runID)
 	if err != nil {
@@ -196,7 +196,7 @@ func (l Layout) StepWorkDir(runID, stepID string) (string, error) {
 // read.
 //
 // It is a SIBLING of the working directory rather than a file inside it,
-// and that placement is the point: BACKUPD_WORK_DIR is the hook's, to
+// and that placement is the point: RETND_WORK_DIR is the hook's, to
 // write whatever it likes into, and a script living inside the directory
 // its own hook is rummaging around in is a script the hook can replace
 // while bash is still reading it.

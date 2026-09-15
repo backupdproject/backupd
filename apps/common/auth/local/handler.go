@@ -202,6 +202,12 @@ func correlationID() string {
 // included) are the reference example to copy, not routes-only wrapping.
 func (s *Service) Handler() http.Handler {
 	r := chi.NewRouter()
+	// Over every route this Service serves, including the two GETs: the
+	// browser's first request after an upgrade is `GET /session`, which
+	// is precisely the one that should retire the deprecated cookie
+	// name. See reissueRenamedSessionCookie (session.go) for why this is
+	// a write on a read path and why it does not extend a session.
+	r.Use(reissueRenamedSessionCookie(s.sessions, s.trustForwardedHeaders))
 	r.With(requireCSRF).Post("/login", s.handleLogin)
 	r.With(requireCSRF).Post("/enroll", s.handleEnroll)
 	r.With(requireCSRF).Post("/password", s.handleRotatePassword)

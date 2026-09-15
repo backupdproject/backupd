@@ -515,7 +515,7 @@
     </div>
     <div class="note warn">
       <span class="note-label">The incremental engine is off until you turn it on</span>
-      <p><code>snapshot</code> and <code>repository</code>, and any backup set whose <code>engine</code> is <code>kopia</code>, are gated on one setting that defaults to <strong>off</strong>: <code>incremental_engine.enabled: true</code> in <code>config.yaml</code>, or <code>BACKUPD_INCREMENTAL_ENGINE=1</code> in the environment, which overrides the file in both directions. With it off, those verbs refuse with one sentence naming both ways to enable it, and exit <code>1</code>; over the API it is <code>409 INCREMENTAL_ENGINE_DISABLED</code>.</p>
+      <p><code>snapshot</code> and <code>repository</code>, and any backup set whose <code>engine</code> is <code>kopia</code>, are gated on one setting that defaults to <strong>off</strong>: <code>incremental_engine.enabled: true</code> in <code>config.yaml</code>, or <code>RETND_INCREMENTAL_ENGINE=1</code> in the environment, which overrides the file in both directions. With it off, those verbs refuse with one sentence naming both ways to enable it, and exit <code>1</code>; over the API it is <code>409 INCREMENTAL_ENGINE_DISABLED</code>.</p>
       <p>Turning it off never stops a daemon: a configuration that declares incremental sets still loads and still backs up every <code>artifact</code> set on schedule. Artifact backup sets are unaffected by this setting in either position, and <strong>nothing ever converts one engine to the other</strong>. See <a href="https://github.com/backupdproject/backupd/blob/main/docs/incremental-engine.md">docs/incremental-engine.md</a>.</p>
     </div>
 

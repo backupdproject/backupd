@@ -110,7 +110,7 @@ func probeService(t *testing.T, engine backupengine.Engine, now time.Time) *Serv
 			ID:            domain.String(),
 			Isolation:     string(model.RepositoryShared),
 			Domain:        model.RepositoryDomain{ID: domain, Isolation: model.RepositoryShared},
-			PassphraseRef: secretref.Ref{Env: "BACKUPD_TEST_PASSPHRASE"},
+			PassphraseRef: secretref.Ref{Env: "RETND_TEST_PASSPHRASE"},
 		}},
 		Sources: []config.Source{{
 			Name: "production",

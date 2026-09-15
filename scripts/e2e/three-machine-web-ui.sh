@@ -1544,7 +1544,7 @@ if [ "$workflows" = 1 ]; then
   # uid rather than as this host's user, and a 0700 ancestor owned by
   # somebody else is a directory it cannot traverse. The workspace itself
   # is 0700 and owned by that uid, which is what holds whatever a hook
-  # writes into BACKUPD_WORK_DIR -- and created from inside a container
+  # writes into RETND_WORK_DIR -- and created from inside a container
   # so the ownership is real on a Linux host rather than only mapped.
   mkdir -p "$wf_prefix" || die "could not create $wf_prefix."
   chmod 755 "$wf_prefix"

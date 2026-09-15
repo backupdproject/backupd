@@ -73,7 +73,7 @@ incremental_engine:
   enabled: true
 ```
 
-`BACKUPD_INCREMENTAL_ENGINE=1` in the environment does the same and overrides
+`RETND_INCREMENTAL_ENGINE=1` in the environment does the same and overrides
 the file in both directions, but on the standard container deployment it is
 for a command you launch yourself rather than for the long-running processes:
 `container/compose.yaml` declares the environment it passes through by name
@@ -269,7 +269,7 @@ them, nothing has been given up.
 
 Before step 7, rollback is: `backup-set enabled <incremental-set> off`,
 or turn the gate off entirely
-(`BACKUPD_INCREMENTAL_ENGINE=0`/`enabled: false`), which leaves the
+(`RETND_INCREMENTAL_ENGINE=0`/`enabled: false`), which leaves the
 artifact set backing up exactly as before. A configuration holding
 incremental sets still loads with the gate off; only the incremental
 sets report the refusal.
@@ -611,7 +611,7 @@ nothing here ever reports one back to be resubmitted.
 ```text
 the incremental (kopia) backup engine is disabled in this deployment: set
 incremental_engine.enabled: true in config.yaml, or
-BACKUPD_INCREMENTAL_ENGINE=1 in the environment, to enable it; existing
+RETND_INCREMENTAL_ENGINE=1 in the environment, to enable it; existing
 artifact backup sets are unaffected
 ```
 
@@ -643,7 +643,7 @@ variable in whatever launched the process — a systemd unit, a compose
 than the deployment's files:
 
 ```bash
-docker compose -p backupd ... exec backupd printenv BACKUPD_INCREMENTAL_ENGINE
+docker compose -p backupd ... exec backupd printenv RETND_INCREMENTAL_ENGINE
 grep -n -A2 '^incremental_engine' /etc/backupd/config/config.yaml
 ```
 

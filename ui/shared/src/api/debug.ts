@@ -35,7 +35,7 @@
 
 /** Where the toggle is persisted, and the query parameter that sets it.
  *  Spelled once: the backend's own half of this switch is `LOG_LEVEL`
- *  (with `BACKUPD_DEBUG=1` as its shortcut, and the deprecated
+ *  (with `RETND_DEBUG=1` as its shortcut, and the deprecated
  *  `RM_DEBUG=1` still accepted as that shortcut's old name), and the two
  *  are meant to read as one feature. */
 const DEBUG_KEY = "rm-debug";

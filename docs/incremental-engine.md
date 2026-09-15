@@ -58,12 +58,12 @@ incremental_engine:
 ```
 
 An absent block is disabled. One environment variable overrides the file,
-in **both** directions — `BACKUPD_INCREMENTAL_ENGINE=1|true|yes|on`
+in **both** directions — `RETND_INCREMENTAL_ENGINE=1|true|yes|on`
 enables it even where the file says otherwise, and `0|false|no|off`
 disables it even where the file enables it:
 
 ```bash
-BACKUPD_INCREMENTAL_ENGINE=1 backupd run
+RETND_INCREMENTAL_ENGINE=1 backupd run
 ```
 
 Unset or empty defers to the file. A value that is neither spelling is
@@ -103,7 +103,7 @@ The refusal is one sentence, from one place
 ```text
 the incremental (kopia) backup engine is disabled in this deployment: set
 incremental_engine.enabled: true in config.yaml, or
-BACKUPD_INCREMENTAL_ENGINE=1 in the environment, to enable it; existing
+RETND_INCREMENTAL_ENGINE=1 in the environment, to enable it; existing
 artifact backup sets are unaffected
 ```
 
@@ -814,7 +814,7 @@ Deployment level:
 
 ```yaml
 incremental_engine:
-  enabled: true                    # default false. BACKUPD_INCREMENTAL_ENGINE overrides, both ways
+  enabled: true                    # default false. RETND_INCREMENTAL_ENGINE overrides, both ways
 
 repository_domains:
   - id: production

@@ -70,7 +70,7 @@ const (
 	// about SCALING rather than about one machine's idea of a lot of
 	// memory.
 	//
-	// BACKUPD_HUGE_DIR_ENTRIES raises it, and it is deliberately the same
+	// RETND_HUGE_DIR_ENTRIES raises it, and it is deliberately the same
 	// variable the transport's huge-directory test reads: one setting
 	// runs both halves of #792's question at whatever bound is being
 	// investigated, and docs/adr/0008's million-entry run is reproducible
@@ -105,18 +105,18 @@ func largeNSEntries(t *testing.T) int {
 		t.Skip("stores a large flat namespace; run without -short")
 	}
 
-	raw := os.Getenv("BACKUPD_HUGE_DIR_ENTRIES")
+	raw := os.Getenv("RETND_HUGE_DIR_ENTRIES")
 	if raw == "" {
 		return largeNSEntryCount
 	}
 
 	n, err := strconv.Atoi(raw)
 	if err != nil {
-		t.Fatalf("BACKUPD_HUGE_DIR_ENTRIES=%q: %v", raw, err)
+		t.Fatalf("RETND_HUGE_DIR_ENTRIES=%q: %v", raw, err)
 	}
 
 	if n < 10 {
-		t.Fatalf("BACKUPD_HUGE_DIR_ENTRIES=%d is too small to compare against a namespace a tenth the size", n)
+		t.Fatalf("RETND_HUGE_DIR_ENTRIES=%d is too small to compare against a namespace a tenth the size", n)
 	}
 
 	return n

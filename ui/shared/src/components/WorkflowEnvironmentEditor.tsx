@@ -27,7 +27,7 @@
  *
  * They are not configuration. `BACKUPD_*` is reserved: the service
  * refuses a write to any name in that namespace, because a hook reading
- * `BACKUPD_BACKUP_STATUS` has to be reading what this product observed
+ * `RETND_BACKUP_STATUS` has to be reading what this product observed
  * rather than a value somebody wrote into a config file. They appear in
  * the preview, read-only, because they ARE part of what a hook receives
  * and a hook author writes against them.

@@ -96,7 +96,7 @@ type UIConfig struct {
 	// Debug turns on the per-request upstream trace below regardless of
 	// the environment. It only exists so a test can assert the trace
 	// without setting process-wide environment; a deployment turns it on
-	// with BACKUPD_DEBUG=1 (or the deprecated RM_DEBUG=1) or
+	// with RETND_DEBUG=1 (or the deprecated RM_DEBUG=1) or
 	// LOG_LEVEL=debug, which webhost.DebugEnabled reads.
 	Debug bool
 }
@@ -160,8 +160,15 @@ const defaultProxyResponseHeaderTimeout = 5 * time.Second
 // Response-only, and deleted from any upstream response by ModifyResponse
 // below: a marker that an upstream could set would be a marker that says
 // nothing.
+//
+// The rename to retnd (EPIC R, #885) is a HARD CUT here, with no alias
+// under the old name (FR-37). The producer is this file and the only
+// consumer is the bundle this same container serves
+// (ui/shared/src/api/transport.ts's PROXY_ERROR_HEADER): they ship in one
+// image and cannot be at different versions, so there is no deployment
+// in which one half reads a name the other half stopped writing.
 const (
-	ProxyErrorHeader = "X-Backupd-Proxy-Error"
+	ProxyErrorHeader = "X-Retnd-Proxy-Error"
 
 	// The one value, and the only one this proxy can honestly report:
 	// ErrorHandler fires when no response was produced at all, which for

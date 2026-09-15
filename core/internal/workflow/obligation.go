@@ -362,7 +362,7 @@ func (o CleanupObligation) validateAcknowledgement() error {
 	return nil
 }
 
-// CleanupReasonInterruptedRun is the value of BACKUPD_CLEANUP_REASON for
+// CleanupReasonInterruptedRun is the value of RETND_CLEANUP_REASON for
 // an "after" stage a recovery is running rather than the run itself.
 //
 // It is a durable string and a hook's contract: a script that branches on

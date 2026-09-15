@@ -467,10 +467,10 @@ func TestServer_ConcurrentExecutesOfOneStepLeaveTheWinnerAlone(t *testing.T) {
 
 	// The hook proves its own working directory outlived it: a cleanup
 	// run by somebody else's failed execute takes this file with it.
-	body := fmt.Sprintf(`echo mine > "$BACKUPD_WORK_DIR/mine"
+	body := fmt.Sprintf(`echo mine > "$RETND_WORK_DIR/mine"
 touch %s/started
 sleep 2
-test -f "$BACKUPD_WORK_DIR/mine" || exit 9
+test -f "$RETND_WORK_DIR/mine" || exit 9
 echo survived
 `, evidence)
 

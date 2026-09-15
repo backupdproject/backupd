@@ -348,7 +348,7 @@ func TestWorkflowEnvironment_AWriteLandsOnTheScopeThePathNamed(t *testing.T) {
 
 	if rec := workflowRequest(t, router, http.MethodPut,
 		"/api/v1/backup-sets/api-server/var-backups/workflow/environment/PGPASSWORD",
-		`{"secret":{"env":"BACKUPD_PG_PASSWORD"}}`); rec.Code != http.StatusOK {
+		`{"secret":{"env":"RETND_PG_PASSWORD"}}`); rec.Code != http.StatusOK {
 		t.Fatalf("the per-set write got %d, body: %s", rec.Code, rec.Body.String())
 	}
 
@@ -418,7 +418,7 @@ var workflowSecretSpellings = []struct {
 	marker string
 }{
 	{"a file", `{"secret":{"file":"/etc/backupd/pg.passphrase"}}`, "/etc/backupd/pg.passphrase"},
-	{"a variable name", `{"secret":{"env":"BACKUPD_PG_PASSWORD"}}`, "BACKUPD_PG_PASSWORD"},
+	{"a variable name", `{"secret":{"env":"RETND_PG_PASSWORD"}}`, "RETND_PG_PASSWORD"},
 	{"a command", `{"secret":{"command":["vault","read","-field=password","secret/pg"]}}`, "secret/pg"},
 }
 

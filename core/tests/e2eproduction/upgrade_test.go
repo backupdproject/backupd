@@ -27,7 +27,7 @@ import (
 // that ran only one of them would leave the other's failure mode
 // completely uncovered:
 //
-//   - upgrading BACKUPD onto a deployment that predates the engine.
+//   - upgrading retnd onto a deployment that predates the engine.
 //     Nothing about such a deployment mentions an engine, a repository
 //     domain or a verification level, and the promise is that it goes on
 //     running exactly as it did, with no automatic conversion of any

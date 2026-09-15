@@ -56,11 +56,11 @@ func TestRenderIncludesProcessInfoAndGeneratedAt(t *testing.T) {
 
 	out := Render(report)
 
-	wantProcess := `backupd_process_info{binary_version="1.2.3",rclone_version="v1.75.0"} 1`
+	wantProcess := `retnd_process_info{binary_version="1.2.3",rclone_version="v1.75.0"} 1`
 	if !strings.Contains(out, wantProcess) {
 		t.Fatalf("Render output missing process info line %q; got:\n%s", wantProcess, out)
 	}
-	wantGenerated := "backupd_report_generated_timestamp_seconds 1700000000"
+	wantGenerated := "retnd_report_generated_timestamp_seconds 1700000000"
 	if !strings.Contains(out, wantGenerated) {
 		t.Fatalf("Render output missing generated-at line %q; got:\n%s", wantGenerated, out)
 	}
@@ -76,21 +76,21 @@ func TestRenderEveryMetricFamilyHasHelpAndType(t *testing.T) {
 	out := Render(report)
 
 	names := []string{
-		"backupd_process_info",
-		"backupd_report_generated_timestamp_seconds",
-		"backupd_backup_set_state",
-		"backupd_backup_set_newest_good_backup_age_seconds",
-		"backupd_backup_set_stale_threshold_seconds",
-		"backupd_backup_set_pending_deletes",
-		"backupd_backup_set_failures",
-		"backupd_backup_set_quarantined",
-		"backupd_backup_set_quarantined_lost",
-		"backupd_backup_set_reinstated_remote_retained",
-		"backupd_backup_set_current_transfers",
-		"backupd_backup_set_free_bytes",
-		"backupd_backup_set_last_successful_poll_timestamp_seconds",
-		"backupd_backup_set_last_completed_backup_timestamp_seconds",
-		"backupd_backup_set_last_retention_run_timestamp_seconds",
+		"retnd_process_info",
+		"retnd_report_generated_timestamp_seconds",
+		"retnd_backup_set_state",
+		"retnd_backup_set_newest_good_backup_age_seconds",
+		"retnd_backup_set_stale_threshold_seconds",
+		"retnd_backup_set_pending_deletes",
+		"retnd_backup_set_failures",
+		"retnd_backup_set_quarantined",
+		"retnd_backup_set_quarantined_lost",
+		"retnd_backup_set_reinstated_remote_retained",
+		"retnd_backup_set_current_transfers",
+		"retnd_backup_set_free_bytes",
+		"retnd_backup_set_last_successful_poll_timestamp_seconds",
+		"retnd_backup_set_last_completed_backup_timestamp_seconds",
+		"retnd_backup_set_last_retention_run_timestamp_seconds",
 	}
 	for _, name := range names {
 		if !strings.Contains(out, "# HELP "+name+" ") {
@@ -111,10 +111,10 @@ func TestRenderStateIsOneHot(t *testing.T) {
 	out := Render(report)
 
 	want := []string{
-		`backupd_backup_set_state{backup_set="prod/postgres-primary",state="healthy"} 0`,
-		`backupd_backup_set_state{backup_set="prod/postgres-primary",state="degraded"} 1`,
-		`backupd_backup_set_state{backup_set="prod/postgres-primary",state="stale"} 0`,
-		`backupd_backup_set_state{backup_set="prod/postgres-primary",state="failing"} 0`,
+		`retnd_backup_set_state{backup_set="prod/postgres-primary",state="healthy"} 0`,
+		`retnd_backup_set_state{backup_set="prod/postgres-primary",state="degraded"} 1`,
+		`retnd_backup_set_state{backup_set="prod/postgres-primary",state="stale"} 0`,
+		`retnd_backup_set_state{backup_set="prod/postgres-primary",state="failing"} 0`,
 	}
 	for _, line := range want {
 		if !strings.Contains(out, line) {
@@ -133,11 +133,11 @@ func TestRenderOmitsUnsetOptionalFields(t *testing.T) {
 	out := Render(report)
 
 	forbidden := []string{
-		"backupd_backup_set_newest_good_backup_age_seconds{",
-		"backupd_backup_set_free_bytes{",
-		"backupd_backup_set_last_successful_poll_timestamp_seconds{",
-		"backupd_backup_set_last_completed_backup_timestamp_seconds{",
-		"backupd_backup_set_last_retention_run_timestamp_seconds{",
+		"retnd_backup_set_newest_good_backup_age_seconds{",
+		"retnd_backup_set_free_bytes{",
+		"retnd_backup_set_last_successful_poll_timestamp_seconds{",
+		"retnd_backup_set_last_completed_backup_timestamp_seconds{",
+		"retnd_backup_set_last_retention_run_timestamp_seconds{",
 	}
 	for _, f := range forbidden {
 		if strings.Contains(out, f) {
@@ -166,11 +166,11 @@ func TestRenderIncludesOptionalFieldsWhenPresent(t *testing.T) {
 	out := Render(report)
 
 	wants := []string{
-		`backupd_backup_set_newest_good_backup_age_seconds{backup_set="prod/one"} 90`,
-		`backupd_backup_set_free_bytes{backup_set="prod/one"} 123456`,
-		`backupd_backup_set_last_successful_poll_timestamp_seconds{backup_set="prod/one"} 1700000100`,
-		`backupd_backup_set_last_completed_backup_timestamp_seconds{backup_set="prod/one"} 1700000200`,
-		`backupd_backup_set_last_retention_run_timestamp_seconds{backup_set="prod/one"} 1700000300`,
+		`retnd_backup_set_newest_good_backup_age_seconds{backup_set="prod/one"} 90`,
+		`retnd_backup_set_free_bytes{backup_set="prod/one"} 123456`,
+		`retnd_backup_set_last_successful_poll_timestamp_seconds{backup_set="prod/one"} 1700000100`,
+		`retnd_backup_set_last_completed_backup_timestamp_seconds{backup_set="prod/one"} 1700000200`,
+		`retnd_backup_set_last_retention_run_timestamp_seconds{backup_set="prod/one"} 1700000300`,
 	}
 	for _, w := range wants {
 		if !strings.Contains(out, w) {
@@ -197,12 +197,12 @@ func TestRenderCounters(t *testing.T) {
 	out := Render(report)
 
 	wants := []string{
-		`backupd_backup_set_pending_deletes{backup_set="prod/one"} 2`,
-		`backupd_backup_set_failures{backup_set="prod/one"} 3`,
-		`backupd_backup_set_quarantined{backup_set="prod/one"} 4`,
-		`backupd_backup_set_quarantined_lost{backup_set="prod/one"} 1`,
-		`backupd_backup_set_current_transfers{backup_set="prod/one"} 2`,
-		`backupd_backup_set_stale_threshold_seconds{backup_set="prod/one"} 21600`,
+		`retnd_backup_set_pending_deletes{backup_set="prod/one"} 2`,
+		`retnd_backup_set_failures{backup_set="prod/one"} 3`,
+		`retnd_backup_set_quarantined{backup_set="prod/one"} 4`,
+		`retnd_backup_set_quarantined_lost{backup_set="prod/one"} 1`,
+		`retnd_backup_set_current_transfers{backup_set="prod/one"} 2`,
+		`retnd_backup_set_stale_threshold_seconds{backup_set="prod/one"} 21600`,
 	}
 	for _, w := range wants {
 		if !strings.Contains(out, w) {
@@ -296,8 +296,8 @@ func TestRenderReportsReinstatedRemoteRetainedPerBackupSet(t *testing.T) {
 	out := Render(report)
 
 	want := []string{
-		`backupd_backup_set_reinstated_remote_retained{backup_set="prod/one"} 3`,
-		`backupd_backup_set_reinstated_remote_retained{backup_set="prod/two"} 0`,
+		`retnd_backup_set_reinstated_remote_retained{backup_set="prod/one"} 3`,
+		`retnd_backup_set_reinstated_remote_retained{backup_set="prod/two"} 0`,
 	}
 	for _, line := range want {
 		if !strings.Contains(out, line) {
@@ -314,7 +314,7 @@ func TestRenderReportsReinstatedRemoteRetainedPerBackupSet(t *testing.T) {
 func TestRenderAlwaysEmitsReinstatedRemoteRetained(t *testing.T) {
 	report := health.NewReport(health.ProcessHealth{}, []health.BackupSetHealth{{Set: mustSet("prod", "one")}}, time.Now())
 
-	if !strings.Contains(Render(report), `backupd_backup_set_reinstated_remote_retained{backup_set="prod/one"} 0`) {
+	if !strings.Contains(Render(report), `retnd_backup_set_reinstated_remote_retained{backup_set="prod/one"} 0`) {
 		t.Errorf("a backup set holding no reinstated remote sources must still report 0, not omit the sample:\n%s", Render(report))
 	}
 }

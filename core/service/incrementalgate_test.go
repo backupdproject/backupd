@@ -9,7 +9,7 @@
 //
 // Both gated cases are driven through the ENVIRONMENT override rather
 // than a second config fixture. That is deliberate, and it is a second
-// assertion for free: BACKUPD_INCREMENTAL_ENGINE=0 has to beat an
+// assertion for free: RETND_INCREMENTAL_ENGINE=0 has to beat an
 // incremental_engine.enabled: true sitting in the file, because the
 // override's whole purpose is to be usable on a deployment whose config
 // file is baked into an image.

@@ -238,7 +238,7 @@ export function RepositoryDomainNewPage() {
                     placeholder={
                       passphraseSource === "file"
                         ? "/etc/backupd/offsite-b2.passphrase"
-                        : "BACKUPD_OFFSITE_B2_PASSPHRASE"
+                        : "RETND_OFFSITE_B2_PASSPHRASE"
                     }
                     onChange={(e) => setPassphraseRef(e.target.value)}
                   />

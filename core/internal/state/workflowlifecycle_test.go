@@ -715,7 +715,7 @@ func TestARunWithAnOutstandingScopeMayStillSayItNeedsRecovery(t *testing.T) {
 // destination -- are persisted WITH the plan, for the same reason the
 // environment is: a recovery has to hand a hook the run it is unwinding,
 // and those three are not things the journal could derive or today's
-// configuration could be trusted for. An unmount of "$BACKUPD_SOURCE_PATH"
+// configuration could be trusted for. An unmount of "$RETND_SOURCE_PATH"
 // with an empty variable runs against the wrong thing or against nothing.
 func TestAPlansFactsRoundTripSeparatelyFromItsEnvironment(t *testing.T) {
 	t.Parallel()
@@ -725,9 +725,9 @@ func TestAPlansFactsRoundTripSeparatelyFromItsEnvironment(t *testing.T) {
 
 	plan := testWorkflowPlan("run-1")
 	plan.Facts = map[string]string{
-		"BACKUPD_SOURCE_HOST": "db.internal",
-		"BACKUPD_SOURCE_PATH": "/srv/data",
-		"BACKUPD_DESTINATION": "nas:/backups/production",
+		"RETND_SOURCE_HOST": "db.internal",
+		"RETND_SOURCE_PATH": "/srv/data",
+		"RETND_DESTINATION": "nas:/backups/production",
 	}
 
 	if err := j.CommitWorkflowPlan(ctx, plan); err != nil {
@@ -744,7 +744,7 @@ func TestAPlansFactsRoundTripSeparatelyFromItsEnvironment(t *testing.T) {
 
 	// The CONFIGURED environment is unchanged by their presence: a fact
 	// is not a variable an operator wrote, and it must not appear in the
-	// environment a recovered plan resolves (where a BACKUPD_ name is
+	// environment a recovered plan resolves (where a RETND_ name is
 	// refused outright).
 	recovered, err := j.RecoverWorkflowPlan(ctx, "run-1")
 	if err != nil {

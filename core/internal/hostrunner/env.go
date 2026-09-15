@@ -13,7 +13,7 @@ import (
 //
 // internal/workflow decides WHAT the environment contains: the sanitized
 // baseline, the deployment layer, the backup-set layer, and this
-// product's BACKUPD_* built-ins, merged with precedence already applied
+// product's RETND_* built-ins, merged with precedence already applied
 // (env.go over there argues every one of those). By the time a block
 // reaches this package it is a finished list, and this file does exactly
 // two things to it: it refuses entries that cannot survive an execve, and
@@ -29,7 +29,7 @@ import (
 // every captured byte is interpreted before the first line of it runs.
 //
 // All four are ordinary variable names by internal/workflow's rules:
-// they are not BACKUPD_-prefixed, so ValidateEnvName accepts them, and an
+// they are not RETND_-prefixed, so ValidateEnvName accepts them, and an
 // operator can put BASH_ENV in workflows.environment today. That is the
 // case this deletion exists for. It is not defending against a hostile
 // engine -- the engine is this product -- it is defending against a
@@ -151,7 +151,7 @@ func (v EnvVar) GoString() string { return v.String() }
 // win.
 //
 // Order is preserved rather than sorted because it is the sender's
-// statement of precedence (global, then per-set, then BACKUPD_*), and
+// statement of precedence (global, then per-set, then RETND_*), and
 // re-sorting it here would be this package forming a second opinion about
 // a decision internal/workflow already made.
 type EnvSet struct {

@@ -252,7 +252,7 @@ func connectTo(t *testing.T, server *fakeSSHD) *Client {
 	if err != nil {
 		t.Fatalf("marshalling the fixture client key: %v", err)
 	}
-	t.Setenv("BACKUPD_TEST_EXEC_KEY", string(pem.EncodeToMemory(block)))
+	t.Setenv("RETND_TEST_EXEC_KEY", string(pem.EncodeToMemory(block)))
 
 	addr := server.listener.Addr().(*net.TCPAddr)
 	knownHosts := filepath.Join(t.TempDir(), "known_hosts")
@@ -270,7 +270,7 @@ func connectTo(t *testing.T, server *fakeSSHD) *Client {
 			Host:       "127.0.0.1",
 			Port:       addr.Port,
 			User:       "hookuser",
-			KeyEnv:     "BACKUPD_TEST_EXEC_KEY",
+			KeyEnv:     "RETND_TEST_EXEC_KEY",
 			KnownHosts: knownHosts,
 		},
 	})

@@ -401,7 +401,7 @@ await withDevServer(async (app) => {
       width: CARD_WIDTH
     });
     await clip.frame(3.0);
-    await typeInto(clip, name, "BACKUPD_PHASE", { chunks: 2 });
+    await typeInto(clip, name, "RETND_PHASE", { chunks: 2 });
     await page.getByText("set by this product from the run it belongs to").waitFor();
     await settle(page, 500);
     await clip.frame(4.0);

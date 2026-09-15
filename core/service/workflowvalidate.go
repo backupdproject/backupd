@@ -1048,10 +1048,10 @@ func (v *workflowValidator) checkEnvConflicts() {
 // namespace.
 //
 // It should be unreachable through a validated configuration --
-// config.Validate refuses the whole BACKUPD_ prefix -- and it is checked
+// config.Validate refuses the whole RETND_ prefix -- and it is checked
 // anyway, because this report is also read against a configuration
 // somebody is in the middle of editing by hand, and "your hook cannot see
-// BACKUPD_RUN_ID because you set it yourself" is a sentence worth having.
+// RETND_RUN_ID because you set it yourself" is a sentence worth having.
 func (v *workflowValidator) checkReservedNames() {
 	var reserved []string
 

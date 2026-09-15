@@ -123,7 +123,7 @@ const DefaultHookNetwork = "none"
 // files a quiesce hook writes and small enough that a runaway `yes >
 // /tmp/x` hits a bound instead of the host's memory: a tmpfs is RAM.
 //
-// Anything larger belongs in BACKUPD_WORK_DIR, which is on disk, is
+// Anything larger belongs in RETND_WORK_DIR, which is on disk, is
 // mounted read-write, and is the directory this runner cleans up.
 const HookTmpfsSize = "64m"
 
@@ -233,7 +233,7 @@ type Bash struct {
 // has on the host.
 //
 // IDENTITY mounts, always, and that is a decision about meaning rather
-// than convenience: BACKUPD_WORK_DIR, a path in a hook's log line and the
+// than convenience: RETND_WORK_DIR, a path in a hook's log line and the
 // engine's own record of where a dump landed are then all one string. A
 // remapped mount would make "the hook wrote /work/dump.sql" a sentence
 // nobody can act on.

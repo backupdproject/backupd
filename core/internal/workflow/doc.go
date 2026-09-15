@@ -94,8 +94,8 @@
 // which is the property it was chosen for.
 //
 // Precedence runs sanitized baseline < workflows.environment < backup-set
-// environment < BACKUPD_* built-ins, and the built-ins are reserved: an
+// environment < RETND_* built-ins, and the built-ins are reserved: an
 // operator cannot configure a name this product injects, because a hook
-// that reads BACKUPD_BACKUP_STATUS has to be reading this product's answer
+// that reads RETND_BACKUP_STATUS has to be reading this product's answer
 // rather than one somebody wrote into a config file.
 package workflow

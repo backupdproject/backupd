@@ -720,6 +720,66 @@
   true, and #895 deletes it because after the move the instruction is simply
   correct.
 
+- **The runtime identifiers are `retnd`'s, and every one whose breakage would
+  have been silent is readable under its old name for one release** (EPIC R
+  #885, R1.4 #889). The environment a hook runs with, the two environment
+  variables an operator sets, the metric series a scrape reads, the session
+  and CSRF cookies, the proxy-error header and the API document's own title
+  all say `retnd` now. Each one was classified by what an upgraded deployment
+  would experience from a straight cut, and the ones that would have failed
+  SILENTLY got a window (FR-37):
+
+  - **Hook environment: both names, identical values.** Every one of the
+    nineteen built-ins a hook receives is exported twice, `RETND_RUN_ID`
+    beside `BACKUPD_RUN_ID` and the bare `RETND` beside `BACKUPD`, from the
+    same values in the same loop. A hook is an operator's own Bash script:
+    `$BACKUPD_BACKUP_STATUS` against a build that stopped exporting it is the
+    empty string rather than an error, so a hook that notifies on failure
+    would simply have stopped notifying. Both prefixes stay reserved in
+    configuration for as long as both are exported.
+  - **Input environment: both read, current name wins, one notice per
+    process.** `RETND_DEBUG` and `RETND_INCREMENTAL_ENGINE` are the names;
+    `BACKUPD_DEBUG`, `BACKUPD_INCREMENTAL_ENGINE` and (still) `RM_DEBUG` are
+    read, and each prints one deprecation notice per process start on stderr
+    -- not one per read, which is a log an operator silences. The debug
+    shortcut's three spellings are OR'd rather than ranked, exactly as
+    before, because none of them has ever had an "off" value.
+  - **Metrics: `retnd_*` primary, `backupd_*` duplicated, gauges only.** An
+    alert rule whose series stopped existing does not fire and a dashboard
+    whose query matches nothing is blank; both look like a healthy
+    deployment. Every gauge family is emitted a second time under the old
+    prefix, derived from the bytes of the first rendering so the two cannot
+    disagree, with `DEPRECATED, renamed to retnd_…` in its `# HELP` line. No
+    counter is duplicated: summing a monotonic series across two names
+    doubles the rate, so the duplication is driven by each family's own
+    `# TYPE` line rather than by a list.
+  - **Cookies: `retnd_session` / `retnd_csrf` issued, the old names read and
+    RE-ISSUED.** A hard cut would have signed every browser out mid-task.
+    Both of this project's earlier names are accepted on a read
+    (`backupd_session`/`backupd_csrf` and #794's `bm_session`/`bm_csrf`,
+    whose window is not nested inside a third one and now closes with them),
+    and a request arriving under a deprecated name has that same session or
+    token re-issued under the current one on that read, so the old name
+    leaves the wire on the caller's next request rather than whenever a jar
+    turns over.
+
+  **Three things are hard cuts, and one of them may be visible to you.** The
+  `x-backupd-proxy-error` response header is now `x-retnd-proxy-error` with
+  no alias, because `serve-ui` writes it and the bundle it serves reads it,
+  and the two ship in one image. The API document is `retnd /api/v1` and both
+  generated bindings were regenerated from it. And **the CLI's default
+  `User-Agent` is now `retnd-cli (api 1)`, where it was `backupd-cli (api
+  1)`** -- nothing in this product reads it, but a log filter, an audit query
+  or a reverse-proxy rule of yours might, and there is deliberately no
+  fallback that would make both of them wrong.
+
+  Every window above is on `scripts/rename/check-brand-drift.sh`'s alias
+  list with the issue that deletes it (#895) and its removal release, "the
+  release after the one that ships this EPIC" (FR-43); that list now refuses
+  an entry carrying neither. The guard also grew the pattern for the bare
+  `BACKUPD`, which no prefix rule could ever match and which had been green
+  through two renames.
+
 - **The debug shortcut is `BACKUPD_DEBUG`, and `RM_DEBUG` is deprecated**
   (#794). The one-variable diagnostics switch still carried the project's
   old `RM_` prefix, from before the rename to backupd, which is the wrong

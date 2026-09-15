@@ -331,12 +331,12 @@ describe("declaring a domain", () => {
     await user.click(screen.getByRole("button", { name: "An environment variable" }));
     await user.type(
       screen.getByLabelText("Passphrase environment variable"),
-      "BACKUPD_OFFSITE_C3_PASSPHRASE"
+      "RETND_OFFSITE_C3_PASSPHRASE"
     );
     await user.click(screen.getByRole("button", { name: "Create domain" }));
 
     await waitFor(() => expect(sent).not.toBeNull());
-    expect(sent!.passphrase).toEqual({ env: "BACKUPD_OFFSITE_C3_PASSPHRASE" });
+    expect(sent!.passphrase).toEqual({ env: "RETND_OFFSITE_C3_PASSPHRASE" });
   });
 
   it("explains a deployment that does not run the incremental engine, and stays put", async () => {

@@ -245,11 +245,12 @@ services:
       # id, so one container at `debug` gives half of every story and
       # nothing to join it to.
       #
-      # BACKUPD_DEBUG=1 is the same switch as LOG_LEVEL=debug, kept as
+      # RETND_DEBUG=1 is the same switch as LOG_LEVEL=debug, kept as
       # the shortcut an operator can be told over a phone call; it wins
-      # if both are set. RM_DEBUG=1 is that shortcut's deprecated old
-      # name (issue #794): still honoured, for one release, so an
-      # upgrade does not turn a diagnosing operator's logs back off.
+      # if both are set. BACKUPD_DEBUG=1 (before EPIC R, #885) and
+      # RM_DEBUG=1 (before #794) are its deprecated older names: both
+      # still read, for one release, so an upgrade does not turn a
+      # diagnosing operator's logs back off.
       # An unparseable value falls back to `info` rather than refusing
       # to start, because a typo in a diagnostic knob must never take a
       # backup host down. See docs/deployment.md's "Turning on
@@ -553,8 +554,9 @@ services:
       # what the engine answered, what framing the body arrived with,
       # and how much of it actually got copied to the browser - which is
       # only half of each story without the engine's own line for the
-      # same request. BACKUPD_DEBUG=1 is the shortcut, and wins over
-      # this; RM_DEBUG=1 is its deprecated old name (issue #794).
+      # same request. RETND_DEBUG=1 is the shortcut, and wins over
+      # this; BACKUPD_DEBUG=1 and RM_DEBUG=1 are its deprecated older
+      # names (EPIC R #885, and #794).
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Published to the host (see `ports:` below); LISTEN_ADDR is this
       # container's own internal bind address, always :8080 regardless of

@@ -276,7 +276,7 @@ ever exists at the host path the operator points `SSH_KEY_FILE` to.
 
 The incremental (kopia) backup engine is off by default and gated on one
 setting, which can be given two ways. The environment wins over the file **in
-both directions**: `BACKUPD_INCREMENTAL_ENGINE` set to `1`, `true`, `yes` or
+both directions**: `RETND_INCREMENTAL_ENGINE` set to `1`, `true`, `yes` or
 `on` enables the engine whatever the file says, `0`, `false`, `no` or `off`
 disables it whatever the file says, and unset or empty defers to the file. A
 value that is neither spelling is refused when the configuration is validated,
@@ -296,7 +296,7 @@ place that works for the long-running processes. `container/compose.yaml`
 passes environment through an explicit `environment:` block — `TMPDIR`,
 `LOG_LEVEL`, `TZ` and the rest, each interpolated by name — and there is no
 catch-all, so a variable dropped into `container/.env` reaches nothing unless
-that file declares it. `BACKUPD_INCREMENTAL_ENGINE` is not among them.
+that file declares it. `RETND_INCREMENTAL_ENGINE` is not among them.
 
 Where the environment override is the right tool is a process you launch
 yourself, and it is worth knowing for exactly two situations — proving
@@ -305,10 +305,10 @@ off for one command:
 
 ```bash
 # one command, inside the running engine container
-docker compose -p backupd ... exec -e BACKUPD_INCREMENTAL_ENGINE=1 backupd /backupd repository health
+docker compose -p backupd ... exec -e RETND_INCREMENTAL_ENGINE=1 backupd /backupd repository health
 
 # a CLI-only install, or a systemd unit, where you own the environment
-BACKUPD_INCREMENTAL_ENGINE=0 ~/backupd/bin/backupd run
+RETND_INCREMENTAL_ENGINE=0 ~/backupd/bin/backupd run
 ```
 
 The variable is read by the **engine** process, the one that runs the cycle,
@@ -743,19 +743,21 @@ docker compose -f container/compose.yaml up -d
 docker compose -f container/compose.yaml logs -f
 ```
 
-`BACKUPD_DEBUG=1` is the same switch under a shorter name, kept because it is
+`RETND_DEBUG=1` is the same switch under a shorter name, kept because it is
 the one an operator can be given over a phone call; it wins if both are set. An
 unparseable value falls back to `info` rather than refusing to start — a typo in a
 diagnostic knob must never take a backup host down.
 
-`RM_DEBUG=1` is that shortcut's deprecated old name, from before this project was
-renamed to backupd (issue #794). It is still honoured, so a deployment upgraded
-without its compose file being re-derived does not go quiet in the middle of a
-diagnosis, and it will be removed a release after `BACKUPD_DEBUG`. Either
-spelling alone turns diagnostics on — neither has ever had an "off" value, only
-the documented `1` means anything — so the two containers of one deployment
-cannot end up disagreeing about how loud they are while an upgrade is half done.
-New deployments should set `BACKUPD_DEBUG`.
+`BACKUPD_DEBUG=1` and `RM_DEBUG=1` are that shortcut's two **deprecated** older
+spellings, one per name this project has had: `BACKUPD_DEBUG` from before the
+rename to `retnd` (EPIC R, issue #885) and `RM_DEBUG` from before the rename to
+`backupd` (issue #794). Both are still read, so a deployment upgraded without its
+compose file or its unit being re-derived does not go quiet in the middle of a
+diagnosis, and both are removed in the release after the one that renames this
+product. The current name wins when more than one is set, and the process prints
+one deprecation notice per deprecated name it read, on stderr, at start — not once
+per read, so a running deployment is not punished for an old compose file. Set
+`RETND_DEBUG` and delete the others.
 
 **Set it on both services or neither.** The engine records what it built and
 served; `web-ui` records what the engine answered, what framing the body arrived

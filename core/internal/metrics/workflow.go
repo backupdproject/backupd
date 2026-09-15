@@ -26,7 +26,7 @@ import (
 // So the label sets below are drawn from enumerations this product
 // defines and cannot exceed -- a scope (2), a phase (2), a target (2), a
 // status (5), a step disposition (6) -- plus the backup set id, which the
-// configuration bounds and which every other backupd_backup_set_ family
+// configuration bounds and which every other retnd_backup_set_ family
 // already carries. The step id, the script name, the connection ref and
 // every path are deliberately absent. labels_test.go holds this, against
 // a snapshot deliberately loaded with secrets and paths in every field it

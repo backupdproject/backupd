@@ -181,24 +181,24 @@ func TestBuiltinsTellAHookWhereItIsInTheRun(t *testing.T) {
 
 	before := h.rec.envOf(t, "10-mount.local.sh")
 	for name, want := range map[string]string{
-		"BACKUPD":                 "1",
-		"BACKUPD_RUN_ID":          "run-1",
-		"BACKUPD_BACKUP_SET_ID":   "production/postgres-primary",
-		"BACKUPD_BACKUP_SET_NAME": "postgres-primary",
-		"BACKUPD_PHASE":           "before",
-		"BACKUPD_STEP_NAME":       "10-mount.local.sh",
-		"BACKUPD_STEP_TARGET":     "local",
-		"BACKUPD_BACKUP_STATUS":   "unknown",
-		"BACKUPD_CLEANUP_STATUS":  "unknown",
-		"BACKUPD_WORKFLOW_STATUS": "running",
-		"BACKUPD_RECOVERY":        "0",
-		"BACKUPD_CLEANUP_REASON":  "run_completed",
+		"RETND":                 "1",
+		"RETND_RUN_ID":          "run-1",
+		"RETND_BACKUP_SET_ID":   "production/postgres-primary",
+		"RETND_BACKUP_SET_NAME": "postgres-primary",
+		"RETND_PHASE":           "before",
+		"RETND_STEP_NAME":       "10-mount.local.sh",
+		"RETND_STEP_TARGET":     "local",
+		"RETND_BACKUP_STATUS":   "unknown",
+		"RETND_CLEANUP_STATUS":  "unknown",
+		"RETND_WORKFLOW_STATUS": "running",
+		"RETND_RECOVERY":        "0",
+		"RETND_CLEANUP_REASON":  "run_completed",
 	} {
 		if got := before[name]; got != want {
 			t.Errorf("a before hook saw %s=%q, want %q", name, got, want)
 		}
 	}
-	if before["BACKUPD_STARTED_AT"] == "" {
+	if before["RETND_STARTED_AT"] == "" {
 		t.Error("a before hook was told no start time")
 	}
 
@@ -206,11 +206,11 @@ func TestBuiltinsTellAHookWhereItIsInTheRun(t *testing.T) {
 	// reason the three statuses are separate fields.
 	after := h.rec.envOf(t, "10-resume.remote.sh")
 	for name, want := range map[string]string{
-		"BACKUPD_PHASE":           "after",
-		"BACKUPD_BACKUP_STATUS":   "success",
-		"BACKUPD_CLEANUP_STATUS":  "running",
-		"BACKUPD_WORKFLOW_STATUS": "running",
-		"BACKUPD_STEP_TARGET":     "remote",
+		"RETND_PHASE":           "after",
+		"RETND_BACKUP_STATUS":   "success",
+		"RETND_CLEANUP_STATUS":  "running",
+		"RETND_WORKFLOW_STATUS": "running",
+		"RETND_STEP_TARGET":     "remote",
 	} {
 		if got := after[name]; got != want {
 			t.Errorf("an after hook saw %s=%q, want %q", name, got, want)

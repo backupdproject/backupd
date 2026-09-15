@@ -44,7 +44,7 @@ func TestValidate_ADomainDeclaringTwoPassphraseSourcesIsRefused(t *testing.T) {
 	c := incrementalConfig()
 	c.RepositoryDomains[0].Passphrase = Passphrase{
 		File: "/run/secrets/repo",
-		Env:  "BACKUPD_REPO_PASSPHRASE",
+		Env:  "RETND_REPO_PASSPHRASE",
 	}
 
 	err := c.Validate()

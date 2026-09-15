@@ -84,7 +84,7 @@ func TestProcessEnv_RefusesANulRatherThanTruncatingASecret(t *testing.T) {
 
 // TestProcessEnv_AppliesTheSendersPrecedence checks the one ordering rule
 // this package is responsible for: later wins, because the sender ordered
-// the layers (deployment, then backup set, then BACKUPD_*).
+// the layers (deployment, then backup set, then RETND_*).
 func TestProcessEnv_AppliesTheSendersPrecedence(t *testing.T) {
 	block, err := EnvSet{Vars: []EnvVar{
 		{Name: "PGHOST", Value: "deployment"},

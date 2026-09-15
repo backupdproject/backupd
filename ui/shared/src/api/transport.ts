@@ -76,8 +76,12 @@ export const CLIENT_ATTEMPT_HEADER = "X-Client-Attempt-Id";
  * topology out of "502" gets one of the two wrong whichever way it
  * guesses. Lower case because `Headers.get` is case-insensitive and this
  * is only ever passed to it.
+ *
+ * Renamed with no compat window by EPIC R (#885, FR-37): producer and
+ * consumer are two halves of one image, so a hard cut has no deployment
+ * in which it can be half applied.
  */
-export const PROXY_ERROR_HEADER = "x-backupd-proxy-error";
+export const PROXY_ERROR_HEADER = "x-retnd-proxy-error";
 
 function newClientAttemptId(): string {
   const bytes = new Uint8Array(8);

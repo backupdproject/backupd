@@ -113,14 +113,14 @@ type RunRequest struct {
 	Backup func(ctx context.Context) error
 
 	// Facts are the deployment's own answers to the built-ins this
-	// package cannot know: BACKUPD_SOURCE_HOST, BACKUPD_SOURCE_PATH,
-	// BACKUPD_DESTINATION. Anything that is not one of
+	// package cannot know: RETND_SOURCE_HOST, RETND_SOURCE_PATH,
+	// RETND_DESTINATION. Anything that is not one of
 	// workflow.BuiltinEnvNames is refused rather than passed through.
 	//
 	// They are PERSISTED with the plan, because a recovery needs them:
 	// the built-ins are injected per call and stored nowhere else, so a
 	// resumed hook would otherwise be handed an empty
-	// BACKUPD_SOURCE_PATH -- and `umount "$BACKUPD_SOURCE_PATH"` with
+	// RETND_SOURCE_PATH -- and `umount "$RETND_SOURCE_PATH"` with
 	// an empty variable unmounts nothing and exits 0. A fact cannot
 	// override anything this product states about the run itself (see
 	// runner.builtins): the built-in layer is applied over these, not
@@ -348,7 +348,7 @@ type runner struct {
 	recoveryOutstanding bool
 
 	// recovering marks a runner built by ResumeCleanup rather than by a
-	// run. It is what puts BACKUPD_RECOVERY=1 in front of a hook and
+	// run. It is what puts RETND_RECOVERY=1 in front of a hook and
 	// what keeps a resumed cleanup from re-deciding the run's own
 	// timeout and cancellation state.
 	recovering bool
@@ -733,8 +733,8 @@ func (r *runner) noteCancellation(err error) {
 //
 // recovering says whether these bytes are being run to unwind an
 // INTERRUPTED run rather than this one, which changes exactly one thing:
-// the environment the hook is handed (BACKUPD_RECOVERY and
-// BACKUPD_CLEANUP_REASON). Everything else about running a step -- the
+// the environment the hook is handed (RETND_RECOVERY and
+// RETND_CLEANUP_REASON). Everything else about running a step -- the
 // durable "running" write, the redaction, the bound, the outcome mapping
 // -- is identical, because a recovery that executed hooks through a
 // second path would be a second set of guarantees.
