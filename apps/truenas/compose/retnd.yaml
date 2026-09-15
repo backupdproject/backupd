@@ -26,6 +26,15 @@
 # every commit: image reference, container-side mount points, port, and
 # the rule that private state and key material never live inside the
 # backup root.
+# The compose project name, stated rather than inherited (issue #891,
+# following container/compose.yaml). Pasted into TrueNAS's own Custom App
+# form the project is named after the app, which step 5 of
+# docs/acceptance/truenas-provider-acceptance.md names `retnd` for exactly
+# this reason; run the same file with `docker compose` directly and this
+# line is what makes the containers `retnd-retnd-1` and `retnd-web-ui-1`
+# rather than a prefix taken from whichever directory the file sits in.
+name: retnd
+
 services:
   # The engine: local authentication, the versioned /api/v1 API and the
   # backup scheduler, one process sharing one shutdown context. It holds

@@ -18,8 +18,10 @@ import (
 //     /backupd-web to /retnd-web. It exists so that an operator's PINNED
 //     compose file, which this repository cannot edit, still starts. Any
 //     rule that asks what an argv[0] or a healthcheck command may SAY has
-//     to accept it, or the eight provider adapters #891 has not moved yet
-//     fail a gate for saying something the image still honours.
+//     to accept it, so that a deployment running a pinned pre-#891
+//     provider file does not fail a gate for saying something the image
+//     still honours. Every adapter IN THIS TREE says /retnd-web, as of
+//     #891; this claim is about the copies outside it.
 //
 //   - The RELEASE MANIFEST of an already-published release keys its
 //     hashes under the pre-rename binary NAMES. That is not an alias and

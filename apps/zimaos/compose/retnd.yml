@@ -46,6 +46,16 @@
 # unresolved reference at install time rather than a knob. Every path
 # below is literal and every one of them is ZimaOS's own layout: private
 # application data under /DATA/AppData, user data under /DATA.
+# The compose project name, stated rather than inherited (issue #891,
+# following container/compose.yaml). Compose defaults the project name to
+# the directory this file happens to sit in, and the project name is the
+# prefix of every default container name. With this line the containers
+# are `retnd-retnd-1` and `retnd-web-ui-1` here exactly as they are in the
+# canonical definition, so `docker ps` on this NAS reads the same as
+# `docker ps` on a generic Docker host and the documented names are true
+# of both.
+name: retnd
+
 x-casaos:
   architectures:
     - amd64

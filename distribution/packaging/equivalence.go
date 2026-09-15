@@ -103,9 +103,10 @@ var EquivalenceProperties = []struct {
 //
 // A method on Canonical because two of the comparisons below have to know
 // which command spellings name the same image entrypoint: #890 moved the
-// canonical stack's argv to /retnd-web and #891 moves the adapters', so
-// between the two an adapter that is byte-for-byte the canonical runtime
-// still spells one argument differently (renameoverlap.go).
+// canonical stack's argv to /retnd-web and #891 moved the adapters', so
+// the two agree in this tree -- while an operator's own pinned copy of a
+// provider file is still byte-for-byte the canonical runtime with one
+// argument spelled the old way (renameoverlap.go).
 func (c Canonical) CheckStackEquivalence(adapter, canonical AdapterRuntime) []Divergence {
 	var out []Divergence
 
@@ -182,8 +183,9 @@ func (c Canonical) equivalentRole(role string, got, want *Service) []Divergence 
 	// The retained entrypoint name is set aside for the same reason the
 	// runtime profile is: it is not a difference in what runs. #890's
 	// /backupd-web is a hardlink to the /retnd-web the canonical stack
-	// names, so an adapter #891 has not moved yet is running the same
-	// inode and the same subcommand.
+	// names, so a deployment still spelling it that way -- an operator's
+	// pinned file rather than anything #891 left behind -- is running the
+	// same inode and the same subcommand.
 	if a, b := c.sameEntrypoint(withoutProfile(got.Command)), withoutProfile(want.Command); !equalStrings(a, b) {
 		out = append(out, Divergence{PropCommand, role,
 			fmt.Sprintf("runs %v and the canonical stack runs %v (the runtime profile is set aside on both sides, because selecting one is what an adapter is for)", withoutProfile(got.Command), b),

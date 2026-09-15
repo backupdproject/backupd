@@ -177,10 +177,11 @@ var (
 	// exactly one release: #890 renamed the unit to
 	// retnd-workflow-runner.service (the installer's
 	// WORKFLOW_RUNNER_UNIT moved with it, and it keeps the old name as a
-	// lookup-and-remove spelling), and the provider procedures that name
-	// the unit are #891's to reword. A document naming either one is
-	// telling its operator a true thing until then; #895 drops the
-	// alternative.
+	// lookup-and-remove spelling), and #891 reworded the provider
+	// procedures that name it, so every one of them now says the new
+	// name. The alternative stays because a procedure written for a host
+	// installed before #890 is still telling its operator a true thing
+	// about that host; #895 drops it.
 	runnerUnitRe = regexp.MustCompile(`(retnd|backupd)-workflow-runner\.service`)
 	// dockerGroupRe: the grant the runner's account needs. #865's whole
 	// cost is this one membership, and the installer's refusal names the
@@ -238,7 +239,7 @@ func LocalHookDocStates(path, doc, answer string) (bool, string) {
 	switch answer {
 	case LocalHooksAvailable:
 		required = []requirement{
-			{runnerUnitRe, "name the systemd unit the runner is installed as (retnd-workflow-runner.service, or the pre-#890 backupd-workflow-runner.service until #891 rewords it)"},
+			{runnerUnitRe, "name the systemd unit the runner is installed as (retnd-workflow-runner.service, or the pre-#890 backupd-workflow-runner.service, which only a host installed before that rename still has)"},
 			{dockerGroupRe, "say that the runner's account needs the Docker socket's group (the `usermod -aG` grant)"},
 			{hookImageRe, "name the hook image local hooks run in, which has to be present because the runner refuses to pull one"},
 		}

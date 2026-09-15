@@ -537,10 +537,12 @@ func waitingOnHealthOf(a AdapterRuntime, service string) []string {
 // and not a difference in what runs.
 //
 // A retained entrypoint name is a spelling in the same sense. #890 moved
-// the canonical commands to /retnd-web and #891 moves the eight
-// adapters' healthcheck tests, and in between the two an adapter's
-// `/backupd-web healthcheck` runs the same inode the contract names
-// (renameoverlap.go). What this comparison exists to catch is a check
+// the canonical commands to /retnd-web and #891 moved all eleven
+// adapters' healthcheck tests, so nothing in this tree names
+// /backupd-web any more -- but an operator's own pinned copy of a
+// provider file does, and it runs the same inode the contract names
+// (renameoverlap.go), which is what the retained spelling is still for
+// until #895 drops it. What this comparison exists to catch is a check
 // that asks a DIFFERENT question, so it walks every spelling the image
 // answers to rather than pinning the one the contract prefers.
 func (c Canonical) sameTest(got, want []string) bool {
