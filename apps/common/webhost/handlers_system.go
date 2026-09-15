@@ -3,6 +3,7 @@ package webhost
 import (
 	"net/http"
 
+	"github.com/retnd/retnd/core/legacypath"
 	"github.com/retnd/retnd/core/service"
 )
 
@@ -103,6 +104,36 @@ type versionResponse struct {
 	// nothing else. It is repeated here so a client that already fetches
 	// version does not need a second round trip.
 	Configured bool `json:"configured"`
+
+	// AdoptedPaths is FR-38's answer on the route the deployment check
+	// already reads (core/cmd/retnd's deploymentcheck.go), and it is here
+	// rather than on a route of its own for that reason: "which
+	// deployment am I talking to" and "which of its directories is
+	// actually live" are the same question asked one level down, and a
+	// client that already fetches this response should not need a second
+	// round trip to find out that the answer came from a pre-rename
+	// path.
+	//
+	// Empty on every deployment whose paths are the ones this release
+	// resolves, and never nil: an omitted array and an empty one are the
+	// same fact and the contract declares this field required, so a
+	// client never has to distinguish "no adoptions" from "this build
+	// does not report them".
+	//
+	// Two populated directories that are different directories never
+	// reach this field, because that deployment refuses to start: see
+	// core/legacypath.
+	AdoptedPaths []adoptedPathResponse `json:"adopted_paths"`
+}
+
+// adoptedPathResponse is one entry of the above: the pre-rename path in
+// use and the renamed path it would otherwise have used. A flat pair
+// rather than a single string, because an operator reading a support
+// transcript needs both — the one that is live and the one to move it to.
+type adoptedPathResponse struct {
+	What    string `json:"what"`
+	Serving string `json:"serving"`
+	Renamed string `json:"renamed"`
 }
 
 // systemVersion is GET /api/v1/system/version. It is the first call every
@@ -133,6 +164,7 @@ func (h *handlers) systemVersion(w http.ResponseWriter, r *http.Request) {
 		DeploymentID:   deploymentID,
 		Ready:          isReady(h.backend),
 		Configured:     h.configured(),
+		AdoptedPaths:   adoptedPaths(h.adoptedPaths),
 	})
 }
 
@@ -208,4 +240,15 @@ func (h *handlers) healthReady(w http.ResponseWriter, r *http.Request) {
 // its own startup sequence completed.
 func isReady(backend BackupServiceClient) bool {
 	return backend != nil && backend.Ready()
+}
+
+// adoptedPaths translates the runtime's own FR-38 decisions into the
+// response shape, and returns an empty slice rather than nil so the
+// contract's required array is always present in the JSON.
+func adoptedPaths(in []legacypath.Adoption) []adoptedPathResponse {
+	out := make([]adoptedPathResponse, 0, len(in))
+	for _, a := range in {
+		out = append(out, adoptedPathResponse{What: a.What, Serving: a.Path, Renamed: a.Renamed})
+	}
+	return out
 }

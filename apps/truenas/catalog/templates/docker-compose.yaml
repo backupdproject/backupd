@@ -47,9 +47,9 @@ services:
     volumes:
       - "{{ .Values.storage.state.hostPath }}:/data/state"
       - "{{ .Values.storage.backups.hostPath }}:/data/backups"
-      - "{{ .Values.storage.configDir.hostPath }}:/etc/backupd/config"
-      - "{{ .Values.storage.sshKey.hostPath }}:/etc/backupd/id_ed25519:ro"
-      - "{{ .Values.storage.knownHosts.hostPath }}:/etc/backupd/known_hosts:ro"
+      - "{{ .Values.storage.configDir.hostPath }}:/etc/retnd/config"
+      - "{{ .Values.storage.sshKey.hostPath }}:/etc/retnd/id_ed25519:ro"
+      - "{{ .Values.storage.knownHosts.hostPath }}:/etc/retnd/known_hosts:ro"
 
     # The start gate, and a liveness question rather than a health
     # verdict (issue #206). The Web UI below declares

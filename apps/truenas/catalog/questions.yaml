@@ -79,11 +79,13 @@ questions:
         # an installed application's answered values forward across an
         # upgrade, so keeping the identifier would have kept a Phase 4
         # answer of /mnt/POOL/backupd/config/config.yaml and bind
-        # mounted that FILE at /etc/backupd/config, where --config
-        # then resolves to .../config/config.yaml and the engine
-        # crash-loops with "not a directory" — a message naming neither
-        # the mount nor the migration. A new identifier has no answer to
-        # carry forward, so the wizard asks again.
+        # mounted that FILE at the container's config mount
+        # (/etc/backupd/config as it was spelled then; /etc/retnd/config
+        # since issue #890), where --config then resolves to
+        # .../config/config.yaml and the engine crash-loops with "not a
+        # directory" — a message naming neither the mount nor the
+        # migration. A new identifier has no answer to carry forward, so
+        # the wizard asks again.
         - variable: configDir
           label: Configuration directory
           schema:

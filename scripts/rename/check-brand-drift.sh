@@ -196,6 +196,28 @@ cd "$repo_root"
 # inside the third's, so every line below is deleted by the same issue in
 # the same release.
 #
+# R1.5 (#890) adds five entries and every one of them is PATH-SCOPED, which
+# is worth explaining because nothing else on this list is.
+#
+# Its three shims are FR-43's `/backupd-web` hardlinked entrypoint, the
+# `ghcr.io/backupdproject/backupd` mirror, and FR-38's adoption of a state
+# or configuration directory found at the pre-rename path. All three are
+# PATHS, and this guard tokenises a path occurrence as the bare word
+# `backupd`: `/backupd-web`, `/etc/backupd` and `/var/lib/backupd` are one
+# token, and it is the same token as the 1,400 occurrences R2.1, R2.2, R2.3
+# and R2.4 are still sweeping. A bare `backupd` alias would therefore be an
+# alias for the whole tree -- it would mask `pending`, take the epic's
+# largest remaining surface green, and report the `pending` entry that is
+# actually doing the work as unused.
+#
+# So each entry names the ONE file that mints the shim: the constant FR-38
+# substitutes (core/legacypath), the `ln` that creates the second entrypoint
+# name (container/Dockerfile), the mirror declaration and the publish guard
+# that refuses a release without it, and the installer's LEGACY_* constants,
+# which are what lets it find an already-installed host's units, firewall
+# rules, wrapper and mount points under their previous names. Everywhere
+# else, `backupd` stays on `pending` and stays this epic's work.
+#
 # When the deprecation window closes, the alias and its line here go
 # together, and this script reports the line as unused the moment the alias
 # is gone.
@@ -210,6 +232,11 @@ BACKUPD_DEBUG #895 the release after the one that ships this EPIC
 BACKUPD_INCREMENTAL_ENGINE #895 the release after the one that ships this EPIC
 backupd_session #895 the release after the one that ships this EPIC
 backupd_csrf #895 the release after the one that ships this EPIC
+backupd@core/legacypath/legacypath.go #895 the release after the one that ships this EPIC
+backupd@container/Dockerfile #895 the release after the one that ships this EPIC
+backupd@distribution/packaging/canonical.json #895 the release after the one that ships this EPIC
+backupd@scripts/bdtools/release/publish_image.py #895 the release after the one that ships this EPIC
+backupd@scripts/install/install_docker_host.py #895 the release after the one that ships this EPIC
 EOF
 )"
 
@@ -226,7 +253,10 @@ EOF
 #   the cookies, the earlier brands'
 #   surviving identifiers                   R1.4 (#889)
 #   /etc/backupd, /var/lib/backupd,
-#   compose and unit names                  R1.5 (#890)
+#   compose and unit names                  R1.5 (#890), landed: what it
+#                                           kept is on `aliases` above,
+#                                           scoped to the five files that
+#                                           mint it
 #   the eleven providers and packaging      R2.1 (#891)
 #   prose, docs and ADRs                    R2.2 (#892)
 #   the site and the brand art              R2.3 (#893)
@@ -270,8 +300,6 @@ Backupd
 backupd_
 backupd_internal
 backupd_repo_production
-backupd_sha
-backupd_web_sha
 backupdDebug
 backupdproject
 rclone_manager

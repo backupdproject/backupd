@@ -98,16 +98,44 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
+# The binary_sha256 keys one shipped binary may be recorded under, most
+# preferred first.
+#
+# EPIC R renamed the files the image carries from /backupd and
+# /backupd-web to /retnd and /retnd-web (#890), and an entry recorded for
+# an ALREADY-PUBLISHED release keeps the keys it was published under,
+# because those names identify a build that really went out. So over the
+# overlap release the manifest can legitimately carry either spelling and
+# this check has to accept both, preferring the new one. The `backupd`
+# spelling -- and this table with it -- goes away when the shim window
+# closes (#895).
+#
+# The IMAGE paths are not aliased the same way: /backupd-web is a hardlink
+# to /retnd-web, not a third binary, so it is never extracted or hashed.
+# A name this table does not know is looked up as itself, so an
+# unrecognised binary fails the lookup and is reported missing rather than
+# quietly resolving to one of these.
+MANIFEST_BINARY_KEYS: dict[str, tuple[str, ...]] = {
+    "retnd": ("retnd", "backupd"),
+    "retnd-web": ("retnd-web", "backupd-web"),
+}
+
+
 def recorded(manifest: Manifest, arch: str, binary: str) -> str | None:
     """The manifest's hash for `binary` under `arch`, or `None` if the
-    manifest carries no such entry. `None` rather than `""`: an empty
+    manifest carries no such entry under any accepted spelling of its key
+    (see MANIFEST_BINARY_KEYS). `None` rather than `""`: an empty
     string and a genuinely absent record must stay distinguishable, or a
     caller that treats them the same reports a hash mismatch against
     nothing instead of naming the real problem."""
     for entry in manifest.get("architectures", []):
         if entry.get("architecture") == arch:
-            value = entry.get("binary_sha256", {}).get(binary)
-            return str(value) if value is not None else None
+            hashes = entry.get("binary_sha256", {})
+            for key in MANIFEST_BINARY_KEYS.get(binary, (binary,)):
+                value = hashes.get(key)
+                if value is not None:
+                    return str(value)
+            return None
     return None
 
 
@@ -166,15 +194,15 @@ def check_one(root: Path, arch: str, manifest: Manifest) -> list[str]:
         capture=False,
     )
 
-    cid = harness.sh_out(["docker", "create", "--platform", f"linux/{arch}", tag, "/backupd", "version"])
+    cid = harness.sh_out(["docker", "create", "--platform", f"linux/{arch}", tag, "/retnd", "version"])
     tmp = Path(tempfile.mkdtemp())
     mismatches: list[str] = []
     try:
-        harness.sh(["docker", "cp", f"{cid}:/backupd", str(tmp / "backupd")])
-        harness.sh(["docker", "cp", f"{cid}:/backupd-web", str(tmp / "backupd-web")])
+        harness.sh(["docker", "cp", f"{cid}:/retnd", str(tmp / "retnd")])
+        harness.sh(["docker", "cp", f"{cid}:/retnd-web", str(tmp / "retnd-web")])
         harness.sh(["docker", "rm", cid])
 
-        for binary in ("backupd", "backupd-web"):
+        for binary in ("retnd", "retnd-web"):
             want = recorded(manifest, arch, binary)
             got = sha256_of(tmp / binary)
             if want is None:

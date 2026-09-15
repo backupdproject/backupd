@@ -54,9 +54,9 @@ var privatePaths = []struct {
 	// declares, and it is also the stricter thing to check: nesting it
 	// inside the backup destination would publish the two key stores as
 	// well as the configuration.
-	{"/etc/backupd/config", "the manager's configuration directory"},
-	{"/etc/backupd/id_ed25519", "the SFTP private key"},
-	{"/etc/backupd/known_hosts", "the pinned host keys"},
+	{"/etc/retnd/config", "the manager's configuration directory"},
+	{"/etc/retnd/id_ed25519", "the SFTP private key"},
+	{"/etc/retnd/known_hosts", "the pinned host keys"},
 }
 
 const backupDataPath = "/data/backups"
@@ -504,7 +504,7 @@ services:
     volumes:
       - /srv/backups:/data/backups
       - /srv/backups/private:/data/state
-      - /srv/backups/keys/id_ed25519:/etc/backupd/id_ed25519:ro
+      - /srv/backups/keys/id_ed25519:/etc/retnd/id_ed25519:ro
 `
 	doc, err := compose.Parse([]byte(nested), "synthetic-nested.yaml", separationEnv())
 	if err != nil {
@@ -515,7 +515,7 @@ services:
 		t.Fatal("the synthetic document declares no backup mount, so this control proves nothing")
 	}
 
-	for _, containerPath := range []string{"/data/state", "/etc/backupd/id_ed25519"} {
+	for _, containerPath := range []string{"/data/state", "/etc/retnd/id_ed25519"} {
 		mount, declared := doc.MountFor(compose.RoleEngine, containerPath)
 		if !declared {
 			t.Fatalf("the synthetic document declares no mount at %s", containerPath)

@@ -384,6 +384,13 @@
           "configured": {
             "type": "boolean",
             "description": "False on an instance listening with no configuration at all: it is serving the first-run setup flow, not the application, and every operation outside that flow refuses with 503 NOT_CONFIGURED. A different question from ready above, and both answers matter separately: an unconfigured instance is never ready, but a not-ready instance is not necessarily unconfigured. GET /system/first-run asks this and nothing else, for a client that does not already fetch this response."
+          },
+          "adopted_paths": {
+            "type": "array",
+            "description": "Which of this deployment's locations, if any, are being served from a pre-rename path. Empty on every deployment whose paths are the ones this release resolves, which is the normal case. A non-empty entry means the renamed path holds nothing and the pre-rename one holds the data, so the pre-rename one is what is live: this is the third of the three surfaces that report that (the others are `retnd check` and the startup log), and it is the one a client or a support transcript can read without a shell on the host. Each entry is reported rather than warned about because the warning is printed once per start and an operator asks the question months later.",
+            "items": {
+              "$ref": "#/components/schemas/AdoptedPath"
+            }
           }
         },
         "required": [
@@ -395,7 +402,32 @@
           "config_revision",
           "deployment_id",
           "ready",
-          "configured"
+          "configured",
+          "adopted_paths"
+        ]
+      },
+      "AdoptedPath": {
+        "type": "object",
+        "description": "One of this deployment's locations that is being served from a pre-rename path, and the renamed path it would otherwise have used. A location is adopted only when the renamed path holds nothing and the pre-rename path holds the data; two populated locations that are different directories make the runtime refuse to start instead, and are therefore never reported here.",
+        "additionalProperties": false,
+        "properties": {
+          "what": {
+            "type": "string",
+            "description": "Which location this is, in the words the runtime uses for it: \"configuration\" or \"state database\". The two are resolved by different code and are reported separately, because a deployment can have adopted one and not the other."
+          },
+          "serving": {
+            "type": "string",
+            "description": "The absolute path actually in use: the pre-rename one."
+          },
+          "renamed": {
+            "type": "string",
+            "description": "The absolute path this release resolves, which holds nothing. This is the path an operator's compose file and persisted configuration should be moved to."
+          }
+        },
+        "required": [
+          "what",
+          "serving",
+          "renamed"
         ]
       },
       "CapabilitiesResponse": {
@@ -5580,7 +5612,7 @@
       },
       "WorkflowRunnerSettings": {
         "type": "object",
-        "description": "How THIS PROCESS reaches the Host Workflow Runner, the component that executes a `.local.sh` hook on the machine backupd is installed on. Reported and not writable here: the two paths differ between a container and a bare-metal install of the same deployment, so they are a deployment-shape fact the installer writes rather than a policy an operator tunes, exactly like the SSH key, the known_hosts file and the state database.",
+        "description": "How THIS PROCESS reaches the Host Workflow Runner, the component that executes a `.local.sh` hook on the machine retnd is installed on. Reported and not writable here: the two paths differ between a container and a bare-metal install of the same deployment, so they are a deployment-shape fact the installer writes rather than a policy an operator tunes, exactly like the SSH key, the known_hosts file and the state database.",
         "additionalProperties": false,
         "properties": {
           "configured": {
@@ -5952,7 +5984,7 @@
       },
       "WorkflowValidatedScript": {
         "type": "object",
-        "description": "One hook this backup set would run, as validation found it on disk, with what backupd's own shell verification established about its bytes. Nothing here was executed: the syntax verdict and the findings come from parsing and walking the bytes in this process, and the only things validation ever hands an interpreter are `bash -n`, which parses and never runs, and this product's own fixed remote capability probe.",
+        "description": "One hook this backup set would run, as validation found it on disk, with what retnd's own shell verification established about its bytes. Nothing here was executed: the syntax verdict and the findings come from parsing and walking the bytes in this process, and the only things validation ever hands an interpreter are `bash -n`, which parses and never runs, and this product's own fixed remote capability probe.",
         "additionalProperties": false,
         "properties": {
           "step_id": {
@@ -14057,7 +14089,7 @@
             ]
           },
           "409": {
-            "description": "Refused: WORKFLOW_SCRIPT_REJECTED. WORKFLOW_SCRIPT_REJECTED is the save gate: a hook script in the deployment-wide stage directories this write points at does not pass backupd's own shell verification -- it is not a shell program, or one of this product's own shell rules reported something at `error` severity -- so the configuration was NOT written. The request is well-formed and a FILE is wrong, which is why it is a 409 with its own code rather than an INVALID_REQUEST that would send an operator back to a form they filled in correctly. The body carries the blocking scripts and their positions as structured fields, so a client renders them beside the save it refused rather than parsing a line number out of prose. `warning`, `info` and `style` findings are reported by GET .../workflow/validation and do NOT refuse a save.",
+            "description": "Refused: WORKFLOW_SCRIPT_REJECTED. WORKFLOW_SCRIPT_REJECTED is the save gate: a hook script in the deployment-wide stage directories this write points at does not pass retnd's own shell verification -- it is not a shell program, or one of this product's own shell rules reported something at `error` severity -- so the configuration was NOT written. The request is well-formed and a FILE is wrong, which is why it is a 409 with its own code rather than an INVALID_REQUEST that would send an operator back to a form they filled in correctly. The body carries the blocking scripts and their positions as structured fields, so a client renders them beside the save it refused rather than parsing a line number out of prose. `warning`, `info` and `style` findings are reported by GET .../workflow/validation and do NOT refuse a save.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14618,7 +14650,7 @@
             ]
           },
           "409": {
-            "description": "Refused: WORKFLOW_SCRIPT_REJECTED, WORKFLOWS_NOT_CONFIGURED. WORKFLOW_SCRIPT_REJECTED is the save gate: a hook script in this set's own stage directories this write points at does not pass backupd's own shell verification -- it is not a shell program, or one of this product's own shell rules reported something at `error` severity -- so the configuration was NOT written. The request is well-formed and a FILE is wrong, which is why it is a 409 with its own code rather than an INVALID_REQUEST that would send an operator back to a form they filled in correctly. The body carries the blocking scripts and their positions as structured fields, so a client renders them beside the save it refused rather than parsing a line number out of prose. `warning`, `info` and `style` findings are reported by GET .../workflow/validation and do NOT refuse a save. WORKFLOWS_NOT_CONFIGURED is the other refusal this status carries: this deployment configures no workflow root, so there is no approved tree for hook scripts to live in and a per-set workflow block would name directories inside nothing. It is its own code rather than INVALID_REQUEST because the request is fine and the deployment is not ready: the remedy is a deployment-wide PATCH /settings/workflow naming a root, which is a different action from correcting a field. The body is one of two shapes and the code decides which, which is the shape the 409 on /backup-sets/{source}/{set} already has for CONFIG_REVISION_STALE: a client reading .blocking_scripts after a WORKFLOW_SCRIPT_REJECTED gets a field the type system guarantees is there.",
+            "description": "Refused: WORKFLOW_SCRIPT_REJECTED, WORKFLOWS_NOT_CONFIGURED. WORKFLOW_SCRIPT_REJECTED is the save gate: a hook script in this set's own stage directories this write points at does not pass retnd's own shell verification -- it is not a shell program, or one of this product's own shell rules reported something at `error` severity -- so the configuration was NOT written. The request is well-formed and a FILE is wrong, which is why it is a 409 with its own code rather than an INVALID_REQUEST that would send an operator back to a form they filled in correctly. The body carries the blocking scripts and their positions as structured fields, so a client renders them beside the save it refused rather than parsing a line number out of prose. `warning`, `info` and `style` findings are reported by GET .../workflow/validation and do NOT refuse a save. WORKFLOWS_NOT_CONFIGURED is the other refusal this status carries: this deployment configures no workflow root, so there is no approved tree for hook scripts to live in and a per-set workflow block would name directories inside nothing. It is its own code rather than INVALID_REQUEST because the request is fine and the deployment is not ready: the remedy is a deployment-wide PATCH /settings/workflow naming a root, which is a different action from correcting a field. The body is one of two shapes and the code decides which, which is the shape the 409 on /backup-sets/{source}/{set} already has for CONFIG_REVISION_STALE: a client reading .blocking_scripts after a WORKFLOW_SCRIPT_REJECTED gets a field the type system guarantees is there.",
             "content": {
               "application/json": {
                 "schema": {

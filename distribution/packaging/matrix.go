@@ -1017,34 +1017,49 @@ func (m ReleaseManifest) ArchitectureSet() []string {
 	return out
 }
 
-// manifestBinaryKey turns a canonical binary path into the key
-// container/release-manifest.json records its SHA-256 under.
+// manifestBinaryKeys returns the keys container/release-manifest.json may
+// record a canonical binary's SHA-256 under, most preferred first.
 //
-// The two are not the same string any more, and that is deliberate
-// rather than an oversight left over from the 0.3.3 CLI rename. What an
-// operator types became `backupd` and `backupd-web`, so canonical.json's
-// commands, every compose file and every adapter name /backupd and /backupd-web,
-// and scan.go checks a `command:`'s argv[0] against exactly that list.
-// The release ARTIFACT did not get renamed: the manifest's binary_sha256
-// keys, apps/synology/spk's payload members and the provenance inventory
-// all still say backupd and backupd-web, because they
-// identify a recorded build rather than a command, and re-keying a
-// record that already carries 0.3.3's hashes would invalidate evidence
-// to change a label.
+// Two spellings, for exactly one release. 0.3.3 renamed the COMMAND an
+// operator types; #890 renamed the FILES the image carries, so the
+// canonical binaries are now /retnd and /retnd-web, plus /backupd-web
+// kept as a hardlink to the second so an unedited pinned compose file
+// still starts. The manifest is a RECORD rather than a label: an entry
+// written for an already-published release keeps the keys it was
+// published under (0.4.0's are backupd and backupd-web), because
+// re-keying it would invalidate evidence to tidy a name. New entries are
+// written under the new spelling.
 //
-// So one translation, in one place, rather than either half being made
-// to lie about the other. A path this map does not know is passed
-// through with its slash stripped, which is what the two callers did
-// before this existed: an unrecognised binary must fail the lookup and
-// be reported missing, never quietly resolve to one of these two.
-func manifestBinaryKey(binary string) string {
-	// The manifest keys each binary by its own name, so this is just the
-	// path with its leading slash removed. It used to translate, because
-	// 0.3.3 renamed the binaries while the release artefact kept the old
-	// keys; the keys moved with the rest of the cut, so there is nothing
-	// left to bridge and nothing here that can pair a hash with the wrong
-	// binary.
-	return strings.TrimPrefix(binary, "/")
+// So a lookup accepts either and prefers the new one, in one place,
+// rather than either half being made to lie about the other. The legacy
+// spelling goes away when the shim window closes (#895), and this table
+// goes with it.
+//
+// A path this table does not know is passed through with its slash
+// stripped, which is what the callers did before any of this existed: an
+// unrecognised binary must fail the lookup and be reported missing, never
+// quietly resolve to one of these.
+func manifestBinaryKeys(binary string) []string {
+	switch name := strings.TrimPrefix(binary, "/"); name {
+	case "retnd", "backupd":
+		return []string{"retnd", "backupd"}
+	case "retnd-web", "backupd-web":
+		return []string{"retnd-web", "backupd-web"}
+	default:
+		return []string{name}
+	}
+}
+
+// recordedHash returns this architecture's recorded SHA-256 for a
+// canonical binary and the manifest key it was found under, or two empty
+// strings when no accepted spelling of the key carries one.
+func (a ReleaseArchitecture) recordedHash(binary string) (hash, key string) {
+	for _, k := range manifestBinaryKeys(binary) {
+		if h := a.BinarySHA256[k]; h != "" {
+			return h, k
+		}
+	}
+	return "", ""
 }
 
 // RecordsEveryBinary reports whether every canonical binary has a
@@ -1059,8 +1074,8 @@ func (m ReleaseManifest) RecordsEveryBinary(binaries []string) (bool, string) {
 	}
 	for _, a := range m.Architectures {
 		for _, binary := range binaries {
-			if a.BinarySHA256[manifestBinaryKey(binary)] == "" {
-				return false, fmt.Sprintf("no SHA-256 recorded for %s (release-manifest key %q) on %s", binary, manifestBinaryKey(binary), a.Architecture)
+			if h, _ := a.recordedHash(binary); h == "" {
+				return false, fmt.Sprintf("no SHA-256 recorded for %s (release-manifest key, either of %q) on %s", binary, manifestBinaryKeys(binary), a.Architecture)
 			}
 		}
 	}
@@ -1071,7 +1086,7 @@ func (m ReleaseManifest) RecordsEveryBinary(binaries []string) (bool, string) {
 func (m ReleaseManifest) HashesFor(binary string) map[string]string {
 	out := map[string]string{}
 	for _, a := range m.Architectures {
-		if h := a.BinarySHA256[manifestBinaryKey(binary)]; h != "" {
+		if h, _ := a.recordedHash(binary); h != "" {
 			out[a.Architecture] = h
 		}
 	}

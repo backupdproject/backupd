@@ -589,7 +589,7 @@ func TestTheEngineGainsNothingAndTwoRulesSaySo(t *testing.T) {
 // would have started failing for a mount only the canonical stack has.
 func TestADeclaredCredentialMountIsHeldToItsWriteModeWithoutAStorageRole(t *testing.T) {
 	c := MustLoad()
-	const token = "/etc/backupd/workflow-runner.token"
+	const token = "/etc/retnd/workflow-runner.token"
 
 	mount := func(containerPath string, readOnly bool) []Service {
 		return []Service{{

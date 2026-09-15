@@ -48,27 +48,57 @@ const (
 // LegacyConfigContainerPaths is every container path that means "the
 // configuration was mounted as a FILE".
 //
-// Two of them, and the second is the one that matters. The rule used to
-// match only ConfigFilePath(), which is the config DIRECTORY plus
-// config.yaml, so today it is /etc/backupd/config/config.yaml. The
-// pre-#196 shape mounted /etc/backupd/config.yaml, one level up,
-// and that value is not derivable from the current containerPaths.config
-// by joining anything to it. So the rule named for the historical shape
-// could not fire on the historical shape: a reintroduced
-// /etc/backupd/config.yaml got Role "" from roleForContainerPath,
-// was skipped by CheckStorageShapes's `if m.Role == ""` line, and reached
-// only the generic role refusal.
+// TWO AXES, and neither is a spelling nobody deploys.
 //
-// Both are derived rather than written down, so a future move of the
-// configuration directory carries them along instead of leaving a
-// hardcoded string behind pointing at history.
+// The first is the #196 shape. The rule used to match only
+// ConfigFilePath(), which is the config DIRECTORY plus config.yaml, so
+// today it is /etc/retnd/config/config.yaml. The pre-#196 shape mounted
+// the file one level up, beside the directory, and that value is not
+// derivable from the current containerPaths.config by joining anything
+// to it. So the rule named for the historical shape could not fire on
+// the historical shape: a reintroduced <configdir>.yaml got Role "" from
+// roleForContainerPath, was skipped by CheckStorageShapes's
+// `if m.Role == ""` line, and reached only the generic role refusal.
+//
+// The second axis is #890's rename, and it is the reason this list is
+// not simply two entries. The deployments that actually shipped the
+// pre-#196 shape shipped it under the OLD brand: the file an operator
+// mounted was /etc/backupd/config.yaml, and the directory shape they
+// were moved to was /etc/backupd/config. Deriving only from the current
+// containerPaths.config would have quietly narrowed this rule to two
+// paths no released deployment has ever used, which is the same defect
+// #196's own control was filed about — a rule named for a historical
+// shape, proven against a value that is not it.
+//
+// So each shape is listed in both spellings, with the pre-rename one
+// derived by LegacyBrandPath rather than written down, exactly as
+// FR-38's state adoption derives the legacy state path it offers to
+// adopt. This is that mechanism's packaging-side counterpart: the engine
+// adopts an operator's legacy STATE, and this refuses an adapter's
+// legacy CONFIG MOUNT with the message that says which three features it
+// breaks. The legacy spellings go when the overlap closes (#895), with
+// renameoverlap.go.
+//
+// Everything is derived, so a future move of the configuration directory
+// carries the whole list along instead of leaving a hardcoded string
+// behind pointing at history.
 func LegacyConfigContainerPaths(c Canonical) []string {
 	if c.ConfigFileName == "" {
 		return nil
 	}
-	out := []string{c.ConfigFilePath()}
-	if beside := path.Join(path.Dir(c.ContainerPaths.Config), c.ConfigFileName); beside != out[0] {
-		out = append(out, beside)
+	var out []string
+	add := func(p string) {
+		if p == "" || contains(out, p) {
+			return
+		}
+		out = append(out, p)
+	}
+	for _, dir := range []string{c.ContainerPaths.Config, LegacyBrandPath(c.ContainerPaths.Config)} {
+		if dir == "" {
+			continue
+		}
+		add(path.Join(dir, c.ConfigFileName))
+		add(path.Join(path.Dir(dir), c.ConfigFileName))
 	}
 	return out
 }
@@ -102,7 +132,7 @@ func CheckStorageShapes(svcs []Service, c Canonical) []Violation {
 				// Its write mode still is this one's, though, whenever
 				// canonical.json names the container path. EPIC L is why:
 				// #877's runner token mounts at
-				// /etc/backupd/workflow-runner.token, and it is a
+				// /etc/retnd/workflow-runner.token, and it is a
 				// CREDENTIAL — read-only for the same reason the SSH key
 				// and known_hosts are, and a writable credential file is
 				// one compromised process away from being replaced. Adding

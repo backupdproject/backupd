@@ -65,10 +65,10 @@ COMPOSE_FILE = REPO_ROOT / "container" / "compose.yaml"
 # The configuration mount is the DIRECTORY, not the file inside it
 # (issue #196): the engine creates and atomically replaces config.yaml and
 # keeps ssh_keys/ and known_hosts.d/ beside it.
-CONTAINER_CONFIG_DIR = "/etc/backupd/config"
+CONTAINER_CONFIG_DIR = "/etc/retnd/config"
 CONTAINER_CONFIG_PATH = CONTAINER_CONFIG_DIR + "/config.yaml"
-CONTAINER_KEY_PATH = "/etc/backupd/id_ed25519"
-CONTAINER_KNOWN_HOSTS_PATH = "/etc/backupd/known_hosts"
+CONTAINER_KEY_PATH = "/etc/retnd/id_ed25519"
+CONTAINER_KNOWN_HOSTS_PATH = "/etc/retnd/known_hosts"
 CONTAINER_STATE_DIR = "/data/state"
 CONTAINER_BACKUP_DIR = "/data/backups"
 
@@ -179,7 +179,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                                     "(not this script's own commit - deploy_generic.py has none to report).")
     deploy_group.add_argument(
         "--project-name",
-        default="backupd",
+        default="retnd",
         help="docker compose project name. Re-running with the SAME name converges an "
              "existing deployment (unchanged services untouched, changed ones recreated) "
              "instead of creating a duplicate one - this is what makes the whole script "

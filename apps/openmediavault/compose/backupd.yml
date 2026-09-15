@@ -93,9 +93,9 @@ services:
       # A writable directory holding config.yaml (issue #196): the
       # engine creates and atomically replaces that file, and its
       # ssh_keys/ and known_hosts.d/ stores are siblings of it.
-      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/config:/etc/backupd/config
-      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/secrets/id_ed25519:/etc/backupd/id_ed25519:ro
-      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/secrets/known_hosts:/etc/backupd/known_hosts:ro
+      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/config:/etc/retnd/config
+      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/secrets/id_ed25519:/etc/retnd/id_ed25519:ro
+      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/secrets/known_hosts:/etc/retnd/known_hosts:ro
       # The hook scripts, READ-ONLY: the engine executes what it reads
       # here, so a writable mount would be one compromised process away
       # from running anything on this host.
@@ -108,7 +108,7 @@ services:
       # SSH key and known_hosts above: nothing in this container writes
       # it, and the rest of the secrets directory is not this container's
       # business.
-      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/secrets/workflow-runner.token:/etc/backupd/workflow-runner.token:ro
+      - ${DISK:?set DISK in backupd.env to your /srv/dev-disk-by-uuid-UUID path}/appdata/backupd/secrets/workflow-runner.token:/etc/retnd/workflow-runner.token:ro
 
     # The start gate, and a liveness question rather than a health
     # verdict (issue #206). The Web UI below declares

@@ -736,7 +736,7 @@
         "  err|                                                   than accepted and ignored",
         "  err|   version                                        report version information",
         "  err| ",
-        "  err| every command except version accepts --config (default /etc/backupd/config/config.yaml;",
+        "  err| every command except version accepts --config (default /etc/retnd/config/config.yaml;",
         "  err| a directory resolves to config.yaml inside it, which is what packaging mounts)",
         "  err| ",
         "  err| a configuration write goes one of three ways, and says which on a \"mode:\" line. With nothing",
@@ -1265,7 +1265,7 @@
         "  err|                                                   than accepted and ignored",
         "  err|   version                                        report version information",
         "  err| ",
-        "  err| every command except version accepts --config (default /etc/backupd/config/config.yaml;",
+        "  err| every command except version accepts --config (default /etc/retnd/config/config.yaml;",
         "  err| a directory resolves to config.yaml inside it, which is what packaging mounts)",
         "  err| ",
         "  err| a configuration write goes one of three ways, and says which on a \"mode:\" line. With nothing",
@@ -2870,6 +2870,51 @@
         "KEEP   too-old-everything.dump      tiers=[ANNUAL(both)]",
         "KEEP   week-old-in-weekly.dump      tiers=[WEEKLY(both)]",
         "last-known-good: artifact \"recent-daily.dump\" is the newest eligible restore point in this backup set, dated 2026-08-28T08:00:00Z by the producer's own timestamp on the remote object, and holds FR-19 last-known-good protection"
+      ]
+    },
+    "20-legacy-state-adoption": {
+      "certifies": "FR-38 row 2, both halves, asserted separately because different code resolves them (matrix V.1): a resolved configuration path that holds nothing beside a pre-rename one that does is an ADOPTION, not a fresh install, and so is a resolved journal path that holds nothing beside a pre-rename one that does. The adopted path is reported (matrix V.5), and the warning names the compose line to change and the installer command that changes it. Adoption is a shim with a closing date (#895): the issue that closes the window replaces this cell with one pinning a refusal.",
+      "rule": "identical",
+      "lines": [
+        "# a configuration at the pre-rename path and nothing at the renamed one",
+        "$ retnd check --config <ROOT>/etc/retnd/config/config.yaml -> exit 0",
+        "  out| config OK: 1 source(s), 1 backup set(s)",
+        "  out| state database OK: <ROOT>/var/lib/backupd/state.db",
+        "  out| configuration adopted from the pre-rename path: <ROOT>/etc/backupd/config/config.yaml (renamed path <ROOT>/etc/retnd/config/config.yaml is empty)",
+        "# a configuration at the renamed path naming a journal that is not there, beside a pre-rename one that is",
+        "$ retnd check --config <ROOT>/etc/retnd/config/config.yaml -> exit 0",
+        "  out| config OK: 1 source(s), 1 backup set(s)",
+        "  out| state database OK: <ROOT>/var/lib/backupd/state.db",
+        "  out| state database adopted from the pre-rename path: <ROOT>/var/lib/backupd/state.db (renamed path <ROOT>/var/lib/retnd/state.db is empty)"
+      ]
+    },
+    "21-fresh-install-first-run": {
+      "certifies": "FR-38 row 3, and the positive control for cell 20: a deployment with nothing at either path still reports that it has no configuration, and one whose paths are the ones this release resolves reports no adoption at all. Without this cell, \"it adopted the pre-rename path\" would be satisfiable by a build that adopts unconditionally, or that can no longer be installed fresh at all.",
+      "rule": "identical",
+      "lines": [
+        "# nothing at either path",
+        "$ retnd check --config <ROOT>/etc/retnd/config/config.yaml -> exit 1",
+        "  err| retnd: config: reading config \"<ROOT>/etc/retnd/config/config.yaml\": open <ROOT>/etc/retnd/config/config.yaml: no such file or directory",
+        "# a configuration and a journal at the renamed paths, nothing at the pre-rename ones",
+        "$ retnd check --config <ROOT>/etc/retnd/config/config.yaml -> exit 0",
+        "  out| config OK: 1 source(s), 1 backup set(s)",
+        "  out| state database OK: <ROOT>/var/lib/retnd/state.db"
+      ]
+    },
+    "22-two-journals-refusal": {
+      "certifies": "FR-38 row 4 and the same-directory half of row 1: two different populated directories are REFUSED, naming both, because choosing one silently is the worst option available; and one host directory reachable under both names — which is exactly what the installer's rollback-window compose override produces — is NOT refused, because it is one device and one inode and therefore not ambiguity. Dropping the same-device-and-inode test turns the second case red, which is what makes it a control rather than a restatement.",
+      "rule": "identical",
+      "lines": [
+        "# a different configuration at each path",
+        "$ retnd check --config <ROOT>/etc/retnd/config/config.yaml -> exit 1",
+        "  err| retnd: refusing to start: two different configuration directories are populated. <ROOT>/etc/retnd/config/config.yaml holds one and <ROOT>/etc/backupd/config/config.yaml holds a different one (different device and inode), so which of the two this deployment means is not something this process can observe. EPIC R renamed <ROOT>/etc/backupd/config to <ROOT>/etc/retnd/config; adoption is for one populated pre-rename path and refusal is reserved for two. Keep the one this deployment should serve, move the other aside, and start again.",
+        "# one configuration naming a journal that exists, beside a different pre-rename journal",
+        "$ retnd check --config <ROOT>/etc/retnd/config/config.yaml -> exit 1",
+        "  err| retnd: refusing to start: two different state database directories are populated. <ROOT>/var/lib/retnd/state.db holds one and <ROOT>/var/lib/backupd/state.db holds a different one (different device and inode), so which of the two this deployment means is not something this process can observe. EPIC R renamed <ROOT>/var/lib/backupd to <ROOT>/var/lib/retnd; adoption is for one populated pre-rename path and refusal is reserved for two. Keep the one this deployment should serve, move the other aside, and start again.",
+        "# one host directory reachable under both names (the installer's rollback window)",
+        "$ retnd check --config <ROOT>/etc/retnd/config/config.yaml -> exit 0",
+        "  out| config OK: 1 source(s), 1 backup set(s)",
+        "  out| state database OK: <ROOT>/var/lib/retnd/state.db"
       ]
     }
   }

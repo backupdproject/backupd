@@ -329,7 +329,7 @@ cd distribution && GOWORK=off go test ./packaging/ -count=1 -run TestCrossProvid
 A workflow step whose target is `local` does not run in the engine container, and since
 issue #865 it does not run on a host shell either: it runs in an **ephemeral Docker
 container** launched by the **Host Workflow Runner**, a small version-pinned process
-systemd supervises as `backupd-workflow-runner.service`
+systemd supervises as `retnd-workflow-runner.service`
 (`docs/adr/0020-host-workflow-runner.md`, `docs/runtime-contract.md`).
 
 Dockge imports the canonical stack onto an ordinary Docker host, so local hooks are
@@ -363,7 +363,7 @@ runner's account cannot reach the daemon. A deployment with an empty workflows
 directory is held to none of it, and `WORKFLOW_RUNNER=off` in the `.env` says so
 explicitly.
 
-- [ ] `systemctl is-active backupd-workflow-runner.service` reports `active`, and the
+- [ ] `systemctl is-active retnd-workflow-runner.service` reports `active`, and the
       account it runs as is recorded in the evidence table
 - [ ] That account is in the Docker socket's group (`id <account>`), and the engine
       container is **not**: `docker inspect` shows no socket mount, no `group_add` and no

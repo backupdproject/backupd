@@ -114,5 +114,18 @@ func CaptureAll(ctx context.Context, workDir, coreRoot, fixtureDir string) (Corp
 	corpus.Cells["10-upgraded-artifact-rows"] = upgradedRows
 	corpus.Cells["11-upgraded-retention-verdicts"] = upgradedVerdicts
 
+	// FR-38's table (EPIC R, #890). Last, because each of these
+	// scenarios builds its own throwaway deployment under workDir and
+	// none of them shares the seeded one above: the shape under test is
+	// a PAIR of directories, one populated and one not, which the shared
+	// fixture cannot express.
+	adoptionCell, freshCell, refusalCell, err := captureDeploymentIdentity(ctx, bin, workDir)
+	if err != nil {
+		return corpus, fmt.Errorf("deployment identity cells: %w", err)
+	}
+	corpus.Cells["20-legacy-state-adoption"] = adoptionCell
+	corpus.Cells["21-fresh-install-first-run"] = freshCell
+	corpus.Cells["22-two-journals-refusal"] = refusalCell
+
 	return corpus, nil
 }

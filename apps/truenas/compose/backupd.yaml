@@ -87,9 +87,9 @@ services:
       # config.yaml through a temp file created in its own
       # directory, which on that shape is the image's read-only
       # rootfs.
-      - /mnt/tank/backupd/config:/etc/backupd/config
-      - /mnt/tank/backupd/secrets/id_ed25519:/etc/backupd/id_ed25519:ro
-      - /mnt/tank/backupd/secrets/known_hosts:/etc/backupd/known_hosts:ro
+      - /mnt/tank/backupd/config:/etc/retnd/config
+      - /mnt/tank/backupd/secrets/id_ed25519:/etc/retnd/id_ed25519:ro
+      - /mnt/tank/backupd/secrets/known_hosts:/etc/retnd/known_hosts:ro
 
     # The start gate, and a liveness question rather than a health
     # verdict (issue #206). The Web UI below declares

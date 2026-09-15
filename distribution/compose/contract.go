@@ -388,7 +388,7 @@ func (d Document) Mounts(service map[string]any) []Mount {
 // carries a colon inside its message, and splitting the raw string on
 // ":" turned
 //
-//	${KEY_FILE:?set KEY_FILE in .env to the SFTP private key}:/etc/backupd/id_ed25519:ro
+//	${KEY_FILE:?set KEY_FILE in .env to the SFTP private key}:/etc/retnd/id_ed25519:ro
 //
 // into HostPath "${KEY_FILE", ContainerPath "?set KEY_FILE in .env to
 // the SFTP private key" and ReadOnly false. Every prohibited-path

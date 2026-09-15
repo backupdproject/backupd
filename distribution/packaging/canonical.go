@@ -298,13 +298,23 @@ type Canonical struct {
 	// Profiles are the runtime profiles the canonical definition declares
 	// and the executable implements. An adapter may select one of these
 	// and nothing else.
-	Profiles       []string       `json:"profiles"`
-	Healthchecks   Healthchecks   `json:"healthchecks"`
-	ListenPort     int            `json:"listenPort"`
-	AuthMode       string         `json:"authMode"`
-	Commands       Commands       `json:"commands"`
-	Binaries       []string       `json:"binaries"`
-	ContainerPaths ContainerPaths `json:"containerPaths"`
+	Profiles     []string     `json:"profiles"`
+	Healthchecks Healthchecks `json:"healthchecks"`
+	ListenPort   int          `json:"listenPort"`
+	AuthMode     string       `json:"authMode"`
+	Commands     Commands     `json:"commands"`
+	Binaries     []string     `json:"binaries"`
+	// RetainedBinaries maps a pre-rename entrypoint the image still
+	// answers to onto the binary it is a hardlink of. Issue #890's
+	// one-release overlap; renameoverlap.go is the only reader and #895
+	// removes both.
+	//
+	// Separate from Binaries because the two answer different questions:
+	// Binaries is what the image CONTAINS, so it is what
+	// container/release-manifest.json has to record a SHA-256 for, and a
+	// hardlink has no hash of its own.
+	RetainedBinaries map[string]string `json:"retainedBinaries"`
+	ContainerPaths   ContainerPaths    `json:"containerPaths"`
 	// ConfigFileName is the file the engine reads inside the config
 	// directory.
 	ConfigFileName         string   `json:"configFileName"`

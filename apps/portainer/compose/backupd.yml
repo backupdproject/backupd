@@ -103,9 +103,9 @@ services:
     volumes:
       - ${STATE_DIR:?set STATE_DIR to the host directory for the SQLite state directory}:/data/state
       - ${BACKUP_DIR:?set BACKUP_DIR to the host directory retained artifacts land in}:/data/backups
-      - ${CONFIG_DIR:?set CONFIG_DIR to the host directory holding config.yaml}:/etc/backupd/config
-      - ${KEY_FILE:?set KEY_FILE to the SFTP private key}:/etc/backupd/id_ed25519:ro
-      - ${KNOWN_HOSTS_FILE:?set KNOWN_HOSTS_FILE to the pinned known_hosts file}:/etc/backupd/known_hosts:ro
+      - ${CONFIG_DIR:?set CONFIG_DIR to the host directory holding config.yaml}:/etc/retnd/config
+      - ${KEY_FILE:?set KEY_FILE to the SFTP private key}:/etc/retnd/id_ed25519:ro
+      - ${KNOWN_HOSTS_FILE:?set KNOWN_HOSTS_FILE to the pinned known_hosts file}:/etc/retnd/known_hosts:ro
       # The hook scripts, READ-ONLY: the engine executes what it reads
       # here, so a writable mount would be one compromised process away
       # from running anything on this host.
@@ -116,7 +116,7 @@ services:
       - ${RUNTIME_DIR:?set RUNTIME_DIR to the host directory the workflow runner's socket appears in}:/data/run
       # The runner's credential, one FILE and read-only, exactly like the
       # SSH key and known_hosts above.
-      - ${RUNNER_TOKEN_FILE:?set RUNNER_TOKEN_FILE to the workflow runner's token file}:/etc/backupd/workflow-runner.token:ro
+      - ${RUNNER_TOKEN_FILE:?set RUNNER_TOKEN_FILE to the workflow runner's token file}:/etc/retnd/workflow-runner.token:ro
 
     # The start gate, and a liveness question rather than a health
     # verdict (issue #206). The Web UI below declares

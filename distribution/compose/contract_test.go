@@ -55,9 +55,20 @@ func env() map[string]string {
 		"SSH_KEY_FILE":     "/srv/backupd/secrets/id_ed25519",
 		"KEY_FILE":         "/srv/backupd/secrets/id_ed25519",
 		"KNOWN_HOSTS_FILE": "/srv/backupd/secrets/known_hosts",
-		"DISK":             "/srv/dev-disk-by-uuid-11111111-2222-3333-4444-555555555555",
-		"APPDATA":          "/volume1/docker/backupd",
-		"BACKUP_ROOT":      "/volume1/backupd",
+		// EPIC L's three, which apps/proxmox and apps/portainer name in
+		// host paths (#877, #921). Their absence was the same omission
+		// this comment already describes, one epic later: both artifacts
+		// reached CheckProhibited with three volumes the parser could
+		// not resolve, so the prohibition list reported "cannot be shown
+		// to be free of /var/run/docker.sock" on mounts that are free of
+		// it, and the two adapters carrying EPIC L were the two the
+		// privilege gate could not actually judge.
+		"WORKFLOWS_DIR":     "/srv/backupd/workflows",
+		"RUNTIME_DIR":       "/srv/backupd/run",
+		"RUNNER_TOKEN_FILE": "/srv/backupd/secrets/workflow-runner.token",
+		"DISK":              "/srv/dev-disk-by-uuid-11111111-2222-3333-4444-555555555555",
+		"APPDATA":           "/volume1/docker/backupd",
+		"BACKUP_ROOT":       "/volume1/backupd",
 	}
 }
 
@@ -570,7 +581,7 @@ services:
     image: backupd:dev
     command: ["/backupd-web", "serve"]
     volumes:
-      - ${KEY_FILE:?set KEY_FILE in .env to the SFTP private key}:/etc/backupd/id_ed25519:ro
+      - ${KEY_FILE:?set KEY_FILE in .env to the SFTP private key}:/etc/retnd/id_ed25519:ro
       - /srv/backupd/state:/data/state
 `
 	parsed, err := compose.Parse([]byte(doc), "synthetic.yaml", map[string]string{})

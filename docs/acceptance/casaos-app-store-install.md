@@ -322,7 +322,7 @@ cd distribution && GOWORK=off go test ./packaging/ -count=1 -run TestCrossProvid
 A workflow step whose target is `local` does not run in the engine container, and since
 issue #865 it does not run on a host shell either: it runs in an **ephemeral Docker
 container** launched by the **Host Workflow Runner**, a small version-pinned process
-systemd supervises as `backupd-workflow-runner.service`
+systemd supervises as `retnd-workflow-runner.service`
 (`docs/adr/0020-host-workflow-runner.md`, `docs/runtime-contract.md`).
 
 CasaOS is an application layer installed onto an ordinary Linux distribution, and that
@@ -367,14 +367,14 @@ runs:
 |---|---|---|
 | `/DATA/AppData/backupd/workflows` | `/workflows` (read-only) | the hook scripts the engine reads |
 | `/DATA/AppData/backupd/run` | `/data/run` | where the runner's socket appears |
-| `/DATA/AppData/backupd/secrets/workflow-runner.token` | `/etc/backupd/workflow-runner.token` (read-only) | the credential the engine presents |
+| `/DATA/AppData/backupd/secrets/workflow-runner.token` | `/etc/retnd/workflow-runner.token` (read-only) | the credential the engine presents |
 
 So install the runner with `--workflows-dir /DATA/AppData/backupd/workflows`,
 `--runtime-dir /DATA/AppData/backupd/run` and its token under
 `/DATA/AppData/backupd/secrets`. None of the three gives this container any part
 of the Docker daemon: the runner holds the socket's group, on the host.
 
-- [ ] `systemctl is-active backupd-workflow-runner.service` reports `active`, and the
+- [ ] `systemctl is-active retnd-workflow-runner.service` reports `active`, and the
       account it runs as is recorded in the evidence table
 - [ ] That account is in the Docker socket's group (`id <account>`), and the engine
       container is **not**: `docker inspect` shows no socket mount, no `group_add` and no

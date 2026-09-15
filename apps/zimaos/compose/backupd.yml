@@ -142,9 +142,9 @@ services:
       # stores are siblings of it. It may legitimately be empty on a
       # fresh install, which a directory can express and a file mount
       # cannot.
-      - /DATA/AppData/backupd/config:/etc/backupd/config
-      - /DATA/AppData/backupd/secrets/id_ed25519:/etc/backupd/id_ed25519:ro
-      - /DATA/AppData/backupd/secrets/known_hosts:/etc/backupd/known_hosts:ro
+      - /DATA/AppData/backupd/config:/etc/retnd/config
+      - /DATA/AppData/backupd/secrets/id_ed25519:/etc/retnd/id_ed25519:ro
+      - /DATA/AppData/backupd/secrets/known_hosts:/etc/retnd/known_hosts:ro
 
     # The start gate, and a liveness question rather than a health
     # verdict (issue #206). The Web UI below declares
@@ -196,13 +196,13 @@ services:
         - container: /data/backups
           description:
             en_us: The backup root. Retained artifacts land here and nothing else does.
-        - container: /etc/backupd/config
+        - container: /etc/retnd/config
           description:
             en_us: Writable configuration directory holding config.yaml.
-        - container: /etc/backupd/id_ed25519
+        - container: /etc/retnd/id_ed25519
           description:
             en_us: SFTP private key, mounted read-only.
-        - container: /etc/backupd/known_hosts
+        - container: /etc/retnd/known_hosts
           description:
             en_us: Pinned SFTP host key, mounted read-only.
 

@@ -36,8 +36,8 @@ prove the check can actually see it go.
 | `timezone` | engine | `TZ`, because retention is evaluated against calendar boundaries |
 | `private-state-mount` | engine | `/data/state` |
 | `backup-data-mount` | engine | `/data/backups` |
-| `configuration-mount` | engine | `/etc/backupd/config`, a writable directory holding `config.yaml` (issue #196) |
-| `secret-file-mount` | engine | `/etc/backupd/id_ed25519`, read-only |
+| `configuration-mount` | engine | `/etc/retnd/config`, a writable directory holding `config.yaml` (issue #196) |
+| `secret-file-mount` | engine | `/etc/retnd/id_ed25519`, read-only |
 | `resource-expectations` | document | `x-canonical-runtime.resources` |
 | `supported-architectures` | document | `x-canonical-runtime.architectures` |
 | `digest-policy` | document | `x-canonical-runtime.digest_policy` |
@@ -116,7 +116,7 @@ else:
 ${WORKFLOWS_DIR:-./workflows}:/workflows:ro    the hook scripts, READ-ONLY
 ${RUNTIME_DIR:-./run}:/data/run                the runner's socket directory,
                                                and nothing but the socket
-${RUNNER_TOKEN_FILE:-./secrets/workflow-runner.token}:/etc/backupd/workflow-runner.token:ro
+${RUNNER_TOKEN_FILE:-./secrets/workflow-runner.token}:/etc/retnd/workflow-runner.token:ro
                                                the runner's credential, ONE
                                                read-only FILE
 ```
@@ -131,7 +131,7 @@ mounts, so the configuration a Docker Compose deployment documents is:
 workflows:
   runner:
     socket: /data/run/workflow-runner.sock
-    token_file: /etc/backupd/workflow-runner.token
+    token_file: /etc/retnd/workflow-runner.token
 ```
 
 It is a single **file**, mounted read-only, exactly like the SSH key and
@@ -157,7 +157,7 @@ Neither mount uses `:?`, so a deployment whose `.env` predates EPIC L still
 starts.
 
 What is on the other end of that socket is deliberately not a shell. It is
-`backupd workflow-runner serve`, built from the same commit as the engine and
+`retnd workflow-runner serve`, built from the same commit as the engine and
 extracted from the same image by the installer, and it:
 
 - listens on a Unix socket only — there is no TCP listener and no address to
@@ -244,10 +244,10 @@ A runtime profile is how one executable changes host-dependent behaviour
 without becoming a second build.
 
 ```
-backupd-web serve    --profile=generic
-backupd-web serve    --profile=ugos --trusted-upstream=172.19.0.2/32
-backupd-web serve-ui --profile=ugos --trusted-gateway=10.1.2.3/32 \
-                            --ui-root=/usr/share/backupd/ui
+retnd-web serve    --profile=generic
+retnd-web serve    --profile=ugos --trusted-upstream=172.19.0.2/32
+retnd-web serve-ui --profile=ugos --trusted-gateway=10.1.2.3/32 \
+                            --ui-root=/usr/share/retnd/ui
 ```
 
 Seven profiles exist: `generic`, `ugos`, and the five issue #169 added when it
@@ -524,7 +524,7 @@ had changed, for three work packages, with every suite green.
 The engine's check is a liveness question. Every adapter's web UI declares
 `depends_on: <engine>: condition: service_healthy`, so whatever it asks stands
 between an operator and the only LAN-facing container in the deployment.
-`backupd status` is FR-24's verdict and exits non-zero on a fresh
+`retnd status` is FR-24's verdict and exits non-zero on a fresh
 install by design, which made "install the app" and "reach the app" mutually
 exclusive on all nine adapters.
 
@@ -584,8 +584,9 @@ The `${VAR:?}` claim only ever covered the first three rows. There is no
 saying otherwise made a fail-closed guarantee out of a property those two
 platforms do not have. On TrueNAS the failure it hid was concrete: an upgrade
 that kept a Phase 4 answer of `<pool>/backupd/config/config.yaml` bind
-mounts that FILE at `/etc/backupd/config`, `--config` resolves to
-`/etc/backupd/config/config.yaml` inside it, and the engine crash-loops
+mounts that FILE at the container's configuration mount — `/etc/backupd/config`
+as it was spelled then, `/etc/retnd/config` since issue #890 — `--config`
+resolves to `config.yaml` inside it, and the engine crash-loops
 on ENOTDIR with a message naming neither the mount nor the migration.
 
 Two things close that. The TrueNAS question carries a new identifier, so there
@@ -595,6 +596,38 @@ names issue #196 and points here, instead of reporting "not a directory".
 Unraid gets the same message, which is the only thing that can help there,
 because retiring an operator's existing mapping is not something a template
 can do.
+
+## Migrating across the #890 rename
+
+Issue #890 (R1.5, EPIC R #885) moves the deployment's own identity. It is the
+second compat-breaking generation change this document records, so it gets the
+same two tables as the configuration mount above: what moved, and what carries
+an old answer into the new world.
+
+Data does not move. `/data/state` and `/data/backups` carry no brand and are
+untouched, so an existing installation keeps its journal, its retained
+artifacts and its enrolled administrator across the change.
+
+| | before #890 | after #890 |
+|---|---|---|
+| container config path | `/etc/backupd/config` | `/etc/retnd/config` |
+| container key material | `/etc/backupd/id_ed25519`, `/etc/backupd/known_hosts` | `/etc/retnd/id_ed25519`, `/etc/retnd/known_hosts` |
+| container runner token | `/etc/backupd/workflow-runner.token` | `/etc/retnd/workflow-runner.token` |
+| image entrypoints | `/backupd`, `/backupd-web` | `/retnd`, `/retnd-web`, plus `/backupd-web` as a real hardlink for one release |
+| image `HEALTHCHECK` | `/backupd status` | `/retnd status` |
+| engine compose service | `backupd` | `retnd`; `web-ui` never named the product and does not move |
+| compose project name | implicit, from the directory | explicit `name: retnd`, so the default containers are `retnd-retnd-1` and `retnd-web-ui-1` |
+| systemd units | `backupd-bridge.service`, `backupd-bridge.timer`, `backupd-workflow-runner.service` | `retnd-bridge.service`, `retnd-bridge.timer`, `retnd-workflow-runner.service` |
+| `/data/state`, `/data/backups` | unchanged | unchanged |
+| image reference | `ghcr.io/backupdproject/backupd` | unchanged by this issue; #895 moves it, and pushes the old package path alongside the new one for one release because a GHCR package path is not covered by GitHub's transfer redirects |
+
+| what carries the old answer | what stops it |
+|---|---|
+| an operator's pinned copy of a previously published `compose.yaml`, which this repository cannot edit | nothing has to: the image carries `/backupd-web` as a real hardlink to `/retnd-web` — one inode, two names, no second copy of the binary and no shell wrapper, because the runtime image is distroless — so an unedited pinned file still starts. Kept for exactly one release and removed by #895. There is deliberately no `/backupd` beside it, because no compose file this project has ever shipped named `/backupd` in a `command:` or a `healthcheck:` |
+| a host directory bind-mounted at the old container path | FR-38's state-adoption preflight in `core/service`. For any resolved path with a path segment that is exactly `retnd` it also resolves the `backupd` counterpart, and ADOPTS the legacy location with a warning on every start rather than handing a first-run wizard to a deployment with years of journal in it. It refuses to start only on ambiguity — both populated, different device and inode — and names both paths when it does |
+| a provider adapter's own `command:`, service names, file names and host paths | issue #891, which moves them as one cut. Until then the packaging gates accept both entrypoint spellings from one place, `distribution/packaging/renameoverlap.go`, rather than each gate deciding for itself; `distribution/packaging/canonical.json`'s `retainedBinaries` is the data behind it and #895 deletes both |
+| the `binary_sha256` keys of an already-published release in `container/release-manifest.json` | nothing rewrites them. They record the SHA-256 of bytes that were built and pushed before the rename, which is evidence rather than a label, so every consumer accepts both spellings across the overlap release, new spelling first |
+| a pre-#196 single-file configuration mount, under either spelling | `distribution/packaging`'s `legacy-config-file-mount` rule, which derives the pre-rename spellings of both file shapes rather than hardcoding them, and refuses the mount with the three write paths it breaks named |
 
 ## Digest policy
 
@@ -700,7 +733,7 @@ the two-service topology leaking into the direct path.
 
 **`image_size_bytes` grew by 65,536 bytes.** That is the profile table, the
 gateway authenticator and the bundle resolver compiled into
-`/backupd-web`. It is 0.15% of the image against a 5% budget, and it is
+`/retnd-web`. It is 0.15% of the image against a 5% budget, and it is
 real growth rather than noise: #165 recorded that two independent builds of the
 same commit produced byte-identical image sizes, so there is no noise here to
 hide in and no reason to describe 64 KiB as anything but 64 KiB.
@@ -721,7 +754,7 @@ working with no change. What is new is additive:
 | `--profile=${RUNTIME_PROFILE:-generic}` on both commands | none; `generic` is what the previous build did |
 | `TZ: ${TZ:-UTC}` | none; UTC is what the image defaulted to |
 | `stop_grace_period` | the engine now gets 30s instead of Docker's 10s default, so a shutdown during a journal write is less likely to be killed mid-write |
-| explicit `healthcheck` on the engine | the engine's compose healthcheck is now `/health/live` rather than the image's `backupd status`, so a DEGRADED or unconfigured instance no longer keeps `web-ui` from starting. Backup freshness stays the image's own HEALTHCHECK, the alerts block, and `docker compose exec backupd /backupd status` |
+| explicit `healthcheck` on the engine | the engine's compose healthcheck is now `/health/live` rather than the image's own freshness verdict, so a DEGRADED or unconfigured instance no longer keeps `web-ui` from starting. Backup freshness stays the image's own HEALTHCHECK, the alerts block, and `docker compose exec retnd /retnd status` (that command was `docker compose exec backupd /backupd status` before issue #890 moved the service name and the entrypoints) |
 | `UI_DIR` / `UI_ROOT` on `web-ui` | none when unset, which is the default |
 | `x-canonical-runtime` | none at runtime; compose ignores unknown `x-` keys |
 

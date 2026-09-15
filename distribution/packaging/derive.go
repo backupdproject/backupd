@@ -107,7 +107,7 @@ const (
 	// SeamImageInherited: the adapter declares nothing, so the image's
 	// own HEALTHCHECK instruction applies.
 	//
-	// That instruction is `/backupd status`, FR-24's
+	// That instruction is `/retnd status`, FR-24's
 	// backup-freshness verdict, and it is deliberately NOT the canonical
 	// engine check any more (issue #206). It is the right default for a
 	// plain `docker run` and for the headless `daemon` command, which
@@ -142,8 +142,15 @@ type AdapterRuntime struct {
 // ReduceToRoles sorts an adapter's services into the two canonical roles
 // by the COMMAND each one runs, never by its name. apps/truenas calls
 // them backupd/backupd-ui and container/compose.yaml calls
-// them backupd/web-ui; a check keyed on the name would silently
+// them retnd/web-ui; a check keyed on the name would silently
 // stop checking the moment someone renamed one.
+//
+// The command is matched against every spelling the image answers to
+// (CommandSpellings), which for one release includes the pre-rename
+// entrypoint canonical.json retains: #890 moved the canonical
+// definition's argv and #891 moves the eight provider adapters', so in
+// between the two there are adapters naming /backupd-web and a canonical
+// contract naming /retnd-web, and both really do run the same inode.
 func ReduceToRoles(platform string, svcs []Service, c Canonical) (AdapterRuntime, []Drift) {
 	out := AdapterRuntime{Platform: platform}
 	var drift []Drift
@@ -151,7 +158,7 @@ func ReduceToRoles(platform string, svcs []Service, c Canonical) (AdapterRuntime
 	for i := range svcs {
 		svc := svcs[i]
 		switch {
-		case runsCommand(svc.Command, c.Commands.Engine):
+		case c.RunsCommand(svc.Command, c.Commands.Engine):
 			if out.Engine != nil {
 				drift = append(drift, Drift{FieldRuntimeProfile, svc.Name,
 					fmt.Sprintf("a second service runs the engine command %v; one adapter declares one engine", c.Commands.Engine),
@@ -159,7 +166,7 @@ func ReduceToRoles(platform string, svcs []Service, c Canonical) (AdapterRuntime
 				continue
 			}
 			out.Engine = &svc
-		case runsCommand(svc.Command, c.Commands.WebUI):
+		case c.RunsCommand(svc.Command, c.Commands.WebUI):
 			if out.WebUI != nil {
 				drift = append(drift, Drift{FieldRuntimeProfile, svc.Name,
 					fmt.Sprintf("a second service runs the Web UI command %v", c.Commands.WebUI), "one edge, not two"})
@@ -193,6 +200,24 @@ func runsCommand(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// RunsCommand is runsCommand over every spelling of want the canonical
+// image answers to, and it is the one place this decision is made.
+//
+// It used to be made twice: this package's runsCommand and the
+// conformance suite's own runsCanonicalCommand were the same rule
+// written out separately, which is how two checks answering one question
+// come to disagree. What they exist to catch is a deployment that runs
+// the wrong subcommand or publishes the engine on its edge port, and
+// neither of those is a flag or a retained entrypoint name.
+func (c Canonical) RunsCommand(got, want []string) bool {
+	for _, spelling := range c.CommandSpellings(want) {
+		if runsCommand(got, spelling) {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckDerivation holds one adapter to every derived field.
@@ -439,7 +464,7 @@ func checkHealth(a AdapterRuntime, c Canonical) []Drift {
 	if a.Engine != nil {
 		switch SeamOf(a.Engine) {
 		case SeamDeclared:
-			if !sameTest(a.Engine.HealthcheckTest, c.Healthchecks.Engine) {
+			if !c.sameTest(a.Engine.HealthcheckTest, c.Healthchecks.Engine) {
 				out = append(out, Drift{FieldHealthCheck, a.Engine.Name,
 					fmt.Sprintf("declares health check %v, and the canonical engine check is %v", a.Engine.HealthcheckTest, c.Healthchecks.Engine), why})
 			}
@@ -472,7 +497,7 @@ func checkHealth(a AdapterRuntime, c Canonical) []Drift {
 	if a.WebUI != nil {
 		switch SeamOf(a.WebUI) {
 		case SeamDeclared:
-			if !sameTest(a.WebUI.HealthcheckTest, c.Healthchecks.WebUI) {
+			if !c.sameTest(a.WebUI.HealthcheckTest, c.Healthchecks.WebUI) {
 				out = append(out, Drift{FieldHealthCheck, a.WebUI.Name,
 					fmt.Sprintf("declares health check %v, and the canonical Web UI check is %v", a.WebUI.HealthcheckTest, c.Healthchecks.WebUI), why})
 			}
@@ -510,8 +535,22 @@ func waitingOnHealthOf(a AdapterRuntime, service string) []string {
 // sameTest compares two compose healthcheck test vectors, tolerating the
 // CMD prefix being present on one side only, because that is a spelling
 // and not a difference in what runs.
-func sameTest(got, want []string) bool {
-	return strings.Join(stripCMD(got), " ") == strings.Join(stripCMD(want), " ")
+//
+// A retained entrypoint name is a spelling in the same sense. #890 moved
+// the canonical commands to /retnd-web and #891 moves the eight
+// adapters' healthcheck tests, and in between the two an adapter's
+// `/backupd-web healthcheck` runs the same inode the contract names
+// (renameoverlap.go). What this comparison exists to catch is a check
+// that asks a DIFFERENT question, so it walks every spelling the image
+// answers to rather than pinning the one the contract prefers.
+func (c Canonical) sameTest(got, want []string) bool {
+	gotJoined := strings.Join(stripCMD(got), " ")
+	for _, spelling := range c.CommandSpellings(stripCMD(want)) {
+		if gotJoined == strings.Join(spelling, " ") {
+			return true
+		}
+	}
+	return false
 }
 
 // stripCMD drops compose's optional CMD / CMD-SHELL prefix. It matters

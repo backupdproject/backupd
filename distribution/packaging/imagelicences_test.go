@@ -115,7 +115,12 @@ func TestTheImageCarriesTheLicenceMaterials(t *testing.T) {
 	}
 	sawBinary := false
 	for _, cp := range copies {
-		if cp.From == "build" && cp.Dest == "/backupd" {
+		// #890: the runtime stage no longer copies each binary from its
+		// own builder. It takes the whole staged directory from
+		// `entrypoints` in ONE COPY, because that is what preserves the
+		// /backupd-web hardlink, so this is the line that says "this is
+		// the stage that becomes the image".
+		if cp.From == "entrypoints" && cp.Dest == "/" {
 			sawBinary = true
 		}
 		if cp.From == "" && strings.HasPrefix(cp.Sources[0], "core/") {
@@ -123,7 +128,7 @@ func TestTheImageCarriesTheLicenceMaterials(t *testing.T) {
 		}
 	}
 	if !sawBinary {
-		t.Error("the runtime stage read here does not copy /backupd from the build stage, so this is not the stage that becomes the image")
+		t.Error("the runtime stage read here does not copy the staged entrypoints directory, so this is not the stage that becomes the image")
 	}
 }
 

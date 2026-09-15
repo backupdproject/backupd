@@ -139,7 +139,7 @@
         <li><a href="#cli-modes">Where a change is written</a></li>
         <li><a href="#cli-exits">Exit codes</a></li>
         <li><a href="#installer">install_docker_host.py</a></li>
-        <li><a href="#installer-commands">Its seven subcommands</a></li>
+        <li><a href="#installer-commands">Its eight subcommands</a></li>
         <li><a href="#installer-flags">Every flag</a></li>
         <li><a href="#installer-exits">Its exit codes</a></li>
       </ol>
@@ -555,7 +555,7 @@
 python3 install_docker_host.py install</code></pre>
     <p>Every flag below has a default that works, which is what makes that second line the whole command. <a href="index.html#install">The install section on the home page</a> is the short version of this.</p>
 
-    <h3 id="installer-commands">Its seven subcommands</h3>
+    <h3 id="installer-commands">Its eight subcommands</h3>
     <p>This table is checked against the parser's own subcommand list, and so is that number, because a count in a heading is the part that stays wrong after the missing row has been added.</p>
     <div class="scroll-x">
       <!-- BEGIN INSTALLER-COMMANDS -->
@@ -569,6 +569,7 @@ python3 install_docker_host.py install</code></pre>
           <tr><td><code>uninstall</code></td><td>Takes the stack down and removes the deployment files.</td><td>Never the backups, the state or the configuration.</td></tr>
           <tr><td><code>network-doctor</code></td><td>Diagnoses Docker bridge networking by measurement and repairs it.</td><td>Firewall rules, escalating through sudo, and with <code>--fix-network persist</code> a systemd unit and timer.</td></tr>
           <tr><td><code>network-undo</code></td><td>Removes every rule and unit <code>network-doctor</code> installed.</td><td>Only what carries this installer's own comment marker.</td></tr>
+          <tr><td><code>migrate-identity</code></td><td>Moves an already-installed deployment onto the current container paths and systemd unit names, as one transaction: the compose mounts, the absolute paths persisted in its own <code>config.yaml</code>, and the units, together.</td><td>Takes the stack down, restages the deployment files, rewrites <code>config.yaml</code> in place, renames the units and brings it back up. On any failure it restores <code>config.yaml</code> and starts the deployment again on what it had before. The previous container paths stay mounted for one release, so rolling the image back still finds its configuration.</td></tr>
         </tbody>
       </table>
       <!-- END INSTALLER-COMMANDS -->

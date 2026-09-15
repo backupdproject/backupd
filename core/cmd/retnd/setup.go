@@ -36,10 +36,20 @@ import (
 
 // defaultConfigPath matches container/compose.yaml's mount point and
 // docs/deployment.md's documented layout. The packaged mount is the
-// DIRECTORY /etc/backupd/config (issue #196) and config.yaml lives
+// DIRECTORY /etc/retnd/config (issue #196) and config.yaml lives
 // inside it; --config also accepts that directory, which
 // config.ResolvePath turns into this same file.
-const defaultConfigPath = "/etc/backupd/config/config.yaml"
+//
+// EPIC R (#890) moved this from /etc/backupd/config, which is a
+// COMPAT-BREAKING move for every deployment whose compose file still
+// mounts the old path: the mount lands where nothing looks, and the
+// consequence of "no configuration here" is the first-run flow.
+// core/legacypath is what makes that safe — a deployment mounted at the
+// pre-rename path is served from it and warned, never handed a wizard —
+// and there is deliberately no configuration key for the old path,
+// because config.Load decodes with KnownFields(true) and a new key is a
+// one-way door out of a rollback.
+const defaultConfigPath = "/etc/retnd/config/config.yaml"
 
 // newFlagSet builds a flag.FlagSet every subcommand but `version` shares:
 // a name (for its own usage/error output) and the one flag they all take,

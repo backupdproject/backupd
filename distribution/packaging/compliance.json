@@ -559,7 +559,7 @@
       },
       "labels": {
         "org.opencontainers.image.licenses": "Apache-2.0",
-        "com.iasbuilt.backupd.licenses.path": "/licenses"
+        "com.iasbuilt.retnd.licenses.path": "/licenses"
       }
     },
     "targets": {

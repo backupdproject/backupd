@@ -1,4 +1,4 @@
-# Generic Docker deployment shape for backupd (A3.9, extended by
+# Generic Docker deployment shape for retnd (A3.9, extended by
 # issue #82/B4.1). See docs/deployment.md for the reasoning behind every
 # one of these settings and how to build and run it.
 #
@@ -12,42 +12,76 @@
 # credential material (the SSH private key) lives only at the host path
 # SSH_KEY_FILE points to, mounted read-only into the container.
 #
-# THE COMMANDS BELOW ARE `/backupd-web`, AND THEY NEED 0.3.3 OR NEWER
+# THE COMMANDS BELOW ARE `/retnd-web`, AND THEY NEED AN IMAGE BUILT AT
+# R1.5 (#890) OR NEWER
 #
-# 0.3.3 renamed the binaries an operator runs: `backupd` for the engine CLI and
-# `backupd-web` for the web host. This file names them, because it is the
-# definition every adapter derives from and it should say what the product
-# is called.
+# 0.3.3 renamed the binaries an operator runs: `backupd` for the engine CLI
+# and `backupd-web` for the web host. That is history, and it stays true of
+# every image published from 0.3.3 up to this change.
 #
-# That makes this file forward-only, which is worth stating plainly. `/backupd`
-# and `/backupd-web` exist in images built from 0.3.3 onwards and in no image
-# published before it, and 0.3.0, 0.3.1 and 0.3.2 are all still on the
-# registry. So pointing `IMAGE` at one of those while using this file gives
-# you two containers that die with "exec /backupd-web: no such file or
-# directory". Use the compose file that shipped with the version you are
-# installing.
+# R1.5 (#890) moves the half 0.3.3 deliberately left alone: the
+# deployment's own identity.
+#
+#   * the entrypoints in the image are `/retnd` (the engine CLI) and
+#     `/retnd-web` (the web host);
+#   * the engine service below is `retnd`, where it was `backupd`.
+#     `web-ui` is unchanged, because it never named the product;
+#   * the compose project is named explicitly (`name: retnd` below), so
+#     the default container names are `retnd-retnd-1` and
+#     `retnd-web-ui-1`;
+#   * the container config directory is /etc/retnd, where it was
+#     /etc/backupd. The two DATA mounts, /data/state and /data/backups,
+#     carry no brand and do not move, so nothing an operator stores
+#     changes place inside the container.
+#
+# What is on the LEFT of every `:` below is a HOST path, chosen by the
+# operator in .env, and #890 does not touch an existing one. Nothing reads
+# the product's name out of a host path. container/.env.example's own
+# example values did move to /volume1/retnd/..., because that file is what
+# a FRESH install copies; an existing deployment keeps its directories
+# exactly where they are.
+#
+# That makes this file forward-only, which is worth stating plainly. An
+# image older than #890 has no `/retnd-web` in it at all, so pointing
+# `image:` at one while using this file gives you two containers that die
+# with "exec /retnd-web: no such file or directory". Use the compose file
+# that shipped with the version you are installing.
 #
 # scripts/install/install_docker_host.py embeds a copy of this file and
-# refuses `--release` below 0.3.3 for exactly that reason, so the one path
-# that could have produced the broken combination on its own no longer can.
+# refuses a `--release` older than the images these paths exist in, for
+# exactly that reason, so the one path that could have produced the broken
+# combination on its own no longer can.
 #
-# What did NOT change is everything that names the project rather than
-# the command: `image: backupd:...`, the `backupd` and
-# `web-ui` service names, and the container config directory at
-# /etc/backupd. Renaming any of those would move an operator's
-# data or break their tooling for no gain.
+# THE OTHER DIRECTION IS BRIDGED, ONCE. An operator who pinned the PREVIOUS
+# compose file still has `command: ["/backupd-web", ...]` in their copy,
+# and "your stack no longer starts" is not an acceptable upgrade. So the
+# image also carries `/backupd-web` as a REAL HARDLINK to `/retnd-web`: one
+# inode, two names, no second copy of a ~40 MB binary and no shell wrapper
+# (the runtime image is distroless and has no shell). It is kept for
+# exactly one release and removed by #895. There is deliberately no
+# `/backupd` beside it: no compose file this project has ever shipped named
+# `/backupd` in a `command:` or a `healthcheck:`, so there is no pinned
+# file that would need one.
+#
+# What this change does NOT move is the IMAGE REFERENCE. `image:` below
+# stays `backupd:${VERSION:-dev}`, and the published one stays
+# ghcr.io/backupdproject/backupd. A registry path is not covered by
+# GitHub's repository-transfer redirects, so moving it means publishing
+# under both names for an overlap release; that is #895's job, with its own
+# mirror window, and doing it here would strand every existing
+# `docker pull`.
 #
 # TWO SERVICES, ONE IMAGE (project-owner requirement, folded in before
-# this issue merged): `backupd` is the engine - core service,
+# this issue merged): `retnd` is the engine - core service,
 # scheduler, local authentication, and the versioned /api/v1 API, all in
 # one process sharing one shutdown context (§9.3) - and has NO published
 # port at all; it is reachable only from `web-ui`, over the `internal`
 # network below. `web-ui` serves the shared static UI and reverse-proxies
-# API requests to `backupd`, and is the ONLY service with a
+# API requests to `retnd`, and is the ONLY service with a
 # LAN-facing published port. Both run the exact same
-# `/backupd-web` binary from the exact same image - only `command:`
+# `/retnd-web` binary from the exact same image - only `command:`
 # differs - matching the "one canonical image, vary command" principle
-# already applied to `/backupd` vs. `/backupd-web`
+# already applied to `/retnd` vs. `/retnd-web`
 # themselves; no nginx or other new runtime dependency was introduced for
 # this (see apps/common/webhost/serve's own doc comment for the plain
 # net/http/httputil.ReverseProxy this uses instead).
@@ -55,7 +89,7 @@
 # Network isolation is plain compose topology, nothing more: `internal`
 # below is a private bridge network scoped to just this project (compose
 # creates one per project by default; this just names it explicitly for
-# clarity), so `backupd` is reachable by `web-ui` (same network)
+# clarity), so `retnd` is reachable by `web-ui` (same network)
 # and by nothing else on the NAS - no other container, and nothing on the
 # host's own LAN interfaces, since it publishes no port and joins no
 # other network. This does NOT block `web-ui`'s own outbound internet
@@ -75,6 +109,18 @@
 # distribution/compose's own suite by name, with the reason the contract
 # gives for requiring it.
 # ---------------------------------------------------------------------
+# The compose project name, stated rather than inherited (issue #890).
+# Compose defaults the project name to the NAME OF THE DIRECTORY this file
+# sits in, and the project name is the prefix of every default container
+# name. With this line the containers are `retnd-retnd-1` and
+# `retnd-web-ui-1`; without it they are whatever the operator happened to
+# call the folder they cloned into. Those two names are a documented part
+# of this deployment's identity - the installer names them, the deployment
+# documentation names them, and an operator reads them back out of
+# `docker ps` - so leaving them to an accident of the filesystem would be
+# leaving the product's own name to it.
+name: retnd
+
 x-canonical-runtime:
   # The contract version this definition was written against, so a
   # contract change is a visible edit here rather than a silent
@@ -146,7 +192,7 @@ x-security: &security
     - no-new-privileges:true
 
 services:
-  backupd:
+  retnd:
     build:
       context: ..
       dockerfile: container/Dockerfile
@@ -161,15 +207,15 @@ services:
         COMMIT: ${COMMIT:-none}
     image: backupd:${VERSION:-dev}
 
-    # `/backupd-web serve` (issue #82/B4.1, docs/EPIC-B-multi-nas.md
+    # `/retnd-web serve` (issue #82/B4.1, docs/EPIC-B-multi-nas.md
     # §9.2's "Generic Web App host") is the engine: local authentication,
     # the versioned /api/v1 API, and the backup scheduler, all in one
     # process sharing one shutdown context (§9.3). No static UI - that is
     # web-ui's job, over the `internal` network below, never a published
-    # port here. `/backupd` (no "-web") is still in this same image
+    # port here. `/retnd` (no "-web") is still in this same image
     # for headless-only use with no web listener at all: override
-    # `command` with `["/backupd", "daemon"]` for that, or `docker
-    # compose run --rm backupd /backupd version` / `... check`
+    # `command` with `["/retnd", "daemon"]` for that, or `docker
+    # compose run --rm retnd /retnd version` / `... check`
     # for a one-shot check; see the `restart` note below, which assumes
     # the default `serve` command specifically.
     # `command` carries the runtime profile, which is one contract field
@@ -178,7 +224,7 @@ services:
     # the profile with no host integration at all, so defaulting to it can
     # only ever under-claim; RUNTIME_PROFILE in .env selects another one
     # out of x-canonical-runtime.profiles above.
-    command: ["/backupd-web", "serve", "--profile=${RUNTIME_PROFILE:-generic}"]
+    command: ["/retnd-web", "serve", "--profile=${RUNTIME_PROFILE:-generic}"]
 
     <<: *security
 
@@ -266,18 +312,18 @@ services:
       # process-level default match the host rather than the image.
       TZ: ${TZ:-UTC}
 
-      # `/backupd-web serve`'s own `--listen` flag defaults to this
+      # `/retnd-web serve`'s own `--listen` flag defaults to this
       # variable when set (falling back to :8080 otherwise), so it binds
       # this address inside the container without it needing to be an
       # explicit command-line argument above. Never published to the
       # host (see the top-of-file note): only reachable from `web-ui`,
       # over the `internal` network, at this same port via the service
-      # name `backupd` (Docker's own embedded DNS).
+      # name `retnd` (Docker's own embedded DNS).
       LISTEN_ADDR: ":8080"
 
       # This container has no published port at all (see the top-of-file
       # note), so its OWN --listen address is never something an operator
-      # can actually open - `/backupd-web serve` used to print the
+      # can actually open - `/retnd-web serve` used to print the
       # one-time enrollment link against that internal address anyway,
       # which was always wrong once this two-container split shipped
       # (issue #119's review). PUBLIC_BASE_URL is what `web-ui`'s own
@@ -291,7 +337,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:${LISTEN_PORT:-8080}}
 
       # Config.TrustForwardedHeaders (apps/common/auth/local): safe here
-      # SPECIFICALLY because `backupd` joins only the `internal`
+      # SPECIFICALLY because `retnd` joins only the `internal`
       # network below, which only `web-ui` also joins - nothing else can
       # ever be this container's direct peer, so trusting the
       # X-Forwarded-For/X-Forwarded-Proto headers `web-ui`'s own reverse
@@ -335,7 +381,7 @@ services:
 
     volumes:
       # Persistent SQLite lifecycle journal (FR-9). A directory, per the
-      # WAL note above, not a single file. `/backupd-web serve` also
+      # WAL note above, not a single file. `/retnd-web serve` also
       # keeps its local-authentication administrator record
       # (apps/common/auth/local) at /data/state/local-auth.json — the
       # Argon2id password hash only, never a plaintext password — so
@@ -361,14 +407,14 @@ services:
       # bind mount cannot say "not configured yet" about a file: Docker
       # creates a directory at a source path that does not exist, so the
       # state a fresh install actually starts in was not representable.
-      - ${CONFIG_DIR:?set CONFIG_DIR in .env to the directory holding config.yaml}:/etc/backupd/config
+      - ${CONFIG_DIR:?set CONFIG_DIR in .env to the directory holding config.yaml}:/etc/retnd/config
 
       # Credentials stay read-only single files. Nothing in this
       # container writes them, and the shapes are two different claims.
       # Nothing here is baked into the image or into this file — only
       # host paths, resolved at `docker compose up` time.
-      - ${SSH_KEY_FILE:?set SSH_KEY_FILE in .env to the SFTP private key}:/etc/backupd/id_ed25519:ro
-      - ${KNOWN_HOSTS_FILE:?set KNOWN_HOSTS_FILE in .env to the pinned known_hosts file}:/etc/backupd/known_hosts:ro
+      - ${SSH_KEY_FILE:?set SSH_KEY_FILE in .env to the SFTP private key}:/etc/retnd/id_ed25519:ro
+      - ${KNOWN_HOSTS_FILE:?set KNOWN_HOSTS_FILE in .env to the pinned known_hosts file}:/etc/retnd/known_hosts:ro
 
       # EPIC L (#808, #809): the hook scripts, the door to the host
       # runner, and the credential that door requires. Three mounts, and
@@ -414,7 +460,7 @@ services:
       #   workflows:
       #     runner:
       #       socket: /data/run/workflow-runner.sock
-      #       token_file: /etc/backupd/workflow-runner.token
+      #       token_file: /etc/retnd/workflow-runner.token
       #
       # A single FILE and read-only, exactly like the SSH key and
       # known_hosts above and for the same two reasons: nothing in this
@@ -430,23 +476,23 @@ services:
       # installer creates them.
       - ${WORKFLOWS_DIR:-./workflows}:/workflows:ro
       - ${RUNTIME_DIR:-./run}:/data/run
-      - ${RUNNER_TOKEN_FILE:-./secrets/workflow-runner.token}:/etc/backupd/workflow-runner.token:ro
+      - ${RUNNER_TOKEN_FILE:-./secrets/workflow-runner.token}:/etc/retnd/workflow-runner.token:ro
 
     # `unless-stopped`: restart across crashes and NAS reboots, but stay
     # down if an operator deliberately stops it — the right policy now that
-    # `command` above (`/backupd-web serve`) is a real long-running
+    # `command` above (`/retnd-web serve`) is a real long-running
     # process rather than the immediately-exiting `version` this file used
     # to default to. For a one-shot check, use `docker compose run --rm
-    # backupd /backupd version` (or `... check`) instead of
+    # retnd /retnd version` (or `... check`) instead of
     # `up -d`, which bypasses `restart` entirely.
     restart: unless-stopped
 
-    # Liveness, deliberately, and NOT `backupd status`.
+    # Liveness, deliberately, and NOT `retnd status`.
     #
     # This is the check web-ui waits on: it declares `depends_on:
-    # backupd: condition: service_healthy` below, so whatever this
+    # retnd: condition: service_healthy` below, so whatever this
     # asks is what stands between an operator and the only LAN-facing
-    # listener in the deployment. `backupd status` answers backup
+    # listener in the deployment. `retnd status` answers backup
     # freshness (HEALTHY/DEGRADED/STALE/FAILING) and exits non-zero on a
     # DEGRADED, STALE or FAILING set, and also when it cannot open the
     # service at all - so gating on it means a stale backup set, or an
@@ -463,10 +509,10 @@ services:
     #
     # Backup freshness is not lost, it moves back to being the thing it
     # was built as: the image's own HEALTHCHECK instruction still runs
-    # `backupd status` (container/Dockerfile, so a plain `docker
+    # `retnd status` (container/Dockerfile, so a plain `docker
     # run` still reports backup health), the alerts block delivers it
     # proactively, and an operator reads it directly with
-    # `docker compose exec backupd /backupd status`.
+    # `docker compose exec retnd /retnd status`.
     #
     # Declared here rather than inherited from the image (issue #167):
     # the runtime contract requires an operator to be able to read what
@@ -483,7 +529,7 @@ services:
     # freshness verdict, so inheriting it here would be inheriting the
     # wrong question.
     healthcheck:
-      test: ["CMD", "/backupd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]
+      test: ["CMD", "/retnd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]
       interval: 30s
       timeout: 5s
       start_period: 5s
@@ -506,8 +552,8 @@ services:
       - internal
 
   web-ui:
-    # SAME image as backupd, no separate `build:` block: this
-    # service reuses whatever `backupd`'s own build already
+    # SAME image as retnd, no separate `build:` block: this
+    # service reuses whatever `retnd`'s own build already
     # produced and tagged (docker compose resolves `image:` against
     # whatever is already built/pulled under that tag). Same digest, same
     # binary, different command - never a second image to keep in sync.
@@ -515,28 +561,28 @@ services:
 
     # Wait for the engine to report healthy before starting: a NAS reboot
     # (or `docker compose up`) starting both containers at once would
-    # otherwise let web-ui begin proxying before backupd is even
+    # otherwise let web-ui begin proxying before retnd is even
     # listening, surfacing as a confusing "bad gateway" instead of a
     # simple "please wait." What "healthy" means here is the engine's
     # liveness probe and nothing else - see its healthcheck above for why
     # backup freshness must never be the condition this waits on.
     depends_on:
-      backupd:
+      retnd:
         condition: service_healthy
 
-    # `/backupd-web serve-ui`: the shared static UI plus a reverse
+    # `/retnd-web serve-ui`: the shared static UI plus a reverse
     # proxy to the engine (apps/common/webhost/serve's own doc comment has the
     # full routing shape). --upstream defaults to
-    # http://backupd:8080 (the engine's own compose service name,
+    # http://retnd:8080 (the engine's own compose service name,
     # resolved through Docker's embedded DNS on the `internal` network
     # below), set explicitly here via UPSTREAM_ADDR anyway so the
     # dependency is visible in this file, not just in the binary's own
     # default.
-    command: ["/backupd-web", "serve-ui", "--profile=${RUNTIME_PROFILE:-generic}"]
+    command: ["/retnd-web", "serve-ui", "--profile=${RUNTIME_PROFILE:-generic}"]
 
     <<: *security
 
-    # Same non-root reasoning as backupd above, even though this
+    # Same non-root reasoning as retnd above, even though this
     # service has no host directory of its own to write into: consistent
     # hardening costs nothing, and this process may as well run with the
     # same reduced privilege.
@@ -562,7 +608,7 @@ services:
       # container's own internal bind address, always :8080 regardless of
       # what host port LISTEN_PORT maps it to.
       LISTEN_ADDR: ":8080"
-      UPSTREAM_ADDR: "http://backupd:8080"
+      UPSTREAM_ADDR: "http://retnd:8080"
 
       # THE trust boundary for a gateway runtime profile (issue #87).
       # This is the only container with a published port, so this is the
@@ -583,7 +629,7 @@ services:
       #    is the only thing that can reach this port at all, or put the
       #    gateway and this container on a network nothing else joins.
       #  - The range names the GATEWAY, never the internal network. A
-      #    range containing `backupd` or this container itself is
+      #    range containing `retnd` or this container itself is
       #    the vulnerability restated as configuration. That is why the
       #    engine reads TRUSTED_UPSTREAM_CIDRS above and not this
       #    variable: the two hops trust different peers, and a single
@@ -614,14 +660,14 @@ services:
 
     restart: unless-stopped
 
-    # Overrides the image's own HEALTHCHECK (`/backupd status`,
+    # Overrides the image's own HEALTHCHECK (`/retnd status`,
     # which needs a config file and a state database neither of which
-    # this container has): `/backupd-web healthcheck` just GETs
+    # this container has): `/retnd-web healthcheck` just GETs
     # its own listener and checks for a non-error response - "is this
     # web server up," the only question that applies to a container with
     # no backup state of its own to report on.
     healthcheck:
-      test: ["CMD", "/backupd-web", "healthcheck"]
+      test: ["CMD", "/retnd-web", "healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 5s

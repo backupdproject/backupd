@@ -690,6 +690,79 @@
 
 ### Changed
 
+- **The deployment identity is `retnd`, and a deployment mounted at the old
+  paths is adopted rather than handed a first-run wizard** (EPIC R #885,
+  R1.5 #890). The compose service, the container-internal configuration
+  directory, the entrypoint names and the systemd units have all moved, and
+  the reason this entry is long is the one failure mode that move creates.
+
+  **FR-38, the state-adoption preflight, is why this issue existed.** An
+  operator deploying with the compose file this project published bind-mounts
+  their host configuration directory onto `/etc/backupd/config`. A binary
+  defaulting to `/etc/retnd/config` finds nothing there -- and every other
+  branch of that condition is correct, because a fresh install really does
+  have no configuration. Taking it on a live deployment runs the first-run
+  flow, which claims the administrator account and burns the enrollment
+  token, and the operator's first instinct, completing the wizard, is the
+  action that makes it worse.
+
+  So before any first-run decision, the process resolves both locations and
+  decides from facts it can observe (`core/legacypath`): the renamed path if
+  it holds the data; the pre-rename path **adopted**, served and warned about
+  on every start if only that one does; a genuine first run if neither does;
+  and a **refusal naming both paths** if two different directories are
+  populated. The forbidden cell -- renamed path empty, pre-rename path
+  holding the data, process proceeding to first run -- is unrepresentable:
+  the decision reads no flag, no environment variable and no configuration
+  key, and it is applied inside `core/service.OpenConfigAndJournal`, the one
+  door every caller opens a deployment through, so a provider app that never
+  thinks to ask is covered too. Adoption rather than refusal is deliberate:
+  refusing is a self-inflicted outage on a backup product, the operator has
+  done nothing wrong, and an operator staring at a stopped stack reaches for
+  the wizard as readily as one staring at a fresh install. Refusal is
+  reserved for genuine ambiguity, and a same-device-and-inode test is what
+  keeps it from firing on the installer's own rollback-window compose
+  override, which mounts one host directory at both container paths on
+  purpose. The configuration half and the state half are decided and
+  asserted separately, because different code resolves them and the
+  configuration directory also holds the SSH key store and `known_hosts.d/`.
+  The adopted path is reported by `retnd check`, by
+  `GET /api/v1/system/version`'s new `adopted_paths` array and by the startup
+  log, so "which directory is my journal in" is answerable months later
+  rather than only in a warning somebody scrolled past. Three new compat
+  cells pin the wording: `20-legacy-state-adoption`,
+  `21-fresh-install-first-run` and `22-two-journals-refusal`.
+
+  **What an upgraded deployment sees.** An unedited pinned compose file still
+  starts: the image carries `/backupd-web` as a real hardlink beside
+  `/retnd-web` for one release, the image reference deliberately does NOT move
+  yet (it stays `ghcr.io/backupdproject/backupd` until #895's cutover, so one
+  rename costs one compose edit rather than two), and the configuration mount
+  still landing on `/etc/backupd/config` is adopted. The only change is a
+  warning on every start naming the compose line to change and the installer
+  command that changes it. `/backupd` is NOT aliased -- nothing in any compose
+  file's `command:` or `healthcheck:` named it -- so a hand-written
+  `docker exec ... /backupd` has to move to `/retnd`.
+
+  **What moved.** `container/compose.yaml`'s engine service is `retnd`, the UI
+  service stays `web-ui`, the project name is declared so the default container
+  names really are `retnd-retnd-1` and `retnd-web-ui-1`, and the four command
+  arrays and two healthchecks name `/retnd-web`. Container-internal paths are
+  `/etc/retnd/{config,id_ed25519,known_hosts,workflow-runner.token}`;
+  `/data/state` and `/data/backups` carry no brand and are untouched. The
+  systemd units are `retnd-bridge.service`, `retnd-bridge.timer` and
+  `retnd-workflow-runner.service`, and a half-migrated host with both an old
+  and a new unit enabled is refused rather than tolerated.
+  `install_docker_host.py migrate-identity` performs the mount move, the
+  persisted `config.yaml` absolute-path rewrite and the unit rename as one
+  transaction, through the temp-file-in-the-configuration-directory discipline
+  #196 established. **No new configuration key**: the pre-rename paths are
+  compiled-in constants, because `KnownFields(true)` makes a new key a one-way
+  door out of a rollback. `container/release-manifest.json`'s already-published
+  entries keep their `backupd` / `backupd-web` keys -- they record artifacts
+  that really were published under those names -- and every consumer accepts
+  both spellings for the release that spans the rename.
+
 - **The command is `retnd`, and the web host is `retnd-web`** (EPIC R #885,
   R1.3 #888). The two binaries this project ships have renamed themselves.
   Every line either of them prints about itself follows: the `usage:` block,
@@ -698,15 +771,16 @@
   Web UI's terminal panel. One constant spells it, `cliecho.Binary`, exactly
   as `core/cliecho/cliname.go` was written to make possible.
 
-  **Nothing is aliased, and nothing else moved yet.** The two files inside
-  the image are still `/backupd` and `/backupd-web`, the compose services are
-  still `backupd`, the configuration directory is still `/etc/backupd` and
-  the environment, metrics and cookies are still `BACKUPD_*` / `backupd_*`.
-  Those are renames an upgraded deployment has to survive rather than renames
-  of a printed word, so they land with their own back-compat windows in #889
-  and #890. Until they do, a `docker exec` or a compose `command:` naming
-  `/backupd` keeps working unchanged; what changed is only what the program
-  calls itself when it speaks.
+  **Nothing about this half is aliased.** At the time #888 landed, the two
+  files inside the image were still `/backupd` and `/backupd-web`, the compose
+  services were still `backupd`, the configuration directory was still
+  `/etc/backupd` and the environment, metrics and cookies were still
+  `BACKUPD_*` / `backupd_*`: those are renames an upgraded deployment has to
+  survive rather than renames of a printed word, so they landed with their own
+  back-compat windows in #889 and #890, both of which are in this same
+  release. What #888 itself changed is only what the program calls itself when
+  it speaks. See the deployment-identity entry below for what an upgraded
+  deployment sees, and for the one entrypoint that IS aliased.
 
   **The Go module path is `github.com/retnd/retnd`** (2,273 occurrences over
   840 files), and the two command directories are `core/cmd/retnd` and

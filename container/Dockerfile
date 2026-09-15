@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-# backupd container image (A3.9, extended by issue #82/B4.1).
+# retnd container image (A3.9, extended by issue #82/B4.1).
 #
 # Five stages:
 #   1. `build`          - the provider-neutral core binary (manager logic
@@ -13,19 +13,23 @@
 #                          which imports core/service + apps/common and
 #                          embeds stage 2's output via go:embed
 #                          (apps/generic/webui).
-#   4. (untagged)       - the distroless runtime, carrying both binaries
+#   4. `entrypoints`    - stages 1 and 3's binaries in one directory, with
+#                          /backupd-web hardlinked to /retnd-web, because
+#                          the runtime image has no shell to run `ln` in
+#                          (#890; see that stage's own note).
+#   5. (untagged)       - the distroless runtime, carrying both binaries
 #                          and nothing else.
 #
 # There is no `rclone` executable anywhere in this image: rclone is
 # consumed as a Go module (core/go.mod pins github.com/rclone/rclone),
-# imported as packages, and compiled straight into /backupd. See
+# imported as packages, and compiled straight into /retnd. See
 # docs/deployment.md for how that claim is verified against the built
 # image, rather than just asserted here.
 #
-# `/backupd` (stage 1) implements every execution mode FR-1/FR-24
+# `/retnd` (stage 1) implements every execution mode FR-1/FR-24
 # call for: `run`, `daemon`, `check`, `status`, `sources`, `artifacts`,
 # `fetch`, `retention`, `reconcile`, `validate` and `version`.
-# `/backupd-web` (stage 3) adds exactly one more: `serve`, the
+# `/retnd-web` (stage 3) adds exactly one more: `serve`, the
 # generic Web host (docs/EPIC-B-multi-nas.md §9.2) - the shared UI, the
 # versioned API, local authentication and the backup scheduler in one
 # process. Two binaries, not one with two names, because apps/generic
@@ -35,29 +39,40 @@
 # boundary reasoning (that half is unaffected by the rename; the name it
 # gives itself is a separate matter tracked on #651).
 #
-# THE BINARY NAMES (EPIC R's CLI rename, #888)
+# THE BINARY NAMES (EPIC R: #888's CLI rename, #890's deployment identity)
 #
-# The command an operator types is `retnd`, and the web host is `retnd-web`.
-# Those are the names the two `go build` invocations below write, and the
-# names core/cliecho's Binary/WebBinary print.
+# The command an operator types is `retnd`, and the web host is `retnd-web`
+# (#888). Those are the names the two `go build` invocations below write,
+# and the names core/cliecho's Binary/WebBinary print.
 #
-# The two FILES in the runtime stage are still /backupd and /backupd-web.
-# That is deliberate and temporary: container-internal paths, the compose
-# service names and the image reference move together in R1.5 (#890),
-# because moving them is an upgrade an existing deployment has to survive
-# (a compose `command:` naming a path the new image does not have is a
-# stack that will not start) and that is a different change from renaming
-# a command. So the COPY lines below take `retnd` out of the builder and
-# land it at `/backupd` until #890.
+# #890 finished the move on the deployment side, and this file is where it
+# lands: the FILES in the runtime stage are now `/retnd` and `/retnd-web`,
+# the image's own HEALTHCHECK names `/retnd`, and the compose service and
+# container config directory move with them (container/compose.yaml).
+# Until #890 these two COPYs landed the same binaries at `/backupd` and
+# `/backupd-web`, deliberately: a container-internal path is an upgrade an
+# existing deployment has to survive rather than a command an operator
+# retypes, so it was a separate change from renaming the command.
 #
-# The rename is a clean cut either way: nothing is aliased, so an operator
-# upgrading has to move any `docker exec`, cron entry or hand-written
-# compose onto the new spelling once #890 lands. container/compose.yaml
-# says the same from the other side.
+# ONE BRIDGE, FOR ONE RELEASE. `/backupd-web` is still in the image, as a
+# REAL HARDLINK to `/retnd-web` - one inode, two names, so it costs no
+# bytes and cannot drift from the file it aliases. It exists because a
+# pinned copy of the previous container/compose.yaml still says
+# `command: ["/backupd-web", ...]`, and an upgrade whose first symptom is
+# "exec /backupd-web: no such file or directory" is not an upgrade. The
+# `entrypoints` stage below creates it and #895 removes it.
 #
-# What did NOT change here is everything that is not the command: the image
-# reference (ghcr.io/backupdproject/backupd), the compose service names,
-# the config directory at /etc/backupd, and the product's own name.
+# There is deliberately NO `/backupd`. Nothing this project ever shipped
+# named `/backupd` in a compose `command:` or `healthcheck:`, so there is
+# no pinned file that would stop starting - only the web host needed a
+# bridge. A `docker exec`, cron entry or hand-written compose naming
+# `/backupd` has to move to `/retnd`, and container/compose.yaml says the
+# same from the other side.
+#
+# What #890 did NOT move is the image reference: it is still
+# ghcr.io/backupdproject/backupd, because a registry path is not covered
+# by GitHub's repository-transfer redirects, so moving it needs an overlap
+# release that publishes under both names. That is #895.
 
 # ---- core builder ---------------------------------------------------------
 # Pinned by digest, not just tag, so this stage resolves to the exact same
@@ -141,6 +156,23 @@ COPY core/apicontract/ ./apicontract/
 # so a tree without it fails the build below with exactly the message the
 # comment above describes, and only the image build says so.
 COPY core/cliecho/ ./cliecho/
+# core/legacypath is the third one along (issue #890): it holds FR-38's
+# state-adoption preflight - the rule that turns a resolved /etc/retnd/...
+# path into the /etc/backupd/... one an upgrade may still have data at -
+# and core/internal/app, core/service and apps/generic all import it, so a
+# tree without it fails both build stages with exactly the "cannot find
+# module providing package" message the comment above describes.
+COPY core/legacypath/ ./legacypath/
+
+# core/envcompat is the FOURTH, and it arrived from #889 (R1.4) without a
+# line here. distribution/packaging's own check was already red on it, and
+# this issue's image build is what met the consequence:
+# `internal/config/incrementalengine.go:8:2: cannot find module providing
+# package github.com/retnd/retnd/core/envcompat`. It holds the deprecated-
+# input-variable read compat EPIC R's back-compat window needs, and
+# core/internal/config imports it, which is why only the image build ever
+# finds out -- exactly the hazard the paragraph above describes.
+COPY core/envcompat/ ./envcompat/
 COPY core/cmd/ ./cmd/
 COPY core/internal/ ./internal/
 COPY core/service/ ./service/
@@ -182,7 +214,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # ---- frontend builder -------------------------------------------------
 # ui/shared's static bundle (docs/EPIC-B-multi-nas.md §9.2/§11): built
-# once here, embedded into /backupd-web below via go:embed
+# once here, embedded into /retnd-web below via go:embed
 # (apps/generic/webui). Node/npm are build-time dependencies only -
 # neither ships in the runtime stage.
 #
@@ -286,6 +318,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY core/apicontract/ ./core/apicontract/
 COPY core/cliecho/ ./core/cliecho/
+COPY core/legacypath/ ./core/legacypath/
+COPY core/envcompat/ ./core/envcompat/
 COPY core/cmd/ ./core/cmd/
 COPY core/internal/ ./core/internal/
 COPY core/service/ ./core/service/
@@ -312,6 +346,34 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         -o /out/retnd-web \
         ./cmd/retnd-web
 
+# ---- entrypoint staging -------------------------------------------------
+# The one thing the runtime stage cannot do for itself: create a hardlink.
+#
+# The image ships `/retnd` and `/retnd-web`, plus `/backupd-web` as a
+# second NAME for the same inode (#890's one-release bridge for a pinned
+# compose file; #895 removes it). The distroless runtime has no shell and
+# no coreutils, so there is no `RUN ln` to be had in it, and copying the
+# same binary twice under two names would be a genuine second copy - tens
+# of megabytes of duplicate layer content, charged against the image-size
+# budget in docs/perf/, for a compatibility alias.
+#
+# So the link is made here, in a stage that does have a shell, and the
+# whole directory is brought across in ONE `COPY --from=entrypoints /out/
+# /` below. That is load bearing: BuildKit preserves hardlinks between
+# files copied by a SINGLE COPY of a tree, and splitting it into one COPY
+# per name would silently turn the link back into two files.
+#
+# It reuses the Go builder's already-pinned digest rather than introducing
+# a base image: that digest is in this build graph already, so it costs no
+# extra pull and needs no pin of its own to stay reproducible. Nothing is
+# compiled or executed here - the binaries are the TARGET architecture's,
+# this stage is $BUILDPLATFORM-native, and `ln` never runs them.
+FROM --platform=$BUILDPLATFORM golang@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452 AS entrypoints
+
+COPY --from=build /out/retnd /out/retnd
+COPY --from=build-web /out/retnd-web /out/retnd-web
+RUN ln /out/retnd-web /out/backupd-web
+
 # ---- runtime ------------------------------------------------------------
 # distroless static, nonroot variant: no shell, no package manager, no libc
 # (neither binary needs any, see CGO_ENABLED=0 above), and no `rclone`
@@ -324,16 +386,20 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # rather than a value baked in here).
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
-COPY --from=build /out/retnd /backupd
-COPY --from=build-web /out/retnd-web /backupd-web
+COPY --from=entrypoints /out/ /
 
-# Those two lines are the whole of what this image carries as commands.
-# 0.3.3 retired `rbm` rather than aliasing it, so there is no
-# link under the old name beside either binary and nothing here creates
-# one: a compose file, cron entry or healthcheck written against the old
-# spelling has to be moved across to `/backupd`. R1.5 (#890) moves these
-# two destinations to /retnd and /retnd-web, and it is the issue that
-# decides what bridges that move for a running deployment.
+# That one line is the whole of what this image carries as commands:
+# `/retnd`, `/retnd-web`, and `/backupd-web` as a second name for the same
+# inode - `docker export | tar -tv` shows the third as a link entry rather
+# than a second multi-megabyte member, which is the only way to tell the
+# bridge from a duplicate.
+#
+# 0.3.3 retired `rbm` rather than aliasing it, and #890 did the same for
+# `/backupd`: there is no link under that name beside either binary and
+# nothing here creates one, because nothing this project shipped ever named
+# it in a compose file, healthcheck or cron entry. `/backupd-web` is the
+# single exception, it is there so an unedited pinned compose file still
+# starts, and #895 deletes it along with the `entrypoints` stage's `ln`.
 
 # The licence, the notices and the machine-readable inventory the other
 # two point at, at a fixed path a recipient can find without a shell
@@ -369,7 +435,7 @@ COPY provenance/third-party-licenses.json /licenses/third-party-licenses.json
 # distribution/packaging/compliance.json under distribution.licenceDelivery
 # and checked against these lines.
 LABEL org.opencontainers.image.licenses="Apache-2.0" \
-      com.iasbuilt.backupd.licenses.path="/licenses"
+      com.iasbuilt.retnd.licenses.path="/licenses"
 
 # The per-provider UI bundles (issue #180). Read-only content, served by
 # `serve-ui --ui-root /ui/bundles`, which resolves <root>/<profile>. Each
@@ -382,7 +448,7 @@ COPY --from=frontend-build /src/ui/shared/dist-bundles/ /ui/bundles/
 
 # Documentary only - EXPOSE does not itself publish anything (see
 # container/compose.yaml's own `ports:` for what actually does): this is
-# `/backupd-web serve`'s own default --listen port, self-documented
+# `/retnd-web serve`'s own default --listen port, self-documented
 # on the image for `docker inspect`/`docker port`/tooling. A headless-only
 # deployment that never runs `serve` simply never binds it.
 EXPOSE 8080
@@ -391,13 +457,13 @@ EXPOSE 8080
 # ENTRYPOINT is a fixed prefix Docker prepends to whatever `command:` (or
 # `docker run <image> ...`) supplies, so a single ENTRYPOINT could only
 # ever name one of the two - exactly the trap an earlier version of this
-# file fell into (`ENTRYPOINT ["/backupd"]` plus `command:
-# ["/backupd-web", "serve"]` resolves to running
-# "/backupd /backupd-web serve", not what anyone intended).
+# file fell into, under whatever the two binaries were called at the time:
+# `ENTRYPOINT ["/retnd"]` plus `command: ["/retnd-web", "serve"]` resolves
+# to running "/retnd /retnd-web serve", not what anyone intended.
 # Every `command:` in container/compose.yaml and every `docker run`
 # example in docs/deployment.md therefore names its binary explicitly by
-# full path (`/backupd-web serve`, `/backupd daemon`,
-# `/backupd version`, ...). This image's own default CMD stays
+# full path (`/retnd-web serve`, `/retnd daemon`,
+# `/retnd version`, ...). This image's own default CMD stays
 # unset for the same reason: there is no single default that would be
 # right for both binaries, so a bare `docker run <image>` with no command
 # fails immediately with "no command specified" - a loud, safe failure,
@@ -411,16 +477,16 @@ EXPOSE 8080
 # previous `version`-based HEALTHCHECK could only ever answer. Verified
 # directly (see docs/deployment.md and apps/generic/tests/dockercli): a container
 # whose one backup set is DEGRADED now reports Docker health "unhealthy",
-# not "healthy". This runs against the plain `/backupd` binary
+# not "healthy". This runs against the plain `/retnd` binary
 # regardless of which command the container's own main process
-# (`/backupd-web serve`, or a headless `/backupd daemon`) is
+# (`/retnd-web serve`, or a headless `/retnd daemon`) is
 # running: `status` is a fresh, read-only check against the same shared
 # state database file either way.
 #
-# It names `/backupd` by absolute path rather than relying on anything on a
+# It names `/retnd` by absolute path rather than relying on anything on a
 # PATH, and that is a choice rather than a detail. A HEALTHCHECK is baked
 # into the image and re-read by the daemon on every interval for the life
 # of every container anyone ever starts from it, and this base image has
 # no shell to resolve a name through in the first place.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD ["/backupd", "status"]
+    CMD ["/retnd", "status"]

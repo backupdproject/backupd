@@ -18,7 +18,7 @@
   "imageReference": "ghcr.io/backupdproject/backupd:0.4.0",
   "releaseManifest": {
     "path": "container/release-manifest.json",
-    "sha256": "bbe7b0879b40bcc70c605c493653354bcc550174528afb5e63bc94b41cab7018",
+    "sha256": "edb90f6240b26ca91ab2b08212d558e3754338cb35d47b11cc79bdd252732cf6",
     "commit": "77427012c8f6b23faa01713d59c0df8ba3bf1657",
     "recordedBuildVersion": "0.4.0",
     "architectures": [
@@ -56,14 +56,14 @@
   },
   "checksums": {
     "path": "provenance/checksums.txt",
-    "sha256": "44704a17a4f3f9a282d37c187c7f56635e964d3e3c26880e2b4a16a683a85cd6",
+    "sha256": "00c6eaf0d9a75a224d4e92d5a9e6e941c45edfee78e5a77281fd39af1f8ef653",
     "format": "sha256sum"
   },
   "artifacts": [
     {
       "target": "casaos",
       "path": "apps/casaos/compose/backupd.yml",
-      "sha256": "f4406b2170e1ae8e5ae7926ee2519b5f6cd33d84400d8557d186be5c7948ffb6"
+      "sha256": "f1f813c6ff41209a161e4ebbb5158f29b11197437a9b2d597da0c6cf9765f4ea"
     },
     {
       "target": "casaos",
@@ -78,7 +78,7 @@
     {
       "target": "openmediavault",
       "path": "apps/openmediavault/compose/backupd.yml",
-      "sha256": "41953369de692c9f3375a4fef471bea11cb5815c687f200a202e8653d6524bdc"
+      "sha256": "d06a2a088ed7f25e7b2cf60212fb6a038a04ee8298295c5ab47fdc2348e02d74"
     },
     {
       "target": "portainer",
@@ -88,7 +88,7 @@
     {
       "target": "portainer",
       "path": "apps/portainer/compose/backupd.yml",
-      "sha256": "2977f1a59120b061b8fb20cfc44c731a13c304d0587ba47d6408071e3f6091c3"
+      "sha256": "7a1fa257f31df6bb2e0a12cd807267439c046beafa264a1fd75b2360bb81f794"
     },
     {
       "target": "portainer",
@@ -108,7 +108,7 @@
     {
       "target": "proxmox",
       "path": "apps/proxmox/compose/backupd.yml",
-      "sha256": "4666f8d494667825d44cc0dc64315897ea821b36c398cf21c041960bd6aa6373"
+      "sha256": "fba502b5e43ad21156bdc697a70ffecd2b728f2a2b2dc2a91dcaabe9008eb4c0"
     },
     {
       "target": "truenas",
@@ -123,17 +123,17 @@
     {
       "target": "truenas",
       "path": "apps/truenas/catalog/questions.yaml",
-      "sha256": "4310d9bdea156757e509d53dfb8b3caa30be6570bf417512ad13661c7d04d2d6"
+      "sha256": "d1b117ec8a4d7eceeb0ccb3701f60d84dbfdab026e2418e06db0d746d1f3e14b"
     },
     {
       "target": "truenas",
       "path": "apps/truenas/catalog/templates/docker-compose.yaml",
-      "sha256": "616416e745130894c32ebc34ee7e589f2eb5ba74203acfc925594ff15aa17584"
+      "sha256": "37cc17a805483aa2ab010f91b8f243d32801c2a3ed89b92ca1e947ed5202736a"
     },
     {
       "target": "truenas",
       "path": "apps/truenas/compose/backupd.yaml",
-      "sha256": "4d3563126ce5eecf4b1849cca40f905a729f20eaa780aa56bd163d1fad8f02eb"
+      "sha256": "0219356cb3c97f05853ac159522fae8ad60d816b11992e6f0ecd2060ed4b7802"
     },
     {
       "target": "unraid",
@@ -143,12 +143,12 @@
     {
       "target": "unraid",
       "path": "apps/unraid/template/backupd.xml",
-      "sha256": "cdcb8e5adb32301f50b6bde43df84351d88a70ede58ee2310fb0f4086064772c"
+      "sha256": "3291878e9d2384a76afed1261620d4d8d343569fe09c66a1bdb2cff040c5696a"
     },
     {
       "target": "zimaos",
       "path": "apps/zimaos/compose/backupd.yml",
-      "sha256": "28d6a8d692c1b416362c287acaccab56195998d84a53cd1db85f46129abce484"
+      "sha256": "0df72eca34a688c139bc881eb6a988f8efc386e11f0a045d2a82ad6bf4415367"
     },
     {
       "target": "zimaos",
@@ -158,17 +158,17 @@
     {
       "target": "generic",
       "path": "container/.env.example",
-      "sha256": "06b6149c331bb256d9f29f913422a23f39a4d71086ed147aef0162dcf5bd326d"
+      "sha256": "35a5df0254b93ef30be5e4f3c2e7f8a78502d3a3a012208ffb402d71461cf645"
     },
     {
       "target": "generic",
       "path": "container/Dockerfile",
-      "sha256": "f3f460fdf356141d2c316563faec20b2cc176b5b245ed08253b60ae5cdb4284c"
+      "sha256": "0472ef0e7c3e5689ced819428615dfc0b32ea74186de8016a0ef7f245a478e4a"
     },
     {
       "target": "generic",
       "path": "container/compose.yaml",
-      "sha256": "b79bf2a920f2c44b922f5174b3a45808c7506d237f58751bf927528536bed56c"
+      "sha256": "c63835e859f06ca7858117572ff978d8c244d12ce6a7219d2978d21d07a9c014"
     }
   ],
   "unbuiltTargets": [
