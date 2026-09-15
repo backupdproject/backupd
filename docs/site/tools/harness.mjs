@@ -121,7 +121,7 @@ export const EXAMPLE = {
   recoveryEmail: "nas-admin@example.com",
   smtpHost: "smtp.example.com",
   smtpPort: "587",
-  smtpFrom: "backupd@example.com",
+  smtpFrom: "retnd@example.com",
   setName: "api-server-nightly",
   host: "api-server.example.net",
   port: "22",
@@ -443,15 +443,68 @@ export async function settle(page, ms = 250) {
  * page as a rendering fault rather than as a short form. Taller-than-
  * viewport screens fall through to a full-page capture instead of being
  * cut off.
+ *
+ * # Why it shoots twice and compares
+ *
+ * The frozen clock settles every rendered TIME, and it does not settle
+ * every rendered PIXEL. This app polls: `usePolling` holds an interval
+ * per resource and `src/api/mock.ts` answers each read after a 180ms
+ * `delay`, so at any instant a screen can have a read in flight. The
+ * fixture behind that read never changes, but whether its answer has
+ * landed by the time the shutter opens depends on wall clock, and that
+ * was measured rather than theorised: two back-to-back re-records of an
+ * untouched tree produced 53 identical files out of 55 and two that
+ * differed, and a third run reproduced neither -- the signature of a
+ * race rather than of a moving fixture.
+ *
+ * So a still is not one screenshot, it is the first frame that agrees
+ * with the frame before it. Shot into memory, compared, and written only
+ * once two consecutive captures are byte-identical. That is what makes
+ * "a re-record with no UI change produces a byte-identical file" a
+ * property of this harness rather than of how busy the machine was.
+ *
+ * If it never stabilises the run FAILS rather than writing the last
+ * frame: a screen that will not hold still for 250ms is a screen with an
+ * animation or a spinner in it, and a picture of one is a picture nobody
+ * can re-take.
  */
-export async function shot(page, name, clipSel, { pad = 28, log = true } = {}) {
+export async function shot(page, name, clipSel, { pad = 28, log = true, tries = 6 } = {}) {
   await settle(page);
   const clip = await clipRect(page, clipSel, pad);
-  const file = resolve(SCREENS, name + ".png");
-  mkdirSync(SCREENS, { recursive: true });
-  await page.screenshot({ path: file, animations: "disabled", ...(clip ? { clip } : { fullPage: true }) });
+  await writeStable(page, name, () =>
+    page.screenshot({ animations: "disabled", ...(clip ? { clip } : { fullPage: true }) }), tries);
   if (log) console.log("  " + name + ".png");
   return name;
+}
+
+/**
+ * The stabilising shutter itself, so a capture that photographs a
+ * LOCATOR rather than the page gets the same property.
+ *
+ * `take` returns a PNG buffer and is called until two consecutive calls
+ * produce the same bytes; the agreed bytes are what lands on disk. Every
+ * still on this site goes through here, and the reason is in `shot`'s
+ * comment above.
+ */
+export async function writeStable(page, name, take, tries = 6) {
+  mkdirSync(SCREENS, { recursive: true });
+  const file = resolve(SCREENS, name + ".png");
+
+  let previous = await take();
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    await page.waitForTimeout(250);
+    const current = await take();
+    if (current.equals(previous)) {
+      writeFileSync(file, current);
+      return name;
+    }
+    previous = current;
+  }
+  throw new Error(
+    name + " never held still: " + tries + " consecutive 250ms captures all differed.\n" +
+      "Something on that screen is animating or polling into view. Wait for the thing itself " +
+      "(a locator, a piece of text) before the shutter rather than letting this retry around it."
+  );
 }
 
 async function clipRect(page, clipSel, pad) {

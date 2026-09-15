@@ -53,3 +53,41 @@ Store them with the submission for that target rather than in this repository: t
 large binaries, they change with every visual revision, and no check here can tell a
 current one from a stale one. Record in the acceptance run which build they were taken
 from.
+
+## The rename (#893), and why it does not move any row
+
+Every screenshot this file describes shows the product's name, in the topbar of every
+screen on the list above and in the sign-in and enrolment pages before them. The product
+was renamed from `backupd` to `retnd` by EPIC R (#885), so every store screenshot that has
+ever been captured for any of the six listings above is of the old name.
+
+That does not change a single verdict here, and the reason is the point of this file.
+There was never a captured screenshot in this repository to go stale: this material has
+read `PENDING_OPERATOR` for every store target since #90 recorded it, because a screenshot
+is of the application running on the provider's own hardware and nobody working on the
+repository has that hardware. The rename adds a second reason a row cannot be green
+without adding anything anybody here can do about it, so every `Store screenshots` cell in
+`docs/conformance/submission-preflight.md` stays outstanding. A row that moved to passing
+because the *listing copy* was reworded (#892) or because the *icon* was redrawn (#893)
+would be claiming a photograph that does not exist.
+
+What the rename does change is what the operator who eventually runs
+`docs/acceptance/store-submission-preflight.md` has to check before submitting: the build
+in front of the camera must be one whose interface says `retnd`, which means 0.4.0 or
+later. A screenshot taken on `0.3.3` — the newest published image — shows `backupd` and is
+not submittable, however good the picture is.
+
+And the one thing that must not happen instead. The temptation a rename creates is to
+satisfy these rows from the material that *was* re-recorded: `docs/site/screens/` holds 55
+captures of the renamed interface, they are reproducible, and they are the right screens.
+They are also all mock data, from `createMockApi` on `ui/shared`'s own dev server, and
+`docs/epic-checklist.md` §10 forbids substituting one here for exactly that reason — a
+listing built from a fixture shows an administrator numbers no deployment will ever
+produce. The site says on every page that its pictures come from a mock; a store listing
+has nowhere to say it.
+
+No provider store listing has been re-reviewed since the rename. The listing copy, the
+icons and the release notes were rewritten in the tree (#892, #893); whether each store
+still accepts the listing under a new product name — the name in the submission form, the
+catalog slug, the existing registration — is an external decision this repository cannot
+record, and §75 says so.

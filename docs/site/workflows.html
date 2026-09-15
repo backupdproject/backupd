@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scripted backup workflows: backupd</title>
+  <title>Scripted backup workflows: retnd</title>
   <meta name="description" content="Bash hook scripts around every backup: the five stages, local and remote targets, the environment and secret model, the shell verification that gates a save, per-script terminals, and the recovery hold a crash leaves behind.">
   <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
   <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
@@ -21,8 +21,8 @@
 <header class="topbar" id="topbar">
   <div class="topbar-content">
     <a class="topbar-brand" href="index.html">
-      <img src="assets/logo-mark-light.svg" alt="backupd mark: a broken ring standing for a transfer cycle in progress">
-      <h1 class="brand-name">backup<span class="brand-dash">d</span></h1>
+      <img src="assets/logo-mark-light.svg" alt="retnd mark: a broken ring standing for a transfer cycle in progress">
+      <h1 class="brand-name">retn<span class="brand-dash">d</span></h1>
     </a>
   </div>
 
@@ -102,7 +102,7 @@
     <span class="step-eyebrow">Guide</span>
     <h2 id="top" style="font-size:1.75rem;border:none;padding-bottom:0;margin-bottom:0.5rem;">Scripted backup workflows</h2>
     <p>The useful backup of a live system is taken with the system in a state somebody put it in: a database quiesced, a snapshot taken, a cache flushed, an application stopped. Every deployment already does that, with cron and a wrapper script, and the wrapper script is where the failures live. It keeps no record of what it ran. It cannot tell you which step failed. It has no answer at all to the case where the machine died between quiescing the database and unquiescing it.</p>
-    <p>This is that wrapper script, with the parts a wrapper script cannot have. An operator puts Bash files in a directory and backupd runs them as ordered, individually observable steps around every backup-set run, with one durable record of what ran, what it printed, and what is still owed. It is deliberately <strong>not</strong> a CI engine: no DAGs, no parallel steps, no per-step images, no plugins, no YAML pipelines, no browser script editor.</p>
+    <p>This is that wrapper script, with the parts a wrapper script cannot have. An operator puts Bash files in a directory and retnd runs them as ordered, individually observable steps around every backup-set run, with one durable record of what ran, what it printed, and what is still owed. It is deliberately <strong>not</strong> a CI engine: no DAGs, no parallel steps, no per-step images, no plugins, no YAML pipelines, no browser script editor.</p>
 
     <div class="cards">
       <a href="#stages" class="clipping">
@@ -160,7 +160,7 @@
       <table>
         <thead><tr><th>Name</th><th>Runs on</th></tr></thead>
         <tbody>
-          <tr><td><code>NAME.local.sh</code></td><td>the machine backupd is installed on, through the <a href="#runner">Host Workflow Runner</a></td></tr>
+          <tr><td><code>NAME.local.sh</code></td><td>the machine retnd is installed on, through the <a href="#runner">Host Workflow Runner</a></td></tr>
           <tr><td><code>NAME.remote.sh</code></td><td>the host this backup set pulls from, over an <a href="#remote">exec-capable SSH connection</a></td></tr>
         </tbody>
       </table>
@@ -178,8 +178,8 @@
 
   <section>
     <h2 id="runner">Local hooks run outside the container, and why</h2>
-    <p>A <code>.local.sh</code> hook means &ldquo;run this on the machine backupd is installed on&rdquo;. The engine cannot run one, and this is not an oversight to be fixed: the engine's image is distroless and has no shell at all, its container is read-only and non-root, and every Linux capability is dropped. Those properties are the product's own security contract, written down in <a href="https://github.com/backupdproject/backupd/blob/main/docs/runtime-contract.md">the runtime contract</a> with gates that fail a build which weakens them.</p>
-    <p>So the shell is bought somewhere else. A <strong>Host Workflow Runner</strong> is a separate process on the host, built from the same commit as the engine and extracted from the same image by the installer, supervised as <code>backupd-workflow-runner.service</code>. The engine asks it to run a hook over a Unix-domain socket &mdash; never a TCP port &mdash; and what crosses that socket is the script's <em>bytes</em>, never a path, so the far side never re-opens a file the engine already vetted.</p>
+    <p>A <code>.local.sh</code> hook means &ldquo;run this on the machine retnd is installed on&rdquo;. The engine cannot run one, and this is not an oversight to be fixed: the engine's image is distroless and has no shell at all, its container is read-only and non-root, and every Linux capability is dropped. Those properties are the product's own security contract, written down in <a href="https://github.com/backupdproject/backupd/blob/main/docs/runtime-contract.md">the runtime contract</a> with gates that fail a build which weakens them.</p>
+    <p>So the shell is bought somewhere else. A <strong>Host Workflow Runner</strong> is a separate process on the host, built from the same commit as the engine and extracted from the same image by the installer, supervised as <code>retnd-workflow-runner.service</code>. The engine asks it to run a hook over a Unix-domain socket &mdash; never a TCP port &mdash; and what crosses that socket is the script's <em>bytes</em>, never a path, so the far side never re-opens a file the engine already vetted.</p>
     <p>The runner refuses to run as root, refuses an engine whose version is not exactly its own, and requires an installation-scoped credential on every connection. Each hook then runs in its own ephemeral container with every capability dropped, no new privileges, a read-only filesystem, a non-root user, no network and a process limit. No Docker socket is mounted into a hook container under any name. The runner never pulls an image: one that is not already on the host is a refusal, not a download.</p>
     <div class="note ok">
       <span class="note-label">What the engine container gained</span>
@@ -187,11 +187,11 @@
     </div>
   <figure class="wide">
     <img src="screens/wf-settings-runner.gif" alt="The deployment-wide Workflow card in Settings: the workflow root, the global stage directories, the script timeout, and the Host Workflow Runner's socket and credential paths" loading="lazy">
-    <figcaption><span class="clip-tag">clip</span>The deployment-wide half. The runner rows report the socket and the credential path as deployment facts and say whether that address is <em>configured</em> &mdash; never that the runner is answering, because nothing on this read contacts it. For a live answer, the <a href="#validation">validation</a> report has a <code>runner_health</code> check, and a terminal has <code>backupd workflow-runner status</code>.</figcaption>
+    <figcaption><span class="clip-tag">clip</span>The deployment-wide half. The runner rows report the socket and the credential path as deployment facts and say whether that address is <em>configured</em> &mdash; never that the runner is answering, because nothing on this read contacts it. For a live answer, the <a href="#validation">validation</a> report has a <code>runner_health</code> check, and a terminal has <code>retnd workflow-runner status</code>.</figcaption>
   </figure>
     <div class="note danger">
       <span class="note-label">The trust boundary, stated plainly</span>
-      <p>Anyone who can write a file into a hook directory can run commands on this machine, as the account the runner gives hooks. That is not a weakness in the design; it is what the feature <em>is</em>. The protections are about making sure that set of people is exactly the set of administrators an operator intended: an approved root, a custody check on every directory above a script, conservative names, and a runner that is unprivileged rather than root. backupd deliberately offers no <code>sudo</code>, <code>su</code> or command-prefix field anywhere in the configuration &mdash; a hook that needs a privileged action needs a narrowly scoped <code>sudoers</code> entry the operator wrote and can read back, not a product feature that escalates on their behalf.</p>
+      <p>Anyone who can write a file into a hook directory can run commands on this machine, as the account the runner gives hooks. That is not a weakness in the design; it is what the feature <em>is</em>. The protections are about making sure that set of people is exactly the set of administrators an operator intended: an approved root, a custody check on every directory above a script, conservative names, and a runner that is unprivileged rather than root. retnd deliberately offers no <code>sudo</code>, <code>su</code> or command-prefix field anywhere in the configuration &mdash; a hook that needs a privileged action needs a narrowly scoped <code>sudoers</code> entry the operator wrote and can read back, not a product feature that escalates on their behalf.</p>
     </div>
   </section>
 
@@ -250,9 +250,9 @@
 
   <section>
     <h2 id="verification">A script that is not a shell program cannot be saved</h2>
-    <p>The footguns that injecting <code>set -euo pipefail</code> would have caught are answered a different way: by reading the script. Saving either workflow configuration verifies every discovered hook script first, and a script that does not pass <strong>refuses the save</strong> &mdash; <code>409 WORKFLOW_SCRIPT_REJECTED</code> over HTTP, with the position of each blocking finding in the response rather than in a sentence a client would have to parse, and the same refusal from <code>backupd settings workflow patch</code> and <code>backupd backup-set workflow patch</code>.</p>
+    <p>The footguns that injecting <code>set -euo pipefail</code> would have caught are answered a different way: by reading the script. Saving either workflow configuration verifies every discovered hook script first, and a script that does not pass <strong>refuses the save</strong> &mdash; <code>409 WORKFLOW_SCRIPT_REJECTED</code> over HTTP, with the position of each blocking finding in the response rather than in a sentence a client would have to parse, and the same refusal from <code>retnd settings workflow patch</code> and <code>retnd backup-set workflow patch</code>.</p>
     <p>Nothing executes a script body to do this. The verdict comes from a real Bash parser linked into the product (<code>mvdan.cc/sh</code>), so it arrives even when no runner and no source host is reachable.</p>
-    <p>Then six rules, this product's own. The namespace is <code>BSH</code> &mdash; &ldquo;backupd shell&rdquo; &mdash; deliberately not ShellCheck's <code>SC</code>, because these are not ShellCheck's rules and a reader who searches for <code>SC2086</code> should not land here:</p>
+    <p>Then six rules, this product's own. The namespace is <code>BSH</code> &mdash; &ldquo;retnd shell&rdquo; &mdash; deliberately not ShellCheck's <code>SC</code>, because these are not ShellCheck's rules and a reader who searches for <code>SC2086</code> should not land here:</p>
     <div class="scroll-x">
       <table class="fields">
         <thead><tr><th>Code</th><th>What it is about</th><th>What it costs</th></tr></thead>
@@ -278,7 +278,7 @@
   </figure>
     <div class="note">
       <span class="note-label">From a terminal</span>
-      <pre style="margin-bottom:0"><code>backupd validate workflow production/postgres-primary</code></pre>
+      <pre style="margin-bottom:0"><code>retnd validate workflow production/postgres-primary</code></pre>
       <p style="margin-top:0.6rem">Everything this product can establish about a set's hooks without running one. Exit 0 when the workflow is sound, 1 when it is not; <code>--json</code> emits the whole report.</p>
     </div>
   </section>
@@ -320,8 +320,8 @@
     <p>Output is bounded per step and per run, and the truncation marker sits <em>in</em> the sequence, in position, so a client never renders it as something the hook printed. Past the bound the hook keeps running with its output still being drained, because a hook blocked on a full pipe is a backup that never finishes.</p>
     <div class="note">
       <span class="note-label">From a terminal</span>
-      <pre style="margin-bottom:0"><code>backupd workflow run steps wfr_2f91a4
-backupd workflow run log wfr_2f91a4 --step &lt;step-id&gt; --follow</code></pre>
+      <pre style="margin-bottom:0"><code>retnd workflow run steps wfr_2f91a4
+retnd workflow run log wfr_2f91a4 --step &lt;step-id&gt; --follow</code></pre>
       <p style="margin-top:0.6rem">The same records the browser reads, by cursor, with <code>--json</code> emitting one record per line so a script reads it with a line reader rather than an incremental JSON parser.</p>
     </div>
   </section>
@@ -352,9 +352,9 @@ backupd workflow run log wfr_2f91a4 --step &lt;step-id&gt; --follow</code></pre>
     </div>
     <div class="note">
       <span class="note-label">From a terminal</span>
-      <pre style="margin-bottom:0"><code>backupd workflow recovery show
-backupd workflow recovery resume-cleanup &lt;run-id&gt;
-backupd workflow recovery acknowledge &lt;run-id&gt; --reason "unquiesced by hand, DBA ticket 4471"</code></pre>
+      <pre style="margin-bottom:0"><code>retnd workflow recovery show
+retnd workflow recovery resume-cleanup &lt;run-id&gt;
+retnd workflow recovery acknowledge &lt;run-id&gt; --reason "unquiesced by hand, DBA ticket 4471"</code></pre>
       <p style="margin-top:0.6rem"><code>--reason</code> is required, and it is required for a reason: the whole value of an acknowledgement is answering, six months later, why a backup set was unblocked without its cleanup ever running. Beside a serving engine, the reads fall back to the journal but the two writes are refused, because that process holds the hold as well as the journal does and a resume made around it would unblock a set that process would go on refusing.</p>
     </div>
     <p>Both the terminal procedure and the browser-only one are written out in <a href="https://github.com/backupdproject/backupd/blob/main/docs/recovery.md">the recovery guide</a> and <a href="https://github.com/backupdproject/backupd/blob/main/docs/recovery-without-a-terminal.md">its no-terminal counterpart</a>.</p>
@@ -378,7 +378,7 @@ backupd workflow recovery acknowledge &lt;run-id&gt; --reason "unquiesced by han
     <p>The same rule as everywhere else on this site: naming the uncomfortable half is the only thing that makes the rest worth reading.</p>
     <ul>
       <li><strong>A browser cannot start a backup run on any deployment this repository builds.</strong> The API's destructive operations are behind a deployment-level gate and the only implementation shipped returns false unconditionally, so <code>run_backup_set</code> is refused everywhere until <a href="https://github.com/backupdproject/backupd/issues/92">#92</a> supplies a real gate. Workflow runs are therefore the scheduler's. The one bypass this feature has lives on that same route, which means &ldquo;an administrator may bypass the hooks&rdquo; is a code path with test coverage and no deployment in which it can be reached.</li>
-      <li><strong>A local hook needs the deployment to mount the host plane, and not every platform offers local hooks at all.</strong> A <code>.local.sh</code> hook needs three things present in the deployment: the workflow root mounted into the engine read-only, the runtime directory holding the runner's socket, and the runner's credential file. Every deployment profile that advertises local hooks now carries all three, and the platforms that cannot host a runner say so rather than offering a capability they do not have &mdash; so the question to ask is not &ldquo;are the mounts there&rdquo; but &ldquo;does my platform answer yes&rdquo;. <a href="https://github.com/backupdproject/backupd/blob/main/docs/install.md">The install guide</a> and <a href="https://github.com/backupdproject/backupd/blob/main/docs/runtime-contract.md">the runtime contract</a> carry that answer per platform, along with the runner's own prerequisites; check yours before you rely on a local hook. If the answer is no, remote hooks are unaffected, because they need no runner. The symptom of a deployment that is not set up for it is the <code>runner_health</code> check in <a href="#validation">the validation report</a> failing, or <code>backupd workflow-runner status</code> finding nothing to ask, before any hook has run.</li>
+      <li><strong>A local hook needs the deployment to mount the host plane, and not every platform offers local hooks at all.</strong> A <code>.local.sh</code> hook needs three things present in the deployment: the workflow root mounted into the engine read-only, the runtime directory holding the runner's socket, and the runner's credential file. Every deployment profile that advertises local hooks now carries all three, and the platforms that cannot host a runner say so rather than offering a capability they do not have &mdash; so the question to ask is not &ldquo;are the mounts there&rdquo; but &ldquo;does my platform answer yes&rdquo;. <a href="https://github.com/backupdproject/backupd/blob/main/docs/install.md">The install guide</a> and <a href="https://github.com/backupdproject/backupd/blob/main/docs/runtime-contract.md">the runtime contract</a> carry that answer per platform, along with the runner's own prerequisites; check yours before you rely on a local hook. If the answer is no, remote hooks are unaffected, because they need no runner. The symptom of a deployment that is not set up for it is the <code>runner_health</code> check in <a href="#validation">the validation report</a> failing, or <code>retnd workflow-runner status</code> finding nothing to ask, before any hook has run.</li>
       <li><strong>A detached remote descendant is outside the termination guarantee.</strong> A hook that runs <code>nohup</code>, <code>setsid</code> or a double fork can leave a process this product cannot prove is gone. Termination is recorded as <em>unconfirmed</em> and the step's working directory is kept as the forensic record rather than tidied away.</li>
       <li><strong>Redaction cannot follow a secret a script has transformed.</strong> The redactor matches resolved values. A script that encodes a credential before printing it has printed something no needle matches.</li>
       <li><strong>Power-loss cleanup is not guaranteed.</strong> <code>recovery_required</code> is an answer about the <em>next</em> start. Between the crash and that start, whatever a before hook did to a machine stays done; there is no agent on the far host to undo it.</li>
@@ -395,7 +395,7 @@ backupd workflow recovery acknowledge &lt;run-id&gt; --reason "unquiesced by han
 </main>
 
 <footer>
-  <p>backupd is Apache-2.0 licensed. <a href="https://github.com/backupdproject/backupd">View on GitHub</a></p>
+  <p>retnd is Apache-2.0 licensed. <a href="https://github.com/backupdproject/backupd">View on GitHub</a></p>
   <p>Pictures taken against the development fixture API. No picture or clip on this page is evidence about a running engine.</p>
 </footer>
 

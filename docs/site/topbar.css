@@ -1,5 +1,5 @@
 /* ============================================================
-   backupd docs shared header.
+   retnd docs shared header.
    Same element on every page. On the home page it starts as the
    full hero (mark + tagline + badges) and shrinks into a sticky
    bar as the reader scrolls: the .is-hero class plus three
@@ -156,7 +156,15 @@ html, body {
   white-space: nowrap;
 }
 
-/* The hyphen is dimmed in the application's wordmark. Same here. */
+/* The trailing `d` is dimmed in the application's wordmark. Same here.
+   The class is called `brand-dash` because this project's second name
+   carried a hyphen and the dimmed glyph WAS that hyphen. Two renames
+   later the accent has stayed on the last letter throughout, and the
+   selector name is the only thing that still remembers a hyphen the
+   wordmark has not had since. Kept rather than renamed because it is
+   spelled in six pages' markup and names nothing an operator sees --
+   and the old name is deliberately not written out here, because
+   scripts/rename/check-brand-drift.sh is right to refuse it and did. */
 .topbar-brand .brand-name .brand-dash { opacity: 0.55; }
 
 .topbar-brand .brand-sub {
