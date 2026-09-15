@@ -250,7 +250,12 @@ cd "$repo_root"
 # gone from the tree, and a bare alias would make a new absolute link to
 # the old organisation green again, which is the one thing #887's fourth
 # pattern exists to catch. All five are deleted by #947 together with
-# `image.mirror` and guard 7.
+# `image.mirror` and guard 7. Six rather than five, because
+# scripts/install/install_docker_host.py EMBEDS container/compose.yaml
+# byte-for-byte with a digest beside it (scripts/install/embed_compose.py
+# regenerates it, and the installer suite refuses a copy that has drifted),
+# so the mirror paragraph in that header arrives there too and cannot be
+# edited out on its own.
 aliases="$(
   cat <<'EOF'
 RM_DEBUG #947 the release after the one that ships this EPIC
@@ -298,6 +303,7 @@ backupdproject@scripts/bdtools/release/publish_image.py #947 the release after t
 backupdproject@scripts/bdtools/tests/publish_image_guards.py #947 the release after the one that ships this EPIC
 backupdproject@container/Dockerfile #947 the release after the one that ships this EPIC
 backupdproject@container/compose.yaml #947 the release after the one that ships this EPIC
+backupdproject@scripts/install/install_docker_host.py #947 the release after the one that ships this EPIC
 EOF
 )"
 
