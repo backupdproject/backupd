@@ -224,8 +224,8 @@ type GoBuildTarget struct {
 // binary appearing in the Dockerfile and not here is a difference someone
 // has to make on purpose.
 var ShippedGoBinaries = []GoBuildTarget{
-	{Binary: "backupd", ModuleDir: "core", Package: "./cmd/retnd"},
-	{Binary: "backupd-web", ModuleDir: "apps/generic", Package: "./cmd/retnd-web"},
+	{Binary: "retnd", ModuleDir: "core", Package: "./cmd/retnd"},
+	{Binary: "retnd-web", ModuleDir: "apps/generic", Package: "./cmd/retnd-web"},
 }
 
 // GoModuleRef is one module in a binary's linked graph.
@@ -385,7 +385,7 @@ func NPMProductionComponents(data []byte) ([]Component, error) {
 			Ecosystem:  EcosystemNPM,
 			LicenseID:  pkg.License,
 			Integrity:  pkg.Integrity,
-			LinkedInto: []string{"backupd-web"},
+			LinkedInto: []string{"retnd-web"},
 		})
 	}
 	SortComponents(out)
@@ -483,7 +483,7 @@ func BuildSPDX(inv Inventory, name, namespace, created string) SPDXDocument {
 		DocumentNamespace: namespace,
 		CreationInfo: SPDXCreationInfo{
 			Created:  created,
-			Creators: []string{"Tool: backupd-provenance", "Organization: Roman Goldmann"},
+			Creators: []string{"Tool: retnd-provenance", "Organization: Roman Goldmann"},
 		},
 	}
 	for _, c := range inv.Components {

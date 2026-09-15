@@ -95,7 +95,7 @@ compose file exists in the tree that nothing registered.
 ## Local hook scripts, and why they do not touch this contract
 
 EPIC L (#809) gives a backup set hook scripts, and a `.local.sh` hook means
-"run this on the machine backupd is installed on". The engine cannot run one:
+"run this on the machine retnd is installed on". The engine cannot run one:
 this image is distroless and has no shell, the container is read-only and
 non-root, and every capability is dropped. That is not an obstacle to work
 around — it is the contract above.
@@ -109,7 +109,7 @@ are this contract deleted:
 - run a **separate, version-matched, unprivileged process on the host** and let
   the engine ask it, over one Unix-domain socket, with a narrow vocabulary.
 
-backupd does the fourth. The engine gains exactly three bind mounts and nothing
+retnd does the fourth. The engine gains exactly three bind mounts and nothing
 else:
 
 ```text
@@ -162,7 +162,7 @@ extracted from the same image by the installer, and it:
 
 - listens on a Unix socket only — there is no TCP listener and no address to
   configure — with the socket 0600 inside a 0700 directory;
-- additionally requires an installation-scoped credential from backupd's
+- additionally requires an installation-scoped credential from retnd's
   secrets area on every connection;
 - refuses an engine whose version is not exactly its own;
 - accepts four operations (`syntax-check`, `execute`, `cancel`, `status`) and
@@ -559,7 +559,7 @@ One mount is redeclared, and the host side of it does not move either:
 | | Phase 4 | Converted adapter |
 |---|---|---|
 | host path | `<appdata>/config/config.yaml` | `<appdata>/config` |
-| container path | `/etc/backupd/config.yaml` | `/etc/backupd/config` |
+| container path | `/etc/backupd/config.yaml` | `/etc/retnd/config` |
 | mode | `ro` | writable |
 
 The file an operator already has stays exactly where it is; what the adapter
@@ -574,7 +574,7 @@ saying per platform rather than once:
 | platform | what carries the old answer | what stops it |
 |---|---|---|
 | generic, OpenMediaVault, Proxmox | an env file the operator edits | `CONFIG_FILE` became `CONFIG_DIR`, a fail-closed `${VAR:?}` reference, so an unconverted file stops the deployment with a message |
-| Synology (Container Manager) | `backupd.env` | the same, `${APPDATA:?...}/config` |
+| Synology (Container Manager) | `retnd.env` | the same, `${APPDATA:?...}/config` |
 | TrueNAS (catalog) | the platform, not a file | the question was renamed `config` to `configDir`, so an upgrade has no stored answer to carry forward and the wizard asks again |
 | Unraid | the operator's own template copy | nothing automatic: a changed `<Config>` Target does not retire a mapping already in the user template, so the old read-only file mapping has to be deleted by hand |
 | Synology (`.spk`) | the package's own layout | the package installs the directory itself |

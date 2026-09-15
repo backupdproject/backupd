@@ -690,6 +690,75 @@
 
 ### Changed
 
+- **The product is `retnd` everywhere a person reads it, and this is the entry
+  that says what an upgrade does** (EPIC R #885, R2.2 #892). The rename reached
+  the prose: `README.md`, the 56 documents under `docs/`, `docs/api/contract.md`,
+  `CONTRIBUTING.md`, the CLA, the thirteen ADRs that named the old product, the
+  eleven store listings, and `NOTICE` — which is generated, so the binary
+  identity it renders from moved and the licence inventory, the SBOM, the
+  checksum manifest and the provenance bundle were regenerated forward rather
+  than hand-edited. `docs/adr/0023-moving-the-repository-coordinates-once-and-last.md`
+  is new and records FR-41: the sequence, what GitHub's transfer redirect covers
+  and what it does not, and which half of the cutover has actually happened.
+  Comments and citations the rename had falsified are fixed, including a design
+  canvas reference that an earlier sweep had pointed at a file that does not
+  exist and a `docs/deployment.md` section that still described the previous
+  rename's clean cut as the current behaviour.
+
+  **What an existing deployment sees, in one place.** An unedited compose file
+  you pinned yourself starts and works: the old image reference resolves through
+  the one-release mirror, the image carries `/backupd-web` as a hardlink beside
+  `/retnd-web`, and the mounts still land on `/etc/backupd` and
+  `/var/lib/backupd`, which the engine **adopts** — it serves from the
+  pre-rename path and warns on every start, naming the compose line to change
+  and the `install_docker_host.py migrate-identity` command that changes mounts,
+  persisted paths and systemd units in one transaction. Nothing first-runs over
+  an existing journal. `config.yaml` is **byte-identical**, because the
+  pre-rename paths are compiled-in constants and not a new configuration key, so
+  a **rollback to the previous build is supported for one release**. The
+  procedure, and the two refusals an upgrade can meet, are written out in
+  [`docs/install.md`](docs/install.md#upgrading-a-deployment-installed-before-the-rename):
+  a deployment with two *different* populated state directories, one at each
+  container path, **refuses to start** and names both rather than choosing a
+  journal silently (one host directory mounted at both paths is not that case
+  and starts normally); and a host with both spellings of a renamed systemd unit
+  enabled is refused with the `systemctl disable` line it needs.
+
+  **The one-release windows, all of which close in #895.** `BACKUPD_*` hook
+  exports and input reads alongside `RETND_*` with identical values;
+  `backupd_session` / `backupd_csrf` accepted on a read and re-issued under the
+  current names; the fourteen `backupd_*` metric **gauges** emitted a second
+  time with `DEPRECATED, renamed to retnd_…` in their `# HELP`; the
+  `/backupd-web` entrypoint hardlink; the `ghcr.io/backupdproject/backupd`
+  mirror; and FR-38's legacy-path adoption. **A query that reads both metric
+  prefixes double-counts** — the duplicated samples are one reading under two
+  names, not two measurements — which is why no counter is duplicated and why
+  the window is one release; point every rule and dashboard at `retnd_*` and
+  read the caveat where the metrics are, in
+  [`docs/deployment.md`](docs/deployment.md#metrics-and-the-one-release-duplicate-series).
+
+  **Two changes with no compatibility window at all.** The CLI's default
+  `User-Agent` is `retnd-cli (api 1)` where it was `backupd-cli (api 1)`:
+  nothing in this product reads it, but a log filter, an audit query or a
+  reverse-proxy rule of yours might, and a fallback would have made both of them
+  wrong. And every provider's deployment artefact is renamed — the nine
+  `apps/*/compose/retnd.{yml,yaml,env}` files, `apps/unraid/template/retnd{,-ui}.xml`
+  and the TrueNAS catalog template now name the `retnd` service, the `retnd`
+  compose project and the `retnd-retnd-1` / `retnd-web-ui-1` containers, matching
+  `container/compose.yaml` — so a script of yours naming `backupd-backupd-1` or
+  `backupd-web-ui-1` in a `docker inspect` or `docker logs` line needs updating
+  (#891).
+
+  **What deliberately still says the old name.** The image reference and every
+  `backupdproject` URL, because FR-39 moves the image exactly once and #895 moves
+  the coordinates with it; `container/release-manifest.json`'s already-published
+  digest keys, which record artifacts that really were published under those
+  names; the reserved on-disk directories `.backupd` and `.backupd-preflight`
+  inside an operator's own backup root and media; the `backupd.workflow-hook`
+  container label and the `backupd-hook-` container-name prefix; this
+  changelog's earlier entries; and `docs/design/`'s dated notes. Everything
+  else, in any casing, is gone.
+
 - **The deployment identity is `retnd`, and a deployment mounted at the old
   paths is adopted rather than handed a first-run wizard** (EPIC R #885,
   R1.5 #890). The compose service, the container-internal configuration

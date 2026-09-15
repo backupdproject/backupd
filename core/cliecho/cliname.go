@@ -22,8 +22,9 @@ package cliecho
 // search-and-replace:
 //
 //   - filesystem paths (/etc/backupd/config, /var/lib/backupd)
-//     which packaging mounts and an operator's existing deployment already
-//     has on disk;
+//     which an operator's existing deployment already has on disk, and
+//     which #890 moved to /etc/retnd/config and /var/lib/retnd rather than
+//     renaming in place;
 //   - the project, the image and the compose service (ghcr.io/spdrman/
 //     backupd, the "backupd" service in container/
 //     compose.yaml, "Backupd" as the product's name);

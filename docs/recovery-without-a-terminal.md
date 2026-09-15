@@ -277,7 +277,7 @@ still true, and it is true for as long as the banner says *held since*.
 - **The console says the account is unverified and will be removed.** That is not a
   fault: a new administrator is *provisional* until somebody opens the link in the
   verification email sent to its recovery address. The banner names the deadline, and
-  if the address is not verified by it, Backupd deletes the administrator, signs every
+  if the address is not verified by it, retnd deletes the administrator, signs every
   session out and reopens enrollment — which puts you back at the setup wizard with the
   bootstrap link printed in the application's log, not in a dead end. Open the link from
   the mail (it works on a phone; it needs no session), or press **Resend link** on the

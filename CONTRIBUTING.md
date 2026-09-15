@@ -1,4 +1,4 @@
-# Contributing to backupd
+# Contributing to retnd
 
 ## Your first pull request needs one extra file
 

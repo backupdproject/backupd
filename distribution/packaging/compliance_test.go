@@ -1412,8 +1412,7 @@ func TestTheProseCarriesNoCountNobodyChecks(t *testing.T) {
 }
 
 // TestTheComplianceDocsNameTheCurrentAppID is the check issue #687 asks
-// for. The rename moved project.appId from com.iasbuilt.backupd to
-// com.iasbuilt.backupd (#685), and source-offer.md and
+// for. The rename moved project.appId (#685), and source-offer.md and
 // privacy-policy.md are store-submitted prose repeating the old id: the
 // blanket rewrite reached compliance.json's own field and its
 // mustMention lists but never touched the doc bodies, because nothing

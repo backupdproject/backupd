@@ -133,7 +133,7 @@ already hold rather than pulling an image to read it.
 release time through the environment and never written down:
 
 ```
-COSIGN_PRIVATE_KEY="$(pass show backupd/cosign)" \
+COSIGN_PRIVATE_KEY="$(pass show retnd/cosign)" \
   cosign sign --key env://COSIGN_PRIVATE_KEY ghcr.io/backupdproject/backupd@<digest>
 ```
 
@@ -159,7 +159,7 @@ guard was first written:
 * `id_rsa` and `id_ed25519` are matched as `*/id_rsa` and `*/id_ed25519` too. A
   git pathspec with no wildcard anchors at the repository root, so the bare forms
   only ever saw a key in the top directory, and this product mounts its SSH key
-  at `/etc/backupd/id_ed25519`.
+  at `/etc/retnd/id_ed25519`.
 
 `scripts/tests/publish-image-guards.test.sh` builds every fixture with this
 repository's real `.gitignore` in it, because the guard's answer depends on the
@@ -232,7 +232,7 @@ the manifest is a claim about what the registry holds.
 ## Version parity
 
 `container/release-manifest.json`'s `version` is the `VERSION` build argument the
-binaries were stamped with, which is what `/backupd version` answers.
+binaries were stamped with, which is what `/retnd version` answers.
 `canonical.json`'s `image.tag` is the semantic version every provider package
 advertises. Those have to be the same string in a real release, and now they are:
 both record `0.4.0`, the tag cut for this release rather than the generator's
