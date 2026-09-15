@@ -140,17 +140,17 @@ type AdapterRuntime struct {
 }
 
 // ReduceToRoles sorts an adapter's services into the two canonical roles
-// by the COMMAND each one runs, never by its name. apps/truenas calls
-// them backupd/backupd-ui and container/compose.yaml calls
-// them retnd/web-ui; a check keyed on the name would silently
-// stop checking the moment someone renamed one.
+// by the COMMAND each one runs, never by its name. apps/unraid calls its
+// two containers retnd/retnd-ui and container/compose.yaml calls its two
+// services retnd/web-ui; a check keyed on the name would silently stop
+// checking the moment someone renamed one, which #891 did to all eleven
+// adapters at once.
 //
 // The command is matched against every spelling the image answers to
 // (CommandSpellings), which for one release includes the pre-rename
-// entrypoint canonical.json retains: #890 moved the canonical
-// definition's argv and #891 moves the eight provider adapters', so in
-// between the two there are adapters naming /backupd-web and a canonical
-// contract naming /retnd-web, and both really do run the same inode.
+// entrypoint canonical.json retains: an operator's own pinned copy of a
+// provider file still names /backupd-web, and it really does run the same
+// inode as /retnd-web (renameoverlap.go).
 func ReduceToRoles(platform string, svcs []Service, c Canonical) (AdapterRuntime, []Drift) {
 	out := AdapterRuntime{Platform: platform}
 	var drift []Drift
