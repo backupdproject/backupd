@@ -435,7 +435,7 @@ it knows nothing about (`core/internal/state/workflowlifecycle.go`).
 
    It runs only the eligible "after" stages, out of that run's own captured bytes, each one
    re-verified against the sha256 recorded when the plan was taken. The hooks are told
-   `BACKUPD_RECOVERY=1` and `BACKUPD_CLEANUP_REASON=interrupted_run`, so a script that wants
+   `RETND_RECOVERY=1` and `RETND_CLEANUP_REASON=interrupted_run`, so a script that wants
    to be careful about a half-applied state can tell this apart from an ordinary unwind. It
    exits non-zero if the run is still not settled afterwards, because then the backup set is
    still blocked. Beside a serving engine it is handed to that process, and beside one this

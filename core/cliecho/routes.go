@@ -517,7 +517,7 @@ var routes = map[string]entry{
 		why: "there is no verb that declares a repository domain from a request body",
 		examples: []Action{
 			{Body: []byte(`{"id":"offsite-b2","isolation":"isolated","description":"Second copy, off site","passphrase":{"file":"/etc/backupd/offsite-b2.passphrase"}}`)},
-			{Body: []byte(`{"id":"production","isolation":"shared","maintenance_owner":"another-instance","passphrase":{"env":"BACKUPD_PRODUCTION_PASSPHRASE"}}`)},
+			{Body: []byte(`{"id":"production","isolation":"shared","maintenance_owner":"another-instance","passphrase":{"env":"RETND_PRODUCTION_PASSPHRASE"}}`)},
 		},
 	},
 	key("GET", "/repositories/{domain}/maintenance"): {
@@ -1424,7 +1424,7 @@ func workflowEnvSetExamples(params map[string]string) []Action {
 		`{"value":"UTC"}`,
 		`{"value":""}`,
 		`{"secret":{"file":"/etc/backupd/pg.passphrase"}}`,
-		`{"secret":{"env":"BACKUPD_PG_PASSWORD"}}`,
+		`{"secret":{"env":"RETND_PG_PASSWORD"}}`,
 		`{"secret":{"command":["vault","read","-field=password","secret/pg"]}}`,
 	}
 	out := make([]Action, 0, len(bodies))

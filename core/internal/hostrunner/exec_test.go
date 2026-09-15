@@ -296,7 +296,7 @@ func TestExecute_TheHookNeverSeesTheCursedFour(t *testing.T) {
 // the directory exists, only this account can read it, and it is gone
 // afterwards.
 //
-// Since #865 it is also the mount: BACKUPD_WORK_DIR is the same string
+// Since #865 it is also the mount: RETND_WORK_DIR is the same string
 // inside the container as outside, because the launch mounts the
 // directory at its own path.
 func TestExecute_GivesTheHookAPrivateWorkingDirectoryAndTakesItAway(t *testing.T) {
@@ -307,10 +307,10 @@ func TestExecute_GivesTheHookAPrivateWorkingDirectoryAndTakesItAway(t *testing.T
 	// /var to /private/var, so a string comparison would be asserting
 	// which symbolic links the platform happens to have rather than
 	// which directory the hook started in.
-	body := `printf 'work=%s\n' "$BACKUPD_WORK_DIR"
-printf 'pwd-is-work=%s\n' "$([ "$PWD" -ef "$BACKUPD_WORK_DIR" ] && echo yes || echo no)"
-printf 'mode=%s\n' "$(stat -c %a "$BACKUPD_WORK_DIR" 2>/dev/null || stat -f %Lp "$BACKUPD_WORK_DIR")"
-echo evidence > "$BACKUPD_WORK_DIR/dump.sql"
+	body := `printf 'work=%s\n' "$RETND_WORK_DIR"
+printf 'pwd-is-work=%s\n' "$([ "$PWD" -ef "$RETND_WORK_DIR" ] && echo yes || echo no)"
+printf 'mode=%s\n' "$(stat -c %a "$RETND_WORK_DIR" 2>/dev/null || stat -f %Lp "$RETND_WORK_DIR")"
+echo evidence > "$RETND_WORK_DIR/dump.sql"
 `
 	if _, err := exec.Execute(context.Background(), scriptRequest("run-1", "step-1", body), out); err != nil {
 		t.Fatalf("running the hook: %v", err)
@@ -322,7 +322,7 @@ echo evidence > "$BACKUPD_WORK_DIR/dump.sql"
 		t.Fatalf("deriving the expected working directory: %v", err)
 	}
 	if !strings.Contains(stdout, "work="+wantDir+"\n") {
-		t.Errorf("BACKUPD_WORK_DIR is not the per-step directory this runner created (%s):\n%s", wantDir, stdout)
+		t.Errorf("RETND_WORK_DIR is not the per-step directory this runner created (%s):\n%s", wantDir, stdout)
 	}
 	if !strings.Contains(stdout, "pwd-is-work=yes\n") {
 		t.Errorf("the hook did not START in its own working directory, so a script writing a relative path writes it somewhere nobody cleans up:\n%s", stdout)
@@ -347,7 +347,7 @@ func TestExecute_TheHookCannotRewriteTheScriptBashIsReading(t *testing.T) {
 	exec, state := testExecutor(t)
 	out := &collector{}
 
-	body := `ls -a "$BACKUPD_WORK_DIR"
+	body := `ls -a "$RETND_WORK_DIR"
 `
 	if _, err := exec.Execute(context.Background(), scriptRequest("run-1", "step-1", body), out); err != nil {
 		t.Fatalf("running the hook: %v", err)
@@ -858,14 +858,14 @@ func TestExecute_DeliversValuesToTheHookByteForByte(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "substitution-ran")
 
 	values := map[string]string{
-		"BACKUPD_TEST_SUBSTITUTION": "$(touch " + marker + ")`touch " + marker + "`",
-		"BACKUPD_TEST_QUOTES":       `he said "hi"; rm -rf /; '\''`,
-		"BACKUPD_TEST_NEWLINE":      "first\nsecond\ttab\\",
-		"BACKUPD_TEST_UTF8":         "café — 日本語 — Ω — 🔒",
+		"RETND_TEST_SUBSTITUTION": "$(touch " + marker + ")`touch " + marker + "`",
+		"RETND_TEST_QUOTES":       `he said "hi"; rm -rf /; '\''`,
+		"RETND_TEST_NEWLINE":      "first\nsecond\ttab\\",
+		"RETND_TEST_UTF8":         "café — 日本語 — Ω — 🔒",
 	}
 	names := make([]string, 0, len(values))
 	vars := make([]EnvVar, 0, len(values))
-	for _, name := range []string{"BACKUPD_TEST_SUBSTITUTION", "BACKUPD_TEST_QUOTES", "BACKUPD_TEST_NEWLINE", "BACKUPD_TEST_UTF8"} {
+	for _, name := range []string{"RETND_TEST_SUBSTITUTION", "RETND_TEST_QUOTES", "RETND_TEST_NEWLINE", "RETND_TEST_UTF8"} {
 		names = append(names, name)
 		vars = append(vars, EnvVar{Name: name, Value: values[name]})
 	}

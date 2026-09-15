@@ -204,7 +204,7 @@ incremental_engine:
   enabled: true
 ```
 
-`BACKUPD_INCREMENTAL_ENGINE=1` does the same from the environment and
+`RETND_INCREMENTAL_ENGINE=1` does the same from the environment and
 overrides the file in both directions. With the gate off, a configuration that
 declares incremental sets still loads and still backs up every artifact set on
 schedule; the incremental ones refuse with one sentence naming both ways to

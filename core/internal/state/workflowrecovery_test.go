@@ -62,7 +62,7 @@ func TestRecoverWorkflowPlanRebuildsThePlannedEnvironment(t *testing.T) {
 		{Name: "PGHOST", Value: "db.internal"},
 		{Name: "PGOPTIONS", Value: ""},
 		{Name: "PGPASSWORD", Secret: secretref.Ref{File: "/etc/backupd/secrets/db.pw"}},
-		{Name: "API_TOKEN", Secret: secretref.Ref{Env: "BACKUPD_TEST_TOKEN"}},
+		{Name: "API_TOKEN", Secret: secretref.Ref{Env: "RETND_TEST_TOKEN"}},
 		{Name: "VAULT_PW", Secret: secretref.Ref{Command: []string{"vault", "read", "-field=password", "secret/prod/db"}}},
 	}
 

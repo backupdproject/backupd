@@ -72,36 +72,42 @@ func TestAuthenticator_RefusesAnUnknownSessionCookie(t *testing.T) {
 	}
 }
 
-// #794's read-compat window, from the seam webhost actually consults.
+// The read-compat window, from the seam webhost actually consults, for
+// every name the cookie has had: #794's bm_session and EPIC R's
+// backupd_session (#889).
 //
-// The rename changed the name every session cookie is WRITTEN under.
+// Each rename changed the name every session cookie is WRITTEN under.
 // Anything already in a browser or a cookie jar at upgrade time still
 // carries the old one, and a read that only knew the new name would
 // answer "nobody is signed in" to a caller holding a perfectly live
-// session - a rename presenting as a mass logout. So the old name is
+// session - a rename presenting as a mass logout. So the old names are
 // still accepted here, and the new one still wins when both arrive, so a
 // stale cookie left behind by the compat window cannot shadow the
 // session that was actually just issued.
 
-func TestAuthenticator_AcceptsTheLegacySessionCookieName(t *testing.T) {
-	svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json")})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	token, _, err := svc.sessions.create("bm-admin")
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
+func TestAuthenticator_AcceptsEveryDeprecatedSessionCookieName(t *testing.T) {
+	for _, deprecated := range LegacySessionCookieNames() {
+		t.Run(deprecated, func(t *testing.T) {
+			svc, err := New(Config{StorePath: filepath.Join(t.TempDir(), "auth.json")})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			token, _, err := svc.sessions.create("bm-admin")
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
 
-	authCtx, err := svc.Authenticator().Authenticate(context.Background(), capabilities.AuthRequest{
-		Headers: map[string][]string{"Cookie": {LegacySessionCookieName + "=" + token}},
-	})
-	if err != nil {
-		t.Fatalf("Authenticate: %v", err)
-	}
-	if !authCtx.Authenticated || authCtx.Username != "bm-admin" {
-		t.Errorf("Authenticate(legacy %s cookie) = %+v, want Authenticated=true Username=bm-admin",
-			LegacySessionCookieName, authCtx)
+			authCtx, err := svc.Authenticator().Authenticate(context.Background(), capabilities.AuthRequest{
+				Headers: map[string][]string{"Cookie": {deprecated + "=" + token}},
+			})
+			if err != nil {
+				t.Fatalf("Authenticate: %v", err)
+			}
+			if !authCtx.Authenticated || authCtx.Username != "bm-admin" {
+				t.Errorf("Authenticate(deprecated %s cookie) = %+v, want Authenticated=true Username=bm-admin",
+					deprecated, authCtx)
+			}
+		})
 	}
 }
 

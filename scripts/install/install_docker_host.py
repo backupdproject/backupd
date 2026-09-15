@@ -2812,7 +2812,7 @@ services:
       # id, so one container at `debug` gives half of every story and
       # nothing to join it to.
       #
-      # BACKUPD_DEBUG=1 is the same switch as LOG_LEVEL=debug, kept as
+      # RETND_DEBUG=1 is the same switch as LOG_LEVEL=debug, kept as
       # the shortcut an operator can be told over a phone call; it wins
       # if both are set. RM_DEBUG=1 is that shortcut's deprecated old
       # name (issue #794): still honoured, for one release, so an
@@ -3120,7 +3120,7 @@ services:
       # what the engine answered, what framing the body arrived with,
       # and how much of it actually got copied to the browser - which is
       # only half of each story without the engine's own line for the
-      # same request. BACKUPD_DEBUG=1 is the shortcut, and wins over
+      # same request. RETND_DEBUG=1 is the shortcut, and wins over
       # this; RM_DEBUG=1 is its deprecated old name (issue #794).
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Published to the host (see `ports:` below); LISTEN_ADDR is this

@@ -155,6 +155,43 @@ guard_without_pending() {
   echo "$copy"
 }
 
+# guard_without_alias <spec> [base]: the guard with one `aliases` entry
+# deleted, printed as a path. Matched on the line's FIRST field, because an
+# alias line carries its closing issue and its removal release after the
+# token (R1.4, #889) and a whole-line match would have to restate the
+# wording.
+#
+# `base` is an already-mutated copy, so two mutations can be composed: the
+# path-scoped cases below need one entry added AND one pending entry gone.
+guard_without_alias() {
+  local copy base="${2:-$guard}"
+  copy="$(mktemp)"
+  awk -v spec="$1" '$1 == spec { next } { print }' "$base" >"$copy"
+  if cmp -s "$copy" "$base"; then
+    fail "the self-test could not delete the alias entry '$1' from the guard" \
+      "no line in $base begins with the field '$1'"
+  fi
+  echo "$copy"
+}
+
+# guard_with_alias <line> [base]: the guard with one extra `aliases` entry,
+# inserted at the top of that heredoc. This is how the path-scoped alias
+# cases plant an entry that does not exist on this tree, and how the
+# malformed-entry case plants a shim with no removal release.
+guard_with_alias() {
+  local copy base="${2:-$guard}"
+  copy="$(mktemp)"
+  awk -v line="$1" '
+    { print }
+    !added && $0 == "aliases=\"$(" { getline nextline; print nextline; print line; added = 1 }
+  ' "$base" >"$copy"
+  if cmp -s "$copy" "$base"; then
+    fail "the self-test could not add an alias entry to the guard" \
+      "the aliases heredoc was not found in $base"
+  fi
+  echo "$copy"
+}
+
 # commit <tree> <path> <content>: a tracked file, because the guard scans
 # what git tracks and nothing else.
 commit() {
@@ -307,7 +344,8 @@ red "a third file in scripts/rename is scanned like anything else" "$tree" "RM_N
 
 # ---------------------------------------------------------------------------
 # The `backupd` family, and the two earlier brands the org-wide grep found
-# still live (#887, FR-40). Seven patterns, a red case each.
+# still live (#887, FR-40). Eight patterns, a red case each, plus the alias
+# list's own bookkeeping (R1.4, #889).
 # ---------------------------------------------------------------------------
 
 # The three anchored spellings of the name this epic retires. Each one has to
@@ -333,6 +371,71 @@ commit "$tree" ui/shared/src/BackupdWidget.tsx 'export function BackupdWidget() 
 }'
 red "a new Backupd display identifier goes red" "$tree" \
   "BackupdWidget" "ui/shared/src/BackupdWidget.tsx:1:"
+
+# The BARE uppercase name, which is the twelfth pattern and the gap #932's
+# review found: `BACKUPD` with nothing after it matches no prefix rule, and
+# it is a real runtime identifier -- the variable a hook reads to tell it is
+# running under this product. It is on the ALIAS list today (R1.4 exports it
+# beside RETND for one release), so the plant runs against a guard with that
+# entry deleted, which is what the case is measuring: the pattern exists and
+# fires the moment the shim goes.
+mutant="$(guard_without_alias BACKUPD)"
+tree="$(new_repo)"
+commit "$tree" core/env.go 'package core
+
+const Marker = "BACKUPD"'
+red_with "$mutant" "a new bare BACKUPD environment variable goes red once the shim goes" "$tree" \
+  "BACKUPD" "core/env.go:3:"
+rm -f "$mutant"
+
+# ...and the bare pattern must not swallow the prefixed one. A report that
+# named `BACKUPD` for a line holding `BACKUPD_RUN_ID` would make every
+# `BACKUPD_*` finding unactionable and would let one alias entry allow the
+# whole family, which is the opposite of what the alias list is for.
+mutant="$(guard_without_alias BACKUPD)"
+tree="$(new_repo)"
+commit "$tree" core/run.go 'package core
+
+const Key = "BACKUPD_RUN_ID"'
+red_with "$mutant" "a prefixed BACKUPD_ name is still reported in full, not as the bare name" "$tree" \
+  "BACKUPD_RUN_ID"
+rm -f "$mutant"
+
+# FR-43's shim table, as a check rather than a paragraph: an alias entry
+# with no closing issue and no removal release is refused outright. An
+# undated shim is how RM_DEBUG reached its third rename.
+mutant="$(guard_with_alias 'backupd_undated_shim')"
+tree="$(new_repo)"
+red_with "$mutant" "an alias entry with no removal release is refused" "$tree" \
+  "backupd_undated_shim" "no closing issue and removal release"
+rm -f "$mutant"
+
+mutant="$(guard_with_alias 'backupd_dated_shim #895 the release after the one that ships this EPIC')"
+tree="$(new_repo)"
+commit "$tree" core/shim.go 'package core
+
+const Name = "backupd_dated_shim"'
+green "a dated alias entry allows its own token" "$tree" "$mutant"
+rm -f "$mutant"
+
+# The path-scoped form, which exists for a shim whose TOKEN is live
+# elsewhere (R1.5's `/backupd-web` entrypoint and FR-38's legacy state
+# paths all tokenise to the bare `backupd`). The scope has to be load
+# bearing in both directions, so this is two cases against one mutant: the
+# named file is allowed, and the same token in another file is still a
+# violation. Both run with the bare `backupd` pending entry deleted, since
+# an entry on `pending` is allowed anywhere by design.
+base="$(guard_without_pending backupd)"
+mutant="$(guard_with_alias 'backupd@container/Dockerfile #895 the release after the one that ships this EPIC' "$base")"
+tree="$(new_repo)"
+commit "$tree" container/Dockerfile 'RUN ln /retnd-web /backupd-web'
+green "a path-scoped alias allows the token in the file it names" "$tree" "$mutant"
+
+tree="$(new_repo)"
+commit "$tree" container/other.yaml 'command: ["/backupd-web", "serve-ui"]'
+red_with "$mutant" "a path-scoped alias does not allow the token anywhere else" "$tree" \
+  "backupd" "container/other.yaml:1:"
+rm -f "$mutant" "$base"
 
 # The organisation, which survived the last rename by not being in anybody's
 # pattern at all. This one and the brand-word case below are run against a
@@ -428,7 +531,7 @@ green "the replacement RETND_/retnd_ names are green" "$tree"
 tree="$(new_repo)"
 commit "$tree" core/brandnewfile.go 'package core
 
-const Session = "backupd_session"'
+const Internal = "backupd_internal"'
 green "a pending token is allowed in a file that did not exist" "$tree"
 
 # The same tree, with that entry deleted from the list. This is the
@@ -438,13 +541,13 @@ green "a pending token is allowed in a file that did not exist" "$tree"
 tree="$(new_repo)"
 commit "$tree" core/session.go 'package core
 
-const Session = "backupd_session"'
+const Internal = "backupd_internal"'
 commit "$tree" apps/common/csrf/csrf.go 'package csrf
 
-const CookieName = "backupd_session"'
-mutant="$(guard_without_pending backupd_session)"
+const Internal = "backupd_internal"'
+mutant="$(guard_without_pending backupd_internal)"
 red_with "$mutant" "a pending entry deleted while its occurrences still exist goes red" "$tree" \
-  "backupd_session" "core/session.go:3:" "apps/common/csrf/csrf.go:3:"
+  "backupd_internal" "core/session.go:3:" "apps/common/csrf/csrf.go:3:"
 
 # And the other end of the same mutation, which is the one the R1.2 row names
 # second: the occurrence was deleted, the entry went with it, and the name
@@ -454,9 +557,9 @@ tree="$(new_repo)"
 commit "$tree" core/service/newsurface.go 'package service
 
 // Copied from a pre-rename branch.
-const Session = "backupd_session"'
+const Internal = "backupd_internal"'
 red_with "$mutant" "a deleted occurrence re-added after its pending entry went goes red" "$tree" \
-  "backupd_session" "core/service/newsurface.go:4:"
+  "backupd_internal" "core/service/newsurface.go:4:"
 rm -f "$mutant"
 
 echo "==> brand-drift guard self-test: $checks checks, $failures failure(s)"

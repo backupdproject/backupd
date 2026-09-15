@@ -346,7 +346,7 @@ dump, silently.
 The `BACKUPD_*` namespace is **reserved at validation time**, not
 overridden at merge time. A key an operator can write and this product
 silently discards is a key that looks like it works; and a hook reading
-`BACKUPD_BACKUP_STATUS` has to be reading what this product observed, not
+`RETND_BACKUP_STATUS` has to be reading what this product observed, not
 a value from a config file. The whole prefix is reserved rather than only
 the names that exist today, so a built-in added in #811 cannot collide
 with a variable somebody already configured.

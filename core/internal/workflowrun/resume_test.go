@@ -428,8 +428,8 @@ func TestAResumeThatOutlivesItsBoundStillRecordsTheScopesOutcome(t *testing.T) {
 // lets a caller state a fact this product owns.
 //
 // The facts are injected per call and persisted nowhere, so a resumed
-// hook used to be handed an empty BACKUPD_SOURCE_PATH -- and
-// `umount "$BACKUPD_SOURCE_PATH"` with an empty variable is a hook that
+// hook used to be handed an empty RETND_SOURCE_PATH -- and
+// `umount "$RETND_SOURCE_PATH"` with an empty variable is a hook that
 // unmounts nothing and exits 0, which is a recovery reporting a machine
 // as put back that it never touched.
 func TestTheRunsFactsReachItsHooksOnBothTheRunAndTheResumePath(t *testing.T) {
@@ -444,14 +444,14 @@ func TestTheRunsFactsReachItsHooksOnBothTheRunAndTheResumePath(t *testing.T) {
 	})
 
 	facts := map[string]string{
-		"BACKUPD_SOURCE_HOST": "db.internal",
-		"BACKUPD_SOURCE_PATH": "/srv/data",
-		"BACKUPD_DESTINATION": "nas:/backups/production",
+		"RETND_SOURCE_HOST": "db.internal",
+		"RETND_SOURCE_PATH": "/srv/data",
+		"RETND_DESTINATION": "nas:/backups/production",
 
 		// A caller trying to state the run's own identity. The
 		// built-ins are this product's facts, not a caller's, and they
 		// win unconditionally.
-		"BACKUPD_RUN_ID": "forged",
+		"RETND_RUN_ID": "forged",
 	}
 
 	crash := &crashAfterStarting{Store: h.store, step: "20-quiesce.remote.sh"}
@@ -481,10 +481,10 @@ func TestTheRunsFactsReachItsHooksOnBothTheRunAndTheResumePath(t *testing.T) {
 	// The ordinary path.
 	env := h.rec.envOf(t, "10-mount.local.sh")
 	for name, want := range map[string]string{
-		"BACKUPD_SOURCE_HOST": "db.internal",
-		"BACKUPD_SOURCE_PATH": "/srv/data",
-		"BACKUPD_DESTINATION": "nas:/backups/production",
-		"BACKUPD_RUN_ID":      "run-1",
+		"RETND_SOURCE_HOST": "db.internal",
+		"RETND_SOURCE_PATH": "/srv/data",
+		"RETND_DESTINATION": "nas:/backups/production",
+		"RETND_RUN_ID":      "run-1",
 	} {
 		if env[name] != want {
 			t.Errorf("a hook of the run was told %s=%q, want %q", name, env[name], want)
@@ -501,11 +501,11 @@ func TestTheRunsFactsReachItsHooksOnBothTheRunAndTheResumePath(t *testing.T) {
 
 	resumed := h.rec.envOf(t, "30-resume.remote.sh")
 	for name, want := range map[string]string{
-		"BACKUPD_SOURCE_HOST": "db.internal",
-		"BACKUPD_SOURCE_PATH": "/srv/data",
-		"BACKUPD_DESTINATION": "nas:/backups/production",
-		"BACKUPD_RUN_ID":      "run-1",
-		"BACKUPD_RECOVERY":    "1",
+		"RETND_SOURCE_HOST": "db.internal",
+		"RETND_SOURCE_PATH": "/srv/data",
+		"RETND_DESTINATION": "nas:/backups/production",
+		"RETND_RUN_ID":      "run-1",
+		"RETND_RECOVERY":    "1",
 	} {
 		if resumed[name] != want {
 			t.Errorf("a resumed hook was told %s=%q, want %q", name, resumed[name], want)
@@ -518,7 +518,7 @@ func TestTheRunsFactsReachItsHooksOnBothTheRunAndTheResumePath(t *testing.T) {
 //
 // Left alone, the row says work is in flight in a process that no longer
 // exists -- forever, in every history surface -- and a resumed "after"
-// hook is told BACKUPD_BACKUP_STATUS=running, which is the input a
+// hook is told RETND_BACKUP_STATUS=running, which is the input a
 // careful hook uses to decide whether to roll something back.
 func TestACrashDuringTheBackupDoesNotLeaveItRunningForever(t *testing.T) {
 	t.Parallel()
@@ -560,8 +560,8 @@ func TestACrashDuringTheBackupDoesNotLeaveItRunningForever(t *testing.T) {
 	}
 
 	env := h.rec.envOf(t, "30-resume.remote.sh")
-	if env["BACKUPD_BACKUP_STATUS"] != string(workflow.StatusUnknown) {
-		t.Errorf("the recovery hook was told BACKUPD_BACKUP_STATUS=%q, want unknown", env["BACKUPD_BACKUP_STATUS"])
+	if env["RETND_BACKUP_STATUS"] != string(workflow.StatusUnknown) {
+		t.Errorf("the recovery hook was told RETND_BACKUP_STATUS=%q, want unknown", env["RETND_BACKUP_STATUS"])
 	}
 }
 

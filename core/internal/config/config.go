@@ -974,7 +974,7 @@ type BackupSet struct {
 	Workflow *SetWorkflow `yaml:"workflow,omitempty"`
 
 	// Environment is this set's own workflow environment, which wins
-	// over the deployment-wide one and loses to the BACKUPD_* built-ins
+	// over the deployment-wide one and loses to the RETND_* built-ins
 	// (workflow.Resolve). It sits beside Workflow rather than inside it
 	// because an environment is a property of the BACKUP SET, not of its
 	// hook directories: #811's cleanup stage and #810's remote execution

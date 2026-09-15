@@ -375,7 +375,7 @@ func TestValidateRefusesUnusableWorkflowConfigurations(t *testing.T) {
 		},
 		{
 			what:    "a reserved environment name",
-			mutate:  func(c *Config) { c.Workflows.Environment[0].Name = "BACKUPD_RUN_ID" },
+			mutate:  func(c *Config) { c.Workflows.Environment[0].Name = "RETND_RUN_ID" },
 			mustSay: "reserved",
 		},
 		{

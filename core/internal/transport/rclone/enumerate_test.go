@@ -189,7 +189,7 @@ func TestTheCapabilityMatrixCoversEveryBundledBackend(t *testing.T) {
 // TestStreamingCostsFarLessThanListAtScale is #792's measurement, run as
 // an assertion: the same real directory, listed both ways, with the peak
 // heap of each. It is skipped under -short because it creates the
-// fixture; the entry count comes from BACKUPD_HUGE_DIR_ENTRIES so the
+// fixture; the entry count comes from RETND_HUGE_DIR_ENTRIES so the
 // million-entry run in docs/adr/0008 is reproducible with one variable
 // and CI never pays for it.
 func TestStreamingCostsFarLessThanListAtScale(t *testing.T) {
@@ -197,10 +197,10 @@ func TestStreamingCostsFarLessThanListAtScale(t *testing.T) {
 		t.Skip("creates a large directory; run without -short")
 	}
 	entries := 100_000
-	if raw := os.Getenv("BACKUPD_HUGE_DIR_ENTRIES"); raw != "" {
+	if raw := os.Getenv("RETND_HUGE_DIR_ENTRIES"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
-			t.Fatalf("BACKUPD_HUGE_DIR_ENTRIES=%q: %v", raw, err)
+			t.Fatalf("RETND_HUGE_DIR_ENTRIES=%q: %v", raw, err)
 		}
 		entries = n
 	}

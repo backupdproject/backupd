@@ -64,7 +64,7 @@ failed`, and an operator acts on each of the three differently. A single
 verdict has to pick one and lose the other two.
 
 A hook is told all three as they stand when it starts, so a "before" hook
-sees `BACKUPD_BACKUP_STATUS=unknown` — a real value rather than an empty
+sees `RETND_BACKUP_STATUS=unknown` — a real value rather than an empty
 string, because an unset variable and one saying "nobody knows yet" read
 identically in `test -z`.
 
@@ -180,8 +180,8 @@ taken at snapshot time — with the ordinary environment the run was
 *planned* with and its secrets re-resolved from their references. An
 operator who edited `/workflows` or `config.yaml` while the daemon was
 down has changed nothing about what the recovery executes. Those hooks
-get `BACKUPD_RECOVERY=1` and
-`BACKUPD_CLEANUP_REASON=interrupted_run`, because unwinding after a crash
+get `RETND_RECOVERY=1` and
+`RETND_CLEANUP_REASON=interrupted_run`, because unwinding after a crash
 is a different job from unwinding after a run.
 
 A resume does what it can and blocks on what it cannot: a scope whose

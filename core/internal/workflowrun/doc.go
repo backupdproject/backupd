@@ -56,8 +56,8 @@
 // the environment that run was planned with and its secrets re-resolved
 // from their references -- so an operator who edited /workflows or the
 // configuration while the daemon was down has not changed what the
-// recovery executes. Those hooks are told BACKUPD_RECOVERY=1 and
-// BACKUPD_CLEANUP_REASON=interrupted_run, because unwinding after a crash
+// recovery executes. Those hooks are told RETND_RECOVERY=1 and
+// RETND_CLEANUP_REASON=interrupted_run, because unwinding after a crash
 // is a different job from unwinding after a run.
 //
 // What a resume executes also includes the FACTS the run was planned
@@ -65,7 +65,7 @@
 // persisted with the plan for exactly this reason: they are injected
 // into a hook's environment per call and stored nowhere else, so a
 // recovery that could not read them back would run
-// `umount "$BACKUPD_SOURCE_PATH"` with an empty variable.
+// `umount "$RETND_SOURCE_PATH"` with an empty variable.
 //
 // A resume that cannot account for everything leaves the run back at
 // recovery_required, durably, so that a second resume or an
@@ -110,7 +110,7 @@
 // verdict would have to pick one and lose the other two.
 //
 // A hook is told all three, as they stand when it starts. A "before"
-// hook therefore sees BACKUPD_BACKUP_STATUS=unknown, which is a real
+// hook therefore sees RETND_BACKUP_STATUS=unknown, which is a real
 // value rather than an empty string, because an unset variable and one
 // saying "nobody knows yet" read identically in `test -z`.
 //

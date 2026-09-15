@@ -55,17 +55,17 @@ type Run struct {
 	FinishedAt *time.Time
 
 	// BackupStatus is what the backup itself did, as an "after" hook is
-	// told it (BACKUPD_BACKUP_STATUS). StatusUnknown until the backup has
+	// told it (RETND_BACKUP_STATUS). StatusUnknown until the backup has
 	// an outcome, which is what a "before" hook legitimately sees.
 	BackupStatus Status
 
 	// CleanupStatus is what the cleanup stage did
-	// (BACKUPD_CLEANUP_STATUS). #811 owns the semantics; this is where
+	// (RETND_CLEANUP_STATUS). #811 owns the semantics; this is where
 	// they are recorded.
 	CleanupStatus Status
 
 	// WorkflowStatus is the aggregate verdict over the run's own steps
-	// (BACKUPD_WORKFLOW_STATUS): what a later stage's hook is told about
+	// (RETND_WORKFLOW_STATUS): what a later stage's hook is told about
 	// the stages before it.
 	WorkflowStatus Status
 

@@ -325,8 +325,8 @@ func follows(what string, from, to State, allowed []State) error {
 }
 
 // Status is what a hook is told about a phase of the run it is part of:
-// the value behind BACKUPD_BACKUP_STATUS, BACKUPD_WORKFLOW_STATUS and
-// BACKUPD_CLEANUP_STATUS.
+// the value behind RETND_BACKUP_STATUS, RETND_WORKFLOW_STATUS and
+// RETND_CLEANUP_STATUS.
 //
 // It is a smaller vocabulary than State on purpose. A hook is not being
 // handed this product's internal lifecycle; it is being told the one thing

@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Backupd /api/v1",
+    "title": "retnd /api/v1",
     "version": "1.0.0",
     "summary": "The authoritative definition of the versioned /api/v1 boundary.",
     "description": "Issue #166 (B6.2). This document, not the Go handlers and not the TypeScript client, is the definition of /api/v1. Both sides are generated from it (scripts/api/generate.sh) and both are held to it by a drift check (scripts/api/check-contract-drift.sh plus the conformance tests named in docs/api/contract.md). Compatibility and deprecation rules are in docs/api/contract.md."
@@ -17,20 +17,20 @@
       "session": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "backupd_session",
-        "description": "The authenticated session. For the generic runtime profile this is apps/common/auth/local's own HTTP-only cookie; a runtime profile with a native gateway (native_auth) establishes the same session from provider identity headers accepted only from a trusted peer. Which mechanism established it is a profile concern; that a caller of a secured operation has one is not. This cookie was named bm_session before the project was renamed to backupd (#794); the runtime still ACCEPTS that name on a read for one release so an in-place upgrade does not sign every caller out, but issues only the name declared here, and a client should carry back whatever the runtime set."
+        "name": "retnd_session",
+        "description": "The authenticated session. For the generic runtime profile this is apps/common/auth/local's own HTTP-only cookie; a runtime profile with a native gateway (native_auth) establishes the same session from provider identity headers accepted only from a trusted peer. Which mechanism established it is a profile concern; that a caller of a secured operation has one is not. This cookie has had two earlier names, one per rename of this project: bm_session before #794 renamed it to backupd, and backupd_session before EPIC R (#885) renamed the product to retnd. The runtime still ACCEPTS both names on a read, for one release, so an in-place upgrade does not sign every caller out; it issues only the name declared here, and a request arriving under a deprecated name has that same session re-issued under this one on that read, so the old name leaves the wire on the caller's next request. A client should carry back whatever the runtime set. Both windows close in the same release, the one after the release that renames this product."
       },
       "csrf": {
         "type": "apiKey",
         "in": "header",
         "name": "X-CSRF-Token",
-        "description": "The double-submit CSRF token (apps/common/csrf). Required on every operation this API serves with a mutating verb, with no exception: that includes test-connection and host-key-probe, whose effect is read-only but which each open an outbound connection to a caller-supplied host, and a request that reaches the network is exactly what a cross-site form must not be able to make. It is never a value an operator configures or a client is issued out of band. The runtime mints it, delivers it in the backupd_csrf cookie below, and a caller echoes that value back here unchanged; a generator that renders this as a user-supplied API key has read it wrongly. Whether an operation needs it is stated twice, in that operation's own security block and in its x-csrf-required, and scripts/api/check-contract-drift.sh fails when the two disagree."
+        "description": "The double-submit CSRF token (apps/common/csrf). Required on every operation this API serves with a mutating verb, with no exception: that includes test-connection and host-key-probe, whose effect is read-only but which each open an outbound connection to a caller-supplied host, and a request that reaches the network is exactly what a cross-site form must not be able to make. It is never a value an operator configures or a client is issued out of band. The runtime mints it, delivers it in the retnd_csrf cookie below, and a caller echoes that value back here unchanged; a generator that renders this as a user-supplied API key has read it wrongly. Whether an operation needs it is stated twice, in that operation's own security block and in its x-csrf-required, and scripts/api/check-contract-drift.sh fails when the two disagree."
       },
       "csrfCookie": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "backupd_csrf",
-        "description": "The other half of the double-submit pair above, and the half a client has to READ. The runtime issues this cookie on any response that does not already carry one, and a caller echoes its value back in X-CSRF-Token; the two are compared byte for byte. It is declared here because a client cannot implement the csrf requirement from this document without knowing which cookie to echo, and until it was, the only place that name existed was the two implementations. This cookie was named bm_csrf before the project was renamed to backupd (#794). For one release the runtime accepts either name on a read, and a request arriving with only the old one has that same token re-issued under the name declared here rather than being given a second, different one - so a client that echoes the value it found under either name is accepted, and a client written against this document reads the current name and finds it."
+        "name": "retnd_csrf",
+        "description": "The other half of the double-submit pair above, and the half a client has to READ. The runtime issues this cookie on any response that does not already carry one, and a caller echoes its value back in X-CSRF-Token; the two are compared byte for byte. It is declared here because a client cannot implement the csrf requirement from this document without knowing which cookie to echo, and until it was, the only place that name existed was the two implementations. This cookie has had two earlier names, one per rename of this project: bm_csrf before #794 renamed it to backupd, and backupd_csrf before EPIC R (#885) renamed the product to retnd. For one release the runtime accepts any of the three names on a read, and a request arriving with only a deprecated one has that same token re-issued under the name declared here rather than being given a second, different one - so a client that echoes the value it found under either name is accepted, and a client written against this document reads the current name and finds it."
       },
       "bootstrapToken": {
         "type": "apiKey",
@@ -4060,7 +4060,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "The store id. This is the value POST /ssh-keys returned when the key was imported, the value BackupSetSpec.ssh_key_id takes, and the value `backupd backup-set patch --ssh-key-id` takes."
+            "description": "The store id. This is the value POST /ssh-keys returned when the key was imported, the value BackupSetSpec.ssh_key_id takes, and the value `retnd backup-set patch --ssh-key-id` takes."
           },
           "algorithm": {
             "type": "string",
@@ -5467,7 +5467,7 @@
           },
           "run_id": {
             "type": "string",
-            "description": "The snapshot run to hold. Absent means this backup set's last known good snapshot, which is the one an operator protecting \"the current restore point\" means and the one they would otherwise have to look up first. Both the service layer and `backupd snapshot hold` already read an unnamed run that way, so this is optional rather than required.",
+            "description": "The snapshot run to hold. Absent means this backup set's last known good snapshot, which is the one an operator protecting \"the current restore point\" means and the one they would otherwise have to look up first. Both the service layer and `retnd snapshot hold` already read an unnamed run that way, so this is optional rather than required.",
             "x-go-omitempty": true
           },
           "reason": {
@@ -5517,7 +5517,7 @@
             "items": {
               "type": "string"
             },
-            "description": "A program and its arguments, executed by the engine to print the value, as an argv rather than a shell string so nothing re-splits it. It is the caller's own words, so a client that renders this as a runnable command line is rendering something that may itself be a credential (`printf %s hunter2` is a valid secret command): `backupd` prints the flag with a placeholder and never the words."
+            "description": "A program and its arguments, executed by the engine to print the value, as an argv rather than a shell string so nothing re-splits it. It is the caller's own words, so a client that renders this as a runnable command line is rendering something that may itself be a credential (`printf %s hunter2` is a valid secret command): `retnd` prints the flag with a placeholder and never the words."
           }
         }
       },
@@ -5528,7 +5528,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "The variable name a hook will see. Held to the engine's own name rule, which refuses this product's reserved BACKUPD_ prefix: a hook cannot be given a variable that would shadow the run facts the engine injects."
+            "description": "The variable name a hook will see. Held to the engine's own name rule, which refuses this product's reserved RETND_ prefix, and its deprecated BACKUPD_ spelling for as long as the runtime still exports that too: a hook cannot be given a variable that would shadow the run facts the engine injects."
           },
           "value": {
             "type": "string",
@@ -5746,7 +5746,7 @@
           },
           "remote_exec_connection_ref": {
             "type": "string",
-            "description": "The declared remote execution connection this set's `.remote.sh` hooks run over, by name. Empty means this set has none, in which case a remote hook cannot run and validation says so rather than the run finding out. The wire spells it as config.yaml's own key so an operator greps for one word; `backupd` spells the same thing --exec-connection."
+            "description": "The declared remote execution connection this set's `.remote.sh` hooks run over, by name. Empty means this set has none, in which case a remote hook cannot run and validation says so rather than the run finding out. The wire spells it as config.yaml's own key so an operator greps for one word; `retnd` spells the same thing --exec-connection."
           },
           "environment": {
             "type": "array",
@@ -6712,7 +6712,7 @@
             ]
           },
           "409": {
-            "description": "Refused: CONFIG_REVISION_STALE, IDEMPOTENCY_KEY_CONFLICT, OPERATION_ALREADY_RUNNING, BACKUP_SET_HELD_FOR_EDITING, RESTORE_REFUSED, SNAPSHOT_NOT_HOLDABLE. The body is one of two shapes and the code decides which: CONFIG_REVISION_STALE carries the structured config_revision a client retries against, the others are the plain error envelope. oneOf rather than one schema with an optional config_revision, so a client reading .config_revision after a CONFIG_REVISION_STALE still gets a field the type system guarantees is there. SNAPSHOT_NOT_HOLDABLE is the state of the snapshot rather than of the request: the run committed no manifest, or its snapshot is already gone, already being deleted, or not in the repository at all, so a hold accepted now would protect nothing. Nothing about the body would make it work, which is why it is not an INVALID_REQUEST. Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "description": "Refused: CONFIG_REVISION_STALE, IDEMPOTENCY_KEY_CONFLICT, OPERATION_ALREADY_RUNNING, BACKUP_SET_HELD_FOR_EDITING, RESTORE_REFUSED, SNAPSHOT_NOT_HOLDABLE. The body is one of two shapes and the code decides which: CONFIG_REVISION_STALE carries the structured config_revision a client retries against, the others are the plain error envelope. oneOf rather than one schema with an optional config_revision, so a client reading .config_revision after a CONFIG_REVISION_STALE still gets a field the type system guarantees is there. SNAPSHOT_NOT_HOLDABLE is the state of the snapshot rather than of the request: the run committed no manifest, or its snapshot is already gone, already being deleted, or not in the repository at all, so a hold accepted now would protect nothing. Nothing about the body would make it work, which is why it is not an INVALID_REQUEST. Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or RETND_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7335,7 +7335,7 @@
             ]
           },
           "409": {
-            "description": "Refused: BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED, BACKUP_SET_CONNECTION_NOT_PROVEN, BACKUP_SET_SOURCE_NOT_WRITABLE. This id already has artifacts on record and the set would be created somewhere other than where they came from, re-sent with acknowledge_repoint once the message has been read; or the connection this set declares could not be proven, re-sent with skip_connection_check once the operator has decided to write it unproven; or the source answered and these credentials cannot write to it, so this set cannot delete from it, re-sent with read_only true (or after granting the account write permission on the source). Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "description": "Refused: BACKUP_SET_HISTORY_REPOINT_NOT_ACKNOWLEDGED, BACKUP_SET_CONNECTION_NOT_PROVEN, BACKUP_SET_SOURCE_NOT_WRITABLE. This id already has artifacts on record and the set would be created somewhere other than where they came from, re-sent with acknowledge_repoint once the message has been read; or the connection this set declares could not be proven, re-sent with skip_connection_check once the operator has decided to write it unproven; or the source answered and these credentials cannot write to it, so this set cannot delete from it, re-sent with read_only true (or after granting the account write permission on the source). Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or RETND_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13171,7 +13171,7 @@
             ]
           },
           "409": {
-            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or RETND_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13310,7 +13310,7 @@
             ]
           },
           "409": {
-            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or RETND_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13439,7 +13439,7 @@
             ]
           },
           "409": {
-            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or RETND_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13568,7 +13568,7 @@
             ]
           },
           "409": {
-            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or RETND_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13651,7 +13651,7 @@
             ]
           },
           "409": {
-            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "description": "Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so nothing here may open a repository. It is distinct from BACKUP_SET_NOT_INCREMENTAL, which is about the SET being the wrong kind: this one is answered by enabling incremental_engine.enabled in the deployment's configuration (or RETND_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13771,7 +13771,7 @@
             ]
           },
           "409": {
-            "description": "Refused: REPOSITORY_DOMAIN_EXISTS, REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE. This deployment already declares a domain of that id, and a second entry claiming it would be two boundaries with one name; or a maintenance record for that id already names an owner, so declaring it as maintained by THIS deployment would be a claim, and ADR 0017 moves maintenance ownership by transfer only -- re-send with maintenance_owner=another-instance to declare the boundary without claiming it. Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so a repository domain declared here is one nothing could ever open. It is answered by enabling incremental_engine.enabled in the deployment's configuration (or BACKUPD_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
+            "description": "Refused: REPOSITORY_DOMAIN_EXISTS, REPOSITORY_DOMAIN_MAINTAINED_ELSEWHERE. This deployment already declares a domain of that id, and a second entry claiming it would be two boundaries with one name; or a maintenance record for that id already names an owner, so declaring it as maintained by THIS deployment would be a claim, and ADR 0017 moves maintenance ownership by transfer only -- re-send with maintenance_owner=another-instance to declare the boundary without claiming it. Refused: INCREMENTAL_ENGINE_DISABLED. EPIC K's production feature gate (#789): this DEPLOYMENT is configured not to run the incremental engine, so a repository domain declared here is one nothing could ever open. It is answered by enabling incremental_engine.enabled in the deployment's configuration (or RETND_INCREMENTAL_ENGINE=1 in the engine process's environment), never by changing the request. Artifact backup sets are unaffected by it.",
             "content": {
               "application/json": {
                 "schema": {

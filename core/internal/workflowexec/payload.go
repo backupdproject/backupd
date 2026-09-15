@@ -30,7 +30,7 @@ var BashArgs = []string{"--noprofile", "--norc", "-s"}
 // than merely documented, because the alternative is a variable an
 // operator configured that this product silently overwrites -- which is a
 // variable that looks like it works, the exact failure
-// workflow.ValidateEnvName refuses the BACKUPD_ prefix to avoid.
+// workflow.ValidateEnvName refuses the RETND_ prefix to avoid.
 const payloadScriptVar = "__backupd_script"
 
 // StdinPayload is the whole of what an executor writes to bash's standard

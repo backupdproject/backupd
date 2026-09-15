@@ -85,7 +85,7 @@ func launchVectors(t *testing.T) (Container, []launchVector) {
 		stepID:     "step1",
 		workDir:    filepath.Join(root, "work"),
 		scriptPath: filepath.Join(root, "step1.script"),
-		envNames:   []string{"BACKUPD_WORK_DIR", "PGPASSWORD"},
+		envNames:   []string{"RETND_WORK_DIR", "PGPASSWORD"},
 	}
 
 	return container, []launchVector{

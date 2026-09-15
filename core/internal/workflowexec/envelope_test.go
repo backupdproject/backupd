@@ -202,12 +202,12 @@ func TestProcessEnvAppliesLayersInOrderAndKeepsTheLastWord(t *testing.T) {
 
 	got, err := ProcessEnv(
 		[]string{"PATH=/bin", "BASH_ENV=/tmp/x"},
-		[]string{"PATH=/opt/bin", "PGDATABASE=orders", "BACKUPD_RUN_ID=r1"},
+		[]string{"PATH=/opt/bin", "PGDATABASE=orders", "RETND_RUN_ID=r1"},
 	)
 	if err != nil {
 		t.Fatalf("ProcessEnv: %v", err)
 	}
-	want := []string{"PATH=/opt/bin", "PGDATABASE=orders", "BACKUPD_RUN_ID=r1"}
+	want := []string{"PATH=/opt/bin", "PGDATABASE=orders", "RETND_RUN_ID=r1"}
 	if strings.Join(got, "\x1f") != strings.Join(want, "\x1f") {
 		t.Errorf("ProcessEnv = %q, want %q", got, want)
 	}

@@ -51,7 +51,7 @@ func incrementalConfig() Config {
 		// repository (#783): env rather than a file so the fixture does
 		// not have to own a path, and secretref's custody rules are its
 		// own package's subject.
-		Passphrase: Passphrase{Env: "BACKUPD_TEST_REPO_PASSPHRASE"},
+		Passphrase: Passphrase{Env: "RETND_TEST_REPO_PASSPHRASE"},
 	}}
 
 	incremental := c.Sources[0].BackupSets[0]

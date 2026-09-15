@@ -261,7 +261,7 @@ func TestUI_ProxyErrorMarkerIsOnlyEverThisHops(t *testing.T) {
 // that set nothing must produce byte-identical output to the one before
 // this instrumentation existed, on the path that actually works.
 func TestUI_UpstreamTraceIsSilentByDefault(t *testing.T) {
-	t.Setenv("BACKUPD_DEBUG", "")
+	t.Setenv("RETND_DEBUG", "")
 	t.Setenv("RM_DEBUG", "")
 	t.Setenv("LOG_LEVEL", "")
 
@@ -547,7 +547,7 @@ func TestUI_StaticResponsesCarryACorrelationId(t *testing.T) {
 // ResponseHeaderTimeout" - at DEFAULT level, since a browser that gets
 // no answer is not a debug-only event.
 func TestUI_UnreachableUpstreamStillReportsHowLongTheBrowserWaited(t *testing.T) {
-	t.Setenv("BACKUPD_DEBUG", "")
+	t.Setenv("RETND_DEBUG", "")
 	t.Setenv("RM_DEBUG", "")
 	t.Setenv("LOG_LEVEL", "")
 

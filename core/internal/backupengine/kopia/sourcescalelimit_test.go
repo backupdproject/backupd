@@ -73,7 +73,7 @@ const (
 // underneath it -- this file's absolute ceiling, and #784's non-growth
 // assertion that the cost per entry falls rather than rises with the
 // namespace -- so an extrapolation from 200,000 to 1,000,000 is an upper
-// bound rather than a guess. BACKUPD_HUGE_DIR_ENTRIES=1000000 runs the
+// bound rather than a guess. RETND_HUGE_DIR_ENTRIES=1000000 runs the
 // real thing on a machine that can hold it, and the same assertions
 // apply unchanged.
 func TestOneSourceStaysWithinTheDocumentedMemoryBound(t *testing.T) {

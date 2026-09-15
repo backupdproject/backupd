@@ -3,11 +3,13 @@ package obs
 import (
 	"os"
 	"strings"
+
+	"github.com/retnd/retnd/core/envcompat"
 )
 
 // LevelFromEnv is how a deployment turns this sink up without a flag, a
 // config key or a restart argument nobody can remember over a phone call:
-// LOG_LEVEL=debug, or BACKUPD_DEBUG=1 as the shortcut.
+// LOG_LEVEL=debug, or RETND_DEBUG=1 as the shortcut.
 //
 // It exists here, rather than at the one or two places that build a
 // Logger, because issue #730's whole difficulty was that the two
@@ -22,22 +24,24 @@ import (
 // apps/ by construction. What keeps them honest is that they read the
 // same variables with the same precedence and the same fallback,
 // each covered by its own package's test, and that this comment and
-// webhost's own say so.
+// webhost's own say so. The one thing they DO share is core/envcompat,
+// which is reachable from both and owns the deprecated names, because
+// "one notice per name per process" is a property neither reader can
+// hold on its own when `serve` runs both of them in one process.
 //
-// BACKUPD_DEBUG wins over LOG_LEVEL because it is the shortcut an
+// RETND_DEBUG wins over LOG_LEVEL because it is the shortcut an
 // operator is told to set, and an unparseable LOG_LEVEL falls back to
 // LevelInfo rather than refusing to start: a typo in a diagnostic knob
 // must never take a backup host down.
 //
-// RM_DEBUG is the same shortcut under this project's old name
-// (rclone-manager, issue #794) and is DEPRECATED: it is still honoured
-// so an upgrade does not silently turn a diagnosing operator's logs
-// back off, and it will be dropped a release after BACKUPD_DEBUG. The
-// two are OR'd rather than ranked because neither has ever had an "off"
-// value - only the documented 1 means anything, so a deployment that
-// sets both, or that sets the old one on one container and the new one
-// on the other, gets debug either way. BACKUPD_DEBUG is the spelling
-// docs/deployment.md and the compose files name.
+// Two DEPRECATED spellings of that shortcut are still read, both under
+// names this project used before (EPIC R, #885, FR-37): BACKUPD_DEBUG,
+// which is the name docs/deployment.md and the compose files named until
+// this rename, and RM_DEBUG, which is rclone-manager's (#794). Both are
+// still honoured so an upgrade does not silently turn a diagnosing
+// operator's logs back off, and each produces one deprecation notice per
+// process the first time it is read. RETND_DEBUG is the only spelling
+// this product writes or documents.
 func LevelFromEnv() Level {
 	if debugShortcut() {
 		return LevelDebug
@@ -54,10 +58,28 @@ func LevelFromEnv() Level {
 	}
 }
 
+// debugEnv is the one-variable debug shortcut and the two deprecated
+// names it has had. Package-level so both this file's reader and its test
+// name the same thing, and so webhost's copy can be compared against it
+// by eye in a review.
+var debugEnv = envcompat.Rename{
+	Current: "RETND_DEBUG",
+	Legacy:  []string{"BACKUPD_DEBUG", "RM_DEBUG"},
+}
+
 // debugShortcut reports whether the one-variable debug shortcut is set,
-// under its own name or under the deprecated RM_DEBUG alias. Only the
-// documented "1" counts, under either name: a knob whose typos mean
+// under its own name or under either deprecated alias. Only the
+// documented "1" counts, under every name: a knob whose typos mean
 // something is a knob that surprises the operator reading it back.
+//
+// The three names are OR'd rather than ranked (envcompat.Any), which is
+// the rule this knob has always had and the reason it exists: none of
+// them has ever had an "off" value, so a deployment that sets two of
+// them, or the old one on one container and the new one on the other,
+// gets debug either way. Ranking them would make an operator who asked
+// for debug twice get INFO, which is a behaviour change and not a
+// rename. The variables whose values mean something in both directions
+// are ranked instead (core/internal/config's incremental-engine gate).
 func debugShortcut() bool {
-	return os.Getenv("BACKUPD_DEBUG") == "1" || os.Getenv("RM_DEBUG") == "1"
+	return envcompat.Any(debugEnv, "1")
 }

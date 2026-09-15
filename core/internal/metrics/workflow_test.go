@@ -82,13 +82,13 @@ func TestRenderWorkflowFamilyNamesAndTypes(t *testing.T) {
 	var empty metrics.Workflow
 
 	want := map[string]string{
-		"backupd_workflow_runs_total":                 "counter",
-		"backupd_workflow_run_duration_seconds":       "histogram",
-		"backupd_workflow_step_duration_seconds":      "histogram",
-		"backupd_workflow_step_failures_total":        "counter",
-		"backupd_workflow_step_timeouts_total":        "counter",
-		"backupd_workflow_remote_exec_failures_total": "counter",
-		"backupd_workflow_log_truncations_total":      "counter",
+		"retnd_workflow_runs_total":                 "counter",
+		"retnd_workflow_run_duration_seconds":       "histogram",
+		"retnd_workflow_step_duration_seconds":      "histogram",
+		"retnd_workflow_step_failures_total":        "counter",
+		"retnd_workflow_step_timeouts_total":        "counter",
+		"retnd_workflow_remote_exec_failures_total": "counter",
+		"retnd_workflow_log_truncations_total":      "counter",
 	}
 
 	for _, rendered := range []string{empty.RenderWorkflow(), labelledWorkflow(t).RenderWorkflow()} {
@@ -315,8 +315,8 @@ func TestWorkflowHistogramsAreArithmeticallySound(t *testing.T) {
 	samples := parseSamples(t, w.RenderWorkflow())
 
 	for _, family := range []string{
-		"backupd_workflow_run_duration_seconds",
-		"backupd_workflow_step_duration_seconds",
+		"retnd_workflow_run_duration_seconds",
+		"retnd_workflow_step_duration_seconds",
 	} {
 		t.Run(family, func(t *testing.T) {
 			var (

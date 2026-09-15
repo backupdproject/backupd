@@ -268,7 +268,7 @@ type SetWorkflow struct {
 // variable, deliberately configured, which is a thing operators do.
 type EnvironmentVariable struct {
 	// Name must match workflow.EnvNamePattern and must not be in the
-	// BACKUPD_ namespace. See workflow.ValidateEnvName, which is the one
+	// RETND_ namespace. See workflow.ValidateEnvName, which is the one
 	// place that rule lives: a copy here would be a second rule, and two
 	// rules disagree the first time one of them learns a new spelling.
 	Name string `yaml:"name"`

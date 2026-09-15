@@ -90,7 +90,7 @@ func TestRepositoryCreate_IsRefusedWhenTheIncrementalEngineIsGatedOff(t *testing
 		t.Fatalf("ReadFile: %v", err)
 	}
 
-	t.Setenv("BACKUPD_INCREMENTAL_ENGINE", "0")
+	t.Setenv("RETND_INCREMENTAL_ENGINE", "0")
 
 	var code int
 	stderr := captureStderr(t, func() {
@@ -138,7 +138,7 @@ func TestRepositoryCreate_RefusesAMalformedInvocation(t *testing.T) {
 		{"no passphrase reference", []string{"repository", "create", "offsite-b2", "--isolation", "shared"}},
 		{"two passphrase references", []string{
 			"repository", "create", "offsite-b2", "--isolation", "shared",
-			"--passphrase-file", "/etc/backupd/p", "--passphrase-env", "BACKUPD_P",
+			"--passphrase-file", "/etc/backupd/p", "--passphrase-env", "RETND_P",
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -407,7 +407,7 @@ socket is in or under. `--hook-mount /run:rw` names no socket and hands
 the same file to the same script, so the refusal is about the resolved
 tree (both `/var/run/docker.sock` and `/run/docker.sock`, plus a
 `DOCKER_HOST` unix path) rather than about the string. Mounts are IDENTITY
-mounts, so `BACKUPD_WORK_DIR` means one thing on both sides and a path in
+mounts, so `RETND_WORK_DIR` means one thing on both sides and a path in
 a hook's log is a path an operator can find.
 
 **The network can be widened but not unhinged.** `--hook-network`

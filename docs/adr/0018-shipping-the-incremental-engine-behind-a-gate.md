@@ -68,7 +68,7 @@ incremental_engine:
 ```
 
 `config.Config.IncrementalEngine.Enabled`, with
-`BACKUPD_INCREMENTAL_ENGINE` overriding the file **in both directions**
+`RETND_INCREMENTAL_ENGINE` overriding the file **in both directions**
 (`1|true|yes|on` enables, `0|false|no|off` disables, unset or empty
 defers to the file), resolved by `config.IncrementalEngineEnabled()` and
 nowhere else.

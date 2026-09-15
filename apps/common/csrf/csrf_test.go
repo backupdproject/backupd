@@ -110,11 +110,12 @@ func TestVerify_MatchingCookieAndHeaderSucceeds(t *testing.T) {
 	}
 }
 
-// #794's read-compat window: the three things that have to hold while
-// LegacyCookieName is still accepted, each of which is a live 403 for a
-// real browser if it doesn't.
+// The read-compat window, for every name this cookie has had: #794's
+// bm_csrf and EPIC R's backupd_csrf (#889). Three things have to hold
+// while a deprecated name is still accepted, each of which is a live 403
+// for a real browser if it doesn't.
 //
-// A client cached from before the rename echoes the value it found under
+// A client cached from before a rename echoes the value it found under
 // the old name, so Verify has to accept it. The upgraded runtime also has
 // to hand that client's token to the CURRENT name rather than mint a
 // second one, because a page that then reloads reads the current name and
@@ -124,49 +125,61 @@ func TestVerify_MatchingCookieAndHeaderSucceeds(t *testing.T) {
 // both names has to be settled by the current one, so the stale cookie
 // cannot outvote a freshly issued token.
 
-func TestVerify_AcceptsTheLegacyCookieName(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req.AddCookie(&http.Cookie{Name: LegacyCookieName, Value: "token-abc"})
-	req.Header.Set(HeaderName, "token-abc")
+func TestVerify_AcceptsEveryDeprecatedCookieName(t *testing.T) {
+	for _, deprecated := range LegacyCookieNames() {
+		t.Run(deprecated, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			req.AddCookie(&http.Cookie{Name: deprecated, Value: "token-abc"})
+			req.Header.Set(HeaderName, "token-abc")
 
-	if err := Verify(req); err != nil {
-		t.Fatalf("Verify with only the legacy %s cookie = %v, want nil", LegacyCookieName, err)
+			if err := Verify(req); err != nil {
+				t.Fatalf("Verify with only the deprecated %s cookie = %v, want nil", deprecated, err)
+			}
+		})
 	}
 }
 
-func TestVerify_PrefersTheCurrentCookieNameOverTheLegacyOne(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req.AddCookie(&http.Cookie{Name: CookieName, Value: "current-token"})
-	req.AddCookie(&http.Cookie{Name: LegacyCookieName, Value: "stale-token"})
-	req.Header.Set(HeaderName, "current-token")
+func TestVerify_PrefersTheCurrentCookieNameOverADeprecatedOne(t *testing.T) {
+	for _, deprecated := range LegacyCookieNames() {
+		t.Run(deprecated, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			req.AddCookie(&http.Cookie{Name: CookieName, Value: "current-token"})
+			req.AddCookie(&http.Cookie{Name: deprecated, Value: "stale-token"})
+			req.Header.Set(HeaderName, "current-token")
 
-	if err := Verify(req); err != nil {
-		t.Fatalf("Verify echoing the current cookie's value = %v, want nil", err)
-	}
+			if err := Verify(req); err != nil {
+				t.Fatalf("Verify echoing the current cookie's value = %v, want nil", err)
+			}
 
-	req.Header.Set(HeaderName, "stale-token")
-	if err := Verify(req); !errors.Is(err, ErrHeaderMismatch) {
-		t.Fatalf("Verify echoing the stale cookie's value = %v, want errors.Is(err, ErrHeaderMismatch)", err)
+			req.Header.Set(HeaderName, "stale-token")
+			if err := Verify(req); !errors.Is(err, ErrHeaderMismatch) {
+				t.Fatalf("Verify echoing the stale cookie's value = %v, want errors.Is(err, ErrHeaderMismatch)", err)
+			}
+		})
 	}
 }
 
-func TestEnsureCookie_CarriesALegacyTokenForwardOntoTheCurrentName(t *testing.T) {
-	handler := EnsureCookie(func(*http.Request) bool { return false })(http.NotFoundHandler())
+func TestEnsureCookie_CarriesADeprecatedTokenForwardOntoTheCurrentName(t *testing.T) {
+	for _, deprecated := range LegacyCookieNames() {
+		t.Run(deprecated, func(t *testing.T) {
+			handler := EnsureCookie(func(*http.Request) bool { return false })(http.NotFoundHandler())
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: LegacyCookieName, Value: "from-before-the-rename"})
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.AddCookie(&http.Cookie{Name: deprecated, Value: "from-before-the-rename"})
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
 
-	cookies := rec.Result().Cookies()
-	if len(cookies) != 1 {
-		t.Fatalf("cookies = %v, want exactly one (the legacy token re-issued under %s)", cookies, CookieName)
-	}
-	if cookies[0].Name != CookieName {
-		t.Errorf("issued cookie name = %q, want %q (the legacy name is never written)", cookies[0].Name, CookieName)
-	}
-	if cookies[0].Value != "from-before-the-rename" {
-		t.Errorf("issued cookie value = %q, want the legacy token carried forward unchanged", cookies[0].Value)
+			cookies := rec.Result().Cookies()
+			if len(cookies) != 1 {
+				t.Fatalf("cookies = %v, want exactly one (the deprecated token re-issued under %s)", cookies, CookieName)
+			}
+			if cookies[0].Name != CookieName {
+				t.Errorf("issued cookie name = %q, want %q (a deprecated name is never written)", cookies[0].Name, CookieName)
+			}
+			if cookies[0].Value != "from-before-the-rename" {
+				t.Errorf("issued cookie value = %q, want the deprecated token carried forward unchanged", cookies[0].Value)
+			}
+		})
 	}
 }
 

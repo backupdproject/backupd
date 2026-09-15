@@ -313,7 +313,7 @@ func calls(call *ast.CallExpr, name string) bool {
 // never exists when the fault is first reported. What a default
 // deployment must still not pay is the extra LINE.
 func TestListActivity_ServesNoDebugRecordByDefault(t *testing.T) {
-	t.Setenv("BACKUPD_DEBUG", "")
+	t.Setenv("RETND_DEBUG", "")
 	t.Setenv("RM_DEBUG", "")
 	t.Setenv("LOG_LEVEL", "")
 
@@ -334,7 +334,7 @@ func TestListActivity_ServesNoDebugRecordByDefault(t *testing.T) {
 // so without one on the success path there is no way to join "the
 // browser could not read this" to "here is what was sent".
 func TestListActivity_DebugRecordsWhatWasServedUnderAQuotableId(t *testing.T) {
-	t.Setenv("BACKUPD_DEBUG", "1")
+	t.Setenv("RETND_DEBUG", "1")
 	t.Setenv("RM_DEBUG", "")
 
 	rt, log := newLoggedRouter(t)
@@ -397,13 +397,13 @@ func TestListActivity_DebugRecordsWhatWasServedUnderAQuotableId(t *testing.T) {
 
 // TestListActivity_DebugStillRespondsToTheDeprecatedRMDebug is the
 // upgrade clause of issue #794's rename. The knob an operator is given
-// over a phone call is now BACKUPD_DEBUG, but a deployment upgraded
+// over a phone call is now RETND_DEBUG, but a deployment upgraded
 // without its compose file being re-derived still says RM_DEBUG, and an
 // operator mid-diagnosis must not find that their logs went quiet
 // because we renamed the project. The old spelling stays honoured, as a
 // deprecated alias, for one release.
 func TestListActivity_DebugStillRespondsToTheDeprecatedRMDebug(t *testing.T) {
-	t.Setenv("BACKUPD_DEBUG", "")
+	t.Setenv("RETND_DEBUG", "")
 	t.Setenv("RM_DEBUG", "1")
 
 	rt, log := newLoggedRouter(t)

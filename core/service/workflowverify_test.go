@@ -143,7 +143,7 @@ func TestASaveSucceedsWithACleanScript(t *testing.T) {
 	writeHook(t, root, "global-before", "quiesce.local.sh",
 		"#!/usr/bin/env bash",
 		"set -euo pipefail",
-		`echo "${BACKUPD_RUN_ID:-none}"`,
+		`echo "${RETND_RUN_ID:-none}"`,
 	)
 
 	if _, err := svc.UpdateWorkflowSettings(context.Background(), UpdateWorkflowSettingsRequest{

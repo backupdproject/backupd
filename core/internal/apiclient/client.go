@@ -35,19 +35,19 @@ import (
 // comparison covers it and so a reader can see the whole credential set in
 // one place.
 const (
-	sessionCookieName = "backupd_session"
-	csrfCookieName    = "backupd_csrf"
+	sessionCookieName = "retnd_session"
+	csrfCookieName    = "retnd_csrf"
 	csrfHeaderName    = "X-CSRF-Token"
 )
 
 // This client reads only the current names, with no legacy fallback, and
-// that asymmetry with the server (which reads both for one release after
-// #794) is deliberate rather than an omission. The compat window exists
-// for credentials already in a jar that outlives the upgrade; this
-// client's jar is per-process and per-invocation, so every token it ever
-// compares was issued by the engine it is talking to, in the same run,
-// under the current name. A fallback here would only add a name nothing
-// can produce.
+// that asymmetry with the server (which reads the two deprecated names
+// for one release after #794 and EPIC R's #885) is deliberate rather
+// than an omission. The compat window exists for credentials already in
+// a jar that outlives the upgrade; this client's jar is per-process and
+// per-invocation, so every token it ever compares was issued by the
+// engine it is talking to, in the same run, under the current name. A
+// fallback here would only add a name nothing can produce.
 
 // defaultTimeout bounds one request, not one command. Every operation this
 // package reaches is a configuration read or write against a local
@@ -69,7 +69,14 @@ const defaultTimeout = 30 * time.Second
 // A caller that already knows its build (cmd/retnd does, from
 // -ldflags) says so through Config.UserAgent, and this is what stands in
 // until one does.
-const defaultUserAgent = "backupd-cli (api " + apicontract.Version + ")"
+//
+// This name is a HARD CUT at the rename: there is no
+// `backupd-cli` fallback, because a User-Agent is read by log filters
+// and audit queries rather than by this product, and a client that sent
+// two names would make both of those wrong. It is called out in
+// CHANGELOG.md's [Unreleased] entry for exactly that reason -- somebody
+// downstream may be matching on it.
+const defaultUserAgent = "retnd-cli (api " + apicontract.Version + ")"
 
 // maxResponseBytes caps what is read from one response. The largest thing
 // on this API is a backup-set or artifact listing, and the cap exists so

@@ -119,10 +119,10 @@ describe("the merge", () => {
     // a configuration written before the reservation. What must not
     // happen is the operator's value being reported as effective.
     const merged = mergeWorkflowEnvironment(
-      [{ name: "BACKUPD_RUN_ID", value: "mine", hasValue: true }],
+      [{ name: "RETND_RUN_ID", value: "mine", hasValue: true }],
       []
     );
-    const row = merged.find((entry) => entry.name === "BACKUPD_RUN_ID" && entry.source === "builtin");
+    const row = merged.find((entry) => entry.name === "RETND_RUN_ID" && entry.source === "builtin");
 
     expect(row?.shadowed).toEqual(["global"]);
     expect(row?.entry).toBeUndefined();
@@ -130,11 +130,11 @@ describe("the merge", () => {
 
   it("reserves the whole BACKUPD_ namespace and the bare name, not just today's list", () => {
     expect(isReservedEnvName("BACKUPD")).toBe(true);
-    expect(isReservedEnvName("BACKUPD_RUN_ID")).toBe(true);
+    expect(isReservedEnvName("RETND_RUN_ID")).toBe(true);
     // The point of a prefix rule: a name this build has never heard of is
     // reserved too, so an operator cannot configure one that silently
     // stops working when the product starts setting it.
-    expect(isReservedEnvName("BACKUPD_SOMETHING_NEW")).toBe(true);
+    expect(isReservedEnvName("RETND_SOMETHING_NEW")).toBe(true);
     expect(isReservedEnvName("PGHOST")).toBe(false);
     expect(isReservedEnvName("MY_BACKUPD_FLAG")).toBe(false);
   });
@@ -176,7 +176,7 @@ describe("what the editor renders", () => {
   it("marks a built-in read-only, with no control that could change it", () => {
     renderEditor("set");
 
-    const builtin = rowFor("BACKUPD_RUN_ID");
+    const builtin = rowFor("RETND_RUN_ID");
     expect(within(builtin).getByText("Built-in")).toBeTruthy();
     expect(within(builtin).getByText("set per run")).toBeTruthy();
     expect(within(builtin).getByText("cannot be overridden")).toBeTruthy();
@@ -253,7 +253,7 @@ describe("writing a variable", () => {
     const onSet = vi.fn<SetVariable>(() => Promise.resolve(undefined));
     renderEditor("global", { onSet });
 
-    await user.type(screen.getByLabelText("Name"), "BACKUPD_BACKUP_STATUS");
+    await user.type(screen.getByLabelText("Name"), "RETND_BACKUP_STATUS");
 
     expect(screen.getByRole("button", { name: "Save variable" })).toBeDisabled();
     expect(screen.getByText(/set by this product from the run it belongs to/)).toBeTruthy();

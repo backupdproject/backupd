@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/retnd/retnd/apps/common/platform/capabilities"
+	"github.com/retnd/retnd/core/envcompat"
 )
 
 // The route table, which is where this package's security tiering
@@ -145,21 +146,22 @@ func DebugEnabled() bool { return envLogLevel() == slog.LevelDebug }
 // before there was anything to configure. An operator diagnosing a
 // report we cannot reproduce (issue #730: a browser that gets no HTTP
 // response at all while curl gets a clean 401) sets LOG_LEVEL=debug, or
-// BACKUPD_DEBUG=1 as the shortcut, and gets the debug events this
+// RETND_DEBUG=1 as the shortcut, and gets the debug events this
 // package and serve/ui.go emit; nobody who sets neither sees one extra
 // line.
 //
-// BACKUPD_DEBUG wins over LOG_LEVEL because it is the shortcut an
+// RETND_DEBUG wins over LOG_LEVEL because it is the shortcut an
 // operator is told to set over a phone call, and an unparseable
 // LOG_LEVEL falls back to INFO rather than refusing to start: a typo in
 // a diagnostic knob must never take a backup host down.
 //
-// RM_DEBUG is the same shortcut under this project's old name
-// (rclone-manager, issue #794) and is DEPRECATED: it is still honoured
-// so an upgrade does not silently turn a diagnosing operator's logs back
-// off, and it will be dropped a release after BACKUPD_DEBUG. The two are
-// OR'd rather than ranked because neither has ever had an "off" value -
-// only the documented 1 means anything.
+// Two DEPRECATED spellings are still read, each under a name this
+// project used before (EPIC R, #885, FR-37): BACKUPD_DEBUG, the name
+// this shortcut had until the rename to retnd, and RM_DEBUG,
+// rclone-manager's (#794). Both are still honoured so an upgrade does
+// not silently turn a diagnosing operator's logs back off, and
+// core/envcompat ranks them behind the current name and prints one
+// deprecation notice per name per process.
 //
 // core/internal/obs.LevelFromEnv is the other reader of these same
 // variables, with the same precedence and the same fallback, and it is
@@ -169,8 +171,11 @@ func DebugEnabled() bool { return envLogLevel() == slog.LevelDebug }
 // to agree: a deployment where the two containers answered "how loud am
 // I" differently is the half of #730 where an operator got the proxy
 // trace and nothing from the process it describes. That includes the
-// deprecated alias: an operator who upgrades one container before the
-// other must not end up with one of them silently quiet.
+// deprecated aliases: an operator who upgrades one container before the
+// other must not end up with one of them silently quiet. The one thing
+// the two readers DO share is core/envcompat, which both can import and
+// which is what keeps "one notice per name per process" true when
+// `serve` runs both readers in a single process.
 func envLogLevel() slog.Level {
 	if debugShortcutEnv() {
 		return slog.LevelDebug
@@ -188,13 +193,17 @@ func envLogLevel() slog.Level {
 }
 
 // debugShortcutEnv reports whether the one-variable debug shortcut is
-// set, under its own name or under the deprecated RM_DEBUG alias. Only
-// the documented "1" counts, under either name: a knob whose typos mean
+// set, under its own name or under either deprecated alias. Only the
+// documented "1" counts, under every name: a knob whose typos mean
 // something is a knob that surprises the operator reading it back. The
-// engine's core/internal/obs.debugShortcut is the same two lines, for
-// the import-direction reason envLogLevel's own doc gives.
+// engine's core/internal/obs.debugShortcut is the same two lines over
+// the same envcompat.Rename, for the import-direction reason
+// envLogLevel's own doc gives.
 func debugShortcutEnv() bool {
-	return os.Getenv("BACKUPD_DEBUG") == "1" || os.Getenv("RM_DEBUG") == "1"
+	return envcompat.Any(envcompat.Rename{
+		Current: "RETND_DEBUG",
+		Legacy:  []string{"BACKUPD_DEBUG", "RM_DEBUG"},
+	}, "1")
 }
 
 // handlers bundles what the HTTP methods in handlers_system.go and

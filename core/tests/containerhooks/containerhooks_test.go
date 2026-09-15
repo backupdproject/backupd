@@ -201,16 +201,16 @@ func TestTheEnvelopeHoldsInsideTheContainer(t *testing.T) {
 	out := &collector{}
 
 	values := map[string]string{
-		"BACKUPD_TEST_SUBSTITUTION": "$(touch /tmp/pwned)`touch /tmp/pwned`",
-		"BACKUPD_TEST_QUOTES":       `he said "hi"; rm -rf /; '\''`,
-		"BACKUPD_TEST_NEWLINE":      "first\nsecond\ttab\\",
-		"BACKUPD_TEST_UTF8":         "café — 日本語 — Ω — 🔒",
+		"RETND_TEST_SUBSTITUTION": "$(touch /tmp/pwned)`touch /tmp/pwned`",
+		"RETND_TEST_QUOTES":       `he said "hi"; rm -rf /; '\''`,
+		"RETND_TEST_NEWLINE":      "first\nsecond\ttab\\",
+		"RETND_TEST_UTF8":         "café — 日本語 — Ω — 🔒",
 	}
 	names := []string{
-		"BACKUPD_TEST_SUBSTITUTION",
-		"BACKUPD_TEST_QUOTES",
-		"BACKUPD_TEST_NEWLINE",
-		"BACKUPD_TEST_UTF8",
+		"RETND_TEST_SUBSTITUTION",
+		"RETND_TEST_QUOTES",
+		"RETND_TEST_NEWLINE",
+		"RETND_TEST_UTF8",
 	}
 	vars := make([]hostrunner.EnvVar, 0, len(names)+5)
 	for _, name := range names {
@@ -300,7 +300,7 @@ func TestTheContainmentIsWhatItClaims(t *testing.T) {
 printf 'socket=%s\n' "$(ls /var/run/docker.sock 2>/dev/null || ls /run/docker.sock 2>/dev/null || echo absent)"
 printf 'rootfs=%s\n' "$(touch /forbidden 2>/dev/null && echo writable || echo read-only)"
 printf 'tmp=%s\n' "$(touch /tmp/scratch 2>/dev/null && echo writable || echo read-only)"
-printf 'workdir=%s\n' "$(touch "$BACKUPD_WORK_DIR/dump" 2>/dev/null && echo writable || echo read-only)"
+printf 'workdir=%s\n' "$(touch "$RETND_WORK_DIR/dump" 2>/dev/null && echo writable || echo read-only)"
 printf 'network=%s\n' "$( (exec 3<>/dev/tcp/1.1.1.1/443) >/dev/null 2>&1 && echo reachable || echo none)"
 printf 'privileged=%s\n' "$(cat /proc/self/status 2>/dev/null | awk '/CapEff/ {print $2}')"
 `

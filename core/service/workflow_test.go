@@ -170,7 +170,7 @@ func TestAnExplicitlyEmptyWorkflowVariableIsAccepted(t *testing.T) {
 func TestAReservedWorkflowVariableNameIsRefused(t *testing.T) {
 	t.Parallel()
 
-	err := validateWorkflowEnvVar(WorkflowEnvVar{Name: "BACKUPD_RUN_ID", Value: "x", HasValue: true})
+	err := validateWorkflowEnvVar(WorkflowEnvVar{Name: "RETND_RUN_ID", Value: "x", HasValue: true})
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("validateWorkflowEnvVar = %v, want ErrInvalidRequest", err)
 	}
@@ -231,9 +231,9 @@ func TestTheObserverSpeaksTheEnginesVocabulary(t *testing.T) {
 	// either vocabulary is renamed on one side, both of these go to
 	// zero and this fails.
 	for _, want := range []string{
-		`backupd_workflow_step_timeouts_total{backup_set="/",scope="set",phase="before",target="local"} 6`,
-		`backupd_workflow_remote_exec_failures_total{backup_set="/",disposition="transport_lost"} 6`,
-		`backupd_workflow_remote_exec_failures_total{backup_set="/",disposition="not_attempted"} 6`,
+		`retnd_workflow_step_timeouts_total{backup_set="/",scope="set",phase="before",target="local"} 6`,
+		`retnd_workflow_remote_exec_failures_total{backup_set="/",disposition="transport_lost"} 6`,
+		`retnd_workflow_remote_exec_failures_total{backup_set="/",disposition="not_attempted"} 6`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("the exporter did not classify the engine's own vocabulary; missing:\n%s\n\ngot:\n%s", want, rendered)

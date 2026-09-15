@@ -172,21 +172,21 @@ type WorkflowPlan struct {
 	Obligations []workflow.CleanupObligation
 
 	// Facts are the deployment's own answers to the built-ins this
-	// product injects but cannot derive: BACKUPD_SOURCE_HOST,
-	// BACKUPD_SOURCE_PATH, BACKUPD_DESTINATION.
+	// product injects but cannot derive: RETND_SOURCE_HOST,
+	// RETND_SOURCE_PATH, RETND_DESTINATION.
 	//
 	// They are persisted for the same reason Env is, and the case is the
 	// same one: a RECOVERY. The built-ins are injected per call rather
 	// than stored anywhere, so a resumed cleanup that could not read
-	// these back would hand its hooks an empty BACKUPD_SOURCE_PATH --
-	// and `umount "$BACKUPD_SOURCE_PATH"` with an empty variable is a
+	// these back would hand its hooks an empty RETND_SOURCE_PATH --
+	// and `umount "$RETND_SOURCE_PATH"` with an empty variable is a
 	// hook that unmounts nothing and reports success, which is the one
 	// outcome a recovery must not produce.
 	//
 	// They go in workflow_run_env beside the configured variables,
 	// because they are literal values of named variables and that is
 	// what the table holds. What keeps the two apart on the way back out
-	// is the reservation rule: a fact's name is always a BACKUPD_ one,
+	// is the reservation rule: a fact's name is always a RETND_ one,
 	// which is exactly what an operator's variable can never be
 	// (workflow.ValidateEnvName), so workflowRunEnvironment skips them
 	// and WorkflowRunFacts reads only them.
@@ -374,7 +374,7 @@ func sortedFactNames(facts map[string]string) []string {
 // row here naming anything else would either be refused at resolution
 // time (a run that cannot be recovered) or, worse, would be a variable an
 // operator never configured arriving in a hook with whatever is in the
-// database. The bare BACKUPD name and the run's own identity are
+// database. The bare RETND name and the run's own identity are
 // built-ins this product states itself; a caller that passes one is
 // claiming a fact on this product's behalf, and the engine's built-in
 // layer overwrites it anyway, so it is refused here rather than silently
@@ -781,7 +781,7 @@ func (j *Journal) RecoverWorkflowPlan(ctx context.Context, runID string) (workfl
 // because this write path produces those on purpose: a run's facts live
 // in this table (see WorkflowPlan.Facts) and they are not part of the
 // configured environment. Handing one to NewEnvironment would refuse the
-// whole plan -- an operator cannot configure a BACKUPD_ name, which is
+// whole plan -- an operator cannot configure a RETND_ name, which is
 // precisely why a fact is safe to store beside them.
 func (j *Journal) workflowRunEnvironment(ctx context.Context, runID string) (workflow.Environment, error) {
 	rows, err := j.db.QueryContext(ctx,

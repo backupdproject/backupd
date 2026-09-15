@@ -377,38 +377,56 @@ export const ENV_SOURCE_LABELS: Record<EnvSource, string> = {
  *
  * Listed rather than derived, because the enumeration IS the contract a
  * hook author writes against: a variable that is set but not listed is
- * one nobody can rely on. They are reserved — the whole `BACKUPD_` prefix
+ * one nobody can rely on. They are reserved — the whole `RETND_` prefix
  * is — so an operator cannot configure one, which is why they are
- * read-only on every surface: a hook reading `BACKUPD_BACKUP_STATUS` has
+ * read-only on every surface: a hook reading `RETND_BACKUP_STATUS` has
  * to be reading what this product observed rather than a value somebody
  * wrote into a config file.
+ *
+ * Each one is ALSO exported under its previous `BACKUPD_` spelling for
+ * one release (EPIC R, #885, FR-37), and that compat block is
+ * deliberately absent from this list: it is what a hook written against
+ * the old name still reads, not something a new hook should be written
+ * against, and a surface that offered both would be documenting the name
+ * that is going away.
  */
 export const BUILTIN_ENV_NAMES: readonly string[] = [
-  "BACKUPD",
-  "BACKUPD_RUN_ID",
-  "BACKUPD_BACKUP_SET_ID",
-  "BACKUPD_BACKUP_SET_NAME",
-  "BACKUPD_PHASE",
-  "BACKUPD_STEP_ID",
-  "BACKUPD_STEP_NAME",
-  "BACKUPD_STEP_TARGET",
-  "BACKUPD_SOURCE_HOST",
-  "BACKUPD_SOURCE_PATH",
-  "BACKUPD_DESTINATION",
-  "BACKUPD_WORK_DIR",
-  "BACKUPD_BACKUP_STATUS",
-  "BACKUPD_WORKFLOW_STATUS",
-  "BACKUPD_CLEANUP_STATUS",
-  "BACKUPD_BACKUP_ERROR_CODE",
-  "BACKUPD_STARTED_AT",
-  "BACKUPD_RECOVERY"
+  "RETND",
+  "RETND_RUN_ID",
+  "RETND_BACKUP_SET_ID",
+  "RETND_BACKUP_SET_NAME",
+  "RETND_PHASE",
+  "RETND_STEP_ID",
+  "RETND_STEP_NAME",
+  "RETND_STEP_TARGET",
+  "RETND_SOURCE_HOST",
+  "RETND_SOURCE_PATH",
+  "RETND_DESTINATION",
+  "RETND_WORK_DIR",
+  "RETND_BACKUP_STATUS",
+  "RETND_WORKFLOW_STATUS",
+  "RETND_CLEANUP_STATUS",
+  "RETND_BACKUP_ERROR_CODE",
+  "RETND_STARTED_AT",
+  "RETND_RECOVERY"
 ];
 
-/** The prefix this product reserves, and the bare name beside it. A name
- *  matching either is refused by the service, so the editor refuses it in
- *  front of the request rather than sending one that cannot succeed. */
+/** The prefix this product reserves, and the bare name beside it.
+ *
+ *  A name matching either is refused by the service, so the editor
+ *  refuses it in front of the request rather than sending one that
+ *  cannot succeed. The previous `BACKUPD_` prefix and its bare
+ *  `BACKUPD` are refused on the same terms while this release still
+ *  exports them (core/internal/workflow.IsReservedEnvName is the rule
+ *  this mirrors): a variable an operator could save under a name the
+ *  engine overwrites per run is one that looks like it works. */
 export function isReservedEnvName(name: string): boolean {
-  return name === "BACKUPD" || name.startsWith("BACKUPD_");
+  return (
+    name === "RETND" ||
+    name.startsWith("RETND_") ||
+    name === "BACKUPD" ||
+    name.startsWith("BACKUPD_")
+  );
 }
 
 /** One row of the merged preview: what a hook will actually receive. */
@@ -432,7 +450,7 @@ export interface MergedEnvVariable {
  * The merge, in the engine's own precedence order.
  *
  * `sanitized baseline < workflows.environment < backup-set environment <
- * BACKUPD_* built-ins` (core/internal/workflow's package doc). The
+ * RETND_* built-ins` (core/internal/workflow's package doc). The
  * baseline is not represented here because it is not configuration and no
  * read reports it; the other three are, and the built-ins win outright,
  * which is what makes them read-only rather than merely discouraged.

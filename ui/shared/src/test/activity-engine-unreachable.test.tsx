@@ -386,7 +386,7 @@ describe("a bodyless 502 from serve-ui names the hop that failed", () => {
         status: 500,
         headers: new Headers({
           "x-correlation-id": "cid_marked500",
-          "x-backupd-proxy-error": "upstream-unreachable"
+          "x-retnd-proxy-error": "upstream-unreachable"
         }),
         json: async () => {
           throw new SyntaxError("Unexpected end of JSON input");

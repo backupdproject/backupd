@@ -306,13 +306,13 @@
       "yaml_path": "incremental_engine.enabled",
       "cli_flags": [],
       "env": [
-        "BACKUPD_INCREMENTAL_ENGINE"
+        "RETND_INCREMENTAL_ENGINE"
       ],
       "type": "bool",
       "default": false,
       "required": false,
       "scope": "deployment",
-      "description": "EPIC K's production gate (#789): whether this deployment may run the incremental (kopia) backup engine at all. Defaults to FALSE, and an absent incremental_engine block is disabled. BACKUPD_INCREMENTAL_ENGINE overrides the file in BOTH directions (1|true|yes|on enables, 0|false|no|off disables, unset or empty defers to the file), and an unparseable value is refused at Validate rather than read as off. Resolved by config.IncrementalEngineEnabled() and nowhere else. With it off, creating or updating an engine: kopia set, that set's snapshot cycle, verification, maintenance, snapshot restore and the repository probes all refuse with config.ErrIncrementalEngineDisabled (409 INCREMENTAL_ENGINE_DISABLED, CLI exit 1); LOADING a configuration that declares kopia sets is deliberately NOT gated, so turning it off never stops a daemon whose artifact sets still have to run. Artifact backup sets are unaffected in either position. See docs/incremental-engine.md.",
+      "description": "EPIC K's production gate (#789): whether this deployment may run the incremental (kopia) backup engine at all. Defaults to FALSE, and an absent incremental_engine block is disabled. RETND_INCREMENTAL_ENGINE overrides the file in BOTH directions (1|true|yes|on enables, 0|false|no|off disables, unset or empty defers to the file), and an unparseable value is refused at Validate rather than read as off. Resolved by config.IncrementalEngineEnabled() and nowhere else. With it off, creating or updating an engine: kopia set, that set's snapshot cycle, verification, maintenance, snapshot restore and the repository probes all refuse with config.ErrIncrementalEngineDisabled (409 INCREMENTAL_ENGINE_DISABLED, CLI exit 1); LOADING a configuration that declares kopia sets is deliberately NOT gated, so turning it off never stops a daemon whose artifact sets still have to run. Artifact backup sets are unaffected in either position. See docs/incremental-engine.md.",
       "ui": {
         "configurable": false,
         "location": null,
@@ -2146,7 +2146,7 @@
       "cli_flags": [],
       "env": [
         "LOG_LEVEL",
-        "BACKUPD_DEBUG",
+        "RETND_DEBUG",
         "RM_DEBUG (deprecated alias)"
       ],
       "type": "string level / bool shortcut",

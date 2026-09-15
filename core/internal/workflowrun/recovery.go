@@ -396,7 +396,7 @@ func reconcileRun(run state.WorkflowRun, steps []state.WorkflowStep, obligations
 	// is exactly the fact -- rather than being left at running, which
 	// claims work is in flight in a process that no longer exists and
 	// which a resumed "after" hook would be told through
-	// BACKUPD_BACKUP_STATUS. A hook deciding whether to roll something
+	// RETND_BACKUP_STATUS. A hook deciding whether to roll something
 	// back on the strength of "the backup is still going" is the concrete
 	// damage.
 	if workflow.Status(run.BackupStatus) == workflow.StatusRunning {
@@ -541,7 +541,7 @@ func finishedRunAdvance(run state.WorkflowRun, steps []state.WorkflowStep, oblig
 	// going to observe its outcome, so it goes to the vocabulary's
 	// "nobody knows yet" rather than being left claiming work is in
 	// flight -- which is what a history surface would show forever and
-	// what a hook would be told through BACKUPD_BACKUP_STATUS.
+	// what a hook would be told through RETND_BACKUP_STATUS.
 	if workflow.Status(run.BackupStatus) == workflow.StatusRunning {
 		adv.BackupStatus = workflow.StatusUnknown
 	}
@@ -708,8 +708,8 @@ func (e *Engine) warn(ctx context.Context, holds []RecoveryHold) {
 // that plan carried. An operator who edited /workflows or config.yaml
 // while the daemon was down has changed nothing about this.
 //
-// The hooks are told BACKUPD_RECOVERY=1 and
-// BACKUPD_CLEANUP_REASON=interrupted_run, because unwinding after a crash
+// The hooks are told RETND_RECOVERY=1 and
+// RETND_CLEANUP_REASON=interrupted_run, because unwinding after a crash
 // is a different job from unwinding after a run: the state a script finds
 // may be half-applied, and a script that wants to be careful about that
 // needs to be able to tell.
@@ -746,7 +746,7 @@ func (e *Engine) ResumeCleanup(ctx context.Context, runID string) (RunResult, er
 	// The facts the run was PLANNED with, out of the journal rather than
 	// out of today's configuration, for the reason the environment comes
 	// from there: a recovery finishes the run that was planned. Without
-	// them an `umount "$BACKUPD_SOURCE_PATH"` in a recovery hook runs
+	// them an `umount "$RETND_SOURCE_PATH"` in a recovery hook runs
 	// with an empty variable.
 	facts, err := e.Store.WorkflowRunFacts(ctx, runID)
 	if err != nil {
@@ -1190,13 +1190,13 @@ func (e *Engine) AcknowledgeRecovery(ctx context.Context, runID string, ack Ackn
 	return nil
 }
 
-// builtins is the BACKUPD_* block one step is handed.
+// builtins is the RETND_* block one step is handed.
 //
 // Every value is a fact this product observed, and the two that only a
 // recovery sets are the reason a hook can tell the two jobs apart:
-// BACKUPD_RECOVERY is "1" when these bytes are being run to unwind an
+// RETND_RECOVERY is "1" when these bytes are being run to unwind an
 // interrupted run rather than a completed one, and
-// BACKUPD_CLEANUP_REASON says which. Both are always present -- an unset
+// RETND_CLEANUP_REASON says which. Both are always present -- an unset
 // variable and one saying "the normal path" read identically in
 // `test -z`, and only one of them is true.
 //
@@ -1219,19 +1219,19 @@ func (r *runner) builtins(step workflow.Step, recovering bool) map[string]string
 	}
 
 	out[workflow.ReservedEnvName] = "1"
-	out["BACKUPD_RUN_ID"] = r.runID
-	out["BACKUPD_BACKUP_SET_ID"] = r.set.String()
-	out["BACKUPD_BACKUP_SET_NAME"] = r.set.Set
-	out["BACKUPD_PHASE"] = string(step.Phase)
-	out["BACKUPD_STEP_ID"] = step.ID
-	out["BACKUPD_STEP_NAME"] = step.ScriptName
-	out["BACKUPD_STEP_TARGET"] = string(step.Target)
-	out["BACKUPD_BACKUP_STATUS"] = string(r.backupStatus)
-	out["BACKUPD_CLEANUP_STATUS"] = string(r.cleanupStatus)
-	out["BACKUPD_WORKFLOW_STATUS"] = string(r.liveWorkflowStatus())
-	out["BACKUPD_STARTED_AT"] = r.startedAt.UTC().Format(time.RFC3339)
-	out["BACKUPD_RECOVERY"] = recovery
-	out["BACKUPD_CLEANUP_REASON"] = reason
+	out["RETND_RUN_ID"] = r.runID
+	out["RETND_BACKUP_SET_ID"] = r.set.String()
+	out["RETND_BACKUP_SET_NAME"] = r.set.Set
+	out["RETND_PHASE"] = string(step.Phase)
+	out["RETND_STEP_ID"] = step.ID
+	out["RETND_STEP_NAME"] = step.ScriptName
+	out["RETND_STEP_TARGET"] = string(step.Target)
+	out["RETND_BACKUP_STATUS"] = string(r.backupStatus)
+	out["RETND_CLEANUP_STATUS"] = string(r.cleanupStatus)
+	out["RETND_WORKFLOW_STATUS"] = string(r.liveWorkflowStatus())
+	out["RETND_STARTED_AT"] = r.startedAt.UTC().Format(time.RFC3339)
+	out["RETND_RECOVERY"] = recovery
+	out["RETND_CLEANUP_REASON"] = reason
 
 	return out
 }

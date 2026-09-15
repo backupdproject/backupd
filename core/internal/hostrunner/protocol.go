@@ -344,7 +344,7 @@ type Request struct {
 	ScriptSHA256 string `json:"script_sha256,omitempty"`
 
 	// Env is the hook's environment, already merged by
-	// internal/workflow. BACKUPD_WORK_DIR in it is ignored: only this
+	// internal/workflow. RETND_WORK_DIR in it is ignored: only this
 	// process knows the working directory it is about to create, so only
 	// this process may state it. See Executor.Execute.
 	Env EnvSet `json:"env,omitzero"`

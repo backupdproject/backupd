@@ -757,21 +757,26 @@ func TestWriteAuthError_SetsCorrelationIdHeader(t *testing.T) {
 	}
 }
 
-// #794's read-compat window, end to end over the real handler.
+// The read-compat window, end to end over the real handler, for every
+// name this cookie has had: #794's bm_session and EPIC R's
+// backupd_session (#889).
 //
 // The upgrade this covers: a browser is signed in, the runtime is
-// replaced with one that issues backupd_session, and the browser's next
-// request still carries only bm_session because that is what the jar has.
-// GET /session has to answer 200 with the username, not 401 - the token
-// is the credential, and its cookie's name changing is not a reason to
-// stop honouring it.
+// replaced with one that issues retnd_session, and the browser's next
+// request still carries only the name its jar holds. GET /session has to
+// answer 200 with the username, not 401 - the token is the credential,
+// and its cookie's name changing is not a reason to stop honouring it.
 //
-// The request is hand-built rather than driven through the jar because
+// It also pins the two halves that make the window close on its own.
+// Nothing in a login response may carry a deprecated name, and a request
+// that arrives under one gets the SAME token re-issued under the current
+// name (reissueRenamedSessionCookie), so the old name is off the wire
+// after one request rather than whenever a jar turns over.
+//
+// The requests are hand-built rather than driven through the jar because
 // the jar can only hold what the server set, and the server no longer
-// sets the old name at all. That asymmetry is the other half of the
-// window and is asserted here too: nothing in a login response may carry
-// the legacy name.
-func TestHandler_SessionCookieReadAcceptsTheLegacyNameButNeverWritesIt(t *testing.T) {
+// sets any deprecated name at all.
+func TestHandler_SessionCookieReadAcceptsEveryDeprecatedNameAndReissuesUnderTheCurrentOne(t *testing.T) {
 	svc, server, client := testServer(t)
 	seedCSRFCookie(t, client, server)
 	csrf := csrfTokenFromJar(t, client, server)
@@ -787,8 +792,10 @@ func TestHandler_SessionCookieReadAcceptsTheLegacyNameButNeverWritesIt(t *testin
 
 	var issued *http.Cookie
 	for _, c := range enrollResp.Cookies() {
-		if c.Name == LegacySessionCookieName {
-			t.Errorf("enroll response set a %s cookie; the legacy name is read-only", LegacySessionCookieName)
+		for _, deprecated := range LegacySessionCookieNames() {
+			if c.Name == deprecated {
+				t.Errorf("enroll response set a %s cookie; a deprecated name is read-only", deprecated)
+			}
 		}
 		if c.Name == SessionCookieName {
 			issued = c
@@ -798,23 +805,71 @@ func TestHandler_SessionCookieReadAcceptsTheLegacyNameButNeverWritesIt(t *testin
 		t.Fatalf("enroll response set no %s cookie (cookies = %v)", SessionCookieName, enrollResp.Cookies())
 	}
 
-	// The same token, presented the way a pre-upgrade browser presents it.
+	for _, deprecated := range LegacySessionCookieNames() {
+		t.Run(deprecated, func(t *testing.T) {
+			// The same token, presented the way a pre-upgrade browser
+			// presents it.
+			req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/auth/session", nil)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+			req.AddCookie(&http.Cookie{Name: deprecated, Value: issued.Value})
+			resp, err := (&http.Client{}).Do(req)
+			if err != nil {
+				t.Fatalf("GET session with %s: %v", deprecated, err)
+			}
+			var got sessionResponse
+			if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+				t.Fatalf("decode session response: %v", err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK || got.Username != "bm-admin" {
+				t.Fatalf("GET session carrying only %s: status=%d body=%+v, want 200 {bm-admin}",
+					deprecated, resp.StatusCode, got)
+			}
+
+			var reissued *http.Cookie
+			for _, c := range resp.Cookies() {
+				if c.Name == SessionCookieName {
+					reissued = c
+				}
+				if c.Name == deprecated {
+					t.Errorf("the response re-wrote %s; a deprecated name is never written", deprecated)
+				}
+			}
+			if reissued == nil {
+				t.Fatalf("a request carrying only %s was not re-issued under %s (cookies = %v)",
+					deprecated, SessionCookieName, resp.Cookies())
+			}
+			if reissued.Value != issued.Value {
+				t.Errorf("re-issued %s = %q, want the token the request carried (%q): this is a rename, not a new session",
+					SessionCookieName, reissued.Value, issued.Value)
+			}
+		})
+	}
+}
+
+// The other side of the re-issue: a cookie naming a session this process
+// does not have is not a credential, and writing it back under the
+// current name would hand the caller a cookie that looks issued and
+// authenticates nothing.
+func TestHandler_AnUnrecognisedLegacySessionCookieIsNotReissued(t *testing.T) {
+	_, server, _ := testServer(t)
+
 	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/auth/session", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	req.AddCookie(&http.Cookie{Name: LegacySessionCookieName, Value: issued.Value})
+	req.AddCookie(&http.Cookie{Name: LegacySessionCookieName, Value: "not-a-session"})
 	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
-		t.Fatalf("GET session with legacy cookie: %v", err)
+		t.Fatalf("GET session: %v", err)
 	}
-	var got sessionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-		t.Fatalf("decode session response: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || got.Username != "bm-admin" {
-		t.Fatalf("GET session carrying only %s: status=%d body=%+v, want 200 {bm-admin}",
-			LegacySessionCookieName, resp.StatusCode, got)
+	defer resp.Body.Close()
+
+	for _, c := range resp.Cookies() {
+		if c.Name == SessionCookieName && c.Value == "not-a-session" {
+			t.Fatalf("an unrecognised token was re-issued as %s", SessionCookieName)
+		}
 	}
 }

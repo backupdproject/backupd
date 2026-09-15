@@ -3,8 +3,9 @@ package config
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
+
+	"github.com/retnd/retnd/core/envcompat"
 )
 
 // EPIC K's production feature gate (#789).
@@ -62,7 +63,7 @@ import (
 // IncrementalEngineEnvVar is the environment override for the gate.
 //
 // It is for the deployments that run this engine's process without
-// editing its config file: a direct `backupd` invocation, a systemd
+// editing its config file: a direct `retnd` invocation, a systemd
 // unit, `docker compose exec`, a CLI-only install, and the tests and
 // clean-environment restores that have to answer the question without a
 // file to hand. The container images this product ships pass a declared
@@ -78,7 +79,24 @@ import (
 // except editing a file inside a container; reading it as "may only turn
 // it off" would leave a CLI-only host unable to evaluate the engine
 // without a config edit it may not own.
-const IncrementalEngineEnvVar = "BACKUPD_INCREMENTAL_ENGINE"
+const IncrementalEngineEnvVar = "RETND_INCREMENTAL_ENGINE"
+
+// LegacyIncrementalEngineEnvVar is the name IncrementalEngineEnvVar had
+// before the product was renamed to retnd (EPIC R, #885). It is READ for
+// one release and is never documented, written or suggested: a gate whose
+// name changed and whose old name went dead reverts a deployment that had
+// the engine ON to a deployment that refuses every incremental backup,
+// and the only evidence is the refusals (FR-37's silent class).
+//
+// The current name wins when both are set, and reading the deprecated one
+// prints one notice per process (core/envcompat).
+const LegacyIncrementalEngineEnvVar = "BACKUPD_INCREMENTAL_ENGINE"
+
+// incrementalEngineEnv is the pair as the reader consults it.
+var incrementalEngineEnv = envcompat.Rename{
+	Current: IncrementalEngineEnvVar,
+	Legacy:  []string{LegacyIncrementalEngineEnvVar},
+}
 
 // ErrIncrementalEngineDisabled is the refusal every surface raises when
 // something would have driven the incremental engine while the gate is
@@ -125,7 +143,7 @@ type IncrementalEngine struct {
 // it.
 //
 // This is the ONLY place that question is answered. A surface that
-// re-derived it from os.Getenv would be a second gate, and two gates
+// re-derived it from the environment would be a second gate, and two gates
 // disagree the first time one of them learns a new spelling.
 //
 // It reads the environment on every call rather than resolving once into
@@ -142,7 +160,8 @@ type IncrementalEngine struct {
 // this state; a Config built by hand in a test can, and the file's own
 // word is the only other answer available.
 func (c *Config) IncrementalEngineEnabled() bool {
-	if override, ok, err := parseIncrementalEngineOverride(os.Getenv(IncrementalEngineEnvVar)); err == nil && ok {
+	name, raw, _ := envcompat.Which(incrementalEngineEnv)
+	if override, ok, err := parseIncrementalEngineOverride(name, raw); err == nil && ok {
 		return override
 	}
 
@@ -162,10 +181,12 @@ var incrementalEngineOverrideSpellings = map[string]bool{
 	"0": false, "false": false, "no": false, "off": false,
 }
 
-// parseIncrementalEngineOverride reads the environment override. The
+// parseIncrementalEngineOverride reads the environment override. name is
+// the variable raw came from, so a refusal names the spelling the
+// operator actually set rather than the one this release prefers. The
 // second result is whether the variable said anything at all: unset, and
 // whitespace, are both "the file decides".
-func parseIncrementalEngineOverride(raw string) (enabled, present bool, err error) {
+func parseIncrementalEngineOverride(name, raw string) (enabled, present bool, err error) {
 	trimmed := strings.ToLower(strings.TrimSpace(raw))
 	if trimmed == "" {
 		return false, false, nil
@@ -176,7 +197,7 @@ func parseIncrementalEngineOverride(raw string) (enabled, present bool, err erro
 		return false, false, fmt.Errorf(
 			"%s=%q is not a value this gate understands: write one of 1, true, yes, on to enable the incremental engine, "+
 				"or 0, false, no, off to disable it; unset the variable to let incremental_engine.enabled in config.yaml decide",
-			IncrementalEngineEnvVar, raw)
+			name, raw)
 	}
 
 	return value, true, nil
@@ -188,7 +209,7 @@ func parseIncrementalEngineOverride(raw string) (enabled, present bool, err erro
 // The opposite rule to the diagnostics knobs (an unparseable LOG_LEVEL
 // falls back to INFO rather than refusing to start, because a typo in a
 // diagnostic must never take a backup host down), and the asymmetry is
-// the judgement. Reading BACKUPD_INCREMENTAL_ENGINE=ture as "off" would
+// the judgement. Reading RETND_INCREMENTAL_ENGINE=ture as "off" would
 // turn every incremental backup in the deployment into a refusal, quietly
 // and for as long as nobody re-reads the compose file -- so the typo is
 // reported at the one moment somebody is watching, which is the restart
@@ -199,7 +220,8 @@ func parseIncrementalEngineOverride(raw string) (enabled, present bool, err erro
 // wrong, and a config naming incremental sets while the gate is shut is
 // deliberately legal (see this file's doc).
 func (v *validator) validateIncrementalEngine() {
-	if _, _, err := parseIncrementalEngineOverride(os.Getenv(IncrementalEngineEnvVar)); err != nil {
+	name, raw, _ := envcompat.Which(incrementalEngineEnv)
+	if _, _, err := parseIncrementalEngineOverride(name, raw); err != nil {
 		v.addf("%s", err.Error())
 	}
 }

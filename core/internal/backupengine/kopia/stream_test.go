@@ -622,10 +622,10 @@ func TestLargeStreamIsBoundedInMemory(t *testing.T) {
 	}
 
 	streamBytes := int64(2) << 30
-	if s := os.Getenv("BACKUPD_SPIKE_STREAM_BYTES"); s != "" {
+	if s := os.Getenv("RETND_SPIKE_STREAM_BYTES"); s != "" {
 		n, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
-			t.Fatalf("BACKUPD_SPIKE_STREAM_BYTES=%q: %v", s, err)
+			t.Fatalf("RETND_SPIKE_STREAM_BYTES=%q: %v", s, err)
 		}
 
 		streamBytes = n

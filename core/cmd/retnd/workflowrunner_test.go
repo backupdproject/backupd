@@ -249,11 +249,11 @@ func TestWorkflowRunner_StatusRefusesWithoutTheInstallationCredential(t *testing
 // sockets it is listening on -- and a process is the only place it can
 // be observed.
 const (
-	runnerChildEnv       = "BACKUPD_TEST_RUNNER_CHILD"
-	runnerChildRuntime   = "BACKUPD_TEST_RUNNER_RUNTIME"
-	runnerChildWorkspace = "BACKUPD_TEST_RUNNER_WORKSPACE"
-	runnerChildSecrets   = "BACKUPD_TEST_RUNNER_SECRETS"
-	runnerChildDocker    = "BACKUPD_TEST_RUNNER_DOCKER"
+	runnerChildEnv       = "RETND_TEST_RUNNER_CHILD"
+	runnerChildRuntime   = "RETND_TEST_RUNNER_RUNTIME"
+	runnerChildWorkspace = "RETND_TEST_RUNNER_WORKSPACE"
+	runnerChildSecrets   = "RETND_TEST_RUNNER_SECRETS"
+	runnerChildDocker    = "RETND_TEST_RUNNER_DOCKER"
 )
 
 // TestWorkflowRunnerChildProcess is not a test. It is the entry point of

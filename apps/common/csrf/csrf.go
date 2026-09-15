@@ -35,12 +35,15 @@ import (
 // the whole pattern requires client-side JavaScript to read the cookie
 // so it can echo it back as HeaderName.
 const (
-	CookieName = "backupd_csrf"
+	CookieName = "retnd_csrf"
 	HeaderName = "X-CSRF-Token"
 )
 
-// LegacyCookieName is the name CookieName had before the project was
-// renamed to backupd (#794), kept readable for one release.
+// The names CookieName has had, newest first, kept readable for one
+// release: backupd_csrf from before EPIC R (#885) renamed the product to
+// retnd, and bm_csrf from before #794 renamed it to backupd. Both
+// windows close in the release after the one that renames this product
+// (FR-43) rather than #794's being nested inside a third one.
 //
 // Unlike the session cookie, where the compat window only spares a
 // credential, here it is load bearing for a live page. The client half
@@ -55,15 +58,26 @@ const (
 //
 // So EnsureCookie carries an existing old-name token FORWARD onto the
 // new name rather than minting a second, different one (below), and
-// Verify accepts either name. Both halves then see the same value under
-// the name each knows, and the old name leaves the wire on its own as
-// each client's session cookie jar turns over.
-const LegacyCookieName = "bm_csrf"
+// Verify accepts any of the three. Both halves then see the same value
+// under the name each knows, and a deprecated name leaves the wire on
+// the first response each client gets rather than whenever its jar turns
+// over.
+const (
+	LegacyCookieName  = "backupd_csrf"
+	EarlierCookieName = "bm_csrf"
+)
 
 // cookieNames are the names a read accepts, in precedence order: the
 // current name wins whenever it carries a value. Package-level so a read
 // does not allocate to iterate it.
-var cookieNames = []string{CookieName, LegacyCookieName}
+var cookieNames = []string{CookieName, LegacyCookieName, EarlierCookieName}
+
+// LegacyCookieNames returns the deprecated names a read accepts, newest
+// first. A function rather than a slice, because a package-level slice is
+// writable by every importer.
+func LegacyCookieNames() []string {
+	return []string{LegacyCookieName, EarlierCookieName}
+}
 
 // readToken returns the double-submit token r carries under any accepted
 // name, or "" for none. An empty value counts as absent so a cleared
@@ -94,11 +108,11 @@ var ErrHeaderMismatch = errors.New("csrf: missing or mismatched header")
 // state-changing request a fresh browser session makes is what will need
 // to echo it.
 //
-// "Already carries one" spans both accepted names for the compat window
-// (LegacyCookieName), and a request that carries only the old name has
-// that exact value re-issued under the current one instead of a fresh
-// token. Minting a new value there would leave the two names holding two
-// different tokens, and a cached client still echoing the old name's
+// "Already carries one" spans every accepted name for the compat windows
+// (LegacyCookieName, EarlierCookieName), and a request that carries only
+// a deprecated name has that exact value re-issued under the current one
+// instead of a fresh token. Minting a new value there would leave the
+// names holding different tokens, and a cached client still echoing the old name's
 // value would then fail Verify - which prefers the current name - on
 // every mutating request. Carrying the value forward makes both halves
 // agree no matter which name either side reads.
@@ -128,8 +142,8 @@ func EnsureCookie(secure func(*http.Request) bool) func(http.Handler) http.Handl
 
 // Verify reports whether r carries a valid double-submit CSRF token: its
 // HeaderName header matches its CSRF cookie, byte-for-byte, in constant
-// time. Either accepted cookie name counts (CookieName first, then
-// LegacyCookieName - see that constant for the window). A non-nil return
+// time. Any accepted cookie name counts (CookieName first, then the
+// deprecated ones - see LegacyCookieName for the window). A non-nil return
 // is always ErrMissingCookie or ErrHeaderMismatch (check with
 // errors.Is), letting each caller choose its own error response shape/
 // code for the two cases - apps/common/auth/local and

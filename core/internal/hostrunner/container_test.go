@@ -33,7 +33,7 @@ func hookSpec(t *testing.T) launchSpec {
 		stepID:     "step1",
 		workDir:    filepath.Join(root, "work"),
 		scriptPath: filepath.Join(root, "step1.script"),
-		envNames:   []string{"BACKUPD_WORK_DIR", "PGPASSWORD"},
+		envNames:   []string{"RETND_WORK_DIR", "PGPASSWORD"},
 	}
 }
 
@@ -212,7 +212,7 @@ func TestHookArgs_CarriesEnvironmentNamesAndNeverValues(t *testing.T) {
 // one.
 //
 // The mounts are IDENTITY mounts -- the same path inside as outside -- so
-// that BACKUPD_WORK_DIR means one thing. A hook that logs where it wrote a
+// that RETND_WORK_DIR means one thing. A hook that logs where it wrote a
 // dump logs a path the operator can then find, and the engine's own record
 // of the working directory is the record of the place the bytes are.
 func TestHookArgs_MountsTheStepsOwnPathsAndNothingElse(t *testing.T) {

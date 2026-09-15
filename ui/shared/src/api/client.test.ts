@@ -24,9 +24,9 @@ import type { ApiErrorCode } from "./contracts";
 import { progressPercent } from "@shared/types/operation";
 
 /** Sets document.cookie the way a browser would after the server issued
- *  a Set-Cookie header for backupd_csrf — jsdom's document.cookie setter
+ *  a Set-Cookie header for retnd_csrf — jsdom's document.cookie setter
  *  accepts the same "name=value" assignment form. */
-function setCsrfCookie(value: string, name = "backupd_csrf") {
+function setCsrfCookie(value: string, name = "retnd_csrf") {
   document.cookie = name + "=" + value;
 }
 
@@ -46,7 +46,7 @@ function mockFetchOk(body: unknown = undefined, status = 200) {
 describe("httpApi CSRF/bootstrap-token wiring", () => {
   beforeEach(() => {
     // Clear any cookie a previous test left behind.
-    clearCookie("backupd_csrf");
+    clearCookie("retnd_csrf");
     clearCookie("bm_csrf");
     window.history.pushState({}, "", "/");
   });
@@ -2536,7 +2536,7 @@ describe("the incremental wire boundary", () => {
     const body = await createdDomainBody({
       domain: "offsite-c3",
       isolation: "shared",
-      passphrase: { env: "BACKUPD_OFFSITE_C3_PASSPHRASE" }
+      passphrase: { env: "RETND_OFFSITE_C3_PASSPHRASE" }
     });
 
     // The one field that must never carry material: what crosses is the
@@ -2546,7 +2546,7 @@ describe("the incremental wire boundary", () => {
     expect(body).toEqual({
       id: "offsite-c3",
       isolation: "shared",
-      passphrase: { file: "", env: "BACKUPD_OFFSITE_C3_PASSPHRASE", command: [] }
+      passphrase: { file: "", env: "RETND_OFFSITE_C3_PASSPHRASE", command: [] }
     });
   });
 

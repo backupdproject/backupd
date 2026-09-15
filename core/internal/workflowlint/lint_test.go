@@ -22,7 +22,7 @@ func TestACleanScriptReportsNothing(t *testing.T) {
 		`  printf '%s\n' "$1"`,
 		"}",
 		"",
-		`main "${BACKUPD_RUN_ID:-none}"`,
+		`main "${RETND_RUN_ID:-none}"`,
 	)
 
 	if r.ParseError != nil {
@@ -171,8 +171,8 @@ func TestBSH001ReportsAnIndirectExpansion(t *testing.T) {
 
 func TestBSH001IsSilentOnTheNameListForms(t *testing.T) {
 	for _, tc := range []struct{ name, line string }{
-		{"${!prefix*}, which is a list of names", `printf '%s\n' ${!BACKUPD_*}`},
-		{"${!prefix@}, the same list", `printf '%s\n' ${!BACKUPD_@}`},
+		{"${!prefix*}, which is a list of names", `printf '%s\n' ${!RETND_*}`},
+		{"${!prefix@}, the same list", `printf '%s\n' ${!RETND_@}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := report(t, "names.local.sh", "#!/bin/bash", tc.line)

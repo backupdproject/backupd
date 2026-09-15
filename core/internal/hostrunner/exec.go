@@ -241,7 +241,7 @@ func (e *Executor) Execute(ctx context.Context, req Request, sink Sink) (Result,
 		return Result{}, &Failure{Code: CodeInternal, Message: err.Error()}
 	}
 
-	// BACKUPD_WORK_DIR is appended LAST and therefore wins, whatever the
+	// RETND_WORK_DIR is appended LAST and therefore wins, whatever the
 	// engine sent. Only this process knows the directory it just
 	// created, so only this process is in a position to state it; an
 	// engine-supplied value would be a path to somewhere else, and a
@@ -250,7 +250,7 @@ func (e *Executor) Execute(ctx context.Context, req Request, sink Sink) (Result,
 	//
 	// It is the same string inside the container as outside, because the
 	// mount is an identity mount: see Mount.
-	env := EnvSet{Vars: append(append([]EnvVar(nil), req.Env.Vars...), EnvVar{Name: "BACKUPD_WORK_DIR", Value: workDir})}
+	env := EnvSet{Vars: append(append([]EnvVar(nil), req.Env.Vars...), EnvVar{Name: "RETND_WORK_DIR", Value: workDir})}
 	block, err := env.ProcessEnv(nil)
 	if err != nil {
 		e.cleanupStep(req.RunID, req.StepID)

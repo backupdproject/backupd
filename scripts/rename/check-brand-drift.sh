@@ -72,7 +72,9 @@
 #               release so an upgrade does not break. Allowed anywhere in
 #               the tree, because an alias has to be minted, read, tested
 #               and documented, and pinning it to a file list would turn
-#               every one of those into a gate failure.
+#               every one of those into a gate failure -- unless the entry
+#               names a path, which is for a shim whose TOKEN is also
+#               live elsewhere (see the format below).
 #   PENDING     identifiers that are still on `main` and are being deleted
 #               by a rename in flight, with no alias. Allowed anywhere, and
 #               expected to disappear: when one does, this script says so
@@ -82,13 +84,35 @@
 #               the occurrences that exist stay green, and the same name
 #               appearing in a new file is a creation and goes red.
 #
-# The lists are consulted most-specific first: a token+path pair on
-# PREEXISTING wins over a bare token on ALIASES or PENDING. That ordering is
-# what lets both lists be true at once during a rename in flight -- `backupd`
-# is on PENDING because 1,433 files are still to be swept, and the same token
-# is pinned to the dated design records that will never be swept, so those
-# pins are already load-bearing rather than becoming so on the day PENDING
-# empties.
+# THE ALIAS ENTRY FORMAT, and why an alias line carries more than a token
+# (FR-43). A shim is a transitional upgrade-safety measure with a removal
+# date, and "we will get to it" is not a date: the spec's own words. So
+# every line on ALIASES is
+#
+#   <token>[@<path>] <#issue> <removal release, in words>
+#
+# and a line that is missing either the issue or the release is REFUSED --
+# the script exits 1 naming the line, rather than quietly keeping an
+# undated shim, which is how `RM_DEBUG` reached its third rename. The
+# issue is the one that DELETES the shim (#895 for every EPIC R window);
+# the release is FR-43's shim-table wording, "the release after the one
+# that ships this EPIC".
+#
+# The optional `@<path>` exists for a shim whose token is not its own.
+# R1.5's three shims -- the `/backupd-web` hardlinked entrypoint and
+# FR-38's `/var/lib/backupd` and `/etc/backupd` legacy constants -- all
+# tokenise to the bare `backupd`, which is simultaneously PENDING for the
+# 1,400-file prose sweep. A bare `backupd` alias line would allow the
+# token everywhere and mask that pending entry, so those entries name the
+# file the shim lives in. `@` is the separator because no identifier this
+# guard matches can contain one.
+#
+# The lists are consulted most-specific first: PREEXISTING's token+path,
+# then ALIASES' token+path, then ALIASES' bare token, then PENDING. That
+# ordering is what lets the lists be true at once during a rename in
+# flight -- `backupd` is on PENDING because 1,433 files are still to be
+# swept, the same token is pinned to the dated design records that will
+# never be swept, and R1.5's shim files are alias-scoped inside it.
 #
 # A list entry that matches nothing left in the tree is reported and does
 # NOT fail the run: a rename lands by deleting occurrences, and a guard that
@@ -133,25 +157,59 @@ cd "$repo_root"
 
 # The kept deprecated aliases. Exactly the identifiers a rename keeps working
 # for one release, and nothing else. Each one is primary nowhere: the
-# preferred name is BACKUPD_DEBUG / backupd_session / backupd_csrf, and these
-# stay only so an in-place upgrade keeps reading the operator's existing
-# environment and keeps existing browser sessions valid.
+# preferred name is RETND_DEBUG / retnd_session / retnd_csrf / retnd_*, and
+# these stay only so an in-place upgrade keeps reading the operator's
+# existing environment, keeps existing browser sessions valid, and keeps an
+# alert rule that was written against the old series firing.
 #
-# EPIC R adds none yet, on purpose. FR-37's shims (`backupd_session` /
-# `backupd_csrf` read-compat, the duplicated `backupd_*` gauges, the
-# `BACKUPD_*` hook variables, the `/backupd-web` entrypoint) are minted by
-# R1.4 and R1.5, and each arrives here with its closing issue and its removal
-# release (FR-43) in the issue that mints it. Until then those names are
-# occurrences being deleted, which is PENDING, not shims being kept.
+# Every line is `<token>[@<path>] <#issue> <removal release>`; see THE ALIAS
+# ENTRY FORMAT in the header for why, and for what happens to a line that
+# carries no removal release.
+#
+# R1.4 (#889) mints the runtime half of FR-37's shim table:
+#
+#   BACKUPD / BACKUPD_*          the hook environment, exported beside every
+#                                RETND_* built-in with identical values. A
+#                                hook is an operator's Bash script and
+#                                `$BACKUPD_BACKUP_STATUS` against a build
+#                                that dropped it is the empty string, not an
+#                                error. The bare `BACKUPD` is here for the
+#                                same reason and is the name #932's review
+#                                found no pattern matched -- there is one
+#                                now.
+#   BACKUPD_DEBUG,               the two input variables, read behind their
+#   BACKUPD_INCREMENTAL_ENGINE   current names with one deprecation notice
+#                                per name per process start
+#                                (core/envcompat).
+#   backupd_session,             accepted on a read and re-issued under the
+#   backupd_csrf                 current name on that same read.
+#   backupd_*                    the fourteen gauge families, duplicated
+#                                under the old prefix with the deprecation
+#                                in each HELP line. The token here is the
+#                                bare prefix `backupd_`, which is what
+#                                core/internal/metrics spells;
+#                                docs/deployment.md is where the
+#                                double-count caveat lives for an operator.
+#
+# #794's own two cookie shims stay, and #794's RM_DEBUG stays, and all of
+# them now close together: FR-43 refuses to nest the second rename's window
+# inside the third's, so every line below is deleted by the same issue in
+# the same release.
 #
 # When the deprecation window closes, the alias and its line here go
 # together, and this script reports the line as unused the moment the alias
 # is gone.
 aliases="$(
   cat <<'EOF'
-RM_DEBUG
-bm_session
-bm_csrf
+RM_DEBUG #895 the release after the one that ships this EPIC
+bm_session #895 the release after the one that ships this EPIC
+bm_csrf #895 the release after the one that ships this EPIC
+BACKUPD #895 the release after the one that ships this EPIC
+BACKUPD_BACKUP_STATUS #895 the release after the one that ships this EPIC
+BACKUPD_DEBUG #895 the release after the one that ships this EPIC
+BACKUPD_INCREMENTAL_ENGINE #895 the release after the one that ships this EPIC
+backupd_session #895 the release after the one that ships this EPIC
+backupd_csrf #895 the release after the one that ships this EPIC
 EOF
 )"
 
@@ -210,83 +268,10 @@ backup-manager
 backupd
 Backupd
 backupd_
-BACKUPD_ANYTHING_AT_ALL
-BACKUPD_BACKUP_ERROR_CODE
-backupd_backup_set_
-backupd_backup_set_current_transfers
-backupd_backup_set_failures
-backupd_backup_set_free_bytes
-BACKUPD_BACKUP_SET_ID
-backupd_backup_set_last_completed_backup_timestamp_seconds
-backupd_backup_set_last_retention_run_timestamp_seconds
-backupd_backup_set_last_successful_poll_timestamp_seconds
-BACKUPD_BACKUP_SET_NAME
-backupd_backup_set_newest_good_backup_age_seconds
-backupd_backup_set_pending_deletes
-backupd_backup_set_quarantined
-backupd_backup_set_quarantined_lost
-backupd_backup_set_reinstated_remote_retained
-backupd_backup_set_stale_threshold_seconds
-backupd_backup_set_state
-BACKUPD_BACKUP_STATUS
-BACKUPD_BAKCUP_STATUS
-BACKUPD_CLEANUP_REASON
-BACKUPD_CLEANUP_STATUS
-backupd_csrf
-BACKUPD_DEBUG
-BACKUPD_DESTINATION
-BACKUPD_DOMAIN_PASSPHRASE
-BACKUPD_HUGE_DIR_ENTRIES
-BACKUPD_INCREMENTAL_ENGINE
 backupd_internal
-BACKUPD_OFFSITE_B2_PASSPHRASE
-BACKUPD_OFFSITE_C3_PASSPHRASE
-BACKUPD_P
-BACKUPD_PG_PASSWORD
-BACKUPD_PHASE
-backupd_process_info
-BACKUPD_PRODUCTION_PASSPHRASE
-BACKUPD_RECOVERY
-BACKUPD_REPO_PASSPHRASE
 backupd_repo_production
-backupd_report_generated_timestamp_seconds
-BACKUPD_RUN_ID
-backupd_session
 backupd_sha
-BACKUPD_SIGNAL_EXIT_CHILD_MODE
-backupd_snapshot_bytes
-BACKUPD_SOMETHING_NEW
-BACKUPD_SOURCE_HOST
-BACKUPD_SOURCE_PATH
-BACKUPD_SPIKE_STREAM_BYTES
-BACKUPD_STARTED_AT
-BACKUPD_STEP_ID
-BACKUPD_STEP_NAME
-BACKUPD_STEP_TARGET
-BACKUPD_TEST_EXEC_KEY
-BACKUPD_TEST_NEWLINE
-BACKUPD_TEST_PASSPHRASE
-BACKUPD_TEST_QUOTES
-BACKUPD_TEST_REPO_PASSPHRASE
-BACKUPD_TEST_RUNNER_CHILD
-BACKUPD_TEST_RUNNER_DOCKER
-BACKUPD_TEST_RUNNER_RUNTIME
-BACKUPD_TEST_RUNNER_SECRETS
-BACKUPD_TEST_RUNNER_WORKSPACE
-BACKUPD_TEST_SECRET
-BACKUPD_TEST_SUBSTITUTION
-BACKUPD_TEST_TOKEN
-BACKUPD_TEST_UTF8
 backupd_web_sha
-BACKUPD_WORK_DIR
-backupd_workflow_log_truncations_total
-backupd_workflow_remote_exec_failures_total
-backupd_workflow_run_duration_seconds
-backupd_workflow_runs_total
-BACKUPD_WORKFLOW_STATUS
-backupd_workflow_step_duration_seconds
-backupd_workflow_step_failures_total
-backupd_workflow_step_timeouts_total
 BackupdApi
 backupdDebug
 BackupdError
@@ -589,7 +574,19 @@ boundary='(^|[^A-Za-z0-9_])'
 # continues the token, a non-identifier character ends it, and `$` is
 # end-of-line, which `[^a-z]` cannot match and which is where
 # `/var/lib/backupd` lives.
-cs_re="$boundary"'(RM_[A-Z][A-Za-z0-9_]*|BM_[A-Z][A-Za-z0-9_]*|bm_[a-z][A-Za-z0-9_]*|rbm_[a-z][A-Za-z0-9_]*|BACKUPD_[A-Z][A-Za-z0-9_]*|backupd_[A-Za-z0-9_]*|backupd[A-Z0-9][A-Za-z0-9_]*|backupd([^A-Za-z0-9_]|$)|Backupd_[A-Za-z0-9_]*|Backupd[A-Z0-9][A-Za-z0-9_]*|Backupd([^A-Za-z0-9_]|$))'
+#
+# `BACKUPD([^A-Za-z0-9_]|$)` is the twelfth pattern and the one #932's
+# review asked for (R1.4, #889): the BARE uppercase name, with no
+# trailing underscore. `BACKUPD` is a real runtime identifier -- the
+# variable this product sets to "1" so a hook can tell it is running under
+# it at all (core/internal/workflow's ReservedEnvName) -- and
+# `BACKUPD_[A-Z]` cannot see it, because there is nothing after the D.
+# It sat green through the whole of #887 for that reason. It is
+# alternative-ordered after `BACKUPD_[A-Z][A-Za-z0-9_]*` so POSIX
+# leftmost-longest still reports `BACKUPD_RUN_ID` as itself rather than as
+# a bare `BACKUPD` with a suffix nobody sees; scripts/rename/selftest.sh
+# plants both to hold that.
+cs_re="$boundary"'(RM_[A-Z][A-Za-z0-9_]*|BM_[A-Z][A-Za-z0-9_]*|bm_[a-z][A-Za-z0-9_]*|rbm_[a-z][A-Za-z0-9_]*|BACKUPD_[A-Z][A-Za-z0-9_]*|BACKUPD([^A-Za-z0-9_]|$)|backupd_[A-Za-z0-9_]*|backupd[A-Z0-9][A-Za-z0-9_]*|backupd([^A-Za-z0-9_]|$)|Backupd_[A-Za-z0-9_]*|Backupd[A-Z0-9][A-Za-z0-9_]*|Backupd([^A-Za-z0-9_]|$))'
 
 # The case-insensitive family: the organisation and the two earlier brands,
 # which are live in every case (`BACKUP_MANAGER_WEB_TEST_VAR`,
@@ -625,12 +622,51 @@ report="$(
         if (parts[i] != "") set[parts[i]] = 1
       }
     }
+    # The alias list is the one with structure: `<token>[@<path>] <#issue>
+    # <removal release>`. A line that carries no issue or no release is a
+    # shim with no removal date, which FR-43 refuses outright, so this
+    # reports it as a MALFORMED record and the shell turns that into a
+    # non-zero exit. Silently ignoring it would make the refusal a
+    # comment.
+    function load_aliases(blob,   n, i, parts, fields, nf, spec, at) {
+      n = split(blob, parts, "\n")
+      for (i = 1; i <= n; i++) {
+        if (parts[i] == "") continue
+
+        nf = split(parts[i], fields, /[ \t]+/)
+        spec = fields[1]
+        if (nf < 3 || fields[2] !~ /^#[0-9]+$/) {
+          print "M\t  " parts[i]
+          continue
+        }
+
+        alias_spec[spec] = 1
+        at = index(spec, "@")
+        if (at == 0) {
+          alias_token[spec] = spec
+        } else {
+          alias_token[spec] = substr(spec, 1, at - 1)
+          alias_path[spec] = substr(spec, at + 1)
+        }
+      }
+    }
     BEGIN {
-      load(ENVIRON["ALIASES"], alias)
+      load_aliases(ENVIRON["ALIASES"])
       load(ENVIRON["PENDING"], pend)
       load(ENVIRON["PREEXISTING"], pre)
       allowed = 0
       nv = 0
+    }
+    # Which alias entry, if any, covers this occurrence. A path-scoped
+    # entry only covers its own file; an unscoped one covers the tree.
+    # Checked most-specific first, so a token that is BOTH a scoped shim
+    # and live elsewhere stays red elsewhere.
+    function alias_match(token, path,   spec) {
+      spec = token "@" path
+      if (spec in alias_spec) return spec
+      if (token in alias_spec) return token
+
+      return ""
     }
     {
       i = index($0, ":")
@@ -656,8 +692,9 @@ report="$(
         allowed++
         next
       }
-      if (token in alias) {
-        found_alias[token] = 1
+      spec = alias_match(token, path)
+      if (spec != "") {
+        found_alias[spec] = 1
         allowed++
         next
       }
@@ -670,7 +707,7 @@ report="$(
     }
     END {
       for (i = 1; i <= nv; i++) print "V\t" violation[i]
-      stale("ALIASES", "alias", found_alias)
+      stale_aliases(found_alias)
       stale("PENDING", "pending", found_pend)
       stale("PREEXISTING", "pre-existing", found_pre)
       print "C\t" allowed
@@ -683,6 +720,13 @@ report="$(
         }
       }
     }
+    # Reported by the whole field-1 spec, `token` or `token@path`, so the
+    # line to delete is the line the report names.
+    function stale_aliases(found,   spec) {
+      for (spec in alias_spec) {
+        if (!(spec in found)) printf "S\t  %-12s %s\n", "alias", spec
+      }
+    }
   ' <<<"$hits"
 )"
 
@@ -693,7 +737,27 @@ report="$(
 # guard that runs in the pre-commit path and one somebody takes out of it.
 violations="$(sed -n 's/^V	//p' <<<"$report")"
 stale="$(sed -n 's/^S	//p' <<<"$report")"
+malformed="$(sed -n 's/^M	//p' <<<"$report")"
 allowed_count="$(sed -n 's/^C	//p' <<<"$report")"
+
+# An alias with no closing issue or no removal release is not an alias, it
+# is the old name kept indefinitely (FR-43), so this is fatal and it is
+# checked before the tree is judged: a malformed line means the allowlist
+# this run applied is not the one somebody thought they wrote.
+if [ -n "$malformed" ]; then
+  echo "check-brand-drift: FAILED: alias entry with no closing issue and removal release:" >&2
+  printf '%s\n' "$malformed" >&2
+  cat >&2 <<'EOF'
+check-brand-drift: every line on the alias list is
+    <token>[@<path>] <#issue> <removal release, in words>
+  because a shim is a transitional measure with a date and an owner, and an
+  undated one is how RM_DEBUG reached its third rename (FR-43). The issue is
+  the one that DELETES the shim; the release is FR-43's shim-table wording.
+  An occurrence being deleted rather than kept belongs on `pending` instead,
+  which takes a bare token.
+EOF
+  exit 1
+fi
 
 # The list entries nothing matched any more. Reported, never fatal: see the
 # header. Printed before the verdict so a red run does not bury them.

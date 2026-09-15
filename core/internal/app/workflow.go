@@ -67,7 +67,7 @@ type WorkflowLifecycle interface {
 // and its discovery errors, and the surfaces that report a cycle read
 // those. What the lifecycle needs from this is one bit -- did the backup
 // succeed -- because that bit is what an "after" hook is told through
-// BACKUPD_BACKUP_STATUS and what the run row records. Handing it a
+// RETND_BACKUP_STATUS and what the run row records. Handing it a
 // wrapped pipeline error instead would put an internal sentence in front
 // of somebody's shell script.
 var errBackupSetPassFailed = errors.New("app: this backup set's pass did not complete cleanly")

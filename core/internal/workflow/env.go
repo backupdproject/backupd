@@ -35,18 +35,21 @@ import (
 // # Precedence, and the one layer that is not negotiable
 //
 // sanitized baseline < workflows.environment < backup-set environment <
-// BACKUPD_* built-ins.
+// RETND_* built-ins.
 //
 // The first three are ordinary: a more specific configuration wins, which
 // is the rule every other per-set override in this product follows. The
 // fourth is different in kind. The built-ins are not a layer an operator
 // competes with, they are the run's own facts, and a hook that reads
-// BACKUPD_BACKUP_STATUS has to be reading what this product observed --
+// RETND_BACKUP_STATUS has to be reading what this product observed --
 // not a value somebody wrote into a config file, and not one left over
-// from an earlier phase. So the whole BACKUPD_ prefix is REFUSED in
+// from an earlier phase. So the whole RETND_ prefix is REFUSED in
 // configuration (not overridden at merge time, refused at validation
 // time), because a key an operator can write and this product silently
-// discards is a key that looks like it works.
+// discards is a key that looks like it works. The deprecated BACKUPD_
+// prefix is refused on the same terms and for the same release: it is
+// still EXPORTED (LegacyEnvName), so a key an operator wrote under it
+// would be overwritten just as silently.
 //
 // # Secrets
 //
@@ -77,12 +80,41 @@ const EnvNamePattern = `^[A-Za-z_][A-Za-z0-9_]*$`
 
 // ReservedEnvPrefix is the namespace this product injects and an operator
 // may not configure.
-const ReservedEnvPrefix = "BACKUPD_"
+const ReservedEnvPrefix = "RETND_"
+
+// LegacyReservedEnvPrefix is the prefix ReservedEnvPrefix had before the
+// product was renamed to retnd (EPIC R, #885, FR-37).
+//
+// Every built-in is exported under BOTH prefixes for one release, with
+// identical values, because this is the epic's SILENT failure class: a
+// hook is an operator's own Bash script, `$BACKUPD_BACKUP_STATUS` in a
+// script this product never sees evaluates to the empty string rather
+// than to an error, and a hook that notifies on failure simply stops
+// notifying. Nothing reports that, which is why a hard cut is not
+// available here and a compat window is.
+//
+// It is reserved in configuration exactly as ReservedEnvPrefix is: the
+// names under it are written by this package, so an operator key
+// carrying this prefix is a key that looks like it works and does not.
+const LegacyReservedEnvPrefix = "BACKUPD_"
 
 // ReservedEnvName is the bare name this product also sets (to "1", so a
 // script can tell it is running under this product at all), and which is
 // reserved for the same reason as the prefix.
-const ReservedEnvName = "BACKUPD"
+const ReservedEnvName = "RETND"
+
+// LegacyReservedEnvName is ReservedEnvName's own previous spelling, and
+// it is the one name in this file that no prefix rule would have caught:
+// `BACKUPD` has no trailing underscore, so the brand-drift guard's
+// BACKUPD_[A-Z] pattern cannot see it either (#932's review found it
+// there, and scripts/rename/check-brand-drift.sh now carries it as a
+// named alias entry rather than relying on a prefix match).
+//
+// It is exported beside ReservedEnvName for LegacyReservedEnvPrefix's
+// reason: `if [ -n "$BACKUPD" ]` is the documented way a shared script
+// tells it is running as a hook of this product (docs/EPIC-L §201's hook
+// contract), and that test going false is silent.
+const LegacyReservedEnvName = "BACKUPD"
 
 // ErrEnvName is every refusal about an environment entry's NAME: the
 // shape, the reservation, or a duplicate within one layer. One sentinel
@@ -108,43 +140,49 @@ var ErrEnvValue = errors.New("workflow: this workflow environment value cannot b
 //
 // Constants rather than three string literals at the one call site that
 // fills them in, because a typo there is silent: the fact is dropped, the
-// variable is exported empty, and `umount "$BACKUPD_SOURCE_PATH"`
+// variable is exported empty, and `umount "$RETND_SOURCE_PATH"`
 // unmounts nothing and exits 0.
 const (
-	EnvSourceHost  = "BACKUPD_SOURCE_HOST"
-	EnvSourcePath  = "BACKUPD_SOURCE_PATH"
-	EnvDestination = "BACKUPD_DESTINATION"
+	EnvSourceHost  = "RETND_SOURCE_HOST"
+	EnvSourcePath  = "RETND_SOURCE_PATH"
+	EnvDestination = "RETND_DESTINATION"
 )
 
 // builtinEnvNames is the full set of variables this product injects, in
 // the order they are documented.
 //
 // The list is exhaustive and it is checked against, not merely described:
-// ValidateEnvName refuses the whole BACKUPD_ prefix, so a built-in added
+// ValidateEnvName refuses the whole RETND_ prefix, so a built-in added
 // here later cannot collide with a key an operator already wrote. The
 // reason to enumerate them anyway is that the enumeration IS the contract
 // a hook author writes against, and a variable that is set but not listed
 // is one nobody can rely on.
+//
+// Every name here is ALSO exported under its deprecated BACKUPD_
+// spelling for one release (LegacyEnvName, Resolve). This list is the
+// new names only, because it is the contract a hook author writes
+// against from now on and a deprecated name is not something to write
+// anything new against.
 var builtinEnvNames = []string{
 	ReservedEnvName,
-	"BACKUPD_RUN_ID",
-	"BACKUPD_BACKUP_SET_ID",
-	"BACKUPD_BACKUP_SET_NAME",
-	"BACKUPD_PHASE",
-	"BACKUPD_STEP_ID",
-	"BACKUPD_STEP_NAME",
-	"BACKUPD_STEP_TARGET",
+	"RETND_RUN_ID",
+	"RETND_BACKUP_SET_ID",
+	"RETND_BACKUP_SET_NAME",
+	"RETND_PHASE",
+	"RETND_STEP_ID",
+	"RETND_STEP_NAME",
+	"RETND_STEP_TARGET",
 	EnvSourceHost,
 	EnvSourcePath,
 	EnvDestination,
-	"BACKUPD_WORK_DIR",
-	"BACKUPD_BACKUP_STATUS",
-	"BACKUPD_WORKFLOW_STATUS",
-	"BACKUPD_CLEANUP_STATUS",
-	"BACKUPD_BACKUP_ERROR_CODE",
-	"BACKUPD_STARTED_AT",
-	"BACKUPD_RECOVERY",
-	"BACKUPD_CLEANUP_REASON",
+	"RETND_WORK_DIR",
+	"RETND_BACKUP_STATUS",
+	"RETND_WORKFLOW_STATUS",
+	"RETND_CLEANUP_STATUS",
+	"RETND_BACKUP_ERROR_CODE",
+	"RETND_STARTED_AT",
+	"RETND_RECOVERY",
+	"RETND_CLEANUP_REASON",
 }
 
 // BuiltinEnvNames returns every variable this product injects into a
@@ -154,16 +192,62 @@ var builtinEnvNames = []string{
 // package-level slice is writable by every importer.
 func BuiltinEnvNames() []string { return append([]string(nil), builtinEnvNames...) }
 
+// LegacyEnvName returns the deprecated spelling of a built-in's name, or
+// "" for a name that has none.
+//
+// One function, used by Resolve to export the compat block and by the
+// tests and docs that have to enumerate it, so "which old name goes with
+// which new one" is a rule rather than a second list to keep in step.
+// The mapping is purely lexical -- swap the prefix, or the whole bare
+// name -- and that is deliberate: a per-name table is a table with an
+// entry somebody forgot.
+func LegacyEnvName(name string) string {
+	if name == ReservedEnvName {
+		return LegacyReservedEnvName
+	}
+	if after, ok := strings.CutPrefix(name, ReservedEnvPrefix); ok {
+		return LegacyReservedEnvPrefix + after
+	}
+
+	return ""
+}
+
+// LegacyBuiltinEnvNames returns the deprecated spelling of every
+// built-in, in the same order as BuiltinEnvNames.
+//
+// It exists because the compat window has to be checkable from outside
+// this package: the hook-contract test runs a real script under both
+// spellings, and docs/deployment.md's table is generated against this
+// rather than typed out.
+func LegacyBuiltinEnvNames() []string {
+	out := make([]string, 0, len(builtinEnvNames))
+	for _, name := range builtinEnvNames {
+		if legacy := LegacyEnvName(name); legacy != "" {
+			out = append(out, legacy)
+		}
+	}
+
+	return out
+}
+
 // IsReservedEnvName reports whether name belongs to this product rather
 // than to an operator.
 //
 // The test is the PREFIX plus the bare name, not membership of
 // builtinEnvNames, and the difference matters: reserving only the names
-// that exist today would let an operator configure BACKUPD_SOMETHING_NEW,
+// that exist today would let an operator configure RETND_SOMETHING_NEW,
 // which then silently stops working the release this product starts
 // setting it.
+//
+// The deprecated prefix and bare name are reserved too, for as long as
+// they are exported: a configured BACKUPD_BACKUP_STATUS would be
+// overwritten by the compat block without a word, which is the state this
+// rule exists to make impossible.
 func IsReservedEnvName(name string) bool {
-	return name == ReservedEnvName || strings.HasPrefix(name, ReservedEnvPrefix)
+	return name == ReservedEnvName ||
+		name == LegacyReservedEnvName ||
+		strings.HasPrefix(name, ReservedEnvPrefix) ||
+		strings.HasPrefix(name, LegacyReservedEnvPrefix)
 }
 
 // ValidateEnvName is the one place a name an operator wrote is judged.
@@ -186,8 +270,8 @@ func ValidateEnvName(name string) error {
 
 	if IsReservedEnvName(name) {
 		return fmt.Errorf(
-			"%w: %q is reserved. Every %s* variable is set by this product from the run it belongs to, and a hook reading %s has to be reading what this product observed rather than a value from a config file. Choose a name outside the %s namespace",
-			ErrEnvName, name, ReservedEnvPrefix, "BACKUPD_BACKUP_STATUS", ReservedEnvPrefix)
+			"%w: %q is reserved. Every %s* variable is set by this product from the run it belongs to, and a hook reading %s has to be reading what this product observed rather than a value from a config file. Choose a name outside the %s namespace (%s* is reserved on the same terms while this release still exports it under its previous name)",
+			ErrEnvName, name, ReservedEnvPrefix, "RETND_BACKUP_STATUS", ReservedEnvPrefix, LegacyReservedEnvPrefix)
 	}
 
 	return nil
@@ -388,9 +472,11 @@ func SanitizedBaseline() []EnvVar {
 // about to hand it to an exec.
 type Resolved struct {
 	// names is in assembly order: sorted configured names, then sorted
-	// built-in names. Two lists rather than one sorted merge, because a
-	// reader of a plan or a log wants to see what was configured
-	// separately from what this product added.
+	// built-in names, then the deprecated spelling of each built-in.
+	// Three lists rather than one sorted merge, because a reader of a
+	// plan or a log wants to see what was configured separately from
+	// what this product added, and the compat block separately from
+	// both -- it is the part that goes away next release.
 	names []string
 
 	literals map[string]string
@@ -399,14 +485,25 @@ type Resolved struct {
 
 // Resolve assembles the environment for one step: the configured entries
 // with every secret reference resolved through the product's existing
-// custody rules, then the built-ins over the top.
+// custody rules, then the built-ins over the top, then the built-ins
+// again under their deprecated names.
 //
 // The built-ins win unconditionally and are not validated against
 // ValidateEnvName's reservation rule -- they are the thing it reserves.
 // They ARE checked for being known built-ins, so a caller cannot smuggle
 // an arbitrary variable in through this argument: a typo'd
-// BACKUPD_BAKCUP_STATUS would otherwise become part of a hook's contract
+// RETND_BAKCUP_STATUS would otherwise become part of a hook's contract
 // and stay there.
+//
+// # The compat block
+//
+// Every built-in is exported a second time under the BACKUPD_ name it
+// had before the rename (LegacyEnvName), with the IDENTICAL value, for
+// one release (FR-37). It is derived from the same map in the same loop
+// rather than assembled beside it, which is the whole point: a second
+// assembly path is a path that can disagree, and two names holding two
+// different values is worse for a hook author than one name holding
+// none.
 //
 // A secret that will not resolve is a refusal, not an empty value. A hook
 // handed an empty credential fails somewhere far away from the reason, and
@@ -414,7 +511,9 @@ type Resolved struct {
 // only honest report.
 func (e Environment) Resolve(ctx context.Context, builtins map[string]string) (Resolved, error) {
 	r := Resolved{
-		literals: make(map[string]string, len(e.vars)+len(builtins)),
+		// Two entries per built-in: the name and its deprecated
+		// spelling.
+		literals: make(map[string]string, len(e.vars)+2*len(builtins)),
 		secrets:  make(map[string]obs.Secret),
 	}
 
@@ -470,11 +569,32 @@ func (e Environment) Resolve(ctx context.Context, builtins map[string]string) (R
 		r.literals[name] = builtins[name]
 	}
 
+	// The compat block, in the same order as the built-ins it mirrors.
+	// Unconditional for the same reason the assignment above is: a hook
+	// that reads the old name has to see what this product observed,
+	// whatever an operator's configuration tried to put there.
+	for _, name := range builtinOrder {
+		legacy := LegacyEnvName(name)
+		if legacy == "" {
+			continue
+		}
+
+		if _, shadowed := r.literals[legacy]; !shadowed {
+			if _, shadowedSecret := r.secrets[legacy]; !shadowedSecret {
+				r.names = append(r.names, legacy)
+			}
+		}
+
+		delete(r.secrets, legacy)
+		r.literals[legacy] = builtins[name]
+	}
+
 	return r, nil
 }
 
 // Names returns every variable in this environment, configured ones first
-// in name order, then the built-ins in name order.
+// in name order, then the built-ins in name order, then the deprecated
+// spelling of each built-in.
 func (r Resolved) Names() []string { return append([]string(nil), r.names...) }
 
 // Environ returns the environment block, as exec expects it.

@@ -38,7 +38,7 @@ real flat directory:
 
 (`TestStreamingCostsFarLessThanListAtScale` in
 `core/internal/transport/rclone`; the million-entry row is the same test
-with `BACKUPD_HUGE_DIR_ENTRIES=1000000`, which also costs 3m34s of
+with `RETND_HUGE_DIR_ENTRIES=1000000`, which also costs 3m34s of
 fixture creation and is why CI does not run it. Peak goroutines includes
 the measuring goroutine itself, so the two columns are comparable to each
 other rather than absolute; the enumerator starts none of its own. Wall
@@ -515,6 +515,6 @@ first version of this walk failed),
 not product code. They are what makes a future rclone bump, or a future
 change to the chunking, fail loudly instead of quietly costing 490 MiB
 again. The million-entry real-filesystem variant is opt-in
-(`BACKUPD_HUGE_DIR_ENTRIES`) because creating the fixture takes three and
+(`RETND_HUGE_DIR_ENTRIES`) because creating the fixture takes three and
 a half minutes and removing it takes as long; the synthetic million-entry
 run is in the default suite and takes half a second.

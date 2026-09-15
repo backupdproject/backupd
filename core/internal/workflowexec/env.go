@@ -24,7 +24,7 @@ var ErrScriptEncoding = errors.New("workflowexec: these script bytes cannot be e
 // package exports rather than restated here.
 //
 // It is deliberately NOT workflow.ValidateEnvName: that function also
-// refuses the whole BACKUPD_ prefix, which is correct for a name an
+// refuses the whole RETND_ prefix, which is correct for a name an
 // OPERATOR wrote and wrong here, because by this point the built-ins have
 // already been merged in and they are the thing that prefix is reserved
 // for. What is checked at this layer is only the shape: whether a shell on
@@ -236,7 +236,7 @@ func validateName(name string) error {
 		// shell variable of its own, and an operator's variable that this
 		// product silently replaces is a variable that looks like it
 		// works -- the same reason workflow.ValidateEnvName refuses the
-		// whole BACKUPD_ prefix instead of winning the merge quietly.
+		// whole RETND_ prefix instead of winning the merge quietly.
 		return fmt.Errorf("%w: %s is the one variable name the remote execution envelope uses for the script itself, so it cannot also carry a configured value",
 			ErrEnvEncoding, name)
 	}
