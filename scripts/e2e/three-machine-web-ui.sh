@@ -27,7 +27,7 @@
 #             the edge network and nothing else, so the only thing it can
 #             reach is the product's front door.
 #
-#   RCLONE-MANAGER  the real product image, built from THIS working tree,
+#   RETND     the real product image, built from THIS working tree,
 #             running the deployment container/compose.yaml describes.
 #
 #   VPS       a real sshd holding real files (atmoz/sftp, through
@@ -36,11 +36,11 @@
 #             the machine being backed up.
 #
 # Three machines, four containers, and the difference is worth being plain
-# about. The product IS two containers: `/backupd-web serve` (the engine: local
-# authentication, /api/v1, the scheduler, SQLite) and `/backupd-web serve-ui`
+# about. The product IS two containers: `/retnd-web serve` (the engine: local
+# authentication, /api/v1, the scheduler, SQLite) and `/retnd-web serve-ui`
 # (the static bundle plus a reverse proxy to the engine). Collapsing them
 # into one would delete the reverse-proxy hop, and that hop is half of what
-# this suite exists to cover. So "the backupd machine" here is the
+# this suite exists to cover. So "the retnd machine" here is the
 # product's own split, unchanged.
 #
 # # Why this drops docker-in-docker, and what that gives up
@@ -80,8 +80,8 @@
 # peer. Both of those are the topology doing work, so the topology is the
 # real one. Nothing is published to the host on any of them.
 #
-# The name `backupd` lives on the edge network only, and it resolves
-# to the UI container: from outside the deployment that IS backupd,
+# The name `retnd` lives on the edge network only, and it resolves
+# to the UI container: from outside the deployment that IS retnd,
 # and it is the address the browser is given. Inside the deployment the
 # containers keep compose's own names. One name per network, so nothing
 # ever resolves to two things.
@@ -102,18 +102,18 @@
 #
 # The client container gets these, and they are the whole contract:
 #
-#   RM_BASE_URL          http://backupd:8080
-#   RM_ADMIN_USERNAME    the enrolled administrator
-#   RM_ADMIN_PASSWORD    its password, generated this run
-#   RM_BACKUP_SET        the seeded set's name
-#   RM_ARTIFACTS_DIR     /artifacts, mounted out to the host
+#   RETND_BASE_URL          http://retnd:8080
+#   RETND_ADMIN_USERNAME    the enrolled administrator
+#   RETND_ADMIN_PASSWORD    its password, generated this run
+#   RETND_BACKUP_SET        the seeded set's name
+#   RETND_ARTIFACTS_DIR     /artifacts, mounted out to the host
 #
 # plus, unless --no-workflows, the workflow contract in the section
 # below: the backup sets #816's scenarios need, the seeded script
 # library's root, and the control channel that crashes the engine or
 # takes the runner away.
 #
-# A Playwright config that sees RM_BASE_URL must use it as `baseURL` and
+# A Playwright config that sees RETND_BASE_URL must use it as `baseURL` and
 # must NOT start a web server: there is one, it is another container, and
 # `npm run dev` in here would serve the mock this whole script exists to
 # get away from.
@@ -143,7 +143,7 @@
 #                     serve-ui, so the browser reaches the stack the way a
 #                     real NAS's front door does (h2 over TLS) rather than
 #                     the plain HTTP/1.1 this rig otherwise uses. The
-#                     reproduction for backupd#730. RM_SEED_CYCLES=N
+#                     reproduction for backupd#730. RETND_SEED_CYCLES=N
 #                     additionally runs N backup cycles to enlarge the feed.
 #   --break-engine    hand the suite the ability to take the ENGINE away
 #                     mid-session, leaving serve-ui up, so the browser
@@ -161,8 +161,8 @@
 #
 #                     The client container gets two more variables:
 #
-#                       RM_ENGINE_UNREACHABLE=1   branch on this
-#                       RM_ENGINE_CONTROL         a directory under
+#                       RETND_ENGINE_UNREACHABLE=1   branch on this
+#                       RETND_ENGINE_CONTROL         a directory under
 #                                                 /artifacts, described
 #                                                 below
 #
@@ -220,7 +220,7 @@
 # rather than behind a flag, because a workflow case that skips itself
 # for want of a fixture is a case that never ran.
 #
-#   THE RUNNER    `backupd workflow-runner serve`, from THIS run's
+#   THE RUNNER    `retnd workflow-runner serve`, from THIS run's
 #                 product image, in a container of its own
 #                 (scripts/e2e/runner-machine.Dockerfile) that is NOT
 #                 the engine's. It holds this host's Docker socket,
@@ -253,7 +253,7 @@
 # findings and a gate-refused script -- and the plaintext of the one
 # secret a hook resolves, so a spec can assert it appears NOWHERE.
 #
-#   RM_WORKFLOW_CONTROL  a directory under /artifacts, the same protocol
+#   RETND_WORKFLOW_CONTROL  a directory under /artifacts, the same protocol
 #                        --break-engine's channel uses and for the same
 #                        reason: the capability lives on THIS host and
 #                        the client is given a few files rather than a
@@ -297,7 +297,7 @@
 # the same cycle on a timer regardless, which gate.go states in as many
 # words, so the rig sets that timer to the product's own floor -- one
 # minute, config.MinPollInterval -- and hands it over as
-# RM_WF_POLL_SECONDS. A spec watches for the run the timer produces
+# RETND_WF_POLL_SECONDS. A spec watches for the run the timer produces
 # instead of asking for one.
 #
 # The exit status is the client container's, not the teardown's. A run that
@@ -373,23 +373,23 @@ suite_dir=""
 artifacts_dir=""
 keep_on_failure=0
 keep_up=0
-prebuilt_image="${RM_PRODUCT_IMAGE:-}"
+prebuilt_image="${RETND_PRODUCT_IMAGE:-}"
 # backupd#730 reproduction: put an ordinary TLS + HTTP/2 reverse
 # proxy in front of serve-ui, so the browser reaches the stack the way it
 # reaches a real NAS (h2 over TLS) rather than the plain HTTP/1.1 the rig
 # otherwise uses. Off by default; the default rig is unchanged.
-front_proxy="${RM_FRONT_PROXY_TLS:-0}"
+front_proxy="${RETND_FRONT_PROXY_TLS:-0}"
 # backupd#795 reproduction: let the suite take the engine away while the
 # browser holds a live session, with serve-ui left up in front of it.
 # Off by default; every line it adds is behind this flag, so a default run
 # is the run it was before.
-break_engine="${RM_BREAK_ENGINE:-0}"
+break_engine="${RETND_BREAK_ENGINE:-0}"
 # EPIC L (#816). The Host Workflow Runner, the exec host, the seeded
 # script library and the backup sets that use them. ON by default,
 # because the point of this rig is that a browser meets the real thing:
 # a suite handed a deployment with no hooks configured skips every
 # workflow case and reports a pass.
-workflows="${RM_WORKFLOWS:-1}"
+workflows="${RETND_WORKFLOWS:-1}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -421,7 +421,7 @@ fi
 # ------------------------------------------------------------ identities
 
 run_id="${E2E_RUN_ID:-$$-$(date +%s)-${RANDOM}}"
-label="backupd-e2e=three-machine-web-ui"
+label="retnd-e2e=three-machine-web-ui"
 
 net_edge="rm-webui-edge-$run_id"
 net_internal="rm-webui-internal-$run_id"
@@ -467,7 +467,7 @@ v_wfsecrets="rm-webui-wfsecrets-$run_id"
 # secret. It lives in a run directory OUTSIDE this repository, so nothing
 # this script writes can be committed by accident.
 tmp_root="${TMPDIR:-/tmp}"
-tmp_root="${tmp_root%/}/backupd-e2e-web-ui"
+tmp_root="${tmp_root%/}/retnd-e2e-web-ui"
 run_dir="$tmp_root/$run_id"
 
 # Artifacts outlive the stack on purpose, so this is not $run_dir. Outside
@@ -508,19 +508,19 @@ workflow_watcher_pid=""
 wf_prefix="$tmp_root/$run_id-workflow-runner"
 wf_workspace="$wf_prefix/workspace"
 
-product_image="${prebuilt_image:-backupd-web-ui-e2e:$run_id}"
-source_image="backupd-e2e-source:1"
-client_image="backupd-e2e-client:1"
-proxy_image="backupd-e2e-proxy:1"
-exec_image="backupd-e2e-exec-host:1"
+product_image="${prebuilt_image:-retnd-web-ui-e2e:$run_id}"
+source_image="retnd-e2e-source:1"
+client_image="retnd-e2e-client:1"
+proxy_image="retnd-e2e-proxy:1"
+exec_image="retnd-e2e-exec-host:1"
 # Per-run, because it is built FROM the product image this run tested:
 # the runner refuses an engine from another release, so the tag has to
 # move when that image does.
-runner_image="backupd-e2e-runner:$run_id"
+runner_image="retnd-e2e-runner:$run_id"
 # The image every local hook runs in. `workflow-runner serve` refuses to
 # pull one, so this is pulled by the rig, once, and is the same reference
 # distribution/packaging/canonical.json pins for a real installation.
-hook_image="${RM_HOOK_IMAGE:-bash:5.2.37-alpine3.21}"
+hook_image="${RETND_HOOK_IMAGE:-bash:5.2.37-alpine3.21}"
 
 source_dockerfile="$repo_root/scripts/e2e/source-machine.Dockerfile"
 client_dockerfile="$repo_root/scripts/e2e/client-machine.Dockerfile"
@@ -660,7 +660,7 @@ wf_rejected_dir="rejected-before"
 # every local hook then fails authentication (backupd#877).
 runner_socket_name="workflow-runner.sock"
 runner_token_name="workflow-runner.token"
-engine_secrets_mount="/etc/backupd/wf-secrets"
+engine_secrets_mount="/etc/retnd/wf-secrets"
 engine_token_path="$engine_secrets_mount/$runner_token_name"
 # How the product names the runner on its own surfaces, handed to the
 # suite so a spec asserting the "Runs on" column reads it from here
@@ -686,7 +686,7 @@ wf_secret_name="wf-e2e-secret"
 wf_secret="e2e-secret-$(openssl rand -hex 12)"
 engine_secret_path="$engine_secrets_mount/$wf_secret_name"
 
-# What the client is told. `backupd` is an alias on the edge network
+# What the client is told. `retnd` is an alias on the edge network
 # and on no other, so it resolves to exactly one container from exactly one
 # place, seen from the client: the UI container normally, or the TLS/HTTP-2
 # front proxy when --front-proxy-tls is set (which then upstreams to the UI
@@ -697,12 +697,12 @@ engine_secret_path="$engine_secrets_mount/$wf_secret_name"
 # certificate trust. front_proxy_probe_env is used UNQUOTED on purpose so
 # the empty default expands to no argument at all.
 if [ "$front_proxy" = 1 ]; then
-  base_url="https://backupd"
+  base_url="https://retnd"
   edge_web_alias="origin"
   front_proxy_probe_env="-e NODE_NO_WARNINGS=1 -e NODE_TLS_REJECT_UNAUTHORIZED=0"
 else
-  base_url="http://backupd:8080"
-  edge_web_alias="backupd"
+  base_url="http://retnd:8080"
+  edge_web_alias="retnd"
   front_proxy_probe_env=""
 fi
 
@@ -881,7 +881,7 @@ wait_or_die() {
 # suite told the second when only the first is true fails on a race it
 # cannot see.
 engine_is_live() {
-  docker exec "$c_engine" /backupd-web healthcheck --url http://127.0.0.1:8080/health/live >/dev/null 2>&1
+  docker exec "$c_engine" /retnd-web healthcheck --url http://127.0.0.1:8080/health/live >/dev/null 2>&1
 }
 
 # And the hop the BROWSER actually uses, which is not the same fact
@@ -908,7 +908,7 @@ engine_is_live() {
 # depends on is what has to be verified, not the nearest thing that is
 # cheap to check.
 serve_ui_reaches_engine() {
-  docker exec "$c_web" /backupd-web healthcheck --url http://127.0.0.1:8080/health/live >/dev/null 2>&1
+  docker exec "$c_web" /retnd-web healthcheck --url http://127.0.0.1:8080/health/live >/dev/null 2>&1
 }
 
 # The health budget one "start" request is given, in seconds.
@@ -1072,7 +1072,7 @@ workflow_ack() {  # workflow_ack <name> [reason]
 # .local.sh hook. So this is the engine's own answer, asked the engine's
 # own way.
 runner_is_live() {
-  docker exec "$c_runner" /backupd workflow-runner status \
+  docker exec "$c_runner" /retnd workflow-runner status \
     --runtime-dir /data/run \
     --workspace-dir "$wf_workspace" \
     --secrets-dir /data/secrets >/dev/null 2>&1
@@ -1240,10 +1240,10 @@ oneshot() {  # oneshot <network, or "none"> <command...>
     --network "$net" \
     --label "$label" \
     --user "$app_uid:$app_gid" \
-    -v "$v_config:/etc/backupd/config" \
+    -v "$v_config:/etc/retnd/config" \
     -v "$v_state:/data/state" \
     -v "$v_backups:/data/backups" \
-    -v "$v_keys:/etc/backupd/keys:ro" \
+    -v "$v_keys:/etc/retnd/keys:ro" \
     ${wf_mounts[@]+"${wf_mounts[@]}"} \
     -e TMPDIR=/tmp \
     "$product_image" "$@"
@@ -1280,7 +1280,7 @@ if [ "$workflows" = 1 ]; then
   # socket under the user's own home, and a rig that mounted a path that
   # is not there would hand the runner a daemon it cannot reach and then
   # report the refusal as a product fault.
-  docker_socket="${RM_DOCKER_SOCKET:-}"
+  docker_socket="${RETND_DOCKER_SOCKET:-}"
   if [ -z "$docker_socket" ]; then
     docker_endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
     case "$docker_endpoint" in
@@ -1290,7 +1290,7 @@ if [ "$workflows" = 1 ]; then
   fi
   [ -S "$docker_socket" ] \
     || cannot_run "the Docker daemon is not reachable over a Unix socket ($docker_socket is not one)." \
-                  "The Host Workflow Runner runs local hooks in containers, so it needs that socket; name it with RM_DOCKER_SOCKET, or re-run with --no-workflows and accept that every workflow case will skip."
+                  "The Host Workflow Runner runs local hooks in containers, so it needs that socket; name it with RETND_DOCKER_SOCKET, or re-run with --no-workflows and accept that every workflow case will skip."
   note "docker socket for the runner: $docker_socket"
 fi
 
@@ -1398,7 +1398,7 @@ step "seeding the VPS's files"
 # Deterministic bytes rather than /dev/urandom, so a digest mismatch can be
 # reasoned about rather than only observed.
 head -c 3145728 /dev/zero \
-  | openssl enc -aes-256-ctr -pbkdf2 -pass pass:backupd-e2e-web-ui -nosalt 2>/dev/null \
+  | openssl enc -aes-256-ctr -pbkdf2 -pass pass:retnd-e2e-web-ui -nosalt 2>/dev/null \
   > "$run_dir/upload/payload.bin" \
   || die "could not generate the payload."
 printf 'CREATE TABLE artifacts (id text primary key);\n' > "$run_dir/upload/schema.sql"
@@ -1444,7 +1444,7 @@ done
 # design, and refuses a group- or world-writable ancestor as well.
 toolbox -v "$v_keys:/keys" -- "
     set -e
-    ssh-keygen -q -t ed25519 -N '' -C 'backupd e2e' -f /keys/id_ed25519 </dev/null
+    ssh-keygen -q -t ed25519 -N '' -C 'retnd e2e' -f /keys/id_ed25519 </dev/null
     chown -R $app_uid:$app_gid /keys
     chmod 700 /keys
     chmod 600 /keys/id_ed25519
@@ -1628,7 +1628,7 @@ if [ "$workflows" = 1 ]; then
     --network-alias exechost \
     --hostname exechost \
     --label "$label" \
-    -v "$run_dir/authorized_keys/engine.pub:/etc/ssh/authorized/backupd.pub:ro" \
+    -v "$run_dir/authorized_keys/engine.pub:/etc/ssh/authorized/retnd.pub:ro" \
     -v "$run_dir/hookdata:/home/$exec_user/hookdata" \
     --entrypoint sh \
     "$exec_image" -c 'ssh-keygen -A >/dev/null && exec /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config.exec' >/dev/null \
@@ -1693,11 +1693,11 @@ step "creating the backup set, before anything is serving"
 # the VPS is up first. The alternative, --known-hosts-line, would need a
 # key this script had settled in advance, and it settles none.
 oneshot "$net_backhaul" \
-  /backupd backup-set create "$backup_set" \
-    --config /etc/backupd/config \
+  /retnd backup-set create "$backup_set" \
+    --config /etc/retnd/config \
     --host vps \
     --user "$sftp_user" \
-    --ssh-key-file /etc/backupd/keys/id_ed25519 \
+    --ssh-key-file /etc/retnd/keys/id_ed25519 \
     --trust-host-key \
     --remote-path /upload \
     --local-path /data/backups/vps \
@@ -1714,13 +1714,13 @@ step "enrolling the administrator"
 # administrator without a browser, and it is what the deployment's first-run
 # flow would otherwise do interactively.
 printf '%s' "$admin_pass" | oneshot none \
-  /backupd-web auth create-admin --username "$admin_user" --password-stdin \
+  /retnd-web auth create-admin --username "$admin_user" --password-stdin \
   || die "could not enrol the administrator."
 note "administrator $admin_user enrolled, password generated this run"
 
 step "running one backup cycle, so the pages have something real to render"
 # BEFORE the engine starts, and this order is load-bearing rather than
-# stylistic. `backupd run` beside a serving engine is two processes writing the
+# stylistic. `retnd run` beside a serving engine is two processes writing the
 # same SQLite journal, and the loser gets SQLITE_BUSY: measured here, a
 # cycle run that way came back with
 #
@@ -1738,7 +1738,7 @@ step "running one backup cycle, so the pages have something real to render"
 # stronger one than a banner grab: it authenticates with the generated key,
 # lists a directory, pulls three files and verifies them.
 oneshot "$net_backhaul" \
-  /backupd run --config /etc/backupd/config \
+  /retnd run --config /etc/retnd/config \
   || die "the backup cycle exited non-zero, so the deployment could not pull from the VPS." \
          "Everything the browser is about to look at would be empty, and a suite passing against empty tables proves nothing."
 
@@ -1748,12 +1748,12 @@ oneshot "$net_backhaul" \
 # streaming/framing threshold a plain seed never reaches. Default 1 leaves
 # the base rig byte-identical; the verify below still holds because the
 # files on the VPS do not change between cycles.
-seed_cycles="${RM_SEED_CYCLES:-1}"
+seed_cycles="${RETND_SEED_CYCLES:-1}"
 if [ "$seed_cycles" -gt 1 ]; then
   step "running $((seed_cycles - 1)) more backup cycle(s) to enlarge the activity journal"
   i=1
   while [ "$i" -lt "$seed_cycles" ]; do
-    oneshot "$net_backhaul" /backupd run --config /etc/backupd/config \
+    oneshot "$net_backhaul" /retnd run --config /etc/retnd/config \
       || die "seed cycle $((i + 1)) of $seed_cycles exited non-zero."
     i=$((i + 1))
   done
@@ -1804,11 +1804,11 @@ if [ "$workflows" = 1 ]; then
     name="${spec%%:*}"
     dir="${spec##*:}"
     oneshot "$net_backhaul" \
-      /backupd backup-set create "$name" \
-        --config /etc/backupd/config \
+      /retnd backup-set create "$name" \
+        --config /etc/retnd/config \
         --host exechost \
         --user "$exec_user" \
-        --ssh-key-file /etc/backupd/keys/id_ed25519 \
+        --ssh-key-file /etc/retnd/keys/id_ed25519 \
         --trust-host-key \
         --remote-path "/home/$exec_user/hookdata" \
         --local-path "/data/backups/$dir" \
@@ -1849,7 +1849,7 @@ if [ "$workflows" = 1 ]; then
   # backupd#877's lesson -- an in-container token_file naming the
   # installer's host path is a file that does not exist and every
   # .local.sh hook fails authentication. container/compose.yaml binds
-  # that credential as a single file at /etc/backupd/workflow-runner.token;
+  # that credential as a single file at /etc/retnd/workflow-runner.token;
   # here it arrives in the secrets volume the runner also reads, which is
   # the one deviation, and it is a deviation about Docker volumes versus
   # bind-mounted files rather than about the contract: a volume is the
@@ -1868,8 +1868,8 @@ workflows:
         host: exechost
         port: 22
         user: $exec_user
-        key_file: /etc/backupd/keys/id_ed25519
-        known_hosts: /etc/backupd/keys/known_hosts
+        key_file: /etc/retnd/keys/id_ed25519
+        known_hosts: /etc/retnd/keys/known_hosts
 YAML
   note "workflows.root=/workflows, the runner's socket and credential, and the \"$exec_connection\" execution connection"
 
@@ -1879,7 +1879,7 @@ YAML
   # with the other pre-start writes rather than later.
   for spec in "${wf_stages[@]}"; do
     IFS='|' read -r name before after conn <<<"$spec"
-    args=(/backupd backup-set workflow patch "$name" --config /etc/backupd/config)
+    args=(/retnd backup-set workflow patch "$name" --config /etc/retnd/config)
     [ -z "$before" ] || args+=(--before-dir "$before")
     [ -z "$after" ] || args+=(--after-dir "$after")
     [ -z "$conn" ] || args+=(--exec-connection "$conn")
@@ -1912,8 +1912,8 @@ YAML
   # LOCATION and never material: the CLI takes no value for this and
   # config.yaml holds the path rather than the secret, which is the same
   # rule the repository passphrase follows.
-  oneshot none /backupd backup-set workflow env "$wf_set_secret" set "$wf_secret_env" \
-    --config /etc/backupd/config \
+  oneshot none /retnd backup-set workflow env "$wf_set_secret" set "$wf_secret_env" \
+    --config /etc/retnd/config \
     --secret-file "$engine_secret_path" >/dev/null \
     || die "could not configure $wf_secret_env on $wf_set_secret."
   note "$wf_secret_env on $wf_set_secret reads $engine_secret_path, which only the engine can see"
@@ -1925,7 +1925,7 @@ YAML
   # re-marshalled the document without the runner block would leave a
   # deployment that cannot run a local hook, and every workflow case
   # would then fail as a product defect.
-  resolved="$(oneshot none /backupd settings workflow --config /etc/backupd/config 2>&1 || true)"
+  resolved="$(oneshot none /retnd settings workflow --config /etc/retnd/config 2>&1 || true)"
   case "$resolved" in
     *"/data/run/$runner_socket_name"*) : ;;
     *) die "the deployment does not report the host runner after its configuration was written." \
@@ -1955,7 +1955,7 @@ YAML
   # timer whatever this reports". So the rig sets that timer to the
   # product's own floor -- config.MinPollInterval, one minute, and a
   # shorter value is refused rather than accepted -- and hands the
-  # number to the suite as RM_WF_POLL_SECONDS so no spec has to guess
+  # number to the suite as RETND_WF_POLL_SECONDS so no spec has to guess
   # it. Each workflow set then gets a fresh run every poll interval plus
   # its position in the cycle, which is what a spec waits for instead of
   # asking.
@@ -1979,7 +1979,7 @@ fi
 
 if [ "$workflows" = 1 ]; then
   step "starting the Host Workflow Runner, OUTSIDE the engine's container"
-  # This is the process the engine cannot be. `/backupd-web serve` is
+  # This is the process the engine cannot be. `/retnd-web serve` is
   # distroless, read-only, capability-dropped and non-root on purpose, so
   # "run this operator's shell script on the host" is a thing it
   # deliberately cannot do; docs/adr/0020-host-workflow-runner.md is the
@@ -2016,13 +2016,13 @@ if [ "$workflows" = 1 ]; then
     -v "$docker_socket:/var/run/docker.sock" \
     -v "$v_wfrun:/data/run" \
     -v "$v_wfsecrets:/data/secrets" \
-    -v "$v_config:/etc/backupd/config:ro" \
+    -v "$v_config:/etc/retnd/config:ro" \
     -v "$wf_workspace:$wf_workspace" \
-    "$runner_image" /backupd workflow-runner serve \
+    "$runner_image" /retnd workflow-runner serve \
       --runtime-dir /data/run \
       --workspace-dir "$wf_workspace" \
       --secrets-dir /data/secrets \
-      --config /etc/backupd/config \
+      --config /etc/retnd/config \
       --docker /usr/local/bin/docker \
       --hook-image "$hook_image" \
       --hook-bash /usr/local/bin/bash >/dev/null \
@@ -2053,7 +2053,7 @@ fi
 
 # --------------------------------------------------------- the engine
 
-step "starting the engine (/backupd-web serve)"
+step "starting the engine (/retnd-web serve)"
 # The environment is container/compose.yaml's own for this service, and the
 # values that differ from it differ for a reason written beside them.
 # The workflow mounts are container/compose.yaml's own three, and the
@@ -2076,10 +2076,10 @@ engine_run=(
   -e LISTEN_ADDR=":8080"
   -e PUBLIC_BASE_URL="$base_url"
   -e TRUST_FORWARDED_HEADERS="true"
-  -v "$v_config:/etc/backupd/config"
+  -v "$v_config:/etc/retnd/config"
   -v "$v_state:/data/state"
   -v "$v_backups:/data/backups"
-  -v "$v_keys:/etc/backupd/keys:ro"
+  -v "$v_keys:/etc/retnd/keys:ro"
 )
 if [ "$workflows" = 1 ]; then
   engine_run+=(
@@ -2088,7 +2088,7 @@ if [ "$workflows" = 1 ]; then
     -v "$v_wfsecrets:$engine_secrets_mount:ro"
   )
 fi
-engine_run+=("$product_image" /backupd-web serve --profile=generic)
+engine_run+=("$product_image" /retnd-web serve --profile=generic)
 "${engine_run[@]}" >/dev/null \
   || die "could not start the engine."
 created_containers+=("$c_engine")
@@ -2100,7 +2100,7 @@ docker network connect --alias manager "$net_backhaul" "$c_engine" \
   || die "could not put the engine on the backhaul network, so it has no route to the VPS."
 
 wait_or_die 180 "the engine to report itself live" \
-  docker exec "$c_engine" /backupd-web healthcheck --url http://127.0.0.1:8080/health/live
+  docker exec "$c_engine" /retnd-web healthcheck --url http://127.0.0.1:8080/health/live
 note "$c_engine is serving on the internal network as \"engine\", and is on the backhaul network as \"manager\""
 
 if [ "$workflows" = 1 ]; then
@@ -2146,7 +2146,7 @@ if [ "$workflows" = 1 ]; then
   # validation_of <set> <file> prints one report and files it.
   validation_of() {
     local set_id="$1" name="$2" out=""
-    out="$(docker exec "$c_engine" /backupd validate workflow "$set_id" --config /etc/backupd/config 2>&1 || true)"
+    out="$(docker exec "$c_engine" /retnd validate workflow "$set_id" --config /etc/retnd/config 2>&1 || true)"
     printf '%s\n' "$out" > "$artifacts_dir/validate-$name.txt"
     printf '%s' "$out"
   }
@@ -2200,7 +2200,7 @@ fi
 
 # --------------------------------------------------------- the UI host
 
-step "starting the UI host (/backupd-web serve-ui)"
+step "starting the UI host (/retnd-web serve-ui)"
 docker run -d \
   --name "$c_web" \
   --network "$net_internal" \
@@ -2212,7 +2212,7 @@ docker run -d \
   -e TMPDIR=/tmp \
   -e LISTEN_ADDR=":8080" \
   -e UPSTREAM_ADDR="http://engine:8080" \
-  "$product_image" /backupd-web serve-ui --profile=generic >/dev/null \
+  "$product_image" /retnd-web serve-ui --profile=generic >/dev/null \
   || die "could not start the UI host."
 created_containers+=("$c_web")
 
@@ -2224,7 +2224,7 @@ docker network connect --alias "$edge_web_alias" "$net_edge" "$c_web" \
   || die "could not put the UI host on the edge network, so the client would have nothing to talk to."
 
 wait_or_die 180 "the UI host to answer its own listener" \
-  docker exec "$c_web" /backupd-web healthcheck
+  docker exec "$c_web" /retnd-web healthcheck
 note "$c_web is serving on the edge network as \"$edge_web_alias\", proxying to \"engine\""
 
 if [ "$front_proxy" = 1 ]; then
@@ -2238,7 +2238,7 @@ if [ "$front_proxy" = 1 ]; then
   docker run -d \
     --name "$c_proxy" \
     --network "$net_edge" \
-    --network-alias backupd \
+    --network-alias retnd \
     --label "$label" \
     "$proxy_image" >/dev/null \
     || die "could not start the front proxy."
@@ -2246,14 +2246,14 @@ if [ "$front_proxy" = 1 ]; then
 
   proxy_up=0
   for _ in $(seq 1 30); do
-    if toolbox --network "$net_edge" -- 'nc -z -w 3 backupd 443'; then
+    if toolbox --network "$net_edge" -- 'nc -z -w 3 retnd 443'; then
       proxy_up=1; break
     fi
     sleep 1
   done
   [ "$proxy_up" = 1 ] \
     || die "the front proxy never accepted TLS on 443 on the edge network."
-  note "$c_proxy terminates TLS + HTTP/2 as \"backupd\", upstream to \"$edge_web_alias\""
+  note "$c_proxy terminates TLS + HTTP/2 as \"retnd\", upstream to \"$edge_web_alias\""
 fi
 
 # ============================================ the two reachability proofs
@@ -2275,10 +2275,10 @@ esac
 # throwaway on the edge network from the client image itself, so what is
 # proven reachable is reachable from the thing that will do the reaching.
 login_probe="$(docker run --rm --label "$label" --network "$net_edge" \
-  -e "RM_BASE_URL=$base_url" $front_proxy_probe_env "$client_image" \
+  -e "RETND_BASE_URL=$base_url" $front_proxy_probe_env "$client_image" \
   node -e '
     (async () => {
-      const r = await fetch(process.env.RM_BASE_URL + "/");
+      const r = await fetch(process.env.RETND_BASE_URL + "/");
       const body = await r.text();
       const title = (body.match(/<title[^>]*>([^<]*)<\/title>/i) || [, ""])[1];
       console.log(r.status + " " + (r.headers.get("content-type") || "") + " " + body.length + " bytes, <title>" + title + "</title>");
@@ -2307,10 +2307,10 @@ if [ "$break_engine" = 1 ]; then
   # the hop behind it.
   api_probe() {
     docker run --rm --label "$label" --network "$net_edge" \
-      -e "RM_BASE_URL=$base_url" $front_proxy_probe_env "$client_image" \
+      -e "RETND_BASE_URL=$base_url" $front_proxy_probe_env "$client_image" \
       node -e '
         (async () => {
-          const r = await fetch(process.env.RM_BASE_URL + "/api/v1/activity");
+          const r = await fetch(process.env.RETND_BASE_URL + "/api/v1/activity");
           console.log(r.status + " " + (r.headers.get("x-correlation-id") || "-"));
         })().catch((e) => { console.log("no-answer " + e.message); process.exitCode = 1; });
       ' 2>&1 || true
@@ -2361,65 +2361,82 @@ fi
 # ------------------------------------------------------- hand it over
 
 step "the stack is up"
-note "RM_BASE_URL       $base_url"
-note "RM_ADMIN_USERNAME $admin_user"
-note "RM_ADMIN_PASSWORD $admin_pass"
-note "RM_BACKUP_SET     $backup_set"
-note "RM_ARTIFACTS_DIR  /artifacts, mounted from $artifacts_dir"
+note "RETND_BASE_URL       $base_url"
+note "RETND_ADMIN_USERNAME $admin_user"
+note "RETND_ADMIN_PASSWORD $admin_pass"
+note "RETND_BACKUP_SET     $backup_set"
+note "RETND_ARTIFACTS_DIR  /artifacts, mounted from $artifacts_dir"
 if [ "$workflows" = 1 ]; then
-  note "RM_WORKFLOW_SET   $wf_set_happy"
-  note "RM_EXEC_SET       $wf_set_remote"
-  note "RM_SFTP_ONLY_SET  $backup_set"
-  note "RM_WF_*_SET       $wf_set_none, $wf_set_before_fail, $wf_set_after_fail, $wf_set_hostile,"
+  note "RETND_WORKFLOW_SET   $wf_set_happy"
+  note "RETND_EXEC_SET       $wf_set_remote"
+  note "RETND_SFTP_ONLY_SET  $backup_set"
+  note "RETND_WF_*_SET       $wf_set_none, $wf_set_before_fail, $wf_set_after_fail, $wf_set_hostile,"
   note "                  $wf_set_secret, $wf_set_slow, $wf_set_crash, $wf_set_many,"
   note "                  $wf_set_findings"
-  note "RM_WF_SCRIPT_PREFIX /workflows"
-  note "RM_WF_POLL_SECONDS $wf_poll_seconds (the scheduler's cadence: a browser cannot start a run, #92)"
+  note "RETND_WF_SCRIPT_PREFIX /workflows"
+  note "RETND_WF_POLL_SECONDS $wf_poll_seconds (the scheduler's cadence: a browser cannot start a run, #92)"
 else
   note "workflows        NOT provisioned (--no-workflows), so every workflow case skips itself"
 fi
 
 client_env=(
-  -e "RM_BASE_URL=$base_url"
-  -e "RM_ADMIN_USERNAME=$admin_user"
-  -e "RM_ADMIN_PASSWORD=$admin_pass"
-  -e "RM_BACKUP_SET=$backup_set"
-  -e "RM_ARTIFACTS_DIR=/artifacts"
-  -e "RM_CHROMIUM_NO_SANDBOX=${RM_CHROMIUM_NO_SANDBOX:-0}"
+  -e "RETND_BASE_URL=$base_url"
+  -e "RETND_ADMIN_USERNAME=$admin_user"
+  -e "RETND_ADMIN_PASSWORD=$admin_pass"
+  -e "RETND_BACKUP_SET=$backup_set"
+  -e "RETND_ARTIFACTS_DIR=/artifacts"
+  -e "RETND_CHROMIUM_NO_SANDBOX=${RETND_CHROMIUM_NO_SANDBOX:-0}"
+  # The same value under the name the SUITE reads. This rig's own
+  # web-ui-smoke.mjs reads RETND_CHROMIUM_NO_SANDBOX and
+  # backupd-tests' harness reads RETND_NO_SANDBOX, and until #895
+  # only the first was exported -- so a run that asked for
+  # --no-sandbox got it in the smoke probe and not in the suite the
+  # rig exists to drive. Two consumers, two names, one value, set
+  # together here rather than renamed on one side alone: renaming
+  # either would break the other repository at a sha this one does
+  # not control. Both names are on the shim-removal issue's list.
+  -e "RETND_NO_SANDBOX=${RETND_CHROMIUM_NO_SANDBOX:-0}"
   -e "HOME=/tmp"
 )
 # Over the self-signed front proxy the browser and any node fetch in the
-# suite must accept the leaf; RM_IGNORE_HTTPS switches on Playwright's
+# suite must accept the leaf; RETND_IGNORE_HTTPS switches on Playwright's
 # ignoreHTTPSErrors in web-ui-smoke.mjs, and NODE_TLS_REJECT_UNAUTHORIZED
 # covers a suite that fetches from node. Appended after the array literal so
 # an empty case never expands to a stray argument.
+#
+# NOTE, and it is a gap rather than a decision: nothing in backupd-tests
+# reads RETND_IGNORE_HTTPS, and its playwright.config.ts never sets
+# ignoreHTTPSErrors. So in front-proxy mode a node fetch inside the suite
+# accepts the self-signed leaf through NODE_TLS_REJECT_UNAUTHORIZED and a
+# BROWSER navigation would still reject it. Recorded here rather than
+# papered over, because the fix is a change on that side.
 if [ "$front_proxy" = 1 ]; then
-  client_env+=(-e "RM_IGNORE_HTTPS=1" -e "NODE_TLS_REJECT_UNAUTHORIZED=0" -e "NODE_NO_WARNINGS=1")
+  client_env+=(-e "RETND_IGNORE_HTTPS=1" -e "NODE_TLS_REJECT_UNAUTHORIZED=0" -e "NODE_NO_WARNINGS=1")
 fi
 # #816's contract. Unset without the machinery, so a spec that reads
-# RM_WORKFLOW_SET gets undefined and says why it skipped rather than
+# RETND_WORKFLOW_SET gets undefined and says why it skipped rather than
 # failing against a deployment that has no hooks at all.
 if [ "$workflows" = 1 ]; then
   client_env+=(
-    -e "RM_WORKFLOW_SET=$wf_set_happy"
-    -e "RM_EXEC_SET=$wf_set_remote"
-    -e "RM_SFTP_ONLY_SET=$backup_set"
-    -e "RM_WF_NO_HOOKS_SET=$wf_set_none"
-    -e "RM_WF_BEFORE_FAIL_SET=$wf_set_before_fail"
-    -e "RM_WF_AFTER_FAIL_SET=$wf_set_after_fail"
-    -e "RM_WF_HOSTILE_SET=$wf_set_hostile"
-    -e "RM_WF_SECRET_SET=$wf_set_secret"
-    -e "RM_WF_SLOW_SET=$wf_set_slow"
-    -e "RM_WF_CRASH_SET=$wf_set_crash"
-    -e "RM_WF_MANY_STEPS_SET=$wf_set_many"
-    -e "RM_WF_FINDINGS_SET=$wf_set_findings"
-    -e "RM_WF_REJECTED_DIR=$wf_rejected_dir"
-    -e "RM_WF_SECRET_ENV=$wf_secret_env"
-    -e "RM_WF_SECRET_VALUE=$wf_secret"
-    -e "RM_WF_SCRIPT_PREFIX=/workflows"
-    -e "RM_WF_POLL_SECONDS=$wf_poll_seconds"
-    -e "RM_WF_GLOBAL_BEFORE_DIR=global-before"
-    -e "RM_WORKFLOW_RUNNER_NAME=$runner_display"
+    -e "RETND_WORKFLOW_SET=$wf_set_happy"
+    -e "RETND_EXEC_SET=$wf_set_remote"
+    -e "RETND_SFTP_ONLY_SET=$backup_set"
+    -e "RETND_WF_NO_HOOKS_SET=$wf_set_none"
+    -e "RETND_WF_BEFORE_FAIL_SET=$wf_set_before_fail"
+    -e "RETND_WF_AFTER_FAIL_SET=$wf_set_after_fail"
+    -e "RETND_WF_HOSTILE_SET=$wf_set_hostile"
+    -e "RETND_WF_SECRET_SET=$wf_set_secret"
+    -e "RETND_WF_SLOW_SET=$wf_set_slow"
+    -e "RETND_WF_CRASH_SET=$wf_set_crash"
+    -e "RETND_WF_MANY_STEPS_SET=$wf_set_many"
+    -e "RETND_WF_FINDINGS_SET=$wf_set_findings"
+    -e "RETND_WF_REJECTED_DIR=$wf_rejected_dir"
+    -e "RETND_WF_SECRET_ENV=$wf_secret_env"
+    -e "RETND_WF_SECRET_VALUE=$wf_secret"
+    -e "RETND_WF_SCRIPT_PREFIX=/workflows"
+    -e "RETND_WF_POLL_SECONDS=$wf_poll_seconds"
+    -e "RETND_WF_GLOBAL_BEFORE_DIR=global-before"
+    -e "RETND_WORKFLOW_RUNNER_NAME=$runner_display"
   )
   # The control channel goes the same way --break-engine's does, and is
   # left off under --keep-up for the same reason: the watcher that acks
@@ -2427,14 +2444,14 @@ if [ "$workflows" = 1 ]; then
   # channel nobody answers would wait out its whole timeout and report
   # this rig's silence as a product failure.
   if [ "$keep_up" != 1 ]; then
-    client_env+=(-e "RM_WORKFLOW_CONTROL=$workflow_control_in_client")
-    note "RM_WORKFLOW_CONTROL $workflow_control_in_client, watched on this host at $workflow_control"
+    client_env+=(-e "RETND_WORKFLOW_CONTROL=$workflow_control_in_client")
+    note "RETND_WORKFLOW_CONTROL $workflow_control_in_client, watched on this host at $workflow_control"
   fi
 fi
 # backupd#795. The flag the suite branches on, and the directory it drives
 # the break from. Same appended-after-the-literal shape as the block
 # above, and for the same reason: off, neither variable exists at all, so
-# a spec that reads RM_ENGINE_UNREACHABLE gets undefined and asserts the
+# a spec that reads RETND_ENGINE_UNREACHABLE gets undefined and asserts the
 # healthy feed.
 #
 # And NOT under --keep-up, which is the other half of that same rule
@@ -2443,14 +2460,14 @@ fi
 # command carrying these two variables would hand a suite a control
 # channel with nobody on the other end: every engine-unreachable case
 # would sit out its full timeout and then report a rig failure as a
-# product one. Left off, RM_ENGINE_UNREACHABLE is simply undefined in
+# product one. Left off, RETND_ENGINE_UNREACHABLE is simply undefined in
 # that command and those cases skip themselves, which is the honest
 # answer. The block printed with the command says so and gives the
 # by-hand equivalent.
 if [ "$break_engine" = 1 ] && [ "$keep_up" != 1 ]; then
-  client_env+=(-e "RM_ENGINE_UNREACHABLE=1" -e "RM_ENGINE_CONTROL=$engine_control_in_client")
-  note "RM_ENGINE_UNREACHABLE 1"
-  note "RM_ENGINE_CONTROL     $engine_control_in_client, watched on this host at $engine_control"
+  client_env+=(-e "RETND_ENGINE_UNREACHABLE=1" -e "RETND_ENGINE_CONTROL=$engine_control_in_client")
+  note "RETND_ENGINE_UNREACHABLE 1"
+  note "RETND_ENGINE_CONTROL     $engine_control_in_client, watched on this host at $engine_control"
 fi
 
 client_run=(
@@ -2517,7 +2534,7 @@ if [ "$keep_up" = 1 ]; then
     echo ""
     echo "    --break-engine's watcher is NOT left running: it holds this host's Docker socket,"
     echo "    and a loop outliving the script that started it is a loop nobody owns. So"
-    echo "    RM_ENGINE_UNREACHABLE and RM_ENGINE_CONTROL are deliberately NOT in the command"
+    echo "    RETND_ENGINE_UNREACHABLE and RETND_ENGINE_CONTROL are deliberately NOT in the command"
     echo "    above: with them set, every engine-unreachable case would write a request into a"
     echo "    directory nobody is watching, wait out its whole timeout, and report the rig's"
     echo "    silence as a product failure. Without them those cases skip themselves and the"
@@ -2532,14 +2549,14 @@ if [ "$keep_up" = 1 ]; then
     echo "    --keep-up, or export the two variables into your own suite run and ack the"
     echo "    requests yourself, in the watcher's own order (request file first, then the ack):"
     echo ""
-    echo "        RM_ENGINE_UNREACHABLE=1 RM_ENGINE_CONTROL=$engine_control_in_client"
+    echo "        RETND_ENGINE_UNREACHABLE=1 RETND_ENGINE_CONTROL=$engine_control_in_client"
     echo "        rm -f $engine_control/stop  && docker stop  $c_engine && : > $engine_control/stopped"
     echo "        rm -f $engine_control/start && docker start $c_engine && : > $engine_control/started"
   fi
   if [ "$workflows" = 1 ]; then
     echo ""
     echo "    The workflow machinery IS up: the runner is $c_runner, the exec host is $c_exec,"
-    echo "    and the seeded script library is in the volume $v_workflows. RM_WORKFLOW_CONTROL is"
+    echo "    and the seeded script library is in the volume $v_workflows. RETND_WORKFLOW_CONTROL is"
     echo "    left off the command above for the watcher's reason, so the crash and runner-down"
     echo "    cases skip themselves. By hand, which is all that watcher does:"
     echo ""

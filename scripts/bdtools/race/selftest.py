@@ -278,8 +278,8 @@ def plant_revision_cache_race(tracker: selftest_swap.AnchorTracker, tree: Path) 
     # to write.
     tracker.swap(
         tree / "core/service/service.go",
-        "\tstate atomic.Pointer[configState]\n\n\tjournal *state.Journal",
-        "\tstate atomic.Pointer[configState]\n"
+        "\tconfigChanged chan struct{}\n\n\tjournal *state.Journal",
+        "\tconfigChanged chan struct{}\n"
         "\n"
         "\t// PLANTED DATA RACE (scripts/race/selftest.sh). The memoised\n"
         "\t// revision ConfigRevision writes below, in a plain field, exactly\n"

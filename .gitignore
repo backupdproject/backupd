@@ -2,7 +2,7 @@
 *.exe
 *.test
 *.out
-/backupd
+/retnd
 /dist/
 /bin/
 
@@ -11,10 +11,19 @@
 # They are 64 MB each, they trip the large-file push warning, and a
 # committed one also breaks the image-size gate, because the Docker build
 # context carries it into the image. Named explicitly rather than caught
-# by a pattern: /backupd above only covers the repository root, and these
+# by a pattern: /retnd above only covers the repository root, and these
 # land one directory down.
-/core/backupd
-/apps/backupd-web
+#
+# THE NAMES HERE ARE THE BUILD'S, NOT THE BRAND'S. R1.3 (#888) renamed
+# both commands and nothing swept this file, so from that day until #895
+# every pattern below named a binary this tree can no longer produce --
+# and `retnd` at the repository root, which it can, was ignored by
+# nothing. A 64 MB Mach-O binary was committed on exactly that path in
+# this epic and reached review; `git rm --cached retnd` took it back out.
+# An ignore rule that names yesterday's artifact is worse than no rule,
+# because the comment above it still reads as if the hole were covered.
+/core/retnd
+/apps/generic/retnd-web
 
 # SQLite journals produced by local runs
 *.db

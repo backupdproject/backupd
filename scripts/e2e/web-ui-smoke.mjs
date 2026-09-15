@@ -32,15 +32,15 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium, expect } from "@playwright/test";
 
-const baseURL = req("RM_BASE_URL");
-const username = req("RM_ADMIN_USERNAME");
-const password = req("RM_ADMIN_PASSWORD");
-const backupSet = process.env.RM_BACKUP_SET ?? "";
-const artifacts = process.env.RM_ARTIFACTS_DIR ?? "/artifacts";
+const baseURL = req("RETND_BASE_URL");
+const username = req("RETND_ADMIN_USERNAME");
+const password = req("RETND_ADMIN_PASSWORD");
+const backupSet = process.env.RETND_BACKUP_SET ?? "";
+const artifacts = process.env.RETND_ARTIFACTS_DIR ?? "/artifacts";
 // Issue #795. Set by three-machine-web-ui.sh --break-engine, together
 // with the directory the break is driven from. Unset, everything below
 // that reads them is skipped and this file is the check it was.
-const engineControl = process.env.RM_ENGINE_UNREACHABLE === "1" ? req("RM_ENGINE_CONTROL") : null;
+const engineControl = process.env.RETND_ENGINE_UNREACHABLE === "1" ? req("RETND_ENGINE_CONTROL") : null;
 
 function req(name) {
   const v = process.env[name];
@@ -186,7 +186,7 @@ const browser = await chromium.launch({
   // knows both; this file does not, so it does what it is told rather than
   // guessing and dying with "Running as root without --no-sandbox is not
   // supported", which is the message everyone meets and nobody enjoys.
-  args: process.env.RM_CHROMIUM_NO_SANDBOX === "1" ? ["--no-sandbox"] : []
+  args: process.env.RETND_CHROMIUM_NO_SANDBOX === "1" ? ["--no-sandbox"] : []
 });
 const context = await browser.newContext({
   viewport: { width: 1440, height: 900 },
@@ -196,7 +196,7 @@ const context = await browser.newContext({
   // than the plain HTTP/1.1 this rig otherwise uses. Trust the leaf: the
   // point is the transport, not certificate provenance. Off unless the
   // harness sets it, so the default plain-HTTP run is unchanged.
-  ignoreHTTPSErrors: process.env.RM_IGNORE_HTTPS === "1"
+  ignoreHTTPSErrors: process.env.RETND_IGNORE_HTTPS === "1"
 });
 const page = await context.newPage();
 
@@ -235,7 +235,7 @@ try {
   //
   // A real POST through serve-ui's reverse proxy to the engine's local
   // auth, answered out of the administrator record the harness created
-  // with `backupd-web auth create-admin`. Nothing here is mocked, so a wrong
+  // with `retnd-web auth create-admin`. Nothing here is mocked, so a wrong
   // password fails exactly the way a wrong password fails in production.
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password", { exact: true }).fill(password);

@@ -294,7 +294,19 @@ DEFAULT_LISTEN_PORT = 8080
 # because a bare SSH_PORT is a name other tooling sets for its own reasons,
 # and reading a stray one would be inferring a port rather than being given
 # one, which is the single thing this must never do.
-SOURCE_PORT_ENV = "RCLONE_MANAGER_SOURCE_PORT"
+#
+# The prefix is `RETND_` since EPIC R (#885). The first brand's
+# RCLONE_MANAGER_SOURCE_PORT is still read for one release, and the
+# reason is the same reason this variable exists at all: it is a value
+# the OPERATOR sets on their own hosts and in their own configuration
+# management, so a rename that only ADDED the new name would take the
+# port away from every existing deployment without saying a word. The
+# install would carry on knowing nothing about a source port, which is
+# precisely the silent default issue #264 exists to refuse. The new name
+# wins when both are set, and a run that got its port from the old one
+# says so and names the release the old one goes away in.
+SOURCE_PORT_ENV = "RETND_SOURCE_PORT"
+SOURCE_PORT_ENV_LEGACY = "RCLONE_MANAGER_SOURCE_PORT"
 
 # The release this installer carries, and the identity ghcr.io assigned
 # it. Both are copied from container/release-manifest.json (`version` and
@@ -3958,7 +3970,7 @@ def ensure_hook_image(args) -> str:
     if platform:
         argv += ["--platform", platform]
     say(f"==> Fetching the image local hooks run in: {image}")
-    pulled = run(argv + [image], check=False, timeout=900)
+    pulled = run([*argv, image], check=False, timeout=900)
     if pulled.returncode != 0:
         raise Refusal(
             EXIT_PREREQ_IMAGE,
@@ -6258,8 +6270,8 @@ class BridgeDoctor:
         return (
             "set -e\n"
             + self.legacy_unit_remove_script()
-            + f"cat > {service} <<'RCLONE_MANAGER_UNIT'\n{self.unit_service_text()}RCLONE_MANAGER_UNIT\n"
-            f"cat > {timer} <<'RCLONE_MANAGER_UNIT'\n{self.unit_timer_text()}RCLONE_MANAGER_UNIT\n"
+            + f"cat > {service} <<'RETND_UNIT'\n{self.unit_service_text()}RETND_UNIT\n"
+            f"cat > {timer} <<'RETND_UNIT'\n{self.unit_timer_text()}RETND_UNIT\n"
             f"{systemctl} daemon-reload\n"
             f"{systemctl} enable {self.SERVICE_UNIT}\n"
             f"{systemctl} enable --now {self.TIMER_UNIT}\n"
@@ -7791,7 +7803,17 @@ def resolve_source_port(args) -> None:
     published), so a refusal that helpfully echoed the number back would
     put it in the operator's scrollback and in whatever captured that
     run's output, which is the thing this issue exists to prevent. Every
-    message below says what is wrong with the value and never what it is.
+    message below says what is wrong with the value and never what it is,
+    and the deprecation notice for the retired name below says which name
+    was read and never what it held either.
+
+    Three sources, most specific first: the flag, then SOURCE_PORT_ENV,
+    then the pre-EPIC-R SOURCE_PORT_ENV_LEGACY. The last one is read for
+    one release because this variable lives in the operator's own
+    configuration management rather than in this repository, so honouring
+    only the new name would not fail an upgrade -- it would leave the run
+    knowing nothing about a source port, which is the silent default this
+    whole function exists to refuse.
     """
     if not hasattr(args, "source_port"):
         # status, uninstall, network-doctor and network-undo do not
@@ -7802,6 +7824,13 @@ def resolve_source_port(args) -> None:
     raw, origin = args.source_port, "--source-port"
     if raw is None:
         raw, origin = os.environ.get(SOURCE_PORT_ENV), SOURCE_PORT_ENV
+    if raw is None:
+        raw, origin = os.environ.get(SOURCE_PORT_ENV_LEGACY), SOURCE_PORT_ENV_LEGACY
+        if raw is not None:
+            say(f"     {SOURCE_PORT_ENV_LEGACY} carried this run's source port. It is the name from "
+                f"before EPIC R and is read for one release only:")
+            say(f"     set {SOURCE_PORT_ENV} instead. The old name is removed in the release after "
+                f"the one that ships EPIC R (#895).")
     if raw is None:
         args.source_port, args.source_port_origin = None, None
         return

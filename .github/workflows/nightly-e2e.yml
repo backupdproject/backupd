@@ -101,7 +101,7 @@ jobs:
       - name: Run ${{ matrix.suite }}
         working-directory: tests/suites/web-ui
         env:
-          RM_UI_DIR: ${{ github.workspace }}/product/ui/shared
+          RETND_UI_DIR: ${{ github.workspace }}/product/ui/shared
         run: npm run ${{ matrix.script }}
 
       # A failed browser run is close to unusable without the trace, and the

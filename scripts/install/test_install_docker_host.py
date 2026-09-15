@@ -99,15 +99,8 @@ ANOTHER_NON_DEFAULT_PORT = 4222
 
 
 @contextlib.contextmanager
-def source_port_in_the_environment(value: str | None):
-    """Run a block with RCLONE_MANAGER_SOURCE_PORT set, or removed.
-
-    Removed matters as much as set. resolve() consults this variable on
-    every call, so a test about "nothing was supplied" that inherited a
-    value from the shell that started the run would pass or fail
-    depending on the machine.
-    """
-    name = installer.SOURCE_PORT_ENV
+def one_environment_variable(name: str, value: str | None):
+    """Run a block with one variable set, or removed, and restored after."""
     was = os.environ.get(name)
     if value is None:
         os.environ.pop(name, None)
@@ -120,6 +113,24 @@ def source_port_in_the_environment(value: str | None):
             os.environ.pop(name, None)
         else:
             os.environ[name] = was
+
+
+@contextlib.contextmanager
+def source_port_in_the_environment(value: str | None, legacy: str | None = None):
+    """Run a block with RETND_SOURCE_PORT set, or removed, and with the
+    deprecated RCLONE_MANAGER_SOURCE_PORT set, or removed.
+
+    Removed matters as much as set. resolve() consults both variables on
+    every call, so a test about "nothing was supplied" that inherited a
+    value from the shell that started the run would pass or fail
+    depending on the machine. The deprecated name is cleared by default
+    for exactly that reason: it is still read for one release, so a stray
+    one in the environment can supply a port to a test that is asserting
+    no port was supplied.
+    """
+    with one_environment_variable(installer.SOURCE_PORT_ENV, value), \
+            one_environment_variable(installer.SOURCE_PORT_ENV_LEGACY, legacy):
+        yield
 
 
 class Fixture:
@@ -403,6 +414,44 @@ class TestTheSourcePortIsAnInputAndNothingInfersOne(unittest.TestCase):
             args = Fixture(self).args("--source-port", str(ANOTHER_NON_DEFAULT_PORT))
         self.assertEqual(args.source_port, ANOTHER_NON_DEFAULT_PORT)
         self.assertEqual(args.source_port_origin, "--source-port")
+
+    def test_the_retired_brands_name_still_carries_a_port_and_says_it_is_going_away(self):
+        """EPIC R (#885) renamed this variable, and an operator's hosts
+        are where the old name lives: in their configuration management,
+        not in this repository. Dropping the old name would not fail the
+        install, it would quietly leave the run knowing nothing about a
+        source port, which is the silent default issue #264 exists to
+        refuse. So the old name still carries a value for one release,
+        and the run says which name it came from and when that stops.
+        """
+        out = io.StringIO()
+        with source_port_in_the_environment(None, legacy=str(A_NON_DEFAULT_PORT)), \
+                contextlib.redirect_stdout(out):
+            args = Fixture(self).args()
+        self.assertEqual(args.source_port, A_NON_DEFAULT_PORT)
+        self.assertEqual(args.source_port_origin, installer.SOURCE_PORT_ENV_LEGACY)
+        notice = out.getvalue()
+        self.assertIn(installer.SOURCE_PORT_ENV_LEGACY, notice, "the notice has to name what was read")
+        self.assertIn(installer.SOURCE_PORT_ENV, notice, "and what to set instead")
+        self.assertIn("#895", notice, "and the issue that deletes the compat read")
+        self.assertNotIn(str(A_NON_DEFAULT_PORT), notice,
+                         "the port is the unpublished half of the endpoint and is never printed")
+
+    def test_the_current_name_wins_over_the_retired_one_and_says_nothing(self):
+        """Both set is what a half-finished migration looks like, and the
+        name this release documents is the one that decides. Nothing
+        deprecated carried the value, so there is nothing to warn about:
+        a notice on every run trains people not to read the one that
+        matters.
+        """
+        out = io.StringIO()
+        with source_port_in_the_environment(str(A_NON_DEFAULT_PORT),
+                                            legacy=str(ANOTHER_NON_DEFAULT_PORT)), \
+                contextlib.redirect_stdout(out):
+            args = Fixture(self).args()
+        self.assertEqual(args.source_port, A_NON_DEFAULT_PORT)
+        self.assertEqual(args.source_port_origin, installer.SOURCE_PORT_ENV)
+        self.assertEqual(out.getvalue(), "")
 
     def test_the_flag_with_an_empty_value_is_refused_rather_than_read_as_silence(self):
         """`--source-port "$SSH_PORT"` with SSH_PORT unexported is the
@@ -2521,7 +2570,7 @@ INSPECT_TWO_NETWORKS = """
     "Options": {}
   },
   {
-    "Name": "backupd_internal",
+    "Name": "retnd_internal",
     "Id": "3f2e1a9c8b7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f",
     "Driver": "bridge",
     "Options": {}

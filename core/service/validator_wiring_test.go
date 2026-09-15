@@ -196,7 +196,7 @@ func TestOpen_RequiredValidatorFailureBlocksRemoteDeletionThroughTheWiredPath(t 
 func TestOpen_RequiredValidatorSuccessStillAllowsRemoteDeletion(t *testing.T) {
 	configPath, _, remoteArtifact := writeValidatorConfigFile(t,
 		string(ValidatorTrailerMarker),
-		[]byte("payload bytes\n--RCLONE-MANAGER-BACKUP-COMPLETE--\n"))
+		[]byte("payload bytes\n--RETND-BACKUP-COMPLETE--\n"))
 
 	svc, cleanup, err := Open(context.Background(), configPath)
 	if err != nil {
@@ -253,7 +253,7 @@ func TestOpen_UnregisteredValidatorIDInTheConfigFileFailsStartup(t *testing.T) {
 func TestClose_LeavesTheValidatorScriptsForAProcessStillUsingThem(t *testing.T) {
 	configPath, _, remoteArtifact := writeValidatorConfigFile(t,
 		string(ValidatorTrailerMarker),
-		[]byte("payload bytes\n--RCLONE-MANAGER-BACKUP-COMPLETE--\n"))
+		[]byte("payload bytes\n--RETND-BACKUP-COMPLETE--\n"))
 
 	first, closeFirst, err := Open(context.Background(), configPath)
 	if err != nil {
@@ -300,7 +300,7 @@ func TestClose_LeavesTheValidatorScriptsForAProcessStillUsingThem(t *testing.T) 
 func TestOpen_AfterACleanCloseResolvesTheValidatorAgain(t *testing.T) {
 	configPath, remoteDir, _ := writeValidatorConfigFile(t,
 		string(ValidatorTrailerMarker),
-		[]byte("first payload\n--RCLONE-MANAGER-BACKUP-COMPLETE--\n"))
+		[]byte("first payload\n--RETND-BACKUP-COMPLETE--\n"))
 	dbPath := filepath.Join(filepath.Dir(configPath), "state.db")
 
 	first, closeFirst, err := Open(context.Background(), configPath)
@@ -315,7 +315,7 @@ func TestOpen_AfterACleanCloseResolvesTheValidatorAgain(t *testing.T) {
 	// A second artifact, so the restarted process has real work to do
 	// rather than only re-reading what the first one already finished.
 	second := filepath.Join(remoteDir, "second.dump")
-	if err := os.WriteFile(second, []byte("second payload\n--RCLONE-MANAGER-BACKUP-COMPLETE--\n"), 0o644); err != nil {
+	if err := os.WriteFile(second, []byte("second payload\n--RETND-BACKUP-COMPLETE--\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -548,7 +548,7 @@ func TestRunCycle_RewritesATamperedValidatorScriptBeforeUsingIt(t *testing.T) {
 func TestRunCycle_TamperedScriptStillLetsAGoodArtifactComplete(t *testing.T) {
 	configPath, _, remoteArtifact := writeValidatorConfigFile(t,
 		string(ValidatorTrailerMarker),
-		[]byte("payload bytes\n--RCLONE-MANAGER-BACKUP-COMPLETE--\n"))
+		[]byte("payload bytes\n--RETND-BACKUP-COMPLETE--\n"))
 	dbPath := filepath.Join(filepath.Dir(configPath), "state.db")
 
 	svc, cleanup, err := Open(context.Background(), configPath)
@@ -579,7 +579,7 @@ func TestRunCycle_TamperedScriptStillLetsAGoodArtifactComplete(t *testing.T) {
 func TestRunCycle_RewritesAReapedValidatorScriptBeforeUsingIt(t *testing.T) {
 	configPath, _, remoteArtifact := writeValidatorConfigFile(t,
 		string(ValidatorTrailerMarker),
-		[]byte("payload bytes\n--RCLONE-MANAGER-BACKUP-COMPLETE--\n"))
+		[]byte("payload bytes\n--RETND-BACKUP-COMPLETE--\n"))
 	dbPath := filepath.Join(filepath.Dir(configPath), "state.db")
 
 	svc, cleanup, err := Open(context.Background(), configPath)
@@ -616,7 +616,7 @@ func TestRunCycle_RewritesAReapedValidatorScriptBeforeUsingIt(t *testing.T) {
 func TestRunCycle_RefusesTheCycleWhenTheScriptsCannotBeRewritten(t *testing.T) {
 	configPath, _, remoteArtifact := writeValidatorConfigFile(t,
 		string(ValidatorTrailerMarker),
-		[]byte("payload bytes\n--RCLONE-MANAGER-BACKUP-COMPLETE--\n"))
+		[]byte("payload bytes\n--RETND-BACKUP-COMPLETE--\n"))
 
 	svc, cleanup, err := Open(context.Background(), configPath)
 	if err != nil {

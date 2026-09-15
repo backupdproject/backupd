@@ -25,7 +25,7 @@ the whole path so a browser can fail on it.
             the edge network and nothing else, so the only thing it can
             reach is the product's front door.
 
-  RCLONE-MANAGER  the real product image, built from THIS working tree,
+  RETND     the real product image, built from THIS working tree,
             running the deployment container/compose.yaml describes.
 
   VPS       a real sshd holding real files (atmoz/sftp, through
@@ -34,11 +34,11 @@ the whole path so a browser can fail on it.
             the machine being backed up.
 
 Three machines, four containers, and the difference is worth being plain
-about. The product IS two containers: `/backupd-web serve` (the engine: local
-authentication, /api/v1, the scheduler, SQLite) and `/backupd-web serve-ui`
+about. The product IS two containers: `/retnd-web serve` (the engine: local
+authentication, /api/v1, the scheduler, SQLite) and `/retnd-web serve-ui`
 (the static bundle plus a reverse proxy to the engine). Collapsing them
 into one would delete the reverse-proxy hop, and that hop is half of what
-this suite exists to cover. So "the backupd machine" here is the
+this suite exists to cover. So "the retnd machine" here is the
 product's own split, unchanged.
 
 # Why this drops docker-in-docker, and what that gives up
@@ -78,8 +78,8 @@ length to explain is only safe because serve-ui is its sole possible
 peer. Both of those are the topology doing work, so the topology is the
 real one. Nothing is published to the host on any of them.
 
-The name `backupd` lives on the edge network only, and it resolves
-to the UI container: from outside the deployment that IS backupd,
+The name `retnd` lives on the edge network only, and it resolves
+to the UI container: from outside the deployment that IS retnd,
 and it is the address the browser is given. Inside the deployment the
 containers keep compose's own names. One name per network, so nothing
 ever resolves to two things.
@@ -100,13 +100,18 @@ this script returns.
 
 The client container gets these, and they are the whole contract:
 
-  RM_BASE_URL          http://backupd:8080
-  RM_ADMIN_USERNAME    the enrolled administrator
-  RM_ADMIN_PASSWORD    its password, generated this run
-  RM_BACKUP_SET        the seeded set's name
-  RM_ARTIFACTS_DIR     /artifacts, mounted out to the host
+  RETND_BASE_URL          http://retnd:8080
+  RETND_ADMIN_USERNAME    the enrolled administrator
+  RETND_ADMIN_PASSWORD    its password, generated this run
+  RETND_BACKUP_SET        the seeded set's name
+  RETND_ARTIFACTS_DIR     /artifacts, mounted out to the host
 
-A Playwright config that sees RM_BASE_URL must use it as `baseURL` and
+plus, unless --no-workflows, the workflow contract in the section
+below: the backup sets #816's scenarios need, the seeded script
+library's root, and the control channel that crashes the engine or
+takes the runner away.
+
+A Playwright config that sees RETND_BASE_URL must use it as `baseURL` and
 must NOT start a web server: there is one, it is another container, and
 `npm run dev` in here would serve the mock this whole script exists to
 get away from.
@@ -136,7 +141,7 @@ get away from.
                     serve-ui, so the browser reaches the stack the way a
                     real NAS's front door does (h2 over TLS) rather than
                     the plain HTTP/1.1 this rig otherwise uses. The
-                    reproduction for backupd#730. RM_SEED_CYCLES=N
+                    reproduction for backupd#730. RETND_SEED_CYCLES=N
                     additionally runs N backup cycles to enlarge the feed.
   --break-engine    hand the suite the ability to take the ENGINE away
                     mid-session, leaving serve-ui up, so the browser
@@ -154,8 +159,8 @@ get away from.
 
                     The client container gets two more variables:
 
-                      RM_ENGINE_UNREACHABLE=1   branch on this
-                      RM_ENGINE_CONTROL         a directory under
+                      RETND_ENGINE_UNREACHABLE=1   branch on this
+                      RETND_ENGINE_CONTROL         a directory under
                                                 /artifacts, described
                                                 below
 
@@ -202,6 +207,96 @@ get away from.
                     again. A mode that cannot demonstrate the fault it
                     exists to produce fails here rather than handing a
                     suite a healthy stack to pass against.
+
+# The workflow machinery (#816)
+
+EPIC L put hook scripts in the product, and none of them can be proven
+in a browser against a mock: a local hook is executed by a SEPARATE
+PROCESS on the host, a remote one by an sshd that may refuse, and the
+interesting states are what a run looks like when one of those fails
+halfway. So the rig stands the whole apparatus up, and by default
+rather than behind a flag, because a workflow case that skips itself
+for want of a fixture is a case that never ran.
+
+  THE RUNNER    `retnd workflow-runner serve`, from THIS run's
+                product image, in a container of its own
+                (scripts/e2e/runner-machine.Dockerfile) that is NOT
+                the engine's. It holds this host's Docker socket,
+                because every local hook runs in an ephemeral
+                container (#865) -- which is the privilege the
+                installer grants the runner's service account and
+                withholds from the engine. The engine reaches it
+                through one authenticated Unix socket in a volume the
+                two share, with the credential read at the path the
+                ENGINE sees (backupd#877).
+
+  THE EXEC HOST a second sshd (scripts/e2e/exec-host.Dockerfile, the
+                definition core/tests/machines already uses), carrying
+                an ordinary shell account and an internal-sftp-forced
+                one that authenticate with the SAME client key. That is
+                what makes "this credential may not exec" provable:
+                e2e/workflow-remote runs a NAME.remote.sh over the
+                shell account and e2e/vps is refused one over its own
+                transfer credential, by the server, not by this rig.
+
+  THE LIBRARY   scripts/e2e/workflows/, seeded into a volume the engine
+                mounts read-only at /workflows. One stage directory per
+                scenario, and every line those scripts print is
+                asserted by the suite, which is why they are committed
+                files rather than here-documents.
+
+The client container gets a backup set name per scenario -- happy,
+remote, SFTP-only-refused, no-hooks, before-fail, after-fail, hostile
+output, secret-backed environment, slow, crash, many-step, lint
+findings and a gate-refused script -- and the plaintext of the one
+secret a hook resolves, so a spec can assert it appears NOWHERE.
+
+  RETND_WORKFLOW_CONTROL  a directory under /artifacts, the same protocol
+                       --break-engine's channel uses and for the same
+                       reason: the capability lives on THIS host and
+                       the client is given a few files rather than a
+                       Docker socket. Three requests:
+
+                         crash        -> the engine is KILLED and
+                                         started again, so a run in
+                                         flight is one nobody observed
+                                         the end of and startup
+                                         reconciliation has to account
+                                         for it. "crashed" appears
+                                         once the browser's own path to
+                                         the engine is good again, or
+                                         "crash-failed" does.
+                         runner-down  -> the runner is stopped, so a
+                                         local hook has nothing to run
+                                         on. "runner-stopped", or
+                                         "runner-down-failed".
+                         runner-up    -> and started again, acked
+                                         "runner-started" only once it
+                                         answers its own status verb,
+                                         or "runner-up-failed".
+
+                       Exactly one ack per request, a success ack means
+                       a state this script WATCHED the stack reach, and
+                       the request file is removed as it is picked up.
+                       Not handed over under --keep-up, for the reason
+                       the engine channel is not.
+
+  --no-workflows   leave all of it out. For a machine whose daemon
+                   cannot host the runner, and it is honest rather than
+                   quiet: none of the variables above is set, so every
+                   workflow case skips itself and says so.
+
+One thing this rig cannot give a browser, and says so rather than
+leaving a suite to discover it as a timeout: a browser cannot START a
+backup. POST /api/v1/operations run_backup_set is refused 403
+DESTRUCTIVE_OPERATIONS_DISABLED on every deployment this repository
+can build, because apps/common/webhost ships one DestructiveGate and
+its own doc says nothing may flip it before #92. The SCHEDULER runs
+the same cycle on a timer regardless, which gate.go states in as many
+words, so the rig sets that timer to the product's own floor -- one
+minute, config.MinPollInterval -- and hands it over as
+RETND_WF_POLL_SECONDS. A spec watches for the run the timer produces
+instead of asking for one.
 
 The exit status is the client container's, not the teardown's. A run that
 tore down cleanly after a red suite is a red run.

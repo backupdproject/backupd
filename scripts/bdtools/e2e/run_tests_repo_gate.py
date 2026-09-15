@@ -13,13 +13,13 @@ since ci-local.sh runs under `set -e` from .husky/pre-commit, a red suite
 refuses the commit. It does two things:
 
   1. the CLI smoke slice (55 of Suite A's 60 cases) against a
-     backupd built from THIS working tree;
+     retnd built from THIS working tree;
   2. the browser suite against a real deployment built from THIS
      working tree, over the wire, through
      scripts/e2e/three-machine-web-ui.sh (#687: this used to start
      ui/shared's own Vite dev server over createMockApi and drive it
-     through RM_UI_DIR, until the tests repository dropped RM_UI_DIR
-     and moved Suite B onto RM_BASE_URL against a real deployment).
+     through RETND_UI_DIR, until the tests repository dropped RETND_UI_DIR
+     and moved Suite B onto RETND_BASE_URL against a real deployment).
 
 Both come from backupdproject/backupd-tests at the sha in tests-repo.pin,
 so the tests are versioned independently of the product and a new test
@@ -156,13 +156,13 @@ def pinned_checkout(pin: dict[str, str]) -> Path:
     there.
     """
     cache_home = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    cache_root = Path(cache_home) / "backupd-tests-gate"
+    cache_root = Path(cache_home) / "retnd-tests-gate"
     checkout = cache_root / pin["sha"]
 
     if (checkout / ".complete").is_file():
         return checkout
 
-    harness.step(f"fetching backupd-tests at {pin['sha'][:12]}")
+    harness.step(f"fetching the tests repository at {pin['sha'][:12]}")
     cache_root.mkdir(parents=True, exist_ok=True)
     scratch = cache_root / f"scratch.{os.getpid()}.{int(time.time())}"
     scratch.mkdir(parents=True, exist_ok=True)
@@ -220,7 +220,7 @@ def pinned_checkout(pin: dict[str, str]) -> Path:
 
 
 def build_under_test(root: Path) -> dict[str, str]:
-    """backupd, built from THIS working tree.
+    """retnd, built from THIS working tree.
 
     The tests repository refuses to run against a build that will not say which
     commit it is, so the -ldflags here are load-bearing rather than cosmetic:
@@ -244,7 +244,7 @@ def build_under_test(root: Path) -> dict[str, str]:
     if unstaged != 0 or staged != 0:
         build_commit = head_sha + "-dirty"
 
-    harness.step("building backupd from this working tree")
+    harness.step("building retnd from this working tree")
     # The short sha comes out of its own checked call rather than out of a
     # command substitution inside the argument. In bash a failing `$(git
     # rev-parse --short HEAD)` there left the -ldflags with an empty
@@ -257,14 +257,14 @@ def build_under_test(root: Path) -> dict[str, str]:
             "-ldflags",
             f"-X main.version={short_sha} -X main.commit={build_commit}",
             "-o",
-            str(work / "backupd"),
+            str(work / "retnd"),
             "./cmd/retnd",
         ],
         capture=False,
         cwd=root / "core",
         env=dict(os.environ, GOWORK="off"),
     )
-    return {"binary": str(work / "backupd"), "commit": head_sha}
+    return {"binary": str(work / "retnd"), "commit": head_sha}
 
 
 def smoke_slice(root: Path, checkout: Path, build: dict[str, str]) -> None:
@@ -274,10 +274,10 @@ def smoke_slice(root: Path, checkout: Path, build: dict[str, str]) -> None:
         capture=False,
         env=dict(
             os.environ,
-            RM_MODE="local",
-            RM_BINARY=build["binary"],
-            RM_COMMIT=build["commit"],
-            RM_SOURCE_DIR=str(root),
+            RETND_MODE="local",
+            RETND_BINARY=build["binary"],
+            RETND_COMMIT=build["commit"],
+            RETND_SOURCE_DIR=str(root),
         ),
     )
 
@@ -291,12 +291,12 @@ def browser_half(root: Path, checkout: Path) -> None:
     harness.sh(["npm", "run", "--silent", "unit"], capture=False, cwd=web_ui)
 
     # #687: this used to start ui/shared's own Vite dev server over
-    # createMockApi and drive it through RM_UI_DIR, so a case's pass or
+    # createMockApi and drive it through RETND_UI_DIR, so a case's pass or
     # fail was a claim about a component rendering given a fixture and
     # not about the path an operator meets (browser -> serve-ui ->
     # reverse proxy -> serve -> SQLite). The tests repository retired
-    # RM_UI_DIR along with that suite (backupd-tests#65) in
-    # favour of RM_BASE_URL against a real deployment, and
+    # RETND_UI_DIR along with that suite (backupd-tests#65) in
+    # favour of RETND_BASE_URL against a real deployment, and
     # scripts/e2e/three-machine-web-ui.sh is that deployment: three
     # private Docker networks, the product's own two containers built
     # from this working tree, a real sshd standing in for the machine
@@ -304,7 +304,7 @@ def browser_half(root: Path, checkout: Path) -> None:
     # the Playwright runner together. #197's host-Chromium probe and the
     # free-port picking above it are both gone with the Vite server they
     # served: the browser now lives inside a container this step builds,
-    # not on this machine, and RM_BASE_URL is a container name the rig
+    # not on this machine, and RETND_BASE_URL is a container name the rig
     # hands the suite rather than a port this process has to pick.
     #
     # The rig's own exit code carries the same three-outcome vocabulary
@@ -465,7 +465,7 @@ if __name__ == "__main__":
 #                     rather than an exception.
 #   held by:          build_under_test's two check=False calls and the
 #                     `!= 0` branch; measured after the port by building
-#                     in a dirty tree and reading `backupd version`.
+#                     in a dirty tree and reading `retnd version`.
 #
 # a red suite refuses the commit
 #   hazard in bash:   `make -C ... smoke` and `npm run e2e` were
@@ -498,7 +498,7 @@ if __name__ == "__main__":
 #                     exiting 3, which makes this gate exit 1.
 #
 # #687: the browser suite is a real deployment now, not this process's
-# own Vite dev server, so the free-port probe, the RM_UI_DIR node_modules
+# own Vite dev server, so the free-port probe, the RETND_UI_DIR node_modules
 # preflight and the host-Chromium probe above them are gone rather than
 # ported: nothing here binds a port, starts a dev server or launches a
 # browser on THIS machine any more, so there was nothing left in any of

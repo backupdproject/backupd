@@ -499,7 +499,7 @@ commands:
   workflow recovery show [--json]                every run still waiting for a cleanup or for a person, oldest first,
                                                   because the question is how long a machine has been left like that.
                                                   Beside a serving engine it asks THAT process, which holds the refusals
-                                                  a run will really be met with, when $BACKUP_MANAGER_API_URL says where
+                                                  a run will really be met with, when $RETND_API_URL says where
                                                   it is; otherwise it reads the journal's own rows, because this process
                                                   has no reconciled engine and a reconciliation pass from a terminal
                                                   would mark a serving engine's in-flight run interrupted
@@ -596,10 +596,10 @@ at all and are refused beside a serving engine either way: a backup-set retentio
 or clears a policy, and the first config.yaml a create writes on an instance that has none
 yet (#535, #543)
 
-the route is three environment variables. BACKUP_MANAGER_API_URL is the engine's address,
+the route is three environment variables. RETND_API_URL is the engine's address,
 either its own listener from inside its container (http://127.0.0.1:8080) or the published
-Web UI port from a shell on the host; BACKUP_MANAGER_API_USERNAME and
-BACKUP_MANAGER_API_PASSWORD are the administrator credentials the Web UI takes, held in
+Web UI port from a shell on the host; RETND_API_USERNAME and
+RETND_API_PASSWORD are the administrator credentials the Web UI takes, held in
 memory for the one invocation and written nowhere. Not flags, because a password on a command
 line is in every process listing on the host. A routed create or patch reports every field it
 wrote, stale_after included: the API carries stale_after_seconds now, so both routes print the

@@ -719,12 +719,24 @@ func runValidator(ctx context.Context, cmd config.Command, localPath string) (pa
 	c := exec.CommandContext(runCtx, cmd.Executable, localPath)
 
 	// A fixed, minimal environment: never the ambient os.Environ() this
-	// process is running with. RCLONE_MANAGER_ARTIFACT_PATH duplicates
-	// argv[1] for a validator that prefers reading its target from the
-	// environment; the config schema (FR-13) does not specify an argument
-	// convention, so this file picks one and offers both.
+	// process is running with. RETND_ARTIFACT_PATH duplicates argv[1] for
+	// a validator that prefers reading its target from the environment;
+	// the config schema (FR-13) does not specify an argument convention,
+	// so this file picks one and offers both.
+	//
+	// RCLONE_MANAGER_ARTIFACT_PATH is the name this variable carried
+	// before EPIC R (#885), exported alongside the new name with an
+	// identical value for one release. This variable is EXPORTED rather
+	// than read, so the rename breaks an operator's own validator script
+	// silently if only the new name is set: an unset variable is the
+	// empty string and not an error, so a script that reads the old name
+	// would start validating the path "" and either pass everything or
+	// fail everything, with nothing anywhere mentioning a rename. Issue
+	// #895 removes the second entry in the release after the one that
+	// ships this EPIC.
 	c.Env = []string{
 		"PATH=/usr/local/bin:/usr/bin:/bin",
+		"RETND_ARTIFACT_PATH=" + localPath,
 		"RCLONE_MANAGER_ARTIFACT_PATH=" + localPath,
 	}
 

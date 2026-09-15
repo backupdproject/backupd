@@ -714,8 +714,8 @@ def body(root: Path, dry_run: bool) -> int:
         d = mutant("command-registered-and-listed-but-never-pinned")
         tracker.swap(
             d / "core/cmd/retnd/main.go",
-            '\t"version":      cmdVersion,\n}',
-            '\t"version":      cmdVersion,\n\t"vacuum":       cmdVersion,\n}',
+            '\t"version":         cmdVersion,\n}',
+            '\t"version":         cmdVersion,\n\t"vacuum":          cmdVersion,\n}',
         )
         tracker.swap(
             d / "core/cmd/retnd/main.go",
@@ -741,8 +741,8 @@ def body(root: Path, dry_run: bool) -> int:
         # subcommands against usage.
         tracker.swap(
             d / "core/cmd/retnd/main.go",
-            '\t"version":      cmdVersion,\n}',
-            '\t"version":      cmdVersion,\n\t"vacuum":       cmdVersion,\n}',
+            '\t"version":         cmdVersion,\n}',
+            '\t"version":         cmdVersion,\n\t"vacuum":          cmdVersion,\n}',
         )
         expect_unit_check_fails(
             tracker,

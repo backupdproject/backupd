@@ -82,7 +82,7 @@ import (
 // container on. Start then attaches the machines to that network and
 // publishes nothing. Only a driver that put the process there should set
 // it.
-const NetworkEnv = "RCLONE_MANAGER_MACHINES_NETWORK"
+const NetworkEnv = "RETND_MACHINES_NETWORK"
 
 const (
 	dockerNetworkTimeout = 30 * time.Second

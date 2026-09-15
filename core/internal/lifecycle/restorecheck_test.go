@@ -107,24 +107,29 @@ func TestRunRestoreCheck_ZeroTimeoutIsAnError(t *testing.T) {
 	}
 }
 
-// TestRunRestoreCheck_DoesNotInheritAmbientEnvironment asserts three things
-// at once, and it needs all three.
+// TestRunRestoreCheck_DoesNotInheritAmbientEnvironment asserts four things
+// at once, and it needs all four.
 //
 // The secret must not be visible: this hook is an operator-supplied
 // executable running inside a process that holds remote credentials, and an
 // inherited environment is how those reach it. The artifact path must be
 // visible in BOTH the environment and argv, because either alone is a
 // plausible interface and hooks in the wild are written against whichever
-// one they found first.
+// one they found first. And for the one release EPIC R (#885) owes them,
+// the environment has to answer under the pre-rename variable name too: a
+// hook written against RCLONE_MANAGER_ARTIFACT_PATH that stops being
+// handed it does not fail, it reads the empty string and renders a verdict
+// about nothing. Deleting the legacy export must turn this cell red, which
+// is what keeps #895's removal from landing a release early.
 //
 // The script exits 1 so its output is preserved in Detail, which is the only
 // channel a test has for seeing what the child process could actually
 // see.
 func TestRunRestoreCheck_DoesNotInheritAmbientEnvironment(t *testing.T) {
 	path := verifyWriteLocalFile(t, []byte("dump-bytes"))
-	t.Setenv("RCLONE_MANAGER_TEST_SECRET", "super-secret-value")
+	t.Setenv("RETND_TEST_SECRET", "super-secret-value")
 
-	script := mustScript(t, "echo \"SECRET=$RCLONE_MANAGER_TEST_SECRET\"\necho \"ARTIFACT=$RCLONE_MANAGER_ARTIFACT_PATH\"\necho \"ARG1=$1\"\nexit 1\n")
+	script := mustScript(t, "echo \"SECRET=$RETND_TEST_SECRET\"\necho \"CURRENT_ARTIFACT=$RETND_ARTIFACT_PATH\"\necho \"LEGACY_ARTIFACT=$RCLONE_MANAGER_ARTIFACT_PATH\"\necho \"ARG1=$1\"\nexit 1\n")
 
 	result, err := RunRestoreCheck(context.Background(), config.Command{Executable: script, Timeout: config.Duration(5 * time.Second)}, path)
 	if err != nil {
@@ -133,8 +138,11 @@ func TestRunRestoreCheck_DoesNotInheritAmbientEnvironment(t *testing.T) {
 	if strings.Contains(result.Detail, "super-secret-value") {
 		t.Fatalf("the hook saw an ambient secret it must never inherit: %q", result.Detail)
 	}
-	if !strings.Contains(result.Detail, "ARTIFACT="+path) {
+	if !strings.Contains(result.Detail, "CURRENT_ARTIFACT="+path) {
 		t.Fatalf("the hook did not see its artifact path via env: %q", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "LEGACY_ARTIFACT="+path) {
+		t.Fatalf("a hook reading the pre-rename variable name saw no artifact path: %q. Both names carry the same value for one release (#895)", result.Detail)
 	}
 	if !strings.Contains(result.Detail, "ARG1="+path) {
 		t.Fatalf("the hook did not see its artifact path via argv[1]: %q", result.Detail)

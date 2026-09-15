@@ -4,7 +4,7 @@
             "type": "url",
             "title": "Backupd",
             "desc": "Pull-based backupd",
-            "icon": "images/backupd_{0}.png",
+            "icon": "images/retnd_{0}.png",
             "url": "/webman/3rdparty/Backupd/index.html",
             "allUsers": true
         }

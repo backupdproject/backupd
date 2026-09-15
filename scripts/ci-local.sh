@@ -845,6 +845,32 @@ bash scripts/api/check-client-paths.sh
 gate_step "the /api/v1 contract gates can actually fail (mutation self-test)"
 bash scripts/api/selftest.sh
 
+# No already-published provenance record is rewritten (#895, R2.8, FR-43).
+#
+# `provenance/**` records artifacts that have been PUSHED, and the epic's
+# own words for it are "regenerated forward, never rewritten". Nothing
+# checked that. distribution/packaging's TestComplianceArtifactsMatchThisTree
+# asks the opposite question -- whether the checked-in bytes are what this
+# tree generates -- and is green against a bundle that quietly restates the
+# registry digest of a release that shipped six months ago.
+#
+# Four fields for a version whose record says `published`: the flag itself,
+# the recorded build version, the architectures, and the per-architecture
+# registry digests. Deliberately NOT the derived digests of NOTICE, the
+# licence inventory, the SBOM and the checksum manifest, which track the
+# tree and moved in most of the commits that have ever touched that file;
+# and deliberately not `imageReference` or `signing.identity`, because
+# FR-41 moves the registry path and re-issues the identity at the cutover
+# and a guard that froze them would refuse the change it was written for.
+# The self-test in the non-FAST block below holds both of those exclusions
+# as controls, so neither can be tightened by accident into a guard nobody
+# can land the cutover past.
+#
+# One `git show` and one JSON compare, so it belongs up here with the
+# other seconds-long sweeps rather than behind the Go suites.
+gate_step "no published release's provenance record has been restated (#895, R2.8)"
+bash scripts/release/check-published-provenance.sh
+
 if [ "$FAST" != "1" ]; then
   gate_step "release-manifest generator guards (#174)"
   bash scripts/tests/record-release-hashes-guards.test.sh
@@ -857,6 +883,18 @@ if [ "$FAST" != "1" ]; then
   # before the first Docker command (#88).
   gate_step "image-publish guards (#88)"
   bash scripts/tests/publish-image-guards.test.sh
+
+  # And the proof the guard above can still go red (#895, R2.8). Row R2.8
+  # of docs/conformance/epic-r-matrix.md will not take a check that has
+  # never been watched to fire, and this one is an assertion that
+  # something never happens, which is the shape that rots silently. Nine
+  # cases in throwaway repositories: four refusals, each asserting its own
+  # message rather than only the exit code, and five controls -- an
+  # untouched record, the four derived digests moving, FR-41's image
+  # reference and signing identity moving, a release being cut, and a
+  # record that was never published freezing nothing.
+  gate_step "the published-provenance guard can actually fail (mutation self-test, #895)"
+  bash scripts/tests/published-provenance-guards.test.sh
 
   # The self-test runs this very script against synthetic checkouts, so
   # without a marker the recursion terminates only by whatever the fixture

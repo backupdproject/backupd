@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/retnd/retnd/core/internal/testenv"
 )
 
 // Whether the simulated VPS still has one definition, and whether the
@@ -103,8 +105,17 @@ func TestTheDriverRunsTheTierInsideAManagerMachine(t *testing.T) {
 	if !strings.Contains(text, "--user") {
 		t.Errorf("the driver does not run the manager machine as a named user. core/internal/testenv REFUSES to run as root rather than skipping the permission-bit tests, and a rootful manager would turn that refusal into a red gate or an opt-out")
 	}
-	if strings.Contains(text, "RCLONE_MANAGER_ALLOW_ROOT") {
-		t.Errorf("the driver sets the root opt-out. That flag exists for a person who typed it on purpose, not for a driver to set on everybody's behalf: setting it here deletes eight permission-bit assertions from every run inside the manager")
+	// The root opt-out this looks for is core/internal/testenv's own
+	// constant rather than a literal. It used to be a literal carrying
+	// this product's first brand name, which is not what any variable
+	// this product reads has ever been called: testenv's opt-out is
+	// ALLOW_ROOT_PERMISSION_TESTS and always was, so the cell forbade a
+	// string the driver could not plausibly contain and would have
+	// stayed green through the exact edit it exists to catch. Naming the
+	// constant is also what keeps it true through a later rename of the
+	// flag, which is why EPIC R (#885) is where this was noticed.
+	if strings.Contains(text, testenv.AllowRootPermissionTestsEnv) {
+		t.Errorf("the driver sets %s, the root opt-out. That flag exists for a person who typed it on purpose, not for a driver to set on everybody's behalf: setting it here deletes eight permission-bit assertions from every run inside the manager", testenv.AllowRootPermissionTestsEnv)
 	}
 	if !strings.Contains(text, "cmd/gotestwatch") {
 		t.Errorf("the driver runs the tier under a bare `go test`. A machine-tier package's wall clock tracks real machine load, so a fixed -timeout chosen on a quiet machine kills a run that is still making progress (#256), which is why scripts/ci-local.sh puts these packages under gotestwatch. A driver meant to stand in for that step has to keep the bound")

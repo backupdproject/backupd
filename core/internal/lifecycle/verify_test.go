@@ -785,6 +785,15 @@ func TestVerify_Validator_CannotStart_Fails(t *testing.T) {
 // during the pipeline rather than during a scheduled pass, so an inherited
 // environment would hand an operator-supplied executable everything the
 // daemon knows.
+//
+// It also holds the one-release overlap EPIC R (#885) owes a validator
+// script that was written against the old variable name: a script reading
+// either RETND_ARTIFACT_PATH or RCLONE_MANAGER_ARTIFACT_PATH has to see
+// the same path, because dropping the old name breaks such a script
+// without any error to go on (an unset variable reads as the empty
+// string). Removing the legacy export must turn this cell red, which is
+// the only thing that stops #895's removal from happening a release early
+// by accident.
 func TestVerify_Validator_DoesNotInheritAmbientEnvironment(t *testing.T) {
 	content := []byte("dump-bytes")
 	path := verifyWriteLocalFile(t, content)
@@ -792,9 +801,9 @@ func TestVerify_Validator_DoesNotInheritAmbientEnvironment(t *testing.T) {
 	j := newVerifyJournal(rec)
 	tr := &verifyTransport{}
 
-	t.Setenv("RCLONE_MANAGER_TEST_SECRET", "super-secret-value")
+	t.Setenv("RETND_TEST_SECRET", "super-secret-value")
 
-	script := mustScript(t, "echo \"SECRET=$RCLONE_MANAGER_TEST_SECRET\"\necho \"ARTIFACT=$RCLONE_MANAGER_ARTIFACT_PATH\"\necho \"ARG1=$1\"\nexit 1\n")
+	script := mustScript(t, "echo \"SECRET=$RETND_TEST_SECRET\"\necho \"CURRENT_ARTIFACT=$RETND_ARTIFACT_PATH\"\necho \"LEGACY_ARTIFACT=$RCLONE_MANAGER_ARTIFACT_PATH\"\necho \"ARG1=$1\"\nexit 1\n")
 
 	out, err := Verify(context.Background(), Deps{Journal: j, Transport: tr}, VerifyParams{
 		Artifact: rec.Artifact, AttemptKey: "a1",
@@ -806,8 +815,11 @@ func TestVerify_Validator_DoesNotInheritAmbientEnvironment(t *testing.T) {
 	if strings.Contains(out.Record.ValidationDetail, "super-secret-value") {
 		t.Fatalf("the validator saw an ambient secret it must never inherit: %q", out.Record.ValidationDetail)
 	}
-	if !strings.Contains(out.Record.ValidationDetail, "ARTIFACT="+path) {
+	if !strings.Contains(out.Record.ValidationDetail, "CURRENT_ARTIFACT="+path) {
 		t.Fatalf("the validator did not see its artifact path via env: %q", out.Record.ValidationDetail)
+	}
+	if !strings.Contains(out.Record.ValidationDetail, "LEGACY_ARTIFACT="+path) {
+		t.Fatalf("a validator reading the pre-rename variable name saw no artifact path: %q. Both names carry the same value for one release (#895)", out.Record.ValidationDetail)
 	}
 	if !strings.Contains(out.Record.ValidationDetail, "ARG1="+path) {
 		t.Fatalf("the validator did not see its artifact path via argv[1]: %q", out.Record.ValidationDetail)

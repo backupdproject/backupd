@@ -98,6 +98,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -125,7 +126,7 @@ KEY_PATHSPECS = [
 KEY_EXCLUDES = ["node_modules/*", "ui/shared/dist/*"]
 
 
-def refuse(message: str, *details: str) -> None:
+def refuse(message: str, *details: str) -> NoReturn:
     print(f"refusing: {message}", file=sys.stderr)
     for detail in details:
         print(detail, file=sys.stderr)
@@ -320,7 +321,7 @@ def _split_reference(reference: str) -> tuple[str, str]:
     return path, ""
 
 
-def canonical_image(canonical: Path) -> dict:
+def canonical_image(canonical: Path) -> dict[str, Any]:
     """canonical.json's `image` object.
 
     A real parse rather than `json_string`'s line scan, because guard 7

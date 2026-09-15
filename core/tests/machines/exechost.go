@@ -209,7 +209,12 @@ func startExecHost(t *testing.T, network, alias string, inNetwork bool) *ExecHos
 
 	authorizedDir := filepath.Join(runDir, "authorized")
 	must(t, os.MkdirAll(authorizedDir, 0o755), "create authorized dir")
-	copyFile(t, clientKey+".pub", filepath.Join(authorizedDir, "backupd.pub"))
+	// The name the image's sshd_config pins as its AuthorizedKeysFile
+	// (scripts/e2e/exec-host.Dockerfile). The two have to move together:
+	// a file under any other name is a key sshd never reads, and the
+	// failure is a 20-second authentication timeout rather than a
+	// missing-file error.
+	copyFile(t, clientKey+".pub", filepath.Join(authorizedDir, "retnd.pub"))
 
 	h.setStage("dockerlease.Sweep (reclaiming containers a killed run left behind)")
 	dockerlease.Sweep()

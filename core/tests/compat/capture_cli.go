@@ -237,7 +237,7 @@ func captureCLI(ctx context.Context, bin, cfgPath, root string) (Cell, Cell, err
 // engine. That is the half of engine-attached mode this corpus had, and
 // the other half, an operator who DID set an address and got it wrong, is
 // where the sentences a script reads actually live: the write refusals
-// name $BACKUP_MANAGER_API_URL, the exit-code table promises a named route
+// name $RETND_API_URL, the exit-code table promises a named route
 // that did not answer is a 1 and not a 3, and #544's caveat line is the
 // only thing standing between a read and an answer about somebody else's
 // world. None of it was pinned anywhere. Two writes and one read, because
@@ -404,9 +404,9 @@ retention:
 // half-configured route rather than a misaimed one.
 func misaimedRoute() []string {
 	return []string{
-		"BACKUP_MANAGER_API_URL=http://127.0.0.1:1",
-		"BACKUP_MANAGER_API_USERNAME=operator",
-		"BACKUP_MANAGER_API_PASSWORD=placeholder-never-sent",
+		"RETND_API_URL=http://127.0.0.1:1",
+		"RETND_API_USERNAME=operator",
+		"RETND_API_PASSWORD=placeholder-never-sent",
 	}
 }
 
@@ -417,7 +417,7 @@ func misaimedRoute() []string {
 // sees, and a cell that only looked at stdout would call that identical.
 //
 // The environment is built rather than inherited, and extra is the one way
-// anything else gets into it. A developer with $BACKUP_MANAGER_API_URL
+// anything else gets into it. A developer with $RETND_API_URL
 // exported for their own deployment would otherwise capture a different
 // corpus from CI, and the difference would be that every refusal in this
 // file quietly became a routed write aimed at their engine, which is the

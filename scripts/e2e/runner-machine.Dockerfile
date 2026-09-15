@@ -3,7 +3,7 @@
 # EPIC L splits hook execution in two, and the split is the whole security
 # argument: the ENGINE is distroless, read-only, capability-dropped and
 # non-root, so "run this operator's shell script on the host" is a thing it
-# deliberately cannot do. `backupd workflow-runner serve` is the process
+# deliberately cannot do. `retnd workflow-runner serve` is the process
 # that can, it runs OUTSIDE that container, and the only thing it exposes
 # is one authenticated Unix socket (docs/adr/0020-host-workflow-runner.md).
 #
@@ -13,7 +13,7 @@
 #     Not a second build and not a host binary: the runner refuses an
 #     engine from a different release, so version-matching is not a
 #     detail, and the only way to be sure the two halves match is for
-#     both to come from the same image. `/backupd` is CGO_ENABLED=0
+#     both to come from the same image. `/retnd` is CGO_ENABLED=0
 #     (container/Dockerfile says so where it sets it), so the static
 #     binary from a distroless image runs unchanged on this alpine base.
 #
@@ -39,11 +39,11 @@ FROM ${PRODUCT_IMAGE} AS product
 
 FROM docker:29-cli
 
-COPY --from=product /backupd /backupd
+COPY --from=product /retnd /retnd
 
 # docker:29-cli's entrypoint is a wrapper that would prefix whatever this
 # container is asked to run. The rig asks for `workflow-runner serve` with
 # a long argument list of its own, so the prefix goes: the same reasoning
 # container/Dockerfile gives for shipping no ENTRYPOINT at all.
 ENTRYPOINT []
-CMD ["/backupd", "version"]
+CMD ["/retnd", "version"]

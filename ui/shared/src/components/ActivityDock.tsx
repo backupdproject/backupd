@@ -441,7 +441,7 @@ function shellWord(s: string): string {
 export function environmentPreamble(origin: string, viewer: string | null): string {
   const url = shellWord(origin === "" ? "http://127.0.0.1:8080" : origin);
   const user = viewer === null || viewer === "" ? "<the administrator you sign in as>" : shellWord(viewer);
-  return "export BACKUP_MANAGER_API_URL=" + url + " BACKUP_MANAGER_API_USERNAME=" + user + " BACKUP_MANAGER_API_PASSWORD=<your password>";
+  return "export RETND_API_URL=" + url + " RETND_API_USERNAME=" + user + " RETND_API_PASSWORD=<your password>";
 }
 
 /**

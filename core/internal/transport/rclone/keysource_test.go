@@ -231,7 +231,7 @@ func TestValidateAndWrapKey_UnencryptedKeyWithPassphraseConfiguredIsRejected(t *
 
 func TestResolveKeyFromEnv_Succeeds(t *testing.T) {
 	pem := mustUnencryptedKeyPEM(t)
-	const name = "RCLONE_MANAGER_TEST_KEY_ENV"
+	const name = "RETND_TEST_KEY_ENV"
 	t.Setenv(name, string(pem))
 
 	secret, err := resolveKeyFromEnv(name, "")
@@ -244,7 +244,7 @@ func TestResolveKeyFromEnv_Succeeds(t *testing.T) {
 }
 
 func TestResolveKeyFromEnv_RejectsMissingVariable(t *testing.T) {
-	const name = "RCLONE_MANAGER_TEST_KEY_ENV_DOES_NOT_EXIST"
+	const name = "RETND_TEST_KEY_ENV_DOES_NOT_EXIST"
 	if _, ok := os.LookupEnv(name); ok {
 		t.Fatalf("test precondition broken: %s is actually set in this environment", name)
 	}
@@ -258,7 +258,7 @@ func TestResolveKeyFromEnv_RejectsMissingVariable(t *testing.T) {
 }
 
 func TestResolveKeyFromEnv_RejectsJunkContent(t *testing.T) {
-	const name = "RCLONE_MANAGER_TEST_KEY_ENV_JUNK"
+	const name = "RETND_TEST_KEY_ENV_JUNK"
 	t.Setenv(name, "<html>not a key</html>")
 	_, err := resolveKeyFromEnv(name, "")
 	if err == nil {
@@ -275,7 +275,7 @@ func TestResolveKeyFromEnv_RejectsJunkContent(t *testing.T) {
 // passphrase, and succeeds with the correct one.
 func TestResolveKeyFromEnv_PassphraseProtectedKey(t *testing.T) {
 	raw := mustEncryptedKeyPEM(t, false)
-	const name = "RCLONE_MANAGER_TEST_KEY_ENV_ENCRYPTED"
+	const name = "RETND_TEST_KEY_ENV_ENCRYPTED"
 	t.Setenv(name, string(raw))
 
 	if _, err := resolveKeyFromEnv(name, ""); err == nil {
@@ -564,7 +564,7 @@ cat "$3"
 func TestResolvedKeyNeverAppearsInLogLine(t *testing.T) {
 	pem := mustUnencryptedKeyPEM(t)
 
-	const envName = "RCLONE_MANAGER_TEST_KEY_ENV_LOGGING"
+	const envName = "RETND_TEST_KEY_ENV_LOGGING"
 	t.Setenv(envName, string(pem))
 	envSecret, err := resolveKeyFromEnv(envName, "")
 	if err != nil {

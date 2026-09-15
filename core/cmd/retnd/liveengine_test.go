@@ -163,7 +163,7 @@ type mutation struct {
 // Four of these six can now be handed to a running engine, so the refusal
 // they get here is the one for an engine this command was told nothing
 // about. That is exactly the condition under test: nothing in this file
-// sets $BACKUP_MANAGER_API_URL, and TestMain clears it, so what every case
+// sets $RETND_API_URL, and TestMain clears it, so what every case
 // below asserts is that finding an engine and having no way to reach it
 // still refuses and still leaves the file alone. It is the case a
 // `backupd daemon` is always in, since a daemon serves no HTTP at
@@ -507,7 +507,7 @@ func TestAFirstConfigurationIsRefusedWhileAnEngineServesThatJournal(t *testing.T
 		t.Errorf("the refusal does not say the file was left alone:\n%s", stderr)
 	}
 	// #571: the remedy has to be one that exists for THIS write. The
-	// shared sentence used to end by naming $BACKUP_MANAGER_API_URL and
+	// shared sentence used to end by naming $RETND_API_URL and
 	// the four verbs an address can carry, which sends an operator to set
 	// three variables and run a command that refuses identically, because
 	// a first configuration is the one write with no route.

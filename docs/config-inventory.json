@@ -2165,7 +2165,8 @@
       "yaml_path": null,
       "cli_flags": [],
       "env": [
-        "BACKUP_MANAGER_API_URL"
+        "RETND_API_URL",
+        "BACKUP_MANAGER_API_URL (deprecated alias)"
       ],
       "type": "string (URL)",
       "default": "\"\" (no route: writes beside a serving engine are refused)",
@@ -2183,7 +2184,8 @@
       "yaml_path": null,
       "cli_flags": [],
       "env": [
-        "BACKUP_MANAGER_API_USERNAME"
+        "RETND_API_USERNAME",
+        "BACKUP_MANAGER_API_USERNAME (deprecated alias)"
       ],
       "type": "string",
       "default": "\"\"",
@@ -2201,7 +2203,8 @@
       "yaml_path": null,
       "cli_flags": [],
       "env": [
-        "BACKUP_MANAGER_API_PASSWORD"
+        "RETND_API_PASSWORD",
+        "BACKUP_MANAGER_API_PASSWORD (deprecated alias)"
       ],
       "type": "string (secret)",
       "default": "\"\"",

@@ -599,7 +599,7 @@ func shellQuote(s string) string {
 }
 
 // What the printed commands need beyond their own argv (the three
-// BACKUP_MANAGER_API_* variables usage() names) is deliberately NOT
+// RETND_API_* variables usage() names) is deliberately NOT
 // composed here. The engine does not know the address the reader would
 // type at their own shell to reach it: it knows what it is listening on,
 // which behind a reverse proxy or a Synology package is not that. The

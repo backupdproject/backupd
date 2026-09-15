@@ -205,7 +205,7 @@ func TestRunCycle_RegisteredValidatorSuccessAllowsRemoteDeletionEndToEnd(t *test
 	source, bs := trailerMarkerBackupSet(t, localDir)
 
 	tr := newValidatorFakeTransport()
-	tr.put("backup.dump", []byte("payload bytes\n--RCLONE-MANAGER-BACKUP-COMPLETE--\n"), wp32Epoch.Unix())
+	tr.put("backup.dump", []byte("payload bytes\n--RETND-BACKUP-COMPLETE--\n"), wp32Epoch.Unix())
 
 	journal := openTestJournal(t)
 	svc := New(testConfig(source), journal, tr, nil)

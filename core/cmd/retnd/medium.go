@@ -375,7 +375,7 @@ func withMediumRoute(ctx context.Context, cfgPath string, body func(route config
 // deployment and no route was named, which is right for a WRITE (a change
 // left in the file is one that process would never read) and wrong for a
 // read: an operator on a stock install has an engine running and no
-// BACKUP_MANAGER_API_URL set, so routing `medium list` would have made
+// RETND_API_URL set, so routing `medium list` would have made
 // looking at your own destinations impossible on the ordinary deployment.
 // `settings` on its own already reads this way for the same reason, and
 // #544 routed four reads and deliberately stopped there.
@@ -691,7 +691,7 @@ func mediumRemove(ctx context.Context, cfgPath, id string, _ mediumFlags) int {
 // stock install with nothing configured (withMediumRead).
 //
 // What that costs is stated rather than buried: on a host with an engine
-// serving this deployment and no BACKUP_MANAGER_API_URL, this verb now
+// serving this deployment and no RETND_API_URL, this verb now
 // refuses where it used to answer, and names what to set. That operator
 // already could not run `medium add`, `edit`, `remove` or `preflight
 // --candidate` for the same reason, and the check they wanted is a button

@@ -894,7 +894,7 @@ var routes = map[string]entry{
 		},
 		why: "there is no verb that proves an undeclared storage destination from a request body",
 		examples: []Action{
-			{Body: []byte(`{"id":"offsite_s3","type":"s3","region":"eu-central-1","endpoint":"https://s3.eu-central-1.example.net","bucket":"acme-backups","prefix":"prod","storage_class":"STANDARD","upload_verification":"readback","credentials":{"env":"BACKUP_MANAGER_S3_CREDENTIALS"}}`)},
+			{Body: []byte(`{"id":"offsite_s3","type":"s3","region":"eu-central-1","endpoint":"https://s3.eu-central-1.example.net","bucket":"acme-backups","prefix":"prod","storage_class":"STANDARD","upload_verification":"readback","credentials":{"env":"RETND_S3_CREDENTIALS"}}`)},
 		},
 	},
 	key("POST", "/storage-mediums/{id}/preflight"): {

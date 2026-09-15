@@ -59,14 +59,14 @@ func TestValidate_ADomainDeclaringTwoPassphraseSourcesIsRefused(t *testing.T) {
 
 func TestValidate_ResolvesThePassphraseIntoTheReferenceTheEngineTakes(t *testing.T) {
 	c := incrementalConfig()
-	c.RepositoryDomains[0].Passphrase = Passphrase{File: "/run/secrets/backupd_repo_production"}
+	c.RepositoryDomains[0].Passphrase = Passphrase{File: "/run/secrets/retnd_repo_production"}
 
 	if err := c.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 
 	ref := c.RepositoryDomains[0].PassphraseRef
-	if ref.File != "/run/secrets/backupd_repo_production" {
+	if ref.File != "/run/secrets/retnd_repo_production" {
 		t.Errorf("PassphraseRef.File = %q, want the declared file", ref.File)
 	}
 
