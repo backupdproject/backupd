@@ -477,22 +477,26 @@ jobs:
       # gate does.
 
   brand-drift:
-    name: no new RM_/BM_/bm_/rbm_ identifier (#794)
+    name: no new RM_/BM_/bm_/rbm_/backupd/backupdproject/rclone-manager/backup-manager identifier (#794, #887)
     runs-on: ubuntu-latest
     # Its own job rather than a step inside somebody else's, for the same
     # reason the gofmt sweep above has one: it is not a module's question.
     # It reads every tracked file in the repository, source in six
     # languages plus compose files, workflow files and documentation.
     #
-    # No toolchain at all: `git grep` and three fixed lists. Two seconds
-    # for the guard and its mutation self-test together, which is why the
-    # self-test runs here too -- a guard whose only evidence is that it
-    # passes on the tree it ships with has proven nothing.
+    # No toolchain at all: two `git grep` sweeps and three fixed lists. About
+    # six seconds for the guard and its mutation self-test together, which is
+    # why the self-test runs here too -- a guard whose only evidence is that
+    # it passes on the tree it ships with has proven nothing.
     #
-    # This project has been renamed twice (rclone-manager -> backup-manager
-    # -> backupd) and both previous names left runtime identifiers behind.
-    # #794 renamed them; this is what stops the third rename from finding
-    # a fresh crop.
+    # This project is on its third name (rclone-manager -> backup-manager ->
+    # backupd -> retnd, EPIC R #885) and every previous rename left runtime
+    # identifiers behind. #794 renamed the first two brands' prefixes and
+    # #887 pointed the guard at the `backupd` family, the `backupdproject`
+    # organisation and the two earlier brand words the org-wide grep found
+    # still live; this is what stops a fourth rename from finding a fresh
+    # crop. The guard is green only because every surviving occurrence is on
+    # its `pending` list, which is what EPIC R empties.
     steps:
       - name: Checkout
         uses: actions/checkout@v7

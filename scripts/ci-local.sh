@@ -242,27 +242,36 @@ fi
 gate_step "every tracked Go file is gofmt-clean, including the ones outside every module (#417)"
 bash scripts/format/check-gofmt.sh
 
-# No new old-brand identifier, over every tracked source file (#794). This
-# project has been renamed twice, and both previous names left runtime
-# identifiers behind: rclone-manager's RM_ environment variables and
-# backup-manager's bm_ cookies. #794 renamed them to BACKUPD_ / backupd_,
-# which is a one-off edit; this step is what makes it stay done. The way
-# the old prefixes spread in the first place was somebody copying the line
-# above the one they were writing, and nothing anywhere looked.
+# No new old-brand identifier, over every tracked source file (#794, #887).
+# This project is on its third name, and both previous ones left runtime
+# identifiers behind: rclone-manager's RM_ and RCLONE_MANAGER_ environment
+# variables and backup-manager's bm_ cookies and BACKUP_MANAGER_ variables.
+# #794 renamed some of them to BACKUPD_ / backupd_, and EPIC R (#885) is
+# renaming the whole `backupd` family to `retnd`; #887 pointed this guard at
+# it. The rename is a one-off edit; this step is what makes it stay done. The
+# way the old prefixes spread in the first place was somebody copying the
+# line above the one they were writing, and nothing anywhere looked.
 #
-# One `git grep` and three fixed lists, so it costs about a second and
-# belongs up here with the anchors and gofmt sweeps rather than behind
+# Two `git grep` sweeps and three fixed lists, so it costs about two seconds
+# and belongs up here with the anchors and gofmt sweeps rather than behind
 # twenty minutes of Go suites. It runs in FAST mode too, for the same
 # reason those two do: it is seconds, and a mid-refactor edit is exactly
 # what introduces the thing it looks for.
 #
-# The self-test next to it plants each of the four prefixes in a throwaway
+# The guard is RED until EPIC R finishes, by design, and green here only
+# because every surviving occurrence is on its `pending` list (FR-40): the
+# list going empty is the epic's completion signal, and each sub-issue
+# deletes its own entries.
+#
+# The self-test next to it plants each of the eleven patterns in a throwaway
 # repository and requires the guard to go red, and plants the lookalikes it
-# must NOT catch (CONFIRM_DELETE, rclone's own ibm_signer.go) and requires
-# it to stay green. A guard whose only evidence is that it passes on the
-# one tree anybody runs it against has proven nothing (#160's shape again),
-# and it is under four seconds, so it runs here rather than nowhere.
-gate_step "no new RM_/BM_/bm_/rbm_ identifier, and that guard can still fail (#794)"
+# must NOT catch -- CONFIRM_DELETE, rclone's own ibm_signer.go, and the nine
+# `BackupD[a-zA-Z]` identifiers whose 50 occurrences a case-insensitive
+# `backupd` pattern would flag -- and requires it to stay green. A guard
+# whose only evidence is that it passes on the one tree anybody runs it
+# against has proven nothing (#160's shape again), and it is under five
+# seconds, so it runs here rather than nowhere.
+gate_step "no new RM_/BM_/bm_/rbm_/backupd/backupdproject/rclone-manager/backup-manager identifier, and that guard can still fail (#794, #887)"
 bash scripts/rename/check-brand-drift.sh
 bash scripts/rename/selftest.sh
 
