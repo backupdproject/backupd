@@ -1,7 +1,7 @@
-# Backupd on CasaOS
+# retnd on CasaOS
 
 CasaOS installs a third-party application from one `docker-compose.yml` carrying
-an `x-casaos` block, so [`compose/backupd.yml`](compose/backupd.yml)
+an `x-casaos` block, so [`compose/retnd.yml`](compose/retnd.yml)
 is both the runtime definition and the store submission. There is nothing else
 in this directory but an icon and this page.
 

@@ -684,7 +684,7 @@ func unresolvedHostPaths(t *testing.T, compose string, env map[string]string) ma
 }
 
 func TestProxmoxProfileRefusesToStartWithAnUnsetHostPath(t *testing.T) {
-	path := Path(filepath.Join("apps", "proxmox", "compose", "backupd.yml"))
+	path := Path(filepath.Join("apps", "proxmox", "compose", "retnd.yml"))
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -719,12 +719,12 @@ func TestProxmoxProfileRefusesToStartWithAnUnsetHostPath(t *testing.T) {
 
 	// And the checked-in env file supplies every one of them, so a
 	// correct deployment never sees a refusal.
-	env, err := ReadEnvFile(Path(filepath.Join("apps", "proxmox", "compose", "backupd.env")))
+	env, err := ReadEnvFile(Path(filepath.Join("apps", "proxmox", "compose", "retnd.env")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if left := unresolvedHostPaths(t, compose, env); len(left) > 0 {
-		t.Errorf("backupd.env leaves %v unresolved", left)
+		t.Errorf("retnd.env leaves %v unresolved", left)
 	}
 }
 

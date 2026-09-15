@@ -244,32 +244,32 @@ func allPlatforms() []platformFixture {
 			name: "openmediavault",
 			requiredFiles: []string{
 				"README.md",
-				"compose/backupd.yml",
-				"compose/backupd.env",
+				"compose/retnd.yml",
+				"compose/retnd.env",
 			},
 			services: func(t *testing.T) []Service {
 				t.Helper()
 				dir := filepath.Join(PlatformDir("openmediavault"), "compose")
-				env, err := ReadEnvFile(filepath.Join(dir, "backupd.env"))
+				env, err := ReadEnvFile(filepath.Join(dir, "retnd.env"))
 				if err != nil {
 					t.Fatalf("read OMV env file: %v", err)
 				}
-				svcs, err := ReadCompose(filepath.Join(dir, "backupd.yml"), env)
+				svcs, err := ReadCompose(filepath.Join(dir, "retnd.yml"), env)
 				if err != nil {
 					t.Fatalf("read OMV compose: %v", err)
 				}
 				return svcs
 			},
-			engineService: "backupd",
-			uiService:     "backupd-ui",
+			engineService: "retnd",
+			uiService:     "web-ui",
 			uiHealthcheck: overrideHealthcheck,
 			hardening:     composeHardening,
 			composeProfiles: []composeProfile{
-				{compose: "compose/backupd.yml", env: "compose/backupd.env"},
+				{compose: "compose/retnd.yml", env: "compose/retnd.env"},
 			},
 			acceptance:       "openmediavault-provider-acceptance.md",
 			docSubstitutions: map[string]string{"$DISK": "/srv/dev-disk-by-uuid"},
-			runtimeArtifacts: composeArtifact("openmediavault", "compose/backupd.yml", "compose/backupd.env"),
+			runtimeArtifacts: composeArtifact("openmediavault", "compose/retnd.yml", "compose/retnd.env"),
 		},
 		{
 			// WP4.5. Proxmox VE has no app store to package into, so
@@ -282,28 +282,28 @@ func allPlatforms() []platformFixture {
 			name: "proxmox",
 			requiredFiles: []string{
 				"README.md",
-				"compose/backupd.yml",
-				"compose/backupd.env",
+				"compose/retnd.yml",
+				"compose/retnd.env",
 			},
 			services: func(t *testing.T) []Service {
 				t.Helper()
 				dir := filepath.Join(PlatformDir("proxmox"), "compose")
-				env, err := ReadEnvFile(filepath.Join(dir, "backupd.env"))
+				env, err := ReadEnvFile(filepath.Join(dir, "retnd.env"))
 				if err != nil {
 					t.Fatalf("read Proxmox env file: %v", err)
 				}
-				svcs, err := ReadCompose(filepath.Join(dir, "backupd.yml"), env)
+				svcs, err := ReadCompose(filepath.Join(dir, "retnd.yml"), env)
 				if err != nil {
 					t.Fatalf("read Proxmox compose: %v", err)
 				}
 				return svcs
 			},
-			engineService: "backupd",
-			uiService:     "backupd-ui",
+			engineService: "retnd",
+			uiService:     "web-ui",
 			uiHealthcheck: overrideHealthcheck,
 			hardening:     composeHardening,
 			composeProfiles: []composeProfile{
-				{compose: "compose/backupd.yml", env: "compose/backupd.env"},
+				{compose: "compose/retnd.yml", env: "compose/retnd.env"},
 			},
 			acceptance: "proxmox-ve-deployment.md",
 			// Every path the Proxmox procedure names is literal: the
@@ -311,7 +311,7 @@ func allPlatforms() []platformFixture {
 			// the profile derives the rest from it, so there is no
 			// machine-specific placeholder to expand.
 			docSubstitutions: map[string]string{},
-			runtimeArtifacts: composeArtifact("proxmox", "compose/backupd.yml", "compose/backupd.env"),
+			runtimeArtifacts: composeArtifact("proxmox", "compose/retnd.yml", "compose/retnd.env"),
 		},
 		{
 			// Issue #169. Synology's Container Manager project: the path
@@ -328,28 +328,28 @@ func allPlatforms() []platformFixture {
 			name: "synology",
 			requiredFiles: []string{
 				"README.md",
-				"compose/backupd.yml",
-				"compose/backupd.env",
+				"compose/retnd.yml",
+				"compose/retnd.env",
 			},
 			services: func(t *testing.T) []Service {
 				t.Helper()
 				dir := filepath.Join(PlatformDir("synology"), "compose")
-				env, err := ReadEnvFile(filepath.Join(dir, "backupd.env"))
+				env, err := ReadEnvFile(filepath.Join(dir, "retnd.env"))
 				if err != nil {
 					t.Fatalf("read Synology env file: %v", err)
 				}
-				svcs, err := ReadCompose(filepath.Join(dir, "backupd.yml"), env)
+				svcs, err := ReadCompose(filepath.Join(dir, "retnd.yml"), env)
 				if err != nil {
 					t.Fatalf("read Synology Container Manager compose: %v", err)
 				}
 				return svcs
 			},
-			engineService: "backupd",
-			uiService:     "backupd-ui",
+			engineService: "retnd",
+			uiService:     "web-ui",
 			uiHealthcheck: overrideHealthcheck,
 			hardening:     composeHardening,
 			composeProfiles: []composeProfile{
-				{compose: "compose/backupd.yml", env: "compose/backupd.env"},
+				{compose: "compose/retnd.yml", env: "compose/retnd.env"},
 			},
 			acceptance:       "synology-dsm-package-lifecycle.md",
 			docSubstitutions: map[string]string{},
@@ -357,7 +357,7 @@ func allPlatforms() []platformFixture {
 			// own doc for why the roots are named here rather than the
 			// platform skipped.
 			scanRoots:        []string{"compose", "frontend"},
-			runtimeArtifacts: composeArtifact("synology", "compose/backupd.yml", "compose/backupd.env"),
+			runtimeArtifacts: composeArtifact("synology", "compose/retnd.yml", "compose/retnd.env"),
 		},
 		{
 			// Issue #170. Portainer deploys the product as a stack, from
@@ -378,20 +378,20 @@ func allPlatforms() []platformFixture {
 				"README.md",
 				"templates.json",
 				"logo.svg",
-				"compose/backupd.yml",
-				"compose/backupd.env",
+				"compose/retnd.yml",
+				"compose/retnd.env",
 			},
-			services:      composeServices("portainer", "compose/backupd.yml", "compose/backupd.env"),
-			engineService: "backupd",
-			uiService:     "backupd-ui",
+			services:      composeServices("portainer", "compose/retnd.yml", "compose/retnd.env"),
+			engineService: "retnd",
+			uiService:     "web-ui",
 			uiHealthcheck: overrideHealthcheck,
 			hardening:     composeHardening,
 			composeProfiles: []composeProfile{
-				{compose: "compose/backupd.yml", env: "compose/backupd.env"},
+				{compose: "compose/retnd.yml", env: "compose/retnd.env"},
 			},
 			acceptance:       "portainer-stack-deployment.md",
 			docSubstitutions: map[string]string{},
-			runtimeArtifacts: composeArtifact("portainer", "compose/backupd.yml", "compose/backupd.env"),
+			runtimeArtifacts: composeArtifact("portainer", "compose/retnd.yml", "compose/retnd.env"),
 		},
 		{
 			// Issue #170. CasaOS installs from one compose file carrying
@@ -403,19 +403,19 @@ func allPlatforms() []platformFixture {
 			requiredFiles: []string{
 				"README.md",
 				"icon.svg",
-				"compose/backupd.yml",
+				"compose/retnd.yml",
 			},
-			services:      composeServices("casaos", "compose/backupd.yml", ""),
-			engineService: "backupd",
-			uiService:     "backupd-ui",
+			services:      composeServices("casaos", "compose/retnd.yml", ""),
+			engineService: "retnd",
+			uiService:     "web-ui",
 			uiHealthcheck: overrideHealthcheck,
 			hardening:     composeHardening,
 			composeProfiles: []composeProfile{
-				{compose: "compose/backupd.yml"},
+				{compose: "compose/retnd.yml"},
 			},
 			acceptance:       "casaos-app-store-install.md",
 			docSubstitutions: map[string]string{},
-			runtimeArtifacts: composeArtifact("casaos", "compose/backupd.yml", ""),
+			runtimeArtifacts: composeArtifact("casaos", "compose/retnd.yml", ""),
 		},
 		{
 			// Issue #170. ZimaOS reads the same x-casaos block CasaOS

@@ -111,7 +111,7 @@ that id belongs to an existing guest: pick another and re-run until both fail.
 Default (VM). Use any current Debian or Ubuntu LTS cloud image:
 
 ```bash
-qm create "$VMID" --name backupd --memory 2048 --cores 2 \
+qm create "$VMID" --name retnd --memory 2048 --cores 2 \
   --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-single
 # import the cloud image, set --scsi0, --ide2 cloudinit, --boot order=scsi0
 qm set "$VMID" --ciuser admin --sshkeys ~/.ssh/id_ed25519.pub
@@ -186,7 +186,7 @@ ssh admin@<guest> 'gunzip -c /tmp/backupd.tar.gz | docker load'
 ```
 
 The compose file reads the image reference from a single `IMAGE` variable in
-`apps/proxmox/compose/backupd.env`, so this is one line in one file.
+`apps/proxmox/compose/retnd.env`, so this is one line in one file.
 
 - [ ] Canonical image resolvable inside the guest, reference recorded
 
@@ -264,17 +264,17 @@ ssh admin@<guest> 'mountpoint -q /mnt/backupd && echo mounted'
 - [ ] `mountpoint -q /mnt/backupd` succeeded in the guest, before `up -d`
 
 ```bash
-scp apps/proxmox/compose/backupd.yml admin@<guest>:/opt/backupd/
-scp apps/proxmox/compose/backupd.env admin@<guest>:/opt/backupd/.env
+scp apps/proxmox/compose/retnd.yml admin@<guest>:/opt/backupd/
+scp apps/proxmox/compose/retnd.env admin@<guest>:/opt/backupd/.env
 ssh admin@<guest> 'cd /opt/backupd && docker compose -f backupd.yml up -d'
 ```
 
 - [ ] Both containers reach `running`
-- [ ] `backupd` reports healthy (it declares the liveness probe
-      `/backupd-web healthcheck --url http://127.0.0.1:8080/health/live`,
-      not the image's own `/backupd status`: the Web UI waits on this, and
+- [ ] `retnd` reports healthy (it declares the liveness probe
+      `/retnd-web healthcheck --url http://127.0.0.1:8080/health/live`,
+      not the image's own `/retnd status`: the Web UI waits on this, and
       the backup-freshness verdict is non-zero on a fresh install)
-- [ ] `backupd-ui` reports healthy (it overrides the image's own healthcheck)
+- [ ] `web-ui` reports healthy (it overrides the image's own healthcheck)
 - [ ] `docker compose logs` shows no repeated restart
 
 ## Step 2 — Reproducibility
@@ -284,7 +284,7 @@ means a second operator following this file from a clean guest lands in the same
 place. Prove it rather than asserting it:
 
 ```bash
-qm clone "$VMID" "$((VMID + 1))" --name backupd-repro   # or pct clone
+qm clone "$VMID" "$((VMID + 1))" --name retnd-repro   # or pct clone
 ```
 
 Bring the clone up from step 0.5 onward against a *separate* host directory, using
@@ -292,7 +292,7 @@ the same two files and no manual edits beyond the env file's documented
 substitutions.
 
 - [ ] Second guest reaches the same running state from the same two files
-- [ ] The only edits needed were inside `backupd.env`
+- [ ] The only edits needed were inside `retnd.env`
 - [ ] Number of undocumented manual steps required: **must be zero**, record it
 
 ## Step 3 — Web UI access
@@ -523,11 +523,11 @@ explicitly.
 
 And a fourth prerequisite, inside the guest rather than on the PVE host, which
 was missing until issue #921: the engine has to be able to see the runner. The
-stack mounts three paths for it, named in `backupd.env` with these values, and an
+stack mounts three paths for it, named in `retnd.env` with these values, and an
 operator who installs the runner somewhere else gets a refusal at the first hook
 rather than a hook that runs:
 
-| `backupd.env` | In the container | Why |
+| `retnd.env` | In the container | Why |
 |---|---|---|
 | `WORKFLOWS_DIR=/mnt/backupd/workflows` | `/workflows` (read-only) | the hook scripts the engine reads |
 | `RUNTIME_DIR=/mnt/backupd/run` | `/data/run` | where the runner's socket appears |
@@ -535,7 +535,7 @@ rather than a hook that runs:
 
 So install the runner with `--workflows-dir` and `--runtime-dir` pointed at the
 first two, and its token written to the third. All three fail closed like every
-other host path in this profile, so a `backupd.env` copied from before them stops
+other host path in this profile, so a `retnd.env` copied from before them stops
 the deployment with the message naming the variable rather than landing a bind
 mount on the guest's root disk. None of them reaches the Docker daemon: the
 runner holds the socket's group, inside this guest, and the engine container

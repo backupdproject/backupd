@@ -45,13 +45,17 @@ across an upgrade lives there.
 The release binaries are the two executables inside the canonical OCI
 image, and they are extracted exactly the way
 `scripts/release/record-release-hashes.sh` extracts them to produce the
-manifest in the first place:
+manifest in the first place. The image's two real files are `/retnd` and
+`/retnd-web` (issue #890 renamed them; `/backupd-web` is a hardlink beside
+the second one for one release and there is no `/backupd` at all), and
+the local names below are the ones `spkctl build` looks for, which the
+package keeps unchanged:
 
 ```sh
 mkdir -p release/amd64
-cid=$(docker create --platform linux/amd64 backupd:<version> /backupd version)
-docker cp "${cid}:/backupd"     release/amd64/backupd
-docker cp "${cid}:/backupd-web" release/amd64/backupd-web
+cid=$(docker create --platform linux/amd64 backupd:<version> /retnd version)
+docker cp "${cid}:/retnd"     release/amd64/backupd
+docker cp "${cid}:/retnd-web" release/amd64/backupd-web
 docker rm "${cid}"
 ```
 
@@ -111,10 +115,10 @@ there. The Container Manager path is also the one EPIC B's support table
 names for Synology; the `.spk` predates it and is not being retired, which
 is a product decision and not this issue's to make.
 
-`compose/backupd.yml` and `compose/backupd.env` are the
+`compose/retnd.yml` and `compose/retnd.env` are the
 project. Container Manager → Project → Create → "Create docker-compose.yml"
 takes the first, and the environment field takes the second. Read
-`compose/backupd.env` before pasting: two paths in it are yours to
+`compose/retnd.env` before pasting: two paths in it are yours to
 set, and the compose file refuses to start rather than inventing either.
 The two installs can run side by side while you compare them, because the
 `.spk` publishes 8477 and the project defaults to 8080.
@@ -140,14 +144,16 @@ Docker app:
 | engine | `backupd-web serve` | `127.0.0.1:8478`, loopback only |
 | web UI | `backupd-web serve-ui` | `:8477`, the only LAN-facing port |
 
-The command an operator types on a Docker host is `backupd-web` since 0.3.3,
-and these two lines are deliberately not that. A `.spk` installs native
-binaries under its own package FHS, and this package names them the way
-`container/release-manifest.json` records them, so what DSM starts really
-is `${SYNOPKG_PKGDEST}/bin/backupd-web`. The release ARTIFACT kept
-its name; only the CLI was renamed. Extracting the binaries out of the
-image above reads them at `/backupd` and `/backupd-web` for that same reason: in
-the image those are the real files and the old names are symlinks.
+The command an operator types on a Docker host is `retnd-web` since issue
+#890, and these two lines are deliberately not that. A `.spk` installs
+native binaries under its own package FHS, and this package names them
+the way `container/release-manifest.json` recorded them for the release
+it ships, so what DSM starts really is
+`${SYNOPKG_PKGDEST}/bin/backupd-web`. The package's own artifact names
+are not the CLI's: only the command was renamed, twice, and the `.spk`
+layout has followed neither rename. Extracting the binaries out of the
+image above therefore reads `/retnd` and `/retnd-web`, the image's two
+real files, and writes them out under the names this package expects.
 
 Authentication is the reusable `local-auth` from the generic Web host.
 There is no DSM-specific auth path anywhere in this directory. Native DSM

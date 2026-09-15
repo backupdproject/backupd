@@ -63,7 +63,7 @@ Two guest shapes are documented. The first is the default:
 | **VM** (default) | Higher | Full kernel isolation | Proxmox's own guidance for running a container engine. Nothing about it is unusual or unsupported. |
 | Unprivileged LXC (variant) | Lower | Shared kernel | Needs `features: nesting=1,keyctl=1`. Proxmox does not support a container engine inside an LXC; if it misbehaves after a PVE upgrade, that is the trade you took. Keep it unprivileged. |
 
-Both run the identical `compose/backupd.yml`. The only difference
+Both run the identical `compose/retnd.yml`. The only difference
 is how the guest is created and how the host directory reaches it.
 
 WP4.5's other listed option, an unprivileged LXC running the app binaries

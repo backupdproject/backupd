@@ -15,7 +15,7 @@
     "Custom Templates, which is the offline route apps/portainer/README.md",
     "documents for a host that cannot reach the repository.",
     "",
-    "Every entry in env below is checked against compose/backupd.env by",
+    "Every entry in env below is checked against compose/retnd.env by",
     "distribution/packaging: same variable set, same defaults. A form field an",
     "operator fills in and a compose file that reads a different variable is the",
     "failure this adapter is most likely to have, and it is silent."
@@ -25,8 +25,8 @@
   "templates": [
     {
       "type": 3,
-      "title": "Backupd",
-      "name": "backupd",
+      "title": "retnd",
+      "name": "retnd",
       "description": "Scheduled, verified pull-based backups with retention tiers, an /api/v1 HTTP API and a shared web UI. Two containers from one canonical image: the engine holds the state database and publishes nothing, and the web UI is the only published port.",
       "note": "This stack does NOT need the Docker socket, privileged mode or host networking, and it must never be given them. Create the four host directories in the environment values below and chown them to PUID:PGID before deploying: the runtime image is distroless, so nothing inside the container can create or chown them for you. The engine prints a one-time enrollment link on first start; read it with the container logs.",
       "categories": ["backup", "storage"],
@@ -34,7 +34,7 @@
       "logo": "https://raw.githubusercontent.com/backupdproject/backupd/main/apps/portainer/logo.svg",
       "repository": {
         "url": "https://github.com/backupdproject/backupd",
-        "stackfile": "apps/portainer/compose/backupd.yml"
+        "stackfile": "apps/portainer/compose/retnd.yml"
       },
       "env": [
         {
