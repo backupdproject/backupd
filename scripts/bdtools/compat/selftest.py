@@ -524,7 +524,7 @@ def body(root: Path, dry_run: bool) -> int:
         # against an incomplete copy.
         #
         # V9 of the matrix's ledger, and it had no row there at all until
-        # #522. TestTheViolationLedgerHasARowPerSpecGuard is what found
+        # #522. TestTheViolationLedgerIsHeldToTheSpecsGuardTable is what found
         # that, by counting the ledger against the spec's own guard table
         # rather than trusting it.
         plant_migration(
