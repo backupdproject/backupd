@@ -68,10 +68,10 @@ cd "$repo_root"
 # not yet added is scanned rather than waved through at exactly the moment
 # it is easiest to get wrong.
 # `git ls-files -z` and `xargs -0`, not a `for` over a word-split string:
-# this tree contains `docs/design/Backup Manager.dc.html`, so a filename
-# with a space in it is not hypothetical here. A NUL-separated list also
-# keeps this working on bash 3.2, which is what macOS ships and which has
-# no `mapfile`.
+# `docs/design/` carries a dated record whose filename contains a space, so
+# a path this would word-split on is not hypothetical in this tree. A
+# NUL-separated list also keeps this working on bash 3.2, which is what
+# macOS ships and which has no `mapfile`.
 svg_count="$(git ls-files --cached --others --exclude-standard -- '*.svg' | sort -u | wc -l | tr -d ' ')"
 
 if [ "$svg_count" -eq 0 ]; then
