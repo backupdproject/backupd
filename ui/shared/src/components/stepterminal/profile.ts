@@ -48,7 +48,7 @@
  *  screen and the claim in the code are the same string. */
 export const RENDERER = {
   /** First party, in this repository, under review with it. */
-  name: "backupd step log view",
+  name: "retnd step log view",
   /** Bumped when the rendering or filtering rules change, so a support
    *  report can name what drew the bytes it is complaining about. */
   revision: "1",

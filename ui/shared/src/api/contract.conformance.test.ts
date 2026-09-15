@@ -270,9 +270,9 @@ describe("every request the shared client makes is a declared operation", () => 
       host: "smtp.example.net",
       port: 587,
       security: "starttls" as const,
-      username: "backupd@example.com",
+      username: "retnd@example.com",
       password: "smtp-secret",
-      from: "backupd@example.com"
+      from: "retnd@example.com"
     };
     const calls: Array<[string, () => Promise<unknown>]> = [
       ["getVersion", () => httpApi.getVersion()],

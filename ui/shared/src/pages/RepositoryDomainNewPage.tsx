@@ -63,7 +63,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "@shared/api/ApiContext";
-import { BackupdError } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
 import { PageHeader } from "@shared/components/PageHeader";
 import { WarningBanner } from "@shared/components/WarningBanner";
 import { Choice } from "@shared/components/Choice";
@@ -119,10 +119,10 @@ export function RepositoryDomainNewPage() {
       navigate("/repositories");
     } catch (e) {
       const message =
-        e instanceof BackupdError ? e.api.message : "This repository domain could not be declared.";
+        e instanceof RetndError ? e.api.message : "This repository domain could not be declared.";
       setRefusal({
         kind:
-          e instanceof BackupdError && e.api.code === "INCREMENTAL_ENGINE_DISABLED"
+          e instanceof RetndError && e.api.code === "INCREMENTAL_ENGINE_DISABLED"
             ? "engine"
             : "form",
         message
@@ -269,7 +269,7 @@ export function RepositoryDomainNewPage() {
             The passphrase itself is never typed here and never travels over this API: what is
             saved is where to read it from. Losing it loses every snapshot in the domain, because
             nothing else can open the store. A passphrase produced by a COMMAND is declared from a
-            terminal instead — <WireField name="backupd repository create --passphrase-command" /> —
+            terminal instead — <WireField name="retnd repository create --passphrase-command" /> —
             because it is a program and its arguments, and one box could only guess where they
             split.
           </Note>

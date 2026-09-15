@@ -101,7 +101,7 @@ function line(seq: number, text: string, stream: "stdout" | "stderr" = "stdout")
 const logOf = () => screen.getByRole("log");
 
 beforeEach(() => {
-  document.title = "backupd";
+  document.title = "retnd";
 });
 
 afterEach(() => {
@@ -300,7 +300,7 @@ describe("the hardened profile", () => {
       expect(injected).toEqual([]);
       // Nothing fetched, and the title is the one the document had.
       expect(fetchSpy).not.toHaveBeenCalled();
-      expect(document.title).toBe("backupd");
+      expect(document.title).toBe("retnd");
       // Only the read the component drives itself was made.
       expect(api.calls.every((call) => call.stepId === "step-1")).toBe(true);
     } finally {
@@ -568,7 +568,7 @@ describe("the bounds", () => {
     await screen.findByText("line " + overflow, undefined, { timeout: 30_000 });
 
     expect(screen.getByText(/earlier lines are not held in this browser any more/).textContent).toContain(
-      "backupd workflow run log --cursor 0"
+      "retnd workflow run log --cursor 0"
     );
     // The oldest went, the newest stayed, and the count is the bound.
     expect(screen.queryByText("line 1")).toBeNull();
@@ -631,7 +631,7 @@ describe("copy and download", () => {
     await user.click(screen.getByRole("button", { name: "Download .txt" }));
 
     expect(clicked).toHaveBeenCalled();
-    expect(name).toMatch(/^backupd-step-10-quiesce-postgres\.sh-step-1-.*\.txt$/);
+    expect(name).toMatch(/^retnd-step-10-quiesce-postgres\.sh-step-1-.*\.txt$/);
   });
 
   it("copies exactly what the file would hold, so the two cannot disagree", async () => {
@@ -648,7 +648,7 @@ describe("copy and download", () => {
     const copied = writeText.mock.calls[0][0] as string;
     expect(copied).toContain("copy me");
     expect(copied).toContain("and me");
-    expect(copied).toContain("# backupd workflow step log");
+    expect(copied).toContain("# retnd workflow step log");
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 });

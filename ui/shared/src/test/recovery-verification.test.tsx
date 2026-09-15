@@ -5,8 +5,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
-import { BackupdError } from "@shared/api/contracts";
-import type { BackupdApi, RecoverySettings } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
+import type { RetndApi, RecoverySettings } from "@shared/api/contracts";
 import { resetGraphForTests } from "@shared/state/graph";
 import { VerifyEmailPage } from "@shared/auth/VerifyEmailPage";
 import { RecoveryVerificationBanner } from "@shared/components/RecoveryVerificationBanner";
@@ -43,12 +43,12 @@ const UNVERIFIED: RecoverySettings = {
     port: 587,
     security: "starttls",
     username: "ops@example.com",
-    from: "backupd@example.net",
+    from: "retnd@example.net",
     passwordSet: true
   }
 };
 
-function renderVerify(api: BackupdApi, url: string) {
+function renderVerify(api: RetndApi, url: string) {
   render(
     <MemoryRouter initialEntries={[url]}>
       <ApiProvider api={api}>
@@ -61,7 +61,7 @@ function renderVerify(api: BackupdApi, url: string) {
   );
 }
 
-function renderBanner(api: BackupdApi) {
+function renderBanner(api: RetndApi) {
   render(
     <MemoryRouter>
       <ApiProvider api={api}>
@@ -140,7 +140,7 @@ describe("opening the verification link", () => {
   it("routes an expired link to a fresh one instead of leaving a dead end", async () => {
     const api = createMockApi();
     vi.spyOn(api, "verifyRecoveryEmail").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "VERIFY_TOKEN_INVALID",
         message: "that verification link has expired or has already been used",
         correlationId: "cid_verify401"
@@ -222,7 +222,7 @@ describe("the unverified-recovery banner", () => {
     const api = createMockApi();
     vi.spyOn(api, "getRecoverySettings").mockResolvedValue(UNVERIFIED);
     vi.spyOn(api, "resendRecoveryEmailVerification").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "SMTP_SEND_FAILED",
         message: "dial tcp 10.0.0.5:587: connection refused",
         correlationId: "cid_smtp502"

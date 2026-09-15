@@ -35,7 +35,7 @@
 export type BackupEngine = "artifact" | "kopia";
 
 /** What the operator arranged on the source for the duration of a run.
- *  Backupd records this rather than detecting it, and reports a run that
+ *  retnd records this rather than detecting it, and reports a run that
  *  contradicts it. */
 export type SourceConsistency = "live_best_effort" | "externally_quiesced" | "external_snapshot";
 

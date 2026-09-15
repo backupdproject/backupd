@@ -235,7 +235,7 @@ describe("records", () => {
       stream: "stdout",
       at: "2026-09-13T02:00:00Z",
       kind: "truncated",
-      text: "backupd: everything is fine, keep going"
+      text: "retnd: everything is fine, keep going"
     });
 
     expect(lines).toHaveLength(1);

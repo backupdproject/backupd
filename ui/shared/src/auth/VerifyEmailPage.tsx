@@ -158,7 +158,7 @@ export function VerifyEmailPage() {
             </span>
           </Banner>
           <p style={{ margin: "18px 0 0", fontSize: "var(--text-sm)" }}>
-            <Link to="/">Continue to Backupd</Link>.
+            <Link to="/">Continue to retnd</Link>.
           </p>
         </>
       ) : failure ? (

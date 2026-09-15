@@ -78,7 +78,7 @@ const SEVERITY: Record<WorkflowFinding["severity"], { tone: "ok" | "warn" | "dan
 };
 
 /**
- * How one of backupd's own shell findings is drawn, and the ORDER the
+ * How one of retnd's own shell findings is drawn, and the ORDER the
  * panel groups them in (#906).
  *
  * The order is the point of this table. A findings list in arrival order
@@ -221,7 +221,7 @@ export function WorkflowSaveRefusal({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <span style={{ fontSize: "var(--text-sm)" }}>
-        {"This configuration was NOT saved. Backupd's own shell rules refuse a write that points " +
+        {"This configuration was NOT saved. retnd's own shell rules refuse a write that points " +
           "at a hook which does not parse, or which carries an error-severity finding. A warning, " +
           "a note or a style finding is reported and does not block a save."}
       </span>
@@ -566,7 +566,7 @@ export function BackupSetWorkflowCard({
             data-tip="workflow.set.findings"
             style={{ margin: "6px 0 0", fontSize: "var(--text-xs)", color: "var(--text-3)", maxWidth: "76ch" }}
           >
-            {"The findings below are backupd's own shell rules \u2014 the BSH codes \u2014 and not " +
+            {"The findings below are retnd's own shell rules \u2014 the BSH codes \u2014 and not " +
               "a general shell linter: the set is deliberately small, and an operator who wants a " +
               "general linter should run one. Nothing in a script was executed to produce them. A " +
               "script that does not parse, or a finding at error severity, is what REFUSES a save " +
@@ -1178,7 +1178,7 @@ function LintPanel({ scriptName, lint }: { scriptName: string; lint: WorkflowScr
         </div>
       ) : lint.findings.length === 0 ? (
         <p style={{ margin: 0, fontSize: 12.5, color: "var(--text-2)", maxWidth: "76ch" }}>
-          {"This script parses, and backupd's own shell rules reported nothing about it."}
+          {"This script parses, and retnd's own shell rules reported nothing about it."}
         </p>
       ) : (
         LINT_SEVERITY_ORDER.map((severity) => {

@@ -58,7 +58,7 @@ export function CatalogRecoveryPage({ readOnly }: { readOnly: boolean }) {
       <PageHeader
         back={{ label: "Settings", onClick: () => navigate("/settings") }}
         title="Catalog recovery"
-        subtitle="Rebuild the Backupd catalog from artifacts already on NAS storage"
+        subtitle="Rebuild the retnd catalog from artifacts already on NAS storage"
       />
 
       {failure ? (
@@ -98,7 +98,7 @@ export function CatalogRecoveryPage({ readOnly }: { readOnly: boolean }) {
             </InfoTooltip>
             <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)", maxWidth: "74ch" }}>
               Backup files were found in the configured storage location, but they are not
-              currently present in the Backupd catalog. Scanning reads file
+              currently present in the retnd catalog. Scanning reads file
               metadata and checksums only.
             </p>
             <Banner

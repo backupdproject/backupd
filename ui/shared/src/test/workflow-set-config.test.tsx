@@ -23,9 +23,9 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { ApiProvider } from "@shared/api/ApiContext";
-import { BackupdError } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
 import type {
-  BackupdApi,
+  RetndApi,
   WorkflowLintFinding,
   WorkflowScriptLint,
   WorkflowSourceExcerpt,
@@ -75,7 +75,7 @@ function seedVersion() {
   });
 }
 
-function renderCard(api: BackupdApi, target: { source: string; set: string }) {
+function renderCard(api: RetndApi, target: { source: string; set: string }) {
   return render(
     <MemoryRouter>
       <ApiProvider api={api}>
@@ -85,7 +85,7 @@ function renderCard(api: BackupdApi, target: { source: string; set: string }) {
   );
 }
 
-function renderDetail(api: BackupdApi, target: { source: string; set: string }) {
+function renderDetail(api: RetndApi, target: { source: string; set: string }) {
   return render(
     <MemoryRouter initialEntries={[backupSetPath(target.source, target.set)]}>
       <ApiProvider api={api}>
@@ -365,7 +365,7 @@ describe("an unresolved recovery hold", () => {
     seedVersion();
     const api = createMockApi();
     vi.spyOn(api, "workflowRecovery").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "WORKFLOW_ENGINE_UNAVAILABLE",
         message: "the workflow engine is not answering",
         correlationId: "cid_holds503"
@@ -385,7 +385,7 @@ describe("an unresolved recovery hold", () => {
 });
 
 /**
- * Backupd's own shell verification on this card (issue #906).
+ * retnd's own shell verification on this card (issue #906).
  *
  * The rules these cases exist for, in order of how badly they read when
  * broken:
@@ -688,7 +688,7 @@ describe("the shell verification's findings panel", () => {
     await user.click(screen.getByRole("button", { name: "clean" }));
 
     expect(
-      screen.getByText(/This script parses, and backupd's own shell rules reported nothing about it/)
+      screen.getByText(/This script parses, and retnd's own shell rules reported nothing about it/)
     ).toBeTruthy();
     expect(panelCodes()).toEqual([]);
   });
@@ -751,7 +751,7 @@ describe("a workflow save the shell rules refused", () => {
     const user = userEvent.setup();
     const api = createMockApi();
     vi.spyOn(api, "patchBackupSetWorkflow").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "WORKFLOW_SCRIPT_REJECTED",
         message:
           "this configuration was not saved: 2 hook scripts it points at would not run",
@@ -853,7 +853,7 @@ describe("a workflow save the shell rules refused", () => {
     // the structured field. The banner has to stay readable: a refusal
     // rendered as an empty list is a save that silently did not happen.
     vi.spyOn(api, "patchBackupSetWorkflow").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "WORKFLOW_SCRIPT_REJECTED",
         message: "10-quiesce.remote.sh does not parse: unexpected EOF at 18:24",
         correlationId: "cid_wfscript409old",

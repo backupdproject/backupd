@@ -24,11 +24,11 @@ import { PlatformProvider } from "@shared/platform/PlatformContext";
 import { genericBridge } from "../../../../apps/generic/frontend/platform";
 import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi } from "@shared/api/mock";
-import type { BackupdApi } from "@shared/api/contracts";
-import { BackupdError } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
 import { resetGraphForTests } from "@shared/state/graph";
 
-function renderWizard(api: BackupdApi) {
+function renderWizard(api: RetndApi) {
   return render(
     <MemoryRouter>
       <ApiProvider api={api}>
@@ -152,7 +152,7 @@ describe("the review step explains the source-deletion answer it actually has", 
   });
 });
 
-function renderDetail(api: BackupdApi, source: string, set: string) {
+function renderDetail(api: RetndApi, source: string, set: string) {
   return render(
     <MemoryRouter initialEntries={["/sets/" + source + "/" + set]}>
       <ApiProvider api={api}>
@@ -211,7 +211,7 @@ describe("the per-set form's delete-from-source control follows the same answer"
     // leave a button that does nothing, which is what this asserts is
     // not shipped.
     vi.spyOn(api, "setReadOnly").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "BACKUP_SET_SOURCE_NOT_WRITABLE",
         message: "these credentials cannot write to this source, so deleting from it cannot be enabled"
       })

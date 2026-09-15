@@ -51,7 +51,7 @@ const HALT_COPY: Record<NonNullable<BackupSet["haltReason"]>, (host: string) => 
   }),
   "authentication-failed": (host) => ({
     eyebrow: "Connection refused",
-    title: "Backupd could not log in to " + host,
+    title: "retnd could not log in to " + host,
     body:
       "The host rejected the credentials this backup set is configured with, so no backup ran " +
       "and no remote artifacts were deleted. Check the key or the account this set uses on the " +

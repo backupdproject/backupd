@@ -5,7 +5,7 @@ import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi } from "@shared/api/mock";
 import { BackupDetailPage } from "@shared/pages/BackupDetailPage";
 import { BackupsPage } from "@shared/pages/BackupsPage";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import type { BackupArtifact, BackupPlacement } from "@shared/types/backup";
 
 /**
@@ -58,7 +58,7 @@ function artifact(over: Partial<BackupArtifact> = {}): BackupArtifact {
   };
 }
 
-function apiServing(a: BackupArtifact, list: BackupArtifact[] = [a]): BackupdApi {
+function apiServing(a: BackupArtifact, list: BackupArtifact[] = [a]): RetndApi {
   const api = createMockApi();
   vi.spyOn(api, "getArtifact").mockResolvedValue(a);
   vi.spyOn(api, "listArtifacts").mockResolvedValue(list);

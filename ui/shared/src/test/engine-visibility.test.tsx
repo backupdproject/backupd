@@ -22,7 +22,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { ApiProvider } from "@shared/api/ApiContext";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import { BackupSetDetailPage } from "@shared/pages/BackupSetDetailPage";
 import { BackupSetsPage } from "@shared/pages/BackupSetsPage";
@@ -33,7 +33,7 @@ import { backupSetPath } from "@shared/utilities/routes";
 
 const noop = () => {};
 
-function renderDetail(source: string, set: string, api: BackupdApi) {
+function renderDetail(source: string, set: string, api: RetndApi) {
   return render(
     <MemoryRouter initialEntries={[backupSetPath(source, set)]}>
       <ApiProvider api={api}>

@@ -232,7 +232,7 @@ export function QuarantinePage({
           >
             <p style={{ margin: 0 }}>{"The checks carried it: " + outcome.reason + "."}</p>
             <p style={{ margin: "6px 0 0" }}>
-              Its remote source is kept for good from now on. Backupd will never delete
+              Its remote source is kept for good from now on. retnd will never delete
               it, however completely this backup passes every later check.
             </p>
           </WarningBanner>
@@ -388,12 +388,12 @@ export function QuarantinePage({
           onConfirm={() => reinstate(confirming)}
         >
           <p style={{ margin: 0 }}>
-            {"Backupd re-checks the durable local copy of \"" + confirming.filename +
+            {"retnd re-checks the durable local copy of \"" + confirming.filename +
               "\" now, and returns it to service only if what it finds is enough on its own."}
           </p>
           <p style={{ margin: 0, color: "var(--text-2)" }}>
             Reinstating permanently forfeits this backup's remote deletion. Its remote
-            source stays where it is for good: Backupd will never delete it,
+            source stays where it is for good: retnd will never delete it,
             however completely the backup passes every later check.
           </p>
           <p style={{ margin: 0, color: "var(--text-2)" }}>

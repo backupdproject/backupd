@@ -28,7 +28,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
-import type { BackupdApi, BackupSetPatch } from "@shared/api/contracts";
+import type { RetndApi, BackupSetPatch } from "@shared/api/contracts";
 import type { BackupSet } from "@shared/types/backup";
 import { BackupSetConfigurationCard } from "@shared/pages/BackupSetConfigurationCard";
 import {
@@ -54,10 +54,10 @@ async function fixture(id: { source: string; set: string }): Promise<BackupSet> 
 
 /** The mock API with every patch it is handed recorded, so a test can
  *  assert what reached the wire rather than that something did. */
-function recordingApi(): { api: BackupdApi; patches: BackupSetPatch[] } {
+function recordingApi(): { api: RetndApi; patches: BackupSetPatch[] } {
   const real = createMockApi();
   const patches: BackupSetPatch[] = [];
-  const api: BackupdApi = {
+  const api: RetndApi = {
     ...real,
     updateBackupSet: (source, set, patch) => {
       patches.push(patch);
@@ -69,7 +69,7 @@ function recordingApi(): { api: BackupdApi; patches: BackupSetPatch[] } {
 
 async function renderCard(
   set: BackupSet,
-  api: BackupdApi = createMockApi(),
+  api: RetndApi = createMockApi(),
   readOnly = false
 ): Promise<void> {
   render(

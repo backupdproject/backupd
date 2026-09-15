@@ -82,13 +82,13 @@ export function describeEnrollmentFailure(e: unknown, linkCarriedToken: boolean)
         ? {
             message: "This enrolment link has expired or has already been used.",
             remediation:
-              "The username and password were not the problem: Backupd checks the one-time token in the link before it looks at them, and nothing was created. Restart Backupd and open the fresh enrolment link it prints to its own log, then enter these details again.",
+              "The username and password were not the problem: retnd checks the one-time token in the link before it looks at them, and nothing was created. Restart retnd and open the fresh enrolment link it prints to its own log, then enter these details again.",
             correlationId: api.correlationId
           }
         : {
             message: "This page was opened without an enrolment token.",
             remediation:
-              "Backupd prints a one-time enrolment link to its own log when it starts, ending in ?token=… . Open that link rather than this page. If the log has already scrolled past it, restart Backupd and it prints a fresh one.",
+              "retnd prints a one-time enrolment link to its own log when it starts, ending in ?token=… . Open that link rather than this page. If the log has already scrolled past it, restart retnd and it prints a fresh one.",
             correlationId: api.correlationId
           };
     case "ENROLLMENT_CLOSED":
@@ -124,7 +124,7 @@ export function describeEnrollmentFailure(e: unknown, linkCarriedToken: boolean)
       return {
         message: "That address was not accepted as an email address.",
         remediation:
-          "Backupd checked the recovery address and the From address against the mail standard rather than against a rough pattern, so this is one of the two rather than the password. Check both for a missing domain, a stray space or a trailing comma.",
+          "retnd checked the recovery address and the From address against the mail standard rather than against a rough pattern, so this is one of the two rather than the password. Check both for a missing domain, a stray space or a trailing comma.",
         correlationId: api?.correlationId
       };
     default:
@@ -185,9 +185,9 @@ export function EnrollmentPage({ onEnrolled }: { onEnrolled(): void }) {
   return (
     <AuthFrame>
       <div className="eyebrow" style={{ fontSize: "var(--text-xs)" }}>First run</div>
-      <h1 style={{ margin: "8px 0 6px", fontSize: 21 }}>Create Backupd administrator</h1>
+      <h1 style={{ margin: "8px 0 6px", fontSize: 21 }}>Create retnd administrator</h1>
       <p style={{ margin: "0 0 22px", color: "var(--text-2)", fontSize: 13 }}>
-        This account manages Backupd only. It is separate from your NAS
+        This account manages retnd only. It is separate from your NAS
         operating-system account.
       </p>
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>

@@ -162,7 +162,7 @@ export function BackupSetsPage({
             </InfoTooltip>
           }
         >
-          Connect Backupd to your first server to begin collecting and
+          Connect retnd to your first server to begin collecting and
           retaining verified backups.
         </EmptyState>
       </>

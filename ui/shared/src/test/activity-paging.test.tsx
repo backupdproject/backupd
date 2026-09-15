@@ -23,7 +23,7 @@ import { createMockApi } from "@shared/api/mock";
 import { PlatformProvider } from "@shared/platform/PlatformContext";
 import { genericBridge } from "../../../../apps/generic/frontend/platform";
 import { resetGraphForTests } from "@shared/state/graph";
-import type { ActivityQuery, BackupdApi } from "@shared/api/contracts";
+import type { ActivityQuery, RetndApi } from "@shared/api/contracts";
 import type { ActivityEvent } from "@shared/types/operation";
 
 function event(id: string, text: string, severity: ActivityEvent["severity"]): ActivityEvent {
@@ -52,7 +52,7 @@ const RECORD = [
   event("ev_4", "Oldest event", "info")
 ];
 
-function pagingApi(): { api: BackupdApi; asked: ActivityQuery[] } {
+function pagingApi(): { api: RetndApi; asked: ActivityQuery[] } {
   const api = createMockApi();
   const asked: ActivityQuery[] = [];
   vi.spyOn(api, "listActivity").mockImplementation((query?: ActivityQuery) => {
@@ -69,7 +69,7 @@ function pagingApi(): { api: BackupdApi; asked: ActivityQuery[] } {
   return { api, asked };
 }
 
-function renderPage(api: BackupdApi) {
+function renderPage(api: RetndApi) {
   return render(
     <MemoryRouter>
       <ApiProvider api={api}>

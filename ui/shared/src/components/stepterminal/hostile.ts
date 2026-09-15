@@ -58,7 +58,7 @@ export const HOSTILE_CASES: readonly HostileCase[] = [
   },
   {
     name: "window title set",
-    raw: ESC + "]0;backupd — all backups verified" + BEL + "nothing was verified",
+    raw: ESC + "]0;retnd — all backups verified" + BEL + "nothing was verified",
     danger: "rewrites the browser tab or terminal title to a reassuring lie",
     keeps: ["nothing was verified"],
     forbids: ["all backups verified"]
@@ -107,7 +107,7 @@ export const HOSTILE_CASES: readonly HostileCase[] = [
   },
   {
     name: "cursor up and overwrite",
-    raw: "backupd: cleanup failed\n" + ESC + "[2A" + ESC + "[2K" + "backupd: cleanup completed",
+    raw: "retnd: cleanup failed\n" + ESC + "[2A" + ESC + "[2K" + "retnd: cleanup completed",
     danger: "moves up over this product's own lines and rewrites them",
     keeps: ["cleanup failed", "cleanup completed"],
     forbids: ["[2A", "[2K"]
@@ -239,9 +239,9 @@ export const HOSTILE_CASES: readonly HostileCase[] = [
   },
   {
     name: "fake product line",
-    raw: "script output\n[backupd] cleanup completed successfully\n",
+    raw: "script output\n[retnd] cleanup completed successfully\n",
     danger: "impersonates this product's own prefix in plain text",
-    keeps: ["[backupd] cleanup completed successfully"]
+    keeps: ["[retnd] cleanup completed successfully"]
   },
   {
     name: "html and script text",

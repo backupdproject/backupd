@@ -20,8 +20,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { BackupSetDetailPage } from "@shared/pages/BackupSetDetailPage";
 import { ApiProvider } from "@shared/api/ApiContext";
-import type { BackupdApi } from "@shared/api/contracts";
-import { BackupdError } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import type { BackupSet } from "@shared/types/backup";
 import { resetGraphForTests } from "@shared/state/graph";
@@ -30,7 +30,7 @@ import { backupSetPath } from "@shared/utilities/routes";
 // Two segments (source, set), not one flat id: a real backup set id
 // (model.BackupSetID.String(), core/internal/model/ids.go) is the two
 // joined by "/", and the route matches that shape (issue #285).
-function renderDetail(source: string, set: string, api: BackupdApi, readOnly = false) {
+function renderDetail(source: string, set: string, api: RetndApi, readOnly = false) {
   return render(
     <MemoryRouter initialEntries={[backupSetPath(source, set)]}>
       <ApiProvider api={api}>
@@ -66,7 +66,7 @@ describe("backup set detail page reads the set", () => {
   it("shows an error state when the fetch fails, never a blank page", async () => {
     const api = createMockApi();
     vi.spyOn(api, "getSet").mockRejectedValue(
-      new BackupdError({ code: "unknown", message: "That backup set no longer exists.", correlationId: "cid_test" })
+      new RetndError({ code: "unknown", message: "That backup set no longer exists.", correlationId: "cid_test" })
     );
 
     renderDetail("does-not-exist", "does-not-exist", api);
@@ -143,7 +143,7 @@ describe("editing a backup set (#97 acceptance: 'stale edits are rejected')", ()
     vi.restoreAllMocks();
   });
 
-  async function enterEditMode(api: BackupdApi, target: BackupSet) {
+  async function enterEditMode(api: RetndApi, target: BackupSet) {
     renderDetail(target.source, target.set, api);
     await screen.findByText(target.name);
     await act(async () => {

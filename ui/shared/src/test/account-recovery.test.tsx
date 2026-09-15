@@ -6,8 +6,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import { httpApi } from "@shared/api/client";
-import { BackupdError } from "@shared/api/contracts";
-import type { BackupdApi } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { PlatformProvider } from "@shared/platform/PlatformContext";
 import type { AuthContext, PlatformBridge } from "@shared/types/platform";
 import { genericBridge } from "../../../../apps/generic/frontend/platform";
@@ -57,7 +57,7 @@ const VERSION: VersionInfo = {
 
 const PASSPHRASE = "a-long-enough-passphrase";
 
-function renderEnrollment(api: BackupdApi) {
+function renderEnrollment(api: RetndApi) {
   render(
     <MemoryRouter>
       <ApiProvider api={api}>
@@ -79,7 +79,7 @@ async function fillCredentialsAndSmtp(user: UserEvent) {
   await user.selectOptions(screen.getByLabelText("Security"), "tls");
   await user.type(screen.getByLabelText("SMTP username"), "relay-user");
   await user.type(screen.getByLabelText(/^SMTP password/), "relay-secret");
-  await user.type(screen.getByLabelText("From address"), "backupd@example.com");
+  await user.type(screen.getByLabelText("From address"), "retnd@example.com");
 }
 
 const createButton = () => screen.getByRole("button", { name: "Create administrator" });
@@ -133,7 +133,7 @@ describe("first-run enrolment collects the way back into the account", () => {
       security: "tls",
       username: "relay-user",
       password: "relay-secret",
-      from: "backupd@example.com"
+      from: "retnd@example.com"
     });
   });
 
@@ -141,7 +141,7 @@ describe("first-run enrolment collects the way back into the account", () => {
     const user = userEvent.setup();
     const api = createMockApi();
     vi.spyOn(api, "enrollAdministrator").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "SMTP_SEND_FAILED",
         message: "dial tcp 10.0.0.5:587: connection refused",
         correlationId: "cid_smtp502"
@@ -160,11 +160,11 @@ describe("first-run enrolment collects the way back into the account", () => {
     // The mail server's own words, which are the only thing that
     // distinguishes a blocked port from a rejected credential.
     expect(screen.getByText(/connection refused/)).toBeInTheDocument();
-    expect(screen.queryByText(/Restart Backupd/)).toBeNull();
+    expect(screen.queryByText(/Restart retnd/)).toBeNull();
   });
 });
 
-function renderReset(api: BackupdApi, url: string) {
+function renderReset(api: RetndApi, url: string) {
   render(
     <MemoryRouter initialEntries={[url]}>
       <ApiProvider api={api}>
@@ -239,7 +239,7 @@ describe("redeeming a reset link", () => {
     const user = userEvent.setup();
     const api = createMockApi();
     vi.spyOn(api, "resetPassword").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "RESET_TOKEN_INVALID",
         message: "this reset link has expired or has already been used",
         correlationId: "cid_reset401"
@@ -257,7 +257,7 @@ describe("redeeming a reset link", () => {
   });
 });
 
-async function renderSettings(api: BackupdApi) {
+async function renderSettings(api: RetndApi) {
   act(() => {
     graph.commit("test/seed-version", (tx) =>
       tx.set(versionNode, { data: VERSION, error: null, loading: false })
@@ -354,7 +354,7 @@ describe("the Settings recovery card", () => {
     const user = userEvent.setup();
     const api = createMockApi();
     vi.spyOn(api, "sendRecoveryTestEmail").mockRejectedValue(
-      new BackupdError({
+      new RetndError({
         code: "SMTP_SEND_FAILED",
         message: "535 5.7.8 authentication failed",
         correlationId: "cid_test502"
@@ -387,7 +387,7 @@ describe("the write-only SMTP password on the wire", () => {
         recoveryEmailConfirmed: true,
         smtp: {
           host: "smtp.example.net", port: 465, security: "tls",
-          username: "relay-user", from: "backupd@example.com", passwordSet: true
+          username: "relay-user", from: "retnd@example.com", passwordSet: true
         }
       })
     });
@@ -401,7 +401,7 @@ describe("the write-only SMTP password on the wire", () => {
     security: "tls" as const,
     username: "relay-user",
     password: "",
-    from: "backupd@example.com"
+    from: "retnd@example.com"
   };
 
   it("omits the password entirely rather than sending an empty one", async () => {
@@ -432,7 +432,7 @@ describe("the write-only SMTP password on the wire", () => {
     // renders "a password is stored" from.
     expect(answer.smtp).toEqual({
       host: "smtp.example.net", port: 465, security: "tls",
-      username: "relay-user", from: "backupd@example.com", passwordSet: true
+      username: "relay-user", from: "retnd@example.com", passwordSet: true
     });
   });
 
@@ -465,7 +465,7 @@ const signedOutBridge: PlatformBridge = {
   getAuthContext: () => Promise.resolve(SIGNED_OUT)
 };
 
-function renderApp(api: BackupdApi, route: string) {
+function renderApp(api: RetndApi, route: string) {
   render(
     <MemoryRouter initialEntries={[route]}>
       <ApiProvider api={api}>

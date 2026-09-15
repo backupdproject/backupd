@@ -62,7 +62,7 @@ export function ForgotPasswordPage() {
     <AuthFrame>
       <h1 style={{ margin: "0 0 6px", fontSize: 21 }}>Reset your password</h1>
       <p style={{ margin: "0 0 22px", color: "var(--text-2)", fontSize: 13 }}>
-        Backupd emails a one-time link to the recovery address stored for the
+        retnd emails a one-time link to the recovery address stored for the
         administrator account.
       </p>
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>

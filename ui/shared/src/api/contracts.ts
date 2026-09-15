@@ -1,6 +1,6 @@
 /**
  * The interface between this frontend and any backend that can serve it:
- * `BackupdApi` at the bottom of the file, and every request and
+ * `RetndApi` at the bottom of the file, and every request and
  * response type its methods name.
  *
  * Two implementations satisfy it, `httpApi` in client.ts and the fixtures
@@ -213,10 +213,10 @@ export interface ApiError {
 /** The typed envelope, thrown. It extends Error so an unprepared caller
  *  still gets something with a readable message, and carries `api` so a
  *  prepared one can branch on the code and quote the correlation id. */
-export class BackupdError extends Error {
+export class RetndError extends Error {
   constructor(readonly api: ApiError) {
     super(api.message);
-    this.name = "BackupdError";
+    this.name = "RetndError";
   }
 }
 
@@ -572,7 +572,7 @@ export interface RestoreCopyRequest {
   configRevision: string;
   /** One key per LOGICAL restore, reused on every retry of it. POST
    *  /operations declares the header required and refuses without one;
-   *  see BackupdApi.runCycle for why the key belongs to the
+   *  see RetndApi.runCycle for why the key belongs to the
    *  submission rather than to the attempt. */
   idempotencyKey: string;
 }
@@ -1750,7 +1750,7 @@ export interface FirstRunResult {
   restartRequired: boolean;
 }
 
-/** The outcome of {@link BackupdApi.reinstate}. */
+/** The outcome of {@link RetndApi.reinstate}. */
 export interface ArtifactReinstatement {
   /** Whether the backup was actually returned to a trusted state. */
   reinstated: boolean;
@@ -1776,7 +1776,7 @@ export interface ActivityQuery {
   before?: string;
 }
 
-/** One page of {@link BackupdApi.listActivity}. */
+/** One page of {@link RetndApi.listActivity}. */
 export interface ActivityFeedPage {
   /** The page itself, newest first. */
   events: ActivityEvent[];
@@ -2034,7 +2034,7 @@ export type WorkflowPhase = "before" | "after";
  * One step of one workflow run: one hook script, executed once.
  *
  * `target` is the field every surface's wording hangs off. "local" means
- * the machine backupd is installed on, executed by the Host Workflow
+ * the machine retnd is installed on, executed by the Host Workflow
  * Runner — never the engine container, which has no shell for a hook and
  * did not grow one. "remote" means the source host, over the execution
  * connection named by `executionConnectionRef`.
@@ -2236,7 +2236,7 @@ export interface WorkflowStage {
 }
 
 /** How this process reaches the Host Workflow Runner: the component that
- *  executes a `.local.sh` hook on the machine backupd is installed on.
+ *  executes a `.local.sh` hook on the machine retnd is installed on.
  *  Reported and never writable, because the two paths differ between a
  *  container and a bare-metal install of the same deployment — a
  *  deployment-shape fact the installer writes, like the SSH key and the
@@ -2395,7 +2395,7 @@ export interface WorkflowSourceLine {
 }
 
 /**
- * One thing backupd's OWN shell rules reported about one hook script
+ * One thing retnd's OWN shell rules reported about one hook script
  * (#906).
  *
  * These are this product's checks, carrying its own BSH codes, and they
@@ -2499,7 +2499,7 @@ export interface WorkflowBlockingScript {
 
 /** One hook this backup set would run, as validation found it on disk.
  *  Nothing here was executed. Two different things look at a script and
- *  neither runs it: `lint` below is backupd's own in-process shell
+ *  neither runs it: `lint` below is retnd's own in-process shell
  *  verification, which parses the exact bytes with a Go shell parser and
  *  applies this product's BSH rules to the syntax tree, and the
  *  capability half of validation hands the script to `bash -n` on the
@@ -2515,7 +2515,7 @@ export interface WorkflowValidatedScript {
   sha256: string;
   sizeBytes: number;
   timeoutMs: number;
-  /** What backupd's own shell verification established about these
+  /** What retnd's own shell verification established about these
    *  bytes. Always present on a script the report carries, including in
    *  its not-examined form, because "nothing looked at this" is an
    *  answer a surface has to be able to draw. */
@@ -2557,7 +2557,7 @@ export interface WorkflowValidation {
  * a write rather than fresh reads. Those are the things a caller gets
  * wrong, and none of them are visible in the types.
  */
-export interface BackupdApi {
+export interface RetndApi {
   getVersion(): Promise<VersionInfo>;
   getHealth(): Promise<SystemHealth>;
 
@@ -2615,7 +2615,7 @@ export interface BackupdApi {
    * one (issue #597, EPIC G's G1.4).
    *
    * `backupSetId` is the full "source/backup-set" id, which is the id
-   * every surface in this product prints and the one `backupd
+   * every surface in this product prints and the one `retnd
    * fetch --backup-set` has taken since #569.
    *
    * It shares runCycle's route, gate and single-flight lock, so a per-set

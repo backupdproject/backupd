@@ -5,7 +5,7 @@ import { StorageDestinationsCard } from "@shared/pages/StorageDestinationsCard";
 import { ApiProvider } from "@shared/api/ApiContext";
 import type {
   BackendCatalog,
-  BackupdApi,
+  RetndApi,
   StorageMedium
 } from "@shared/api/contracts";
 import { createMockApi } from "@shared/api/mock";
@@ -155,7 +155,7 @@ function instance(id: string, over: Partial<StorageMedium>): StorageMedium {
  *  confirm step is WHAT it hands on, not what it writes. */
 function renderWizard(
   existing: StorageMedium[],
-  overrides: Partial<BackupdApi> = {}
+  overrides: Partial<RetndApi> = {}
 ) {
   const api = {
     ...createMockApi(),
@@ -167,7 +167,7 @@ function renderWizard(
     updateStorageMedium: vi.fn(),
     preflightStorageMediumCandidate: vi.fn(),
     ...overrides
-  } as unknown as BackupdApi;
+  } as unknown as RetndApi;
   const confirmed = vi.fn<(backendId: string, instanceId: string) => void>();
   render(
     <ApiProvider api={api}>
@@ -460,7 +460,7 @@ describe("confirming (#668 step 3)", () => {
     await reachConfirm();
 
     const shown = group().textContent ?? "";
-    // This step used to print `backupd medium add usb_dock --backend
+    // This step used to print `retnd medium add usb_dock --backend
     // local_volume`, and `medium` has no --backend flag at all
     // (core/cmd/retnd/medium.go:183) — the line failed on
     // execution with "flag provided but not defined". `--type` would not
@@ -474,7 +474,7 @@ describe("confirming (#668 step 3)", () => {
     // printing nothing at all passes the first, and printing a broken
     // line beside the prose passes the second.
     expect(shown).not.toContain("--backend");
-    expect(shown).not.toContain("backupd medium add usb_dock");
+    expect(shown).not.toContain("retnd medium add usb_dock");
     expect(shown).toContain("These steps run none");
     expect(shown).toContain("printed by the configure step");
   });
@@ -499,7 +499,7 @@ describe("the destinations list (#668, the Main artboard)", () => {
           instance("warm_tier", { type: "s3", bucket: "warm", region: "eu-west-1" })
         ])
       )
-    } as BackupdApi;
+    } as RetndApi;
     render(
       <ApiProvider api={api}>
         <StorageDestinationsCard readOnly={false} />

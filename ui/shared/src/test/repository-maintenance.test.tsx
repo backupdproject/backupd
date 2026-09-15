@@ -16,13 +16,13 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import { ApiProvider } from "@shared/api/ApiContext";
-import { BackupdError } from "@shared/api/contracts";
-import type { BackupdApi } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import { RepositoryMaintenancePage } from "@shared/pages/RepositoryMaintenancePage";
 import { resetGraphForTests } from "@shared/state/graph";
 
-function renderMaintenance(api: BackupdApi) {
+function renderMaintenance(api: RetndApi) {
   return render(
     <MemoryRouter>
       <ApiProvider api={api}>
@@ -106,7 +106,7 @@ describe("repository maintenance", () => {
     vi.spyOn(api, "getRepositoryMaintenance").mockImplementation((domain) =>
       domain === "offsite-b2"
         ? Promise.reject(
-            new BackupdError({
+            new RetndError({
               code: "REPOSITORY_DOMAIN_NOT_FOUND",
               message: "no repository domain offsite-b2 is declared",
               correlationId: "cid_test"

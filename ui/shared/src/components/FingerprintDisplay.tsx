@@ -53,7 +53,7 @@ import type { TooltipId } from "@shared/tooltips/tooltips";
 export function FingerprintDisplay({
   host,
   keys,
-  emptyNote = "Backupd could not read a host key for this set, so none is shown here.",
+  emptyNote = "retnd could not read a host key for this set, so none is shown here.",
   trustedAt,
   tip
 }: {

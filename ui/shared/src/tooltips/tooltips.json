@@ -1,7 +1,7 @@
 {
   "shell.service-status": {
     "label": "Service status",
-    "html": "Whether the <strong>backupd service</strong> is running on this machine, and which version answered. Nothing runs on a schedule while it is stopped."
+    "html": "Whether the <strong>retnd service</strong> is running on this machine, and which version answered. Nothing runs on a schedule while it is stopped."
   },
   "shell.theme-toggle": {
     "label": "Theme",
@@ -13,7 +13,7 @@
   },
   "shell.platform": {
     "label": "Running on",
-    "html": "The platform this interface is running on, how it is integrated, and which account signed in. Backupd is the same product on all of them."
+    "html": "The platform this interface is running on, how it is integrated, and which account signed in. retnd is the same product on all of them."
   },
   "nav.dashboard": {
     "label": "Dashboard",
@@ -49,7 +49,7 @@
   },
   "platform.name": {
     "label": "Platform",
-    "html": "The host Backupd is running on, as that host names itself. Backupd is the same product on every one of them; the platform only decides how it is packaged and how you sign in."
+    "html": "The host retnd is running on, as that host names itself. retnd is the same product on every one of them; the platform only decides how it is packaged and how you sign in."
   },
   "platform.integration": {
     "label": "Integration",
@@ -57,7 +57,7 @@
   },
   "platform.auth": {
     "label": "Authentication",
-    "html": "Which account signed in. A <strong>platform session</strong> is the host's own login; a <strong>Backupd local account</strong> is one this service keeps itself."
+    "html": "Which account signed in. A <strong>platform session</strong> is the host's own login; a <strong>retnd local account</strong> is one this service keeps itself."
   },
   "platform.deployment": {
     "label": "Deployment",
@@ -209,7 +209,7 @@
   },
   "settings.capability": {
     "label": "Capability",
-    "html": "A tick means this platform provides it; a dash means it does not, and the note on the right says what Backupd does instead."
+    "html": "A tick means this platform provides it; a dash means it does not, and the note on the right says what retnd does instead."
   },
   "settings.system-information": {
     "label": "System information",
@@ -217,7 +217,7 @@
   },
   "settings.version.service": {
     "label": "Service version",
-    "html": "The version of the backupd service answering this interface. This page and the compatibility banner read one source, so they cannot disagree."
+    "html": "The version of the retnd service answering this interface. This page and the compatibility banner read one source, so they cannot disagree."
   },
   "settings.version.api": {
     "label": "API contract",
@@ -245,7 +245,7 @@
   },
   "settings.password": {
     "label": "Administrator password",
-    "html": "Changes the password of the account signed in here. It does not affect platform accounts or anyone else's Backupd account."
+    "html": "Changes the password of the account signed in here. It does not affect platform accounts or anyone else's retnd account."
   },
   "settings.change-password": {
     "label": "Change password",
@@ -1617,11 +1617,11 @@
   },
   "source.read-only-credentials": {
     "label": "Source is read-only",
-    "html": "The connection test wrote a temporary file under this source's remote path and the account was <strong>refused</strong>, so these SSH credentials can read this source but not write to it. Backupd therefore cannot delete anything there, and <strong>deleting the original after backup cannot be enabled</strong> for this set: every remote original is kept. Grant the account write permission on the source and test the connection again to enable source deletion."
+    "html": "The connection test wrote a temporary file under this source's remote path and the account was <strong>refused</strong>, so these SSH credentials can read this source but not write to it. retnd therefore cannot delete anything there, and <strong>deleting the original after backup cannot be enabled</strong> for this set: every remote original is kept. Grant the account write permission on the source and test the connection again to enable source deletion."
   },
   "wizard.set.remote-handling": {
     "label": "Remote source handling",
-    "html": "Whether Backupd deletes the original artifact on the source once its own copy has been transferred, verified, committed and recorded as safe. A source protected from deletion keeps every remote original for good."
+    "html": "Whether retnd deletes the original artifact on the source once its own copy has been transferred, verified, committed and recorded as safe. A source protected from deletion keeps every remote original for good."
   },
   "wizard.set.go-to-sets": {
     "label": "Go to backup sets",
@@ -1733,7 +1733,7 @@
   },
   "wizard.incremental.consistency": {
     "label": "Source consistency",
-    "html": "What you have arranged on the server, which Backupd records rather than detects. It decides whether a file changing mid-run is ordinary or is reported as a <strong>broken arrangement</strong>. Only <em>frozen image</em> may be called a point in time."
+    "html": "What you have arranged on the server, which retnd records rather than detects. It decides whether a file changing mid-run is ordinary or is reported as a <strong>broken arrangement</strong>. Only <em>frozen image</em> may be called a point in time."
   },
   "wizard.incremental.verification": {
     "label": "Verification level",
@@ -1741,15 +1741,15 @@
   },
   "wizard.incremental.write-probe": {
     "label": "Write permission",
-    "html": "Backupd wrote a scratch file under the source path and deleted it again. It is the only evidence that these credentials could remove a file there, and it is what arms or refuses <code>Delete from source after a verified backup</code>."
+    "html": "retnd wrote a scratch file under the source path and deleted it again. It is the only evidence that these credentials could remove a file there, and it is what arms or refuses <code>Delete from source after a verified backup</code>."
   },
   "sets.source-delete": {
     "label": "Delete from source",
-    "html": "After a backup is stored and verified, Backupd deletes the file on the server, freeing space there. It never runs on a backup that failed verification."
+    "html": "After a backup is stored and verified, retnd deletes the file on the server, freeing space there. It never runs on a backup that failed verification."
   },
   "sets.source-delete.read-only": {
     "label": "Delete from source unavailable",
-    "html": "The SSH credentials for this source are <strong>read-only</strong>: the write test could not create a file on the server, so Backupd cannot delete there either. Grant this account write permission on the source path and re-run the connection test to enable source deletion."
+    "html": "The SSH credentials for this source are <strong>read-only</strong>: the write test could not create a file on the server, so retnd cannot delete there either. Grant this account write permission on the source path and re-run the connection test to enable source deletion."
   },
   "snapshots.reused": {
     "label": "Reused",
@@ -1865,7 +1865,7 @@
   },
   "workflow.set.findings": {
     "label": "Shell findings",
-    "html": "Backupd's own shell rules, carrying its own <code>BSH</code> codes. They are <strong>not</strong> a general shell linter: the set is deliberately small and conservative, and nothing in a script was executed to produce them. A script that does not parse, or a finding at <strong>error</strong> severity, refuses a save of this workflow configuration; a warning, an info and a style finding are reported and save fine."
+    "html": "retnd's own shell rules, carrying its own <code>BSH</code> codes. They are <strong>not</strong> a general shell linter: the set is deliberately small and conservative, and nothing in a script was executed to produce them. A script that does not parse, or a finding at <strong>error</strong> severity, refuses a save of this workflow configuration; a warning, an info and a style finding are reported and save fine."
   },
   "workflow.set.finding-severity": {
     "label": "This script's findings",
@@ -1941,7 +1941,7 @@
   },
   "workflow.settings.runner": {
     "label": "Host Workflow Runner",
-    "html": "The component that executes a <code>*.local.sh</code> hook <strong>on the machine Backupd is installed on</strong>. Reaching it needs both a socket path and a credential file; with either missing, a local hook has nothing to run on."
+    "html": "The component that executes a <code>*.local.sh</code> hook <strong>on the machine retnd is installed on</strong>. Reaching it needs both a socket path and a credential file; with either missing, a local hook has nothing to run on."
   },
   "workflow.settings.runner-status": {
     "label": "Runner status",
@@ -1953,7 +1953,7 @@
   },
   "workflow.settings.execution-user": {
     "label": "Runner liveness, version and execution user",
-    "html": "Not carried by this read. A backup set's <em>Check this set's hooks</em> reports the runner's version, its bash and the account it executes a hook as, because that check actually opens the socket; <code>backupd workflow-runner status</code> reports the same from a shell on the machine the runner is installed on. There is <strong>no</strong> control anywhere in this product that raises a hook's privileges."
+    "html": "Not carried by this read. A backup set's <em>Check this set's hooks</em> reports the runner's version, its bash and the account it executes a hook as, because that check actually opens the socket; <code>retnd workflow-runner status</code> reports the same from a shell on the machine the runner is installed on. There is <strong>no</strong> control anywhere in this product that raises a hook's privileges."
   },
   "workflow.settings.max-size": {
     "label": "Maximum script size",

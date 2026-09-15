@@ -32,7 +32,7 @@ import { ApiProvider } from "@shared/api/ApiContext";
 import { PlatformProvider } from "@shared/platform/PlatformContext";
 import { createMockApi } from "@shared/api/mock";
 import { readLocalAccountSession } from "@shared/platform/localSession";
-import { BackupdError, RequestFailure } from "@shared/api/contracts";
+import { RetndError, RequestFailure } from "@shared/api/contracts";
 import { genericBridge } from "../../../../apps/generic/frontend/platform";
 import { resetGraphForTests } from "@shared/state/graph";
 import type { AuthContext, PlatformBridge } from "@shared/types/platform";
@@ -82,7 +82,7 @@ function policyDenied(message = "this deployment does not allow session checks f
 }
 
 /** A 200 whose body is not JSON: #598's other half, reached on the
- *  session route. Backupd ANSWERED, which is the fact that matters here. */
+ *  session route. retnd ANSWERED, which is the fact that matters here. */
 function unreadableSession() {
   return {
     ok: true,
@@ -127,9 +127,9 @@ describe("the session read answers only what it was actually told", () => {
       (ctx) => ctx,
       (e: unknown) => e
     );
-    expect(failure).toBeInstanceOf(BackupdError);
-    expect((failure as BackupdError).api.status).toBe(502);
-    expect((failure as BackupdError).api.correlationId).toBe("cid_proxy502");
+    expect(failure).toBeInstanceOf(RetndError);
+    expect((failure as RetndError).api.status).toBe(502);
+    expect((failure as RetndError).api.correlationId).toBe("cid_proxy502");
   });
 
   it("refuses to call a rejected fetch a signed-out browser either", async () => {
@@ -156,12 +156,12 @@ describe("the session read answers only what it was actually told", () => {
       (ctx) => ctx,
       (e: unknown) => e
     );
-    expect(failure).toBeInstanceOf(BackupdError);
-    expect((failure as BackupdError).api.status).toBe(403);
+    expect(failure).toBeInstanceOf(RetndError);
+    expect((failure as RetndError).api.status).toBe(403);
     // The service's own words, kept: this is the most specific thing
     // anybody has about a refusal nothing else can classify.
-    expect((failure as BackupdError).api.message).toContain("does not allow session checks");
-    expect((failure as BackupdError).api.correlationId).toBe("cid_denied403");
+    expect((failure as RetndError).api.message).toContain("does not allow session checks");
+    expect((failure as RetndError).api.correlationId).toBe("cid_denied403");
   });
 
   it("names its attempt on the way out, like every other request this bundle makes", async () => {
@@ -223,8 +223,8 @@ describe("an app that could not ask does not claim the operator is signed out", 
     // left believing their password stopped working.
     expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("Backupd did not answer");
-    expect(screen.getByText(/could not reach Backupd to ask whether you are signed in/i)).toBeTruthy();
+    expect(alert.textContent).toContain("retnd did not answer");
+    expect(screen.getByText(/could not reach retnd to ask whether you are signed in/i)).toBeTruthy();
     // And it does not promise the session survived. The engine holds its
     // sessions in its own process, so the restart this page is most
     // often shown for ends them; "you have not been signed out" was the
@@ -233,9 +233,9 @@ describe("an app that could not ask does not claim the operator is signed out", 
     expect(document.body.textContent).not.toContain("unavailable");
   });
 
-  it("says Backupd is not answering only when it did not answer", async () => {
+  it("says retnd is not answering only when it did not answer", async () => {
     // #795's review: every rejection used to land on that heading, and
-    // two of the four rejections this gate sees are Backupd ANSWERING.
+    // two of the four rejections this gate sees are retnd ANSWERING.
     // A 403 is one of them. The heading claimed silence directly above an
     // ErrorState quoting what was said, which is a page an operator
     // cannot act on because it disagrees with itself.
@@ -246,7 +246,7 @@ describe("an app that could not ask does not claim the operator is signed out", 
     // Still not the sign-in form: re-signing-in cannot lift a policy
     // denial, and offering it is what #795 is about.
     expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Backupd could not check your session" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "retnd could not check your session" })).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/is not answering|did not answer/i);
     // The service's own sentence, verbatim, because on this path it is
     // the most specific thing anybody has.
@@ -254,20 +254,20 @@ describe("an app that could not ask does not claim the operator is signed out", 
     expect(screen.getByRole("alert").textContent).toContain("cid_denied403");
     // And it does not name a hop: which machine refused is exactly what
     // is NOT established here.
-    expect(document.body.textContent).not.toContain("could not reach the Backupd service");
+    expect(document.body.textContent).not.toContain("could not reach the retnd service");
   });
 
   it("does not claim silence for a 200 whose body could not be read", async () => {
     // The other answered-but-unusable case, and the one that made the
     // contradiction unmissable: the ErrorState's own first line is
-    // "Backupd answered, and this page could not read the answer", under
+    // "retnd answered, and this page could not read the answer", under
     // a heading that used to say nothing answered at all.
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(unreadableSession()));
     renderApp(genericBridge);
     await act(async () => {});
 
     expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Backupd could not check your session" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "retnd could not check your session" })).toBeTruthy();
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("could not read the answer");
     expect(document.body.textContent).not.toMatch(/is not answering/i);
@@ -279,7 +279,7 @@ describe("an app that could not ask does not claim the operator is signed out", 
     await act(async () => {});
 
     expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
-    expect(screen.getByRole("alert").textContent).toContain("could not reach the Backupd service");
+    expect(screen.getByRole("alert").textContent).toContain("could not reach the retnd service");
   });
 
   it("still shows the sign-in form when the service really said not signed in", async () => {
@@ -290,7 +290,7 @@ describe("an app that could not ask does not claim the operator is signed out", 
     // The gate above must not swallow the ordinary case: a 401 is an
     // answer, and the answer is "sign in".
     expect(screen.getByRole("heading", { name: "Sign in" })).toBeTruthy();
-    expect(screen.queryByText(/could not reach Backupd to ask/i)).toBeNull();
+    expect(screen.queryByText(/could not reach retnd to ask/i)).toBeNull();
   });
 
   it("asks again when Try again is pressed, and gets out of the way once it works", async () => {
@@ -309,7 +309,7 @@ describe("an app that could not ask does not claim the operator is signed out", 
 
     // The engine came back, so the session read succeeds and the app is
     // where the operator left it, signed in, with no reload needed.
-    expect(screen.queryByText(/could not reach Backupd to ask/i)).toBeNull();
+    expect(screen.queryByText(/could not reach retnd to ask/i)).toBeNull();
     expect(await screen.findByRole("navigation", { name: "Sections" }, { timeout: 4000 })).toBeTruthy();
   });
 });
@@ -346,7 +346,7 @@ describe("a session that ended while the app was open sends the operator to sign
     vi.spyOn(api, "listActivity").mockImplementation(() => {
       if (sessionAlive) return Promise.resolve({ events: [] });
       return Promise.reject(
-        new BackupdError({ code: "UNAUTHENTICATED", message: "authentication required", correlationId: "cid_gone1" })
+        new RetndError({ code: "UNAUTHENTICATED", message: "authentication required", correlationId: "cid_gone1" })
       );
     });
     const bridge: PlatformBridge = {
@@ -394,7 +394,7 @@ describe("a session that ended while the app was open sends the operator to sign
     // and its Try again, and the operator stays where they were.
     const api = createMockApi();
     vi.spyOn(api, "listActivity").mockRejectedValue(
-      new BackupdError({ code: "INTERNAL", message: "failed to list activity", correlationId: "cid_internal1" })
+      new RetndError({ code: "INTERNAL", message: "failed to list activity", correlationId: "cid_internal1" })
     );
     render(
       <MemoryRouter initialEntries={["/activity"]}>

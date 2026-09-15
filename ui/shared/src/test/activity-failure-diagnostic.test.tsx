@@ -1,10 +1,10 @@
 /**
  * Issue #598. The Activity page failing on a real NAS with nothing but
- * "Backupd could not complete that request." and "correlation id
+ * "retnd could not complete that request." and "correlation id
  * unavailable" under it.
  *
  * Every case here drives the same shape: `listActivity` rejects with an
- * exception that is NOT a `BackupdError`, which is what a dropped
+ * exception that is NOT a `RetndError`, which is what a dropped
  * connection, a truncated body and a mapper that threw all look like from
  * a page's side. What is asserted is never that the page failed. It is
  * that what reaches the operator names something: the exception's own
@@ -186,9 +186,9 @@ describe("the Activity page says what actually failed", () => {
   });
 
   it("still keeps a typed refusal's own message and correlation id", async () => {
-    const { BackupdError } = await import("@shared/api/contracts");
+    const { RetndError } = await import("@shared/api/contracts");
     renderActivity(
-      new BackupdError({ code: "INTERNAL", message: "failed to list activity", correlationId: "cid_real42" })
+      new RetndError({ code: "INTERNAL", message: "failed to list activity", correlationId: "cid_real42" })
     );
     await act(async () => {});
 

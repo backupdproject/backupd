@@ -233,7 +233,7 @@ export function repositoryChecks(health: RepositoryHealth): Check[] {
         (!health.clockSane
           ? ". A clock behind the repository dates a new snapshot before one already stored, which mis-orders manifests."
           : health.clockSkewSeconds === null
-            ? ". Backupd reports no drift against this store, but the skew itself was never measured."
+            ? ". retnd reports no drift against this store, but the skew itself was never measured."
             : ". Manifests written here order correctly against the ones already stored.")
     },
     {

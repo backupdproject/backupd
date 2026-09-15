@@ -103,7 +103,7 @@ export async function readLocalAccountSession(): Promise<AuthContext> {
     throw refusal(
       await apiErrorFromResponse(
         res,
-        "Backupd could not answer whether this browser is signed in."
+        "retnd could not answer whether this browser is signed in."
       ),
       { path: SESSION_PATH, attemptId }
     );

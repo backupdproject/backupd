@@ -18,7 +18,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { ApiProvider } from "@shared/api/ApiContext";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import { SnapshotRestorePage } from "@shared/pages/SnapshotRestorePage";
 import { graph, resetGraphForTests } from "@shared/state/graph";
@@ -31,7 +31,7 @@ const VERSION: VersionInfo = {
   engine: "1.68.2", configRevision: "cfg_9f4c1ab", ready: true, compatible: true
 };
 
-async function seed(api: BackupdApi) {
+async function seed(api: RetndApi) {
   const sets = await api.listSets();
   act(() => {
     graph.commit("test/seed", (tx) => {
@@ -41,7 +41,7 @@ async function seed(api: BackupdApi) {
   });
 }
 
-function renderRestore(api: BackupdApi, runId?: string) {
+function renderRestore(api: RetndApi, runId?: string) {
   return render(
     <MemoryRouter initialEntries={[restorePath("production", "postgres-primary", runId)]}>
       <ApiProvider api={api}>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { useApi } from "@shared/api/ApiContext";
-import { BackupdError, LOCAL_DESTINATION_ID } from "@shared/api/contracts";
+import { RetndError, LOCAL_DESTINATION_ID } from "@shared/api/contracts";
 import { Banner } from "@shared/components/Banner";
 import { HelpField } from "@shared/components/FieldHelp";
 import { FIELD_HELP } from "@shared/components/fieldHelpCopy";
@@ -590,9 +590,9 @@ function TierDestinationActions({
         setError({
           medium: asked,
           message:
-            e instanceof BackupdError
+            e instanceof RetndError
               ? e.api.message
-              : "Backupd could not test the connection to this destination."
+              : "retnd could not test the connection to this destination."
         })
       )
       .finally(() => setBusy(false));
@@ -972,9 +972,9 @@ function MediumPreflightRow({ mediumId, disabled }: { mediumId: string; disabled
       .then(setReport)
       .catch((e: unknown) =>
         setError(
-          e instanceof BackupdError
+          e instanceof RetndError
             ? e.api.message
-            : "Backupd could not check this storage medium."
+            : "retnd could not check this storage medium."
         )
       )
       .finally(() => setBusy(false));

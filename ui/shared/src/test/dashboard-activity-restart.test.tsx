@@ -23,7 +23,7 @@ import { MemoryRouter } from "react-router-dom";
 import { DashboardActivity, feedRestarted, mergeActivity } from "@shared/pages/DashboardActivity";
 import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi } from "@shared/api/mock";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import type { BackupSet } from "@shared/types/backup";
 import type { LiveActivity, SetActivity, SetActivityEvent } from "@shared/types/activity";
 
@@ -132,7 +132,7 @@ describe("noticing that the service restarted", () => {
       .mockResolvedValueOnce(before)
       .mockResolvedValueOnce(afterRestart)
       .mockResolvedValue(caughtUp);
-    const api: BackupdApi = { ...createMockApi(), getLiveActivity };
+    const api: RetndApi = { ...createMockApi(), getLiveActivity };
     render(
       <MemoryRouter>
         <ApiProvider api={api}>

@@ -33,7 +33,7 @@ import { ApiProvider } from "@shared/api/ApiContext";
 import { createMockApi } from "@shared/api/mock";
 import { httpApi } from "@shared/api/client";
 import { resetGraphForTests } from "@shared/state/graph";
-import type { BackupdApi, ManagerStorage } from "@shared/api/contracts";
+import type { RetndApi, ManagerStorage } from "@shared/api/contracts";
 import type { AsyncState } from "@shared/hooks/useAsync";
 import type { BackupSet } from "@shared/types/backup";
 import type { SystemHealth } from "@shared/types/operation";
@@ -175,7 +175,7 @@ async function sharedVolumeSets(): Promise<BackupSet[]> {
 }
 
 async function renderDashboard() {
-  const api: BackupdApi = { ...createMockApi(), getStorage: () => Promise.resolve(VOLUME) };
+  const api: RetndApi = { ...createMockApi(), getStorage: () => Promise.resolve(VOLUME) };
   const health: AsyncState<SystemHealth> = {
     data: await healthForSharedVolume(),
     error: null,

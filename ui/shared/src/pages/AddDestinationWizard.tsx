@@ -584,7 +584,7 @@ function ConfirmPane({
 
       {/* EPIC G's rule is that what an operator can DO names its
           equivalent command. These steps do nothing: they collect two
-          answers and hand them on, and there is no `backupd` invocation that
+          answers and hand them on, and there is no `retnd` invocation that
           declares a destination carrying no values (see
           storageDestinationCommands.ts, which is where the `declareCommand`
           that used to be printed here was deleted and why). So the gap is
@@ -594,7 +594,7 @@ function ConfirmPane({
         <span style={{ fontSize: "var(--text-xs)", color: "var(--text-3)" }}>Equivalent command</span>
         <span style={{ fontSize: 12, color: "var(--text-2)", maxWidth: "74ch" }}>
           These steps run none. On a terminal a destination is declared in one act, by{" "}
-          <code className="mono">backupd medium add</code> carrying the values below — so the command this flow
+          <code className="mono">retnd medium add</code> carrying the values below — so the command this flow
           is equivalent to is printed by the configure step, which is the step that writes.
         </span>
       </div>

@@ -30,8 +30,8 @@ import { App } from "@shared/App";
 import { ApiProvider } from "@shared/api/ApiContext";
 import { PlatformProvider } from "@shared/platform/PlatformContext";
 import { createMockApi } from "@shared/api/mock";
-import { BackupdError } from "@shared/api/contracts";
-import type { BackupdApi } from "@shared/api/contracts";
+import { RetndError } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import type { AuthContext, PlatformBridge } from "@shared/types/platform";
 import { genericBridge } from "../../../../apps/generic/frontend/platform";
 import { resetGraphForTests } from "@shared/state/graph";
@@ -40,7 +40,7 @@ const SIGNED_OUT: AuthContext = { authenticated: false, username: null, mode: "l
 const SIGNED_IN: AuthContext = { authenticated: true, username: "bm-admin", mode: "local-account" };
 
 function unauthenticated() {
-  return new BackupdError({
+  return new RetndError({
     code: "UNAUTHENTICATED",
     message: "Sign in to continue.",
     correlationId: "cid_test"
@@ -63,7 +63,7 @@ function deployment(options: { configured: boolean }) {
   const guard = <T,>(fn: () => Promise<T>) => (): Promise<T> =>
     session.current.authenticated ? fn() : Promise.reject(unauthenticated());
 
-  const api: BackupdApi = {
+  const api: RetndApi = {
     ...base,
     getHealth: guard(() => base.getHealth()),
     getVersion: guard(() => base.getVersion()),
@@ -81,7 +81,7 @@ function deployment(options: { configured: boolean }) {
   return { api, bridge, session };
 }
 
-function renderApp(api: BackupdApi, bridge: PlatformBridge, route: string) {
+function renderApp(api: RetndApi, bridge: PlatformBridge, route: string) {
   return render(
     <MemoryRouter initialEntries={[route]}>
       <ApiProvider api={api}>

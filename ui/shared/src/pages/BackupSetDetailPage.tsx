@@ -361,7 +361,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
       setSourceWritable(result.writable);
       activityFeed.refresh();
     } catch (e) {
-      const failure = describeFailure(e, "Backupd could not test this backup set's connection.");
+      const failure = describeFailure(e, "retnd could not test this backup set's connection.");
       emitBrowserNotice({
         outcome: apiErrorOf(e) === null ? "unreachable" : "refused",
         code: apiErrorOf(e)?.code ?? "unknown",
@@ -393,7 +393,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
     } catch (e) {
       const code = apiErrorOf(e)?.code ?? null;
       if (code === "BACKUP_SET_SOURCE_NOT_WRITABLE") setSourceWritable(false);
-      const failure = describeFailure(e, "Backupd could not change this backup set's read-only status.");
+      const failure = describeFailure(e, "retnd could not change this backup set's read-only status.");
       emitBrowserNotice({
         outcome: code === null ? "unreachable" : "refused",
         code: code ?? "unknown",
@@ -433,7 +433,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
       const hold = await api.takeEditHold(source, setName);
       setStopped(hold.stopped);
     } catch (e) {
-      setEnterError(describeFailure(e, "Backupd could not pause this backup set for editing.").message);
+      setEnterError(describeFailure(e, "retnd could not pause this backup set for editing.").message);
       return;
     }
     const loaded = readEditFields(s);
@@ -461,7 +461,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
       // race the hold exists to prevent, and doing it silently would be
       // worse than saying so.
       setEnterError(
-        describeFailure(e, "Backupd could not check whether a backup is running for this set.").message
+        describeFailure(e, "retnd could not check whether a backup is running for this set.").message
       );
       return;
     }
@@ -579,7 +579,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
       // an explanation is added. Dropping back to view mode here would
       // discard the operator's work and show them the old value as
       // though nothing had happened.
-      const message = describeFailure(e, "Backupd could not save this change.").message;
+      const message = describeFailure(e, "retnd could not save this change.").message;
       const kind = REFUSALS_NEEDING_AN_ANSWER[apiErrorOf(e)?.code ?? ""];
       if (kind) {
         // Not a field error. The service is not saying the value is
@@ -733,7 +733,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
                 cycle (FR-6), which is core's job and not a reason to
                 take the fleet's run away from the operator (#231). */}
             {/* The per-set run this page has never had (#597). The
-                engine half has existed since FR-1 behind `backupd
+                engine half has existed since FR-1 behind `retnd
                 fetch --backup-set`; what was missing was a way to reach
                 it in the serving process, so the work takes the engine's
                 own single-flight lock and lands in its feeds instead of
@@ -1018,7 +1018,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
       {editing && stopped ? (
         <div style={{ marginBottom: 14 }}>
           <WarningBanner tone="info" title="A backup was stopped for this edit">
-            {"Backupd stopped " +
+            {"retnd stopped " +
               (stopped.artifact || "the cycle") +
               " at the " + stopped.stage + " stage. It stays incomplete rather than counting as a finished backup, and the next cycle after you leave edit mode picks it up again."}
           </WarningBanner>
@@ -1326,7 +1326,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
               </InfoTooltip>
               {deleteFromSourceBlocked ? (
                 <p id="set-read-only-forced" style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--text-3)" }}>
-                  These SSH credentials are read-only on the source, so Backupd cannot delete
+                  These SSH credentials are read-only on the source, so retnd cannot delete
                   there. Grant the account write permission on the source to enable deleting
                   the original after backup.
                 </p>
@@ -1369,7 +1369,7 @@ export function BackupSetDetailPage({ readOnly }: { readOnly: boolean }) {
         }}
       >
         <p style={{ margin: 0 }}>
-          {"Backupd is " +
+          {"retnd is " +
             (warnAbout?.stage ?? "") +
             (warnAbout?.artifact ? " " + warnAbout.artifact : " this set's current cycle") +
             " right now. Editing this set stops it, and holds the schedule until you leave edit mode."}

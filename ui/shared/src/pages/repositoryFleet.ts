@@ -23,7 +23,7 @@
  * version of an empty owner cell — "nobody owns this" is a real answer
  * this product draws, and it must never be what a failed read looks like.
  */
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { describeFailure } from "@shared/api/failure";
 import type { OperatorFailure } from "@shared/api/failure";
 import type { RepositoryHealth, RepositoryMaintenance } from "@shared/types/snapshot";
@@ -47,7 +47,7 @@ export interface RepositoryFleetView {
   domains: DomainRecord[];
 }
 
-export async function loadRepositoryFleet(api: BackupdApi): Promise<RepositoryFleetView> {
+export async function loadRepositoryFleet(api: RetndApi): Promise<RepositoryFleetView> {
   const fleet = await api.listRepositories();
   const domains = await Promise.all(
     fleet.repositories.map(async (health): Promise<DomainRecord> => {
@@ -59,7 +59,7 @@ export async function loadRepositoryFleet(api: BackupdApi): Promise<RepositoryFl
           maintenance: null,
           maintenanceError: describeFailure(
             e,
-            "Backupd could not read who maintains this repository domain."
+            "retnd could not read who maintains this repository domain."
           )
         };
       }

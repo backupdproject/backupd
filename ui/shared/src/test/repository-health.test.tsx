@@ -18,12 +18,12 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import { ApiProvider } from "@shared/api/ApiContext";
-import type { BackupdApi } from "@shared/api/contracts";
+import type { RetndApi } from "@shared/api/contracts";
 import { createMockApi, resetMockFixtures } from "@shared/api/mock";
 import { RepositoryHealthPage } from "@shared/pages/RepositoryHealthPage";
 import { resetGraphForTests } from "@shared/state/graph";
 
-function renderHealth(api: BackupdApi) {
+function renderHealth(api: RetndApi) {
   return render(
     <MemoryRouter>
       <ApiProvider api={api}>

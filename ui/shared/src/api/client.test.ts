@@ -19,7 +19,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { httpApi, newIdempotencyKey } from "./client";
-import { BackupdError, RequestFailure, toApiErrorCode } from "./contracts";
+import { RetndError, RequestFailure, toApiErrorCode } from "./contracts";
 import type { ApiErrorCode } from "./contracts";
 import { progressPercent } from "@shared/types/operation";
 
@@ -190,9 +190,9 @@ describe("httpApi CSRF/bootstrap-token wiring", () => {
       host: "smtp.example.net",
       port: 587,
       security: "starttls",
-      username: "backupd@example.com",
+      username: "retnd@example.com",
       password: "smtp-secret",
-      from: "backupd@example.com"
+      from: "retnd@example.com"
     });
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -472,8 +472,8 @@ describe("httpApi error envelope handling", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(BackupdError);
-    const err = caught as BackupdError;
+    expect(caught).toBeInstanceOf(RetndError);
+    const err = caught as RetndError;
     expect(err.api.code).toBe("INVALID_REQUEST");
     expect(err.api.message).toBe("name is required");
     expect(err.api.correlationId).toBe("cid_test123");
@@ -494,8 +494,8 @@ describe("httpApi error envelope handling", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(BackupdError);
-    const err = caught as BackupdError;
+    expect(caught).toBeInstanceOf(RetndError);
+    const err = caught as RetndError;
     expect(err.api.code).toBe("UNAUTHENTICATED");
     expect(err.api.correlationId).toBe("cid_flat456");
   });
@@ -517,8 +517,8 @@ describe("httpApi error envelope handling", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(BackupdError);
-    expect((caught as BackupdError).api.correlationId).toBe("cid_nojson");
+    expect(caught).toBeInstanceOf(RetndError);
+    expect((caught as RetndError).api.correlationId).toBe("cid_nojson");
   });
 
   /**
@@ -1686,7 +1686,7 @@ describe("httpApi maps the wire shapes onto the domain types", () => {
    *
    * The captions and the ranks here are agreed verbatim with
    * core/cmd/retnd/activity.go's table, which derives the same
-   * severity for `backupd activity --severity`. Issue #625 was the last time
+   * severity for `retnd activity --severity`. Issue #625 was the last time
    * those two drifted.
    */
   it("reads a successful in-place recovery as two calm rows, not as an attempt that failed and a quarantine", async () => {
@@ -3095,10 +3095,10 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
       .then(() => null)
       .catch((e: unknown) => e);
 
-    expect(refusal).toBeInstanceOf(BackupdError);
-    expect((refusal as BackupdError).api.code).toBe("WORKFLOW_SCRIPT_REJECTED");
-    expect((refusal as BackupdError).api.correlationId).toBe("cid_wf409");
-    expect((refusal as BackupdError).api.blockingScripts).toEqual([
+    expect(refusal).toBeInstanceOf(RetndError);
+    expect((refusal as RetndError).api.code).toBe("WORKFLOW_SCRIPT_REJECTED");
+    expect((refusal as RetndError).api.correlationId).toBe("cid_wf409");
+    expect((refusal as RetndError).api.blockingScripts).toEqual([
       {
         scriptName: "10-prune.local.sh",
         dir: "/srv/hooks/before",
@@ -3155,7 +3155,7 @@ describe("workflow wire mapping (apps/common/webhost/handlers_workflowruns.go)",
     const refusal = (await httpApi
       .patchWorkflowSettings({ beforeDir: "/srv/hooks/before" })
       .then(() => null)
-      .catch((e: unknown) => e)) as BackupdError;
+      .catch((e: unknown) => e)) as RetndError;
 
     expect(refusal.api.message).toBe("not saved");
     // The one entry that was an object survives, with every field

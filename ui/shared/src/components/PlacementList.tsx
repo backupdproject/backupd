@@ -123,7 +123,7 @@ export function PlacementList({
             <div>
               <div style={{ fontWeight: 500 }}>No confirmed copy yet</div>
               <p style={{ margin: "4px 0 0", fontSize: "var(--text-sm)", color: "var(--text-2)", maxWidth: "68ch" }}>
-                A copy appears here once one finishes and the backupd records it. An empty
+                A copy appears here once one finishes and the retnd records it. An empty
                 list means there is nothing to fall back on yet, not that the copies could not be
                 read. A backup still arriving has a partial file on disk, and a partial file is not
                 a copy.
