@@ -194,7 +194,7 @@ func platformOfArtifact(rel string) string {
 // nonComposePlatformCoverage names a claimed platform this suite checks
 // through something other than a Compose document, and where.
 var nonComposePlatformCoverage = map[string]string{
-	"unraid": "apps/unraid/template/backupd.xml, read by TestTheUnraidTemplateKeepsPrivateStateOutOfTheBackupShare",
+	"unraid": "apps/unraid/template/retnd.xml, read by TestTheUnraidTemplateKeepsPrivateStateOutOfTheBackupShare",
 }
 
 // platformsWithNoHostPathsToCheck names a claimed platform this suite
@@ -567,7 +567,7 @@ func (tpl unraidTemplate) mounts() map[string]compose.Mount {
 // TestTheUnraidTemplateKeepsPrivateStateOutOfTheBackupShare closes the
 // biggest half of M8's platform gap.
 //
-// apps/unraid/template/backupd.xml declares exactly the mounts
+// apps/unraid/template/retnd.xml declares exactly the mounts
 // this rule is about (`/mnt/user/appdata/backupd/state`,
 // `.../secrets/id_ed25519`, `.../secrets/known_hosts` and
 // `/mnt/user/backups/backupd`) as operator-editable Config
@@ -578,7 +578,7 @@ func (tpl unraidTemplate) mounts() map[string]compose.Mount {
 func TestTheUnraidTemplateKeepsPrivateStateOutOfTheBackupShare(t *testing.T) {
 	t.Parallel()
 
-	const rel = "apps/unraid/template/backupd.xml"
+	const rel = "apps/unraid/template/retnd.xml"
 	raw, err := os.ReadFile(compose.Path(rel))
 	if err != nil {
 		t.Fatalf("read %s: %v", rel, err)

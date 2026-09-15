@@ -18,9 +18,9 @@
     "opt out of is not a prohibition.",
     "",
     "Roles, not service names. A service is the engine or the web UI because of",
-    "the command it runs, never because of what it is called: apps/truenas calls",
-    "them backupd/backupd-ui and the canonical file calls them",
-    "retnd/web-ui, and a check keyed on the name would silently stop",
+    "the command it runs, never because of what it is called: apps/unraid calls",
+    "its two containers retnd/retnd-ui and the canonical file calls its two",
+    "services retnd/web-ui, and a check keyed on the name would silently stop",
     "checking the moment someone renamed one."
   ],
 
@@ -36,14 +36,14 @@
     "outside the prohibition check."
   ],
   "derived": [
-    "apps/truenas/compose/backupd.yaml",
+    "apps/truenas/compose/retnd.yaml",
     "apps/truenas/catalog/templates/docker-compose.yaml",
     "apps/openmediavault/compose/retnd.yml",
     "apps/proxmox/compose/retnd.yml",
     "apps/synology/compose/retnd.yml",
     "apps/portainer/compose/retnd.yml",
     "apps/casaos/compose/retnd.yml",
-    "apps/zimaos/compose/backupd.yml"
+    "apps/zimaos/compose/retnd.yml"
   ],
 
   "_dockge_comment": [

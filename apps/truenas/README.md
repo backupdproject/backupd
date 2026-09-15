@@ -39,11 +39,11 @@ No state or backup data moves.
 
 | Path | What it is |
 | --- | --- |
-| `compose/backupd.yaml` | The custom-app deployment. Paste it into Apps, Discover Apps, Custom App, Install via YAML. Usable today. |
+| `compose/retnd.yaml` | The custom-app deployment. Paste it into Apps, Discover Apps, Custom App, Install via YAML. Usable today. |
 | `catalog/app.yaml` | Catalog entry metadata: title, version, categories, icon, sources, run-as context. |
 | `catalog/questions.yaml` | The install wizard: image reference, five storage paths, the published port, and the uid/gid. |
 | `catalog/ix_values.yaml` | A default for every question. |
-| `catalog/templates/docker-compose.yaml` | What the catalog renders. The same two containers as `compose/backupd.yaml`, with the answers substituted. `distribution/packaging` renders it against `ix_values.yaml` on every commit and puts the result through every rule the paste-in compose file gets: the canonical image, the five storage roles and their host paths, read-only mounts, the single published port, the commands, and the full hardening set. The template stays loop-free and conditional-free so that stays possible. |
+| `catalog/templates/docker-compose.yaml` | What the catalog renders. The same two containers as `compose/retnd.yaml`, with the answers substituted. `distribution/packaging` renders it against `ix_values.yaml` on every commit and puts the result through every rule the paste-in compose file gets: the canonical image, the five storage roles and their host paths, read-only mounts, the single published port, the commands, and the full hardening set. The template stays loop-free and conditional-free so that stays possible. |
 | `frontend/platform.ts` | The shared platform bridge (§3.5). Provider identity and storage expectations only, no lifecycle behaviour. |
 
 There is deliberately no fourth thing. No Go, no shell, no install hook, no
@@ -51,12 +51,12 @@ TrueNAS-specific service. `distribution/packaging` fails the build if any appear
 
 ## Two containers, one image
 
-`backupd` runs `/backupd-web serve`: local authentication, the
+`retnd` runs `/retnd-web serve`: local authentication, the
 versioned `/api/v1` API and the backup scheduler in one process sharing one
 shutdown context. It holds the state database and the credentials, and it
 publishes no port.
 
-`backupd-ui` runs `/backupd-web serve-ui`: the shared static UI plus
+`web-ui` runs `/retnd-web serve-ui`: the shared static UI plus
 a reverse proxy to the engine. It is the only container with a published port, and
 it mounts nothing at all.
 
@@ -64,18 +64,18 @@ Same image, different argv. The image ships no `ENTRYPOINT` and no `CMD` on
 purpose, because no single default would be right for both of its binaries.
 
 Both containers override the image's baked-in healthcheck, for two different
-reasons. The image runs `/backupd status`, which needs a config file and a
+reasons. The image runs `/retnd status`, which needs a config file and a
 state database the Web UI container does not have, so left inherited there it
 would report unhealthy forever while working perfectly.
 
 The engine's override is the one that decides whether you get a page at all. The
-Web UI will not start until the engine reports healthy, and `backupd
+Web UI will not start until the engine reports healthy, and `retnd
 status` is FR-24's backup-freshness verdict: it exits non-zero on any DEGRADED,
 STALE or FAILING set, and on a fresh install, which has backed nothing up yet. So
 the engine asks `/health/live` instead, a liveness probe that needs no
 configuration. Backup freshness is still reported, by the image's own HEALTHCHECK
 for a plain `docker run`, by the alerts block, and by
-`docker exec backupd /backupd status`; it just no longer decides
+`docker compose exec retnd /retnd status`; it just no longer decides
 whether a container starts.
 
 ## Storage
@@ -84,9 +84,9 @@ whether a container starts.
 | --- | --- | --- | --- |
 | State | `/mnt/tank/backupd/state` | `/data/state` | rw |
 | Backups | `/mnt/tank/backupd/backups` | `/data/backups` | rw |
-| Config | `/mnt/tank/backupd/config` | `/etc/backupd/config` | rw |
-| SSH key | `/mnt/tank/backupd/secrets/id_ed25519` | `/etc/backupd/id_ed25519` | ro |
-| Known hosts | `/mnt/tank/backupd/secrets/known_hosts` | `/etc/backupd/known_hosts` | ro |
+| Config | `/mnt/tank/backupd/config` | `/etc/retnd/config` | rw |
+| SSH key | `/mnt/tank/backupd/secrets/id_ed25519` | `/etc/retnd/id_ed25519` | ro |
+| Known hosts | `/mnt/tank/backupd/secrets/known_hosts` | `/etc/retnd/known_hosts` | ro |
 
 `config` is a writable **directory** holding `config.yaml`, not a read-only single
 file (issue #196). Adding a backup set, saving settings and first-run setup all
@@ -115,7 +115,7 @@ Web host provides: first-run administrator enrollment through a single-use token
 the engine prints to its own log, Argon2id password hashing, an HTTP-only session
 cookie, CSRF protection and per-IP rate limiting.
 
-TrueNAS accounts cannot log into Backupd and Backupd accounts cannot
+TrueNAS accounts cannot log into retnd and retnd accounts cannot
 log into TrueNAS. Nothing in this directory ships a credential, and
 `distribution/packaging` scans for one on every commit.
 
@@ -148,8 +148,8 @@ sources:
           host: "sftp.example.internal"
           user: "backup"
           key:
-            file: "/etc/backupd/id_ed25519"
-          known_hosts: "/etc/backupd/known_hosts"
+            file: "/etc/retnd/id_ed25519"
+          known_hosts: "/etc/retnd/known_hosts"
         remote_path: "/srv/backups"
         local_path: /data/backups
         include:
@@ -181,7 +181,7 @@ compose file, so substituting it is a one-place change.
 ## Contributing this to the TrueNAS catalog
 
 Copy `catalog/` into the TrueNAS apps repository as
-`ix-dev/community/backupd/` and run that repository's own validation and
+`ix-dev/community/retnd/` and run that repository's own validation and
 render tooling. That validator cannot run here, so it is step 8 of the acceptance
 procedure rather than a CI check. What CI does check on every commit: every
 question is consumed by the template and given a default, the rendered image is

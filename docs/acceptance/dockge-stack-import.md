@@ -89,9 +89,9 @@ chmod 600 /volume1/backupd/secrets/id_ed25519
 
 The engine's start gate is a liveness question, not a backup-freshness verdict
 (issue #206). It declares
-`["CMD", "/backupd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]`,
+`["CMD", "/retnd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]`,
 derived from `container/compose.yaml`, and `web-ui` waits on that with
-`condition: service_healthy`. `/backupd status` is still FR-24's freshness
+`condition: service_healthy`. `/retnd status` is still FR-24's freshness
 verdict and still the image's own baked-in `HEALTHCHECK`, and it exits non-zero on a
 fresh install by design, which is exactly why nothing waits on it any more. So a
 **fresh install reaches the web UI**: an empty configuration directory is a legitimate
@@ -159,9 +159,9 @@ host and user.
 - [ ] Dockge's own editor round-trips the file without reformatting it into
       something the canonical suite would reject
 - [ ] Both containers reach `running`, and Dockge's interactive log pane shows both
-- [ ] `backupd` reports healthy (it declares the liveness probe
-      `/backupd-web healthcheck --url http://127.0.0.1:8080/health/live`,
-      not the image's own `/backupd status`: the web UI waits on this, and
+- [ ] `retnd` reports healthy (it declares the liveness probe
+      `/retnd-web healthcheck --url http://127.0.0.1:8080/health/live`,
+      not the image's own `/retnd status`: the web UI waits on this, and
       the backup-freshness verdict is non-zero on a fresh install)
 - [ ] `web-ui` reports healthy, having overridden the image's own healthcheck
 
@@ -221,7 +221,7 @@ whether compatibility held.
       uses host networking or the host PID namespace, and neither adds a capability:
 
       ```bash
-      docker inspect backupd-backupd-1 backupd-web-ui-1 \
+      docker inspect retnd-retnd-1 retnd-web-ui-1 \
         --format '{{.Name}} priv={{.HostConfig.Privileged}} net={{.HostConfig.NetworkMode}} binds={{.HostConfig.Binds}}'
       ```
 - [ ] Stopping Dockge leaves the stack running and the web UI reachable

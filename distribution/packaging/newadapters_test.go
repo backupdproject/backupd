@@ -50,7 +50,7 @@ func newAdapters() []newAdapter {
 		{id: "portainer", compose: "compose/retnd.yml", env: "compose/retnd.env", acceptance: "docs/acceptance/portainer-stack-deployment.md"},
 		{id: "dockge", acceptance: "docs/acceptance/dockge-stack-import.md"},
 		{id: "casaos", compose: "compose/retnd.yml", acceptance: "docs/acceptance/casaos-app-store-install.md"},
-		{id: "zimaos", compose: "compose/backupd.yml", acceptance: "docs/acceptance/zimaos-app-store-install.md"},
+		{id: "zimaos", compose: "compose/retnd.yml", acceptance: "docs/acceptance/zimaos-app-store-install.md"},
 	}
 }
 
@@ -174,7 +174,7 @@ func TestAHostPlaneMountIsOptionalToCarryAndNotOptionalToCarryCorrectly(t *testi
 		t.Fatal(`"workflows" is not a host-plane role any more, so the exemption this control guards is not the one under test`)
 	}
 
-	base, drift := ReduceToRoles("zimaos", newAdapter{id: "zimaos", compose: "compose/backupd.yml"}.services(t), c)
+	base, drift := ReduceToRoles("zimaos", newAdapter{id: "zimaos", compose: "compose/retnd.yml"}.services(t), c)
 	if len(drift) > 0 {
 		t.Fatalf("could not reduce the fixture adapter to roles: %s", FormatDrift(drift))
 	}
@@ -231,13 +231,13 @@ func mutateForEquivalence(a AdapterRuntime, property string) (AdapterRuntime, st
 
 	switch property {
 	case PropRoleSet:
-		out.Others = append(out.Others, Service{Name: "backupd-sidecar", Command: []string{"/backupd", "daemon"}})
+		out.Others = append(out.Others, Service{Name: "retnd-sidecar", Command: []string{"/retnd", "daemon"}})
 		return out, "added a third container", true
 	case PropCommand:
 		if out.WebUI == nil {
 			return out, "", false
 		}
-		out.WebUI.Command = append([]string{"/backupd-web", "serve"}, out.WebUI.Command[2:]...)
+		out.WebUI.Command = append([]string{"/retnd-web", "serve"}, out.WebUI.Command[2:]...)
 		return out, "made the Web UI run the engine command", true
 	case PropContainerMounts:
 		if out.Engine == nil || len(out.Engine.Mounts) == 0 {
@@ -255,7 +255,7 @@ func mutateForEquivalence(a AdapterRuntime, property string) (AdapterRuntime, st
 		if out.WebUI == nil {
 			return out, "", false
 		}
-		out.WebUI.HealthcheckTest = []string{"CMD", "/backupd", "status"}
+		out.WebUI.HealthcheckTest = []string{"CMD", "/retnd", "status"}
 		return out, "gave the Web UI the engine's health check, which needs a state database it does not have", true
 	case PropEngineEnvironment:
 		if out.Engine == nil {
@@ -917,17 +917,9 @@ func TestTheDockgeStackIsTheCanonicalStack(t *testing.T) {
 func TestCasaOSAndZimaOSStoreMetadataDescribesTheStackBesideIt(t *testing.T) {
 	c := MustLoad()
 
-	// One row per store, each naming its own compose file: #891 renames
-	// the eleven providers' artefacts in two halves, so for the length of
-	// one pull request CasaOS is already `retnd.yml` and ZimaOS is not.
-	// Collapse this back to a bare list once both say `retnd.yml`.
-	for _, store := range []struct{ id, compose string }{
-		{"casaos", "retnd.yml"},
-		{"zimaos", "backupd.yml"},
-	} {
-		id := store.id
+	for _, id := range []string{"casaos", "zimaos"} {
 		t.Run(id, func(t *testing.T) {
-			path := filepath.Join(PlatformDir(id), "compose", store.compose)
+			path := filepath.Join(PlatformDir(id), "compose", "retnd.yml")
 			md, err := ReadCasaOSMetadata(path)
 			if err != nil {
 				t.Fatalf("read x-casaos: %v", err)
@@ -940,7 +932,7 @@ func TestCasaOSAndZimaOSStoreMetadataDescribesTheStackBesideIt(t *testing.T) {
 			if len(drift) > 0 {
 				t.Fatalf("could not reduce this adapter to roles:\n%s", FormatDrift(drift))
 			}
-			if v := CheckCasaOSMetadata(id+"/compose/"+store.compose, md, rt, c); len(v) > 0 {
+			if v := CheckCasaOSMetadata(id+"/compose/retnd.yml", md, rt, c); len(v) > 0 {
 				t.Errorf("the store metadata does not describe the services beside it:\n%s", format(v))
 			}
 		})

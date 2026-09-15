@@ -309,10 +309,11 @@ func (d Document) ServiceNames() []string {
 
 // Roles maps each service name to its role.
 //
-// The role comes from the command, never from the name. apps/truenas
-// calls its two services backupd and backupd-ui and the
-// canonical file calls them backupd and web-ui; a check keyed on
-// the name would silently stop checking the moment someone renamed one.
+// The role comes from the command, never from the name. apps/unraid
+// calls its two containers retnd and retnd-ui and the canonical file
+// calls its two services retnd and web-ui; a check keyed on the name
+// would silently stop checking the moment someone renamed one, which
+// #891 did to all eleven adapters at once.
 func (d Document) Roles() map[string]Role {
 	out := map[string]Role{}
 	for name, raw := range d.services() {

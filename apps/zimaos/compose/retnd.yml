@@ -1,4 +1,4 @@
-# ZimaOS app-store entry for Backupd (issue #170, B6.6).
+# ZimaOS app-store entry for retnd (issue #170, B6.6).
 #
 # ZimaOS is built on CasaOS and reads the same `x-casaos` block out of a
 # docker-compose file, so this single file is both the runtime definition
@@ -10,7 +10,7 @@
 #
 # This is a SECOND STORE REGISTRATION OVER ONE RUNTIME, not a second
 # runtime. Its services are the same shape as
-# apps/casaos/compose/backupd.yml and its host paths are the same paths,
+# apps/casaos/compose/retnd.yml and its host paths are the same paths,
 # because ZimaOS lays /DATA out the way CasaOS does. What differs is the
 # store the file is submitted to and the identity it is submitted under,
 # which is exactly the amount of difference a thin adapter is allowed to
@@ -46,22 +46,32 @@
 # unresolved reference at install time rather than a knob. Every path
 # below is literal and every one of them is ZimaOS's own layout: private
 # application data under /DATA/AppData, user data under /DATA.
+# The compose project name, stated rather than inherited (issue #891,
+# following container/compose.yaml). Compose defaults the project name to
+# the directory this file happens to sit in, and the project name is the
+# prefix of every default container name. With this line the containers
+# are `retnd-retnd-1` and `retnd-web-ui-1` here exactly as they are in the
+# canonical definition, so `docker ps` on this NAS reads the same as
+# `docker ps` on a generic Docker host and the documented names are true
+# of both.
+name: retnd
+
 x-casaos:
   architectures:
     - amd64
     - arm64
-  main: backupd-ui
+  main: web-ui
   author: spdrman
   developer: spdrman
   category: Backup
-  store_app_id: backupd
+  store_app_id: retnd
   icon: https://raw.githubusercontent.com/backupdproject/backupd/main/apps/zimaos/icon.svg
   scheme: http
   hostname: ""
   port_map: "8080"
   index: /
   title:
-    en_us: Backupd
+    en_us: retnd
   tagline:
     en_us: Scheduled, verified pull-based backups with retention tiers
   description:
@@ -87,9 +97,9 @@ services:
   # The engine: local authentication, the versioned /api/v1 API and the
   # scheduler in one process. Holds the state database and the
   # credentials, and publishes no port at all.
-  backupd:
+  retnd:
     image: ghcr.io/backupdproject/backupd:0.4.0
-    command: ["/backupd-web", "serve", "--profile=generic"]
+    command: ["/retnd-web", "serve", "--profile=generic"]
 
     user: "1000:1000"
     read_only: true
@@ -148,9 +158,9 @@ services:
 
     # The start gate, and a liveness question rather than a health
     # verdict (issue #206). The Web UI below declares
-    # `depends_on: backupd: condition: service_healthy`, so
+    # `depends_on: retnd: condition: service_healthy`, so
     # whatever this asks stands between an operator and the only
-    # container with a published port. `/backupd status` is
+    # container with a published port. `/retnd status` is
     # FR-24's backup-freshness verdict and exits non-zero on any
     # DEGRADED, STALE or FAILING set, and on a fresh install, which has
     # backed nothing up yet: gating the Web UI on it means an app an
@@ -161,12 +171,12 @@ services:
     # is the right default for a plain `docker run` and for the headless
     # `daemon` command, which serves no HTTP and so has no liveness
     # endpoint to ask. Backup freshness is not lost - read it with
-    # `docker exec backupd /backupd status`, or let the
+    # `docker compose exec retnd /retnd status`, or let the
     # alerts block deliver it.
     #
     # Derived from container/compose.yaml, never authored here.
     healthcheck:
-      test: ["CMD", "/backupd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]
+      test: ["CMD", "/retnd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]
       interval: 30s
       timeout: 5s
       start_period: 5s
@@ -209,12 +219,12 @@ services:
   # The web UI: the shared static bundle plus a reverse proxy to the
   # engine. The only container with a published port, and the app ZimaOS
   # opens when the tile is clicked.
-  backupd-ui:
+  web-ui:
     image: ghcr.io/backupdproject/backupd:0.4.0
-    command: ["/backupd-web", "serve-ui", "--profile=generic"]
+    command: ["/retnd-web", "serve-ui", "--profile=generic"]
 
     depends_on:
-      backupd:
+      retnd:
         condition: service_healthy
 
     user: "1000:1000"
@@ -235,7 +245,7 @@ services:
       # engine's own line for it.
       LOG_LEVEL: "info"
       LISTEN_ADDR: ":8080"
-      UPSTREAM_ADDR: "http://backupd:8080"
+      UPSTREAM_ADDR: "http://retnd:8080"
 
     # Neither UI_DIR nor UI_ROOT, on purpose: this adapter serves the
     # bundle compiled into the binary. apps/zimaos/README.md has the
@@ -245,7 +255,7 @@ services:
     # key, known_hosts, or either data directory.
 
     healthcheck:
-      test: ["CMD", "/backupd-web", "healthcheck"]
+      test: ["CMD", "/retnd-web", "healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 5s

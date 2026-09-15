@@ -140,17 +140,17 @@ type AdapterRuntime struct {
 }
 
 // ReduceToRoles sorts an adapter's services into the two canonical roles
-// by the COMMAND each one runs, never by its name. apps/truenas calls
-// them backupd/backupd-ui and container/compose.yaml calls
-// them retnd/web-ui; a check keyed on the name would silently
-// stop checking the moment someone renamed one.
+// by the COMMAND each one runs, never by its name. apps/unraid calls its
+// two containers retnd/retnd-ui and container/compose.yaml calls its two
+// services retnd/web-ui; a check keyed on the name would silently stop
+// checking the moment someone renamed one, which #891 did to all eleven
+// adapters at once.
 //
 // The command is matched against every spelling the image answers to
 // (CommandSpellings), which for one release includes the pre-rename
-// entrypoint canonical.json retains: #890 moved the canonical
-// definition's argv and #891 moves the eight provider adapters', so in
-// between the two there are adapters naming /backupd-web and a canonical
-// contract naming /retnd-web, and both really do run the same inode.
+// entrypoint canonical.json retains: an operator's own pinned copy of a
+// provider file still names /backupd-web, and it really does run the same
+// inode as /retnd-web (renameoverlap.go).
 func ReduceToRoles(platform string, svcs []Service, c Canonical) (AdapterRuntime, []Drift) {
 	out := AdapterRuntime{Platform: platform}
 	var drift []Drift
@@ -537,10 +537,12 @@ func waitingOnHealthOf(a AdapterRuntime, service string) []string {
 // and not a difference in what runs.
 //
 // A retained entrypoint name is a spelling in the same sense. #890 moved
-// the canonical commands to /retnd-web and #891 moves the eight
-// adapters' healthcheck tests, and in between the two an adapter's
-// `/backupd-web healthcheck` runs the same inode the contract names
-// (renameoverlap.go). What this comparison exists to catch is a check
+// the canonical commands to /retnd-web and #891 moved all eleven
+// adapters' healthcheck tests, so nothing in this tree names
+// /backupd-web any more -- but an operator's own pinned copy of a
+// provider file does, and it runs the same inode the contract names
+// (renameoverlap.go), which is what the retained spelling is still for
+// until #895 drops it. What this comparison exists to catch is a check
 // that asks a DIFFERENT question, so it walks every spelling the image
 // answers to rather than pinning the one the contract prefers.
 func (c Canonical) sameTest(got, want []string) bool {

@@ -241,7 +241,7 @@
       "tier": "B",
       "epic": "B",
       "workPackage": "4.3",
-      "metadata": { "kind": "compose", "root": "apps/truenas", "compose": "compose/backupd.yaml", "files": ["README.md", "catalog/app.yaml", "catalog/questions.yaml", "catalog/ix_values.yaml", "catalog/templates/docker-compose.yaml"], "storeArtifacts": ["catalog/app.yaml", "catalog/questions.yaml", "catalog/ix_values.yaml", "catalog/templates/docker-compose.yaml"] },
+      "metadata": { "kind": "compose", "root": "apps/truenas", "compose": "compose/retnd.yaml", "files": ["README.md", "catalog/app.yaml", "catalog/questions.yaml", "catalog/ix_values.yaml", "catalog/templates/docker-compose.yaml"], "storeArtifacts": ["catalog/app.yaml", "catalog/questions.yaml", "catalog/ix_values.yaml", "catalog/templates/docker-compose.yaml"] },
       "scanRoots": ["apps/truenas"],
       "acceptance": "docs/acceptance/truenas-provider-acceptance.md",
       "workflowRunner": { "localHooks": "unavailable", "platform": "truenas", "doc": "docs/acceptance/truenas-provider-acceptance.md" },
@@ -283,7 +283,7 @@
       "tier": "B",
       "epic": "B",
       "workPackage": "4.3",
-      "metadata": { "kind": "unraid-template", "root": "apps/unraid", "templates": ["template/backupd.xml", "template/backupd-ui.xml"], "files": ["README.md", "frontend/webui.json"], "storeArtifacts": ["template/backupd.xml", "template/backupd-ui.xml"] },
+      "metadata": { "kind": "unraid-template", "root": "apps/unraid", "templates": ["template/retnd.xml", "template/retnd-ui.xml"], "files": ["README.md", "frontend/webui.json"], "storeArtifacts": ["template/retnd.xml", "template/retnd-ui.xml"] },
       "scanRoots": ["apps/unraid"],
       "acceptance": "docs/acceptance/unraid-provider-acceptance.md",
       "workflowRunner": { "localHooks": "unavailable", "platform": "unraid", "doc": "docs/acceptance/unraid-provider-acceptance.md" },
@@ -747,16 +747,16 @@
       "metadata": {
         "kind": "compose",
         "root": "apps/zimaos",
-        "compose": "compose/backupd.yml",
+        "compose": "compose/retnd.yml",
         "files": [
           "README.md",
           "icon.svg"
         ],
         "storeArtifacts": [
-          "compose/backupd.yml"
+          "compose/retnd.yml"
         ],
         "architectureClaim": {
-          "source": "apps/zimaos/compose/backupd.yml",
+          "source": "apps/zimaos/compose/retnd.yml",
           "architectures": [
             "amd64",
             "arm64"

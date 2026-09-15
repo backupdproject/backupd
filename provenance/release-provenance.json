@@ -56,7 +56,7 @@
   },
   "checksums": {
     "path": "provenance/checksums.txt",
-    "sha256": "1b06cbe7834047d2402302d150705c5f0307608e30f89f5c4a567f82b3c59373",
+    "sha256": "ac166ad9b8fb9818e078090de26b75cb045ede0293fb900a1c9394f495ab2472",
     "format": "sha256sum"
   },
   "artifacts": [
@@ -113,7 +113,7 @@
     {
       "target": "truenas",
       "path": "apps/truenas/catalog/app.yaml",
-      "sha256": "a38efbbec1cf3e6d22078c71de3ee2ec4c7e082b3cf336316a145f5dbf7864bc"
+      "sha256": "17810a7e5f7ccb09e1ffef74400a21bcc77efafce1083a3595b707342dd0d9e2"
     },
     {
       "target": "truenas",
@@ -123,37 +123,37 @@
     {
       "target": "truenas",
       "path": "apps/truenas/catalog/questions.yaml",
-      "sha256": "d1b117ec8a4d7eceeb0ccb3701f60d84dbfdab026e2418e06db0d746d1f3e14b"
+      "sha256": "b55e3c7e5063a0cc7ddd5b04c2753097271583e96734d833e8bb1e1a4db9e2ea"
     },
     {
       "target": "truenas",
       "path": "apps/truenas/catalog/templates/docker-compose.yaml",
-      "sha256": "37cc17a805483aa2ab010f91b8f243d32801c2a3ed89b92ca1e947ed5202736a"
+      "sha256": "6c4ec981eea52c60c3390f77864d2aea2cf4b8fca59f9be93f8ec0cbf87cee86"
     },
     {
       "target": "truenas",
-      "path": "apps/truenas/compose/backupd.yaml",
-      "sha256": "0219356cb3c97f05853ac159522fae8ad60d816b11992e6f0ecd2060ed4b7802"
+      "path": "apps/truenas/compose/retnd.yaml",
+      "sha256": "ee5d48eae1f11fa6582d6ab816fb01e9984731fa623a0e6cf73131129480ebce"
     },
     {
       "target": "unraid",
-      "path": "apps/unraid/template/backupd-ui.xml",
-      "sha256": "fbf2aa5d2586461e56296e6e33ab01b04507291e0a91d3e171a5296ff565cec8"
+      "path": "apps/unraid/template/retnd-ui.xml",
+      "sha256": "b3411687c4c07d0fc2449f44881a7e193e773a04e4612799c531ad11dd71619c"
     },
     {
       "target": "unraid",
-      "path": "apps/unraid/template/backupd.xml",
-      "sha256": "3291878e9d2384a76afed1261620d4d8d343569fe09c66a1bdb2cff040c5696a"
+      "path": "apps/unraid/template/retnd.xml",
+      "sha256": "c23a897f43c1f8e1739d9e6183179f3e80c6d960ceb01097e98b2a681580ae89"
     },
     {
       "target": "zimaos",
-      "path": "apps/zimaos/compose/backupd.yml",
-      "sha256": "0df72eca34a688c139bc881eb6a988f8efc386e11f0a045d2a82ad6bf4415367"
+      "path": "apps/zimaos/compose/retnd.yml",
+      "sha256": "8d9e41fc36696dbc67c2530819938f48491147cf75baee0c919a4b03be02c0fc"
     },
     {
       "target": "zimaos",
       "path": "apps/zimaos/icon.svg",
-      "sha256": "e83f92d42a95a7e8d5977a8a05f994fca631cfd5c6d5c5d7209d1403cb0104ba"
+      "sha256": "8e5181956f8e4f24134949b0a274646d2682f396b77c77dc82daaad1e7162595"
     },
     {
       "target": "generic",

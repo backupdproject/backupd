@@ -53,7 +53,7 @@ func TestScanForHostPlaneModificationCatchesEveryMarker(t *testing.T) {
 		{"pve daemon restart", "install.yaml", "post: systemctl reload pveproxy\n"},
 		{"omv config database", "compose/backupd.env", "HOOK=/etc/openmediavault/config.xml\n"},
 		{"omv tooling", "compose/backupd.env", "HOOK=omv-salt deploy run backupmanager\n"},
-		{"unraid plugin", "template/backupd.xml", "<Plugin>backupd.plg</Plugin>\n"},
+		{"unraid plugin", "template/retnd.xml", "<Plugin>retnd.plg</Plugin>\n"},
 		{"truenas middleware", "catalog/app.yaml", "hook: midclt call system.general.update\n"},
 		{"dsm web root", "conf/resource", "{\"path\": \"/usr/syno/synoman/webman/3rdparty\"}\n"},
 		{"dsm private api", "scripts/postinst.yaml", "cmd: synowebapi --exec api=SYNO.Core.Service\n"},

@@ -6,7 +6,7 @@ it is unticked and the evidence table at the bottom is empty, which is the
 honest state: ZimaOS is build-supported and uncertified.
 
 ZimaOS reads the same `x-casaos` block CasaOS does, so
-`apps/zimaos/compose/backupd.yml` is both the runtime definition and the
+`apps/zimaos/compose/retnd.yml` is both the runtime definition and the
 store submission.
 
 It is a separate procedure from the CasaOS one even though the stack is the same
@@ -90,9 +90,9 @@ chmod 600 /DATA/AppData/backupd/secrets/id_ed25519
 
 The engine's start gate is a liveness question, not a backup-freshness verdict
 (issue #206). It declares
-`["CMD", "/backupd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]`,
-derived from `container/compose.yaml`, and `backupd-ui` waits on that with
-`condition: service_healthy`. `/backupd status` is still FR-24's freshness
+`["CMD", "/retnd-web", "healthcheck", "--url", "http://127.0.0.1:8080/health/live"]`,
+derived from `container/compose.yaml`, and `web-ui` waits on that with
+`condition: service_healthy`. `/retnd status` is still FR-24's freshness
 verdict and still the image's own baked-in `HEALTHCHECK`, and it exits non-zero on a
 fresh install by design, which is exactly why nothing waits on it any more. So a
 **fresh install reaches the web UI**: an empty configuration directory is a legitimate
@@ -140,7 +140,7 @@ host and user.
 ## Step 1 — Install
 
 1. In ZimaOS, install the app from its store, or use the custom-install route
-   with `apps/zimaos/compose/backupd.yml`.
+   with `apps/zimaos/compose/retnd.yml`.
 2. ZimaOS renders the install dialog out of the `x-casaos` block. Change nothing.
 3. Install.
 
@@ -149,11 +149,11 @@ host and user.
 - [ ] The install dialog listed the five volumes and the two environment values
       the per-service `x-casaos` blocks describe
 - [ ] Both containers reach `running`
-- [ ] `backupd` reports healthy (it declares the liveness probe
-      `/backupd-web healthcheck --url http://127.0.0.1:8080/health/live`,
-      not the image's own `/backupd status`: the web UI waits on this, and
+- [ ] `retnd` reports healthy (it declares the liveness probe
+      `/retnd-web healthcheck --url http://127.0.0.1:8080/health/live`,
+      not the image's own `/retnd status`: the web UI waits on this, and
       the backup-freshness verdict is non-zero on a fresh install)
-- [ ] `backupd-ui` reports healthy, having overridden the image's own healthcheck
+- [ ] `web-ui` reports healthy, having overridden the image's own healthcheck
 - [ ] The app claims `amd64` and `arm64`, and it installed on this machine's architecture
 
 ## Step 2 — Web UI
@@ -207,7 +207,7 @@ host and user.
       uses host networking or the host PID namespace, and neither adds a capability:
 
       ```bash
-      docker inspect backupd backupd-ui \
+      docker inspect retnd web-ui \
         --format '{{.Name}} priv={{.HostConfig.Privileged}} net={{.HostConfig.NetworkMode}} binds={{.HostConfig.Binds}}'
       ```
 - [ ] Both containers run as uid 1000, on a read-only root filesystem

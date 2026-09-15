@@ -578,15 +578,15 @@
           "apps/truenas/catalog/ix_values.yaml",
           "apps/truenas/catalog/questions.yaml",
           "apps/truenas/catalog/templates/docker-compose.yaml",
-          "apps/truenas/compose/backupd.yaml"
+          "apps/truenas/compose/retnd.yaml"
         ],
         "unbuiltReason": "",
         "licenceDelivery": "image"
       },
       "unraid": {
         "artifacts": [
-          "apps/unraid/template/backupd-ui.xml",
-          "apps/unraid/template/backupd.xml"
+          "apps/unraid/template/retnd-ui.xml",
+          "apps/unraid/template/retnd.xml"
         ],
         "unbuiltReason": "",
         "licenceDelivery": "image"
@@ -632,7 +632,7 @@
       },
       "zimaos": {
         "artifacts": [
-          "apps/zimaos/compose/backupd.yml",
+          "apps/zimaos/compose/retnd.yml",
           "apps/zimaos/icon.svg"
         ],
         "unbuiltReason": "",

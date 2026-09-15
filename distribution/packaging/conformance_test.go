@@ -62,7 +62,7 @@ type platformFixture struct {
 	engineService string
 	uiService     string
 	// uiHealthcheck says how this platform stops the Web UI container
-	// from running the image's baked-in `/backupd status`
+	// from running the image's baked-in `/retnd status`
 	// healthcheck, which needs a config file and a state database that
 	// container does not have (WP4.3 calls this out by name).
 	uiHealthcheck uiHealthcheckStrategy
@@ -155,7 +155,7 @@ func allPlatforms() []platformFixture {
 			name: "truenas",
 			requiredFiles: []string{
 				"README.md",
-				"compose/backupd.yaml",
+				"compose/retnd.yaml",
 				"catalog/app.yaml",
 				"catalog/questions.yaml",
 				"catalog/ix_values.yaml",
@@ -163,7 +163,7 @@ func allPlatforms() []platformFixture {
 			},
 			services: func(t *testing.T) []Service {
 				t.Helper()
-				svcs, err := ReadCompose(filepath.Join(PlatformDir("truenas"), "compose", "backupd.yaml"), nil)
+				svcs, err := ReadCompose(filepath.Join(PlatformDir("truenas"), "compose", "retnd.yaml"), nil)
 				if err != nil {
 					t.Fatalf("read TrueNAS custom-app compose: %v", err)
 				}
@@ -177,23 +177,23 @@ func allPlatforms() []platformFixture {
 				// here puts it through every per-platform rule below.
 				return append(svcs, renderedTrueNASCatalog(t)...)
 			},
-			engineService: "backupd",
-			uiService:     "backupd-ui",
+			engineService: "retnd",
+			uiService:     "web-ui",
 			uiHealthcheck: overrideHealthcheck,
 			hardening:     composeHardening,
 			composeProfiles: []composeProfile{
-				{compose: "compose/backupd.yaml"},
+				{compose: "compose/retnd.yaml"},
 			},
 			acceptance:       "truenas-provider-acceptance.md",
 			docSubstitutions: map[string]string{"/mnt/POOL": "/mnt/tank"},
 			runtimeArtifacts: func(t *testing.T) []derivationArtifact {
 				t.Helper()
-				svcs, err := ReadCompose(filepath.Join(PlatformDir("truenas"), "compose", "backupd.yaml"), nil)
+				svcs, err := ReadCompose(filepath.Join(PlatformDir("truenas"), "compose", "retnd.yaml"), nil)
 				if err != nil {
 					t.Fatalf("read TrueNAS custom-app compose: %v", err)
 				}
 				return []derivationArtifact{
-					{"compose/backupd.yaml", svcs},
+					{"compose/retnd.yaml", svcs},
 					{"catalog/templates/docker-compose.yaml (rendered)", renderedTrueNASCatalog(t)},
 				}
 			},
@@ -202,13 +202,13 @@ func allPlatforms() []platformFixture {
 			name: "unraid",
 			requiredFiles: []string{
 				"README.md",
-				"template/backupd.xml",
-				"template/backupd-ui.xml",
+				"template/retnd.xml",
+				"template/retnd-ui.xml",
 			},
 			services: func(t *testing.T) []Service {
 				t.Helper()
 				var out []Service
-				for _, f := range []string{"backupd.xml", "backupd-ui.xml"} {
+				for _, f := range []string{"retnd.xml", "retnd-ui.xml"} {
 					tpl, err := ReadUnraidTemplate(filepath.Join(PlatformDir("unraid"), "template", f))
 					if err != nil {
 						t.Fatalf("read Unraid template %s: %v", f, err)
@@ -217,8 +217,8 @@ func allPlatforms() []platformFixture {
 				}
 				return out
 			},
-			engineService:    "backupd",
-			uiService:        "backupd-ui",
+			engineService:    "retnd",
+			uiService:        "retnd-ui",
 			uiHealthcheck:    disableHealthcheck,
 			hardening:        extraParamsHardening,
 			acceptance:       "unraid-provider-acceptance.md",
@@ -226,7 +226,7 @@ func allPlatforms() []platformFixture {
 			runtimeArtifacts: func(t *testing.T) []derivationArtifact {
 				t.Helper()
 				var out []Service
-				for _, f := range []string{"backupd.xml", "backupd-ui.xml"} {
+				for _, f := range []string{"retnd.xml", "retnd-ui.xml"} {
 					tpl, err := ReadUnraidTemplate(filepath.Join(PlatformDir("unraid"), "template", f))
 					if err != nil {
 						t.Fatalf("read Unraid template %s: %v", f, err)
@@ -237,7 +237,7 @@ func allPlatforms() []platformFixture {
 				// container, and the deployable runtime is the pair. A
 				// per-template artifact would report every template as
 				// missing the other role.
-				return []derivationArtifact{{"template/backupd{,-ui}.xml", out}}
+				return []derivationArtifact{{"template/retnd{,-ui}.xml", out}}
 			},
 		},
 		{
@@ -427,19 +427,19 @@ func allPlatforms() []platformFixture {
 			requiredFiles: []string{
 				"README.md",
 				"icon.svg",
-				"compose/backupd.yml",
+				"compose/retnd.yml",
 			},
-			services:      composeServices("zimaos", "compose/backupd.yml", ""),
-			engineService: "backupd",
-			uiService:     "backupd-ui",
+			services:      composeServices("zimaos", "compose/retnd.yml", ""),
+			engineService: "retnd",
+			uiService:     "web-ui",
 			uiHealthcheck: overrideHealthcheck,
 			hardening:     composeHardening,
 			composeProfiles: []composeProfile{
-				{compose: "compose/backupd.yml"},
+				{compose: "compose/retnd.yml"},
 			},
 			acceptance:       "zimaos-app-store-install.md",
 			docSubstitutions: map[string]string{},
-			runtimeArtifacts: composeArtifact("zimaos", "compose/backupd.yml", ""),
+			runtimeArtifacts: composeArtifact("zimaos", "compose/retnd.yml", ""),
 		},
 	}
 }
@@ -1243,7 +1243,7 @@ func TestUnraidWebUIJSONAgreesWithTheTemplate(t *testing.T) {
 		t.Fatalf("parse webui.json: %v", err)
 	}
 
-	tpl, err := ReadUnraidTemplate(filepath.Join(PlatformDir("unraid"), "template", "backupd-ui.xml"))
+	tpl, err := ReadUnraidTemplate(filepath.Join(PlatformDir("unraid"), "template", "retnd-ui.xml"))
 	if err != nil {
 		t.Fatalf("read Unraid UI template: %v", err)
 	}

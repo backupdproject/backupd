@@ -97,9 +97,11 @@ func CheckHealthCheck(svc Service, c Canonical) []Violation {
 
 	// Every spelling of the canonical command the image answers to, not
 	// just the canonical one: #890 moved the entrypoint names and #891
-	// moves the eight adapters' healthcheck tests, so for one release an
-	// adapter's `/backupd-web healthcheck` and the contract's
-	// `/retnd-web healthcheck` are the same inode (renameoverlap.go).
+	// moved all eleven adapters' healthcheck tests. No adapter in this
+	// tree spells it the old way now; an operator's own pinned copy of one
+	// still does, and for one release `/backupd-web healthcheck` and the
+	// contract's `/retnd-web healthcheck` are the same inode
+	// (renameoverlap.go).
 	got := svc.HealthcheckTest
 	var want []string
 	matched := false

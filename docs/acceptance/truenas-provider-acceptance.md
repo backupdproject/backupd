@@ -26,8 +26,8 @@ reach.
 | Term | Meaning here |
 | --- | --- |
 | `POOL` | The ZFS pool you install into. The package's defaults assume `tank`; substitute yours everywhere. |
-| Engine container | `/backupd-web serve`: API, scheduler, local authentication. No published port. |
-| Web UI container | `/backupd-web serve-ui`: static UI plus reverse proxy. The only published port. |
+| Engine container | `/retnd-web serve`: API, scheduler, local authentication. No published port. |
+| Web UI container | `/retnd-web serve-ui`: static UI plus reverse proxy. The only published port. |
 | Canonical image | The single OCI reference in `distribution/packaging/canonical.json`. |
 
 ---
@@ -152,7 +152,7 @@ Nothing in this app needs that, so nothing here does it.
 > confirmed on that same step, and no `config.yaml` is written by hand
 > at all.
 
-`/backupd-web serve` starts without a `config.yaml` and serves the
+`/retnd-web serve` starts without a `config.yaml` and serves the
 first-run setup flow instead (#176), but a config file that EXISTS and does not
 validate is still a hard startup failure. Given the read-only mount above,
 create all three before the first start.
@@ -162,7 +162,7 @@ now a writable directory the application owns, so the container can create and r
 `config.yaml` itself, and an empty directory is a legitimate state rather than a broken
 deployment. Two things nonetheless keep this step here. The directory itself must exist
 and be owned by `PUID:PGID` before the first start, because a bind mount does not create
-or chown its source. And `/backupd-web serve` still refuses to start without a
+or chown its source. And `/retnd-web serve` still refuses to start without a
 valid config: removing that refusal, and serving a first-run flow instead, is #176's
 work and is not merged. Once it is, everything below except creating and owning the
 directory becomes optional.
@@ -195,12 +195,12 @@ shape).
 
 1. In the TrueNAS Web UI go to **Apps → Discover Apps → Custom App**.
 2. Choose **Install via YAML**.
-3. Paste the whole of `apps/truenas/compose/backupd.yaml`.
+3. Paste the whole of `apps/truenas/compose/retnd.yaml`.
 4. Substitute, at the top of the pasted YAML only:
    - the image reference from step 0.1, if you did not push to the recorded one;
    - `POOL` in each host path;
    - `PUID`/`PGID` from step 0.3.
-5. Name the app `backupd`.
+5. Name the app `retnd`.
 6. Install.
 
 Record: how long the install took, and the full text of any warning TrueNAS showed.
@@ -208,13 +208,13 @@ Record: how long the install took, and the full text of any warning TrueNAS show
 - [ ] Install completed without error
 - [ ] TrueNAS shows the app, and both containers reach **running**
 - [ ] The engine container reaches Docker health **healthy** (it declares the
-      liveness probe, `/backupd-web healthcheck --url
+      liveness probe, `/retnd-web healthcheck --url
       http://127.0.0.1:8080/health/live`, and NOT the image's own
-      `HEALTHCHECK`, `/backupd status`. The Web UI will not start until
+      `HEALTHCHECK`, `/retnd status`. The Web UI will not start until
       this reports healthy, and `status` is the backup-freshness verdict, which
       is non-zero on a fresh install that has backed nothing up)
 - [ ] The Web UI container reaches Docker health **healthy** (it overrides that
-      healthcheck with `/backupd-web healthcheck`, because it has no config
+      healthcheck with `/retnd-web healthcheck`, because it has no config
       file and no state database of its own to report on)
 
 If the Web UI container is unhealthy while the engine is healthy, the override did
@@ -226,7 +226,7 @@ changing anything.
 
 ## Step 2 — Web portal link
 
-1. Open **Apps → Installed → backupd**.
+1. Open **Apps → Installed → retnd**.
 2. Click the **Web Portal** button.
 
 - [ ] The portal button exists and is not greyed out
@@ -339,7 +339,7 @@ already has real state from step 4.
    find <backups dataset> -type f -printf '%p %s\n' | sort > /tmp/before-update.txt
    ```
 3. Push or side-load a newer image tag.
-4. In TrueNAS, **Apps → Installed → backupd → Edit**, change the image tag,
+4. In TrueNAS, **Apps → Installed → retnd → Edit**, change the image tag,
    and save. TrueNAS recreates both containers.
 5. Compare afterwards:
    ```bash
@@ -386,7 +386,7 @@ storage step, because after the delete there is nothing left to compare against,
 "the dataset looks fine" is not a result, and any deletion the comparison turns
 up is a release blocker rather than a finding to triage.
 
-1. **Apps → Installed → backupd → Delete**.
+1. **Apps → Installed → retnd → Delete**.
 2. When TrueNAS asks, do **not** tick anything that deletes the app's datasets.
 
 - [ ] Both containers are gone
@@ -423,11 +423,11 @@ catalog. Nothing on a developer laptop can run TrueNAS's own catalog validator, 
 that check lives here.
 
 1. Clone the TrueNAS apps repository.
-2. Copy `apps/truenas/catalog/` in as `ix-dev/community/backupd/`.
+2. Copy `apps/truenas/catalog/` in as `ix-dev/community/retnd/`.
 3. Run that repository's own validation and render tooling.
 
 - [ ] The catalog validator accepts the app
-- [ ] The rendered compose matches `apps/truenas/compose/backupd.yaml`
+- [ ] The rendered compose matches `apps/truenas/compose/retnd.yaml`
       apart from values the questions supply
 - [ ] Every question in `questions.yaml` is consumed by the template, and every
       template variable is answered by a question
